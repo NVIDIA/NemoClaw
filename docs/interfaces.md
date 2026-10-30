@@ -189,15 +189,16 @@ Run the `Open` command from a terminal on the client host, with the gateway sele
 OpenShell's access control is the only authentication: anyone who can run `openshell sandbox exec` in the workspace can open the terminal UI.
 Quit it with Ctrl-D.
 
-The terminal UI runs a separate session from Fabric's invocations, with the runtime's `dcode` configuration, home, and workspace:
+The terminal UI opens a separate session from Fabric's invocations, sharing the runtime's `dcode` configuration, home, session store, and workspace:
 
 - It uses the configured model and endpoint.
   The launcher holds no secret; `dcode` reads the model key from the variable the configuration names, which OpenShell sets in each `sandbox exec` session.
   For a provider with a credential, that variable holds OpenShell's placeholder, which OpenShell replaces with the key in requests to the endpoint.
 - The first time it opens in a runtime's home, it asks for a name and then offers to choose a model; Escape skips both and keeps the configured model.
 - It uses `dcode`'s own approval behavior, which asks before gated actions, not `approval_mode`, which applies only to invocations.
-- It doesn't show invocations as they run.
-  The runtime's thread ID is in `interfaces/terminal.running` beside the launcher, and `LAUNCHER -r THREAD_ID` resumes that thread; writing to it while an invocation runs can conflict.
+- It doesn't show invocations as they run, and it can't open the runtime's own thread.
+  The runtime's ACP session is a `dcode` thread, whose ID is in `interfaces/terminal.running` beside the launcher, and it holds that thread while the runtime runs; `LAUNCHER -r THREAD_ID` fails with `Thread can't be resumed`, because the thread is open elsewhere, and once the runtime stops the launcher refuses to start.
+  `openshell sandbox exec -n SANDBOX --tty -- LAUNCHER threads list` lists the runtime's thread with the terminal's own sessions.
 - Each runtime has its own launcher path; after the runtime restarts, apply prints the new one.
 
 The launcher refuses to start, printing `This NeMo Fabric runtime is not running.`, when `terminal.running` is absent: the adapter writes it once the runtime's session starts and removes it when the runtime stops.
