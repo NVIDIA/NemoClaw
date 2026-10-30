@@ -420,6 +420,45 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
     return { bin, cli, digest: sha256(cli) };
   };
 
+  const writeGitFetchFixture = (bin: string) =>
+    fs.writeFileSync(
+      path.join(bin, "git"),
+      `#!/usr/bin/env bash
+case " $* " in
+  *" fetch "*)
+    case "$FETCH_MODE" in
+      stall | cancel-INT | cancel-TERM)
+        /bin/sleep 60 &
+        child=$!
+        trap 'kill -TERM "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; exit 143' TERM
+        printf '%s\\n%s\\n' "$$" "$child" >"$FETCH_PIDS"
+        case "$FETCH_MODE" in
+          cancel-*)
+            owner="$(ps -o ppid= -p "$PPID" | tr -d '[:space:]')"
+            [[ "$owner" =~ ^[0-9]+$ && "$owner" -gt 1 ]] || exit 98
+            kill "-\${FETCH_MODE#cancel-}" "$owner"
+            ;;
+        esac
+        wait "$child"
+        ;;
+      output)
+        printf '%0*d' "$GIT_OUTPUT_BYTES" 0 >&2
+        exit 128
+        ;;
+      diagnostic)
+        printf '%s\\n' "$GIT_ERROR_FIXTURE" >&2
+        exit 128
+        ;;
+      completed-124) exit 124 ;;
+      *) exit 97 ;;
+    esac
+    ;;
+  *) exec /usr/bin/git "$@" ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+
   const unreachableGitHubEnv = (closedPort: number) => ({
     GIT_CONFIG_COUNT: "2",
     GIT_CONFIG_KEY_0: `url.http://127.0.0.1:${closedPort}/NemoClaw.git.insteadOf`,
@@ -471,6 +510,12 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
     { caller: "payload", failure: "HTTP 403" },
     { caller: "bootstrap", failure: "HTTP 500" },
     { caller: "payload", failure: "HTTP 500" },
+    { caller: "bootstrap", failure: "fetch deadline" },
+    { caller: "bootstrap", failure: "SIGINT" },
+    { caller: "bootstrap", failure: "SIGTERM" },
+    { caller: "bootstrap", failure: "oversized output" },
+    { caller: "bootstrap", failure: "at-limit output" },
+    { caller: "bootstrap", failure: "completed child status 124" },
   ] as const)(
     "reports $failure through the $caller fetch boundary (#11515)",
     async ({ caller, failure }) => {
@@ -482,8 +527,33 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
       fs.writeFileSync(marker, "previous managed source\n");
       const sockets = new Set<net.Socket>();
       const httpStatus = failure.startsWith("HTTP ") ? failure.slice(5) : "";
-      const stubbedFetch = failure === "delayed failure" || failure === "TLS timeout";
-      const timeoutExpected = failure === "stall" || failure === "TLS timeout";
+      const fetchModes: Record<string, string> = {
+        "delayed failure": "diagnostic",
+        "TLS timeout": "diagnostic",
+        "fetch deadline": "stall",
+        SIGINT: "cancel-INT",
+        SIGTERM: "cancel-TERM",
+        "oversized output": "output",
+        "at-limit output": "output",
+        "completed child status 124": "completed-124",
+      };
+      const fetchMode = fetchModes[failure] ?? "";
+      const stubbedFetch = Boolean(fetchMode);
+      const cancelled = failure === "SIGINT" || failure === "SIGTERM";
+      const ownedProcesses = failure === "fetch deadline" || cancelled;
+      const fetchPids = path.join(root, "fetch.pids");
+      const timeoutExpected =
+        failure === "stall" || failure === "TLS timeout" || failure === "fetch deadline";
+      const bootstrap = standaloneInstaller(CURL_PIPE_INSTALLER, root);
+      fs.writeFileSync(
+        bootstrap,
+        fs
+          .readFileSync(bootstrap, "utf8")
+          .replace(
+            "BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30",
+            `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${failure === "fetch deadline" ? 1 : 30}`,
+          ),
+      );
       let acceptedConnections = 0;
       const server = net.createServer((socket) => {
         acceptedConnections++;
@@ -501,12 +571,7 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
           server.once("error", reject);
           server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port));
         });
-        stubbedFetch &&
-          fs.writeFileSync(
-            path.join(installed.bin, "git"),
-            '#!/usr/bin/env bash\ncase " $* " in\n  *" fetch "*) printf "%s\\n" "$GIT_ERROR_FIXTURE" >&2; exit 128 ;;\n  *) exec /usr/bin/git "$@" ;;\nesac\n',
-            { mode: 0o755 },
-          );
+        stubbedFetch && writeGitFetchFixture(installed.bin);
         const script =
           caller === "bootstrap"
             ? 'exec bash < "$BOOTSTRAP"'
@@ -517,9 +582,12 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
             HOME: root,
             PATH: `${installed.bin}:/usr/bin:/bin`,
             TMPDIR: root,
-            BOOTSTRAP: CURL_PIPE_INSTALLER,
+            BOOTSTRAP: bootstrap,
             INSTALLER_PAYLOAD,
             PAYLOAD_CHECKOUT: path.join(root, "payload-checkout"),
+            FETCH_MODE: fetchMode,
+            FETCH_PIDS: fetchPids,
+            GIT_OUTPUT_BYTES: failure === "oversized output" ? "65537" : "65536",
             GIT_ERROR_FIXTURE:
               failure === "TLS timeout" ? tlsConnectionTimeout : delayedConnectionFailure,
             GIT_CONFIG_NOSYSTEM: "1",
@@ -535,32 +603,80 @@ describe("installer git checkout failures", testTimeoutOptions(15_000), () => {
             GIT_CONFIG_VALUE_3: "1",
           },
           timeoutMs: 10_000,
-          maxOutputBytesPerStream: 64 * 1024,
+          maxOutputBytesPerStream: 128 * 1024,
         });
 
         expect(result.error).toBeUndefined();
         expect(result.timedOut).toBe(false);
-        expect(result.status, result.stderr).toBe(1);
-        expect(acceptedConnections > 0).toBe(!stubbedFetch);
-        expect(result.stderr).toContain(
-          timeoutExpected
-            ? `Timed out looking up install ref 'lkg' at ${REPO_URL}.`
-            : `Could not verify install ref 'lkg' from ${REPO_URL}.`,
+        expect(result.status, result.stderr).toBe(
+          failure === "SIGINT" ? 130 : failure === "SIGTERM" ? 143 : 1,
         );
-        const details = {
+        expect(acceptedConnections > 0).toBe(!stubbedFetch);
+        const details: Record<string, string> = {
           stall: "Timed out looking up install ref",
           "delayed failure": "Git reported 132418 ms elapsed before the lookup failed.",
           "TLS timeout": "SSL connection timeout",
           "HTTP 403": "The requested URL returned error: 403",
           "HTTP 500": "The requested URL returned error: 500",
+          "fetch deadline": "Check network access to github.com and try again.",
+          "oversized output": "Check repository access and the Git diagnostic, then try again.",
+          "at-limit output": "0".repeat(65536),
+          "completed child status 124":
+            "Check repository access and the Git diagnostic, then try again.",
         };
-        expect(result.stderr).toContain(details[failure]);
+        const checkDiagnostic = {
+          cancelled: () => {
+            expect(result.stderr).not.toContain("Could not verify install ref");
+          },
+          failed: () => {
+            expect(result.stderr).toContain(
+              timeoutExpected
+                ? `Timed out looking up install ref 'lkg' at ${REPO_URL}.`
+                : `Could not verify install ref 'lkg' from ${REPO_URL}.`,
+            );
+            expect(result.stderr).toContain(details[failure]);
+          },
+        };
+        checkDiagnostic[cancelled ? "cancelled" : "failed"]();
         expect(result.stderr.includes("Timed out")).toBe(timeoutExpected);
+        expect(result.stderr.includes("Could not verify install ref")).toBe(
+          !timeoutExpected && !cancelled,
+        );
+        expect(result.stderr.includes("Couldn't connect to server")).toBe(
+          failure === "delayed failure",
+        );
         expect(result.stderr).not.toContain("Could not connect");
         expect(result.stderr.includes("The installed CLI was not changed.")).toBe(
-          caller === "bootstrap",
+          caller === "bootstrap" && !cancelled,
         );
         expect(result.stderr).not.toContain("is not available");
+        const ownedPids = fs.existsSync(fetchPids)
+          ? fs.readFileSync(fetchPids, "utf8").trim().split("\n")
+          : [];
+        expect(ownedPids).toHaveLength(ownedProcesses ? 2 : 0);
+        expect(ownedPids[0] ? spawnSync("kill", ["-0", ownedPids[0]]).status : -1).not.toBe(0);
+        expect(ownedPids[1] ? spawnSync("kill", ["-0", ownedPids[1]]).status : -1).not.toBe(0);
+        const checkBootstrap = () => {
+          expect(sha256(installed.cli)).toBe(installed.digest);
+          expect(spawnSync(installed.cli, ["--version"], { encoding: "utf8" }).stdout).toBe(
+            "nemoclaw v0.0.118\n",
+          );
+          expect(fs.readFileSync(marker, "utf8")).toBe("previous managed source\n");
+          expect(fs.readdirSync(root).sort()).toEqual(
+            [
+              ".nemoclaw",
+              "bin",
+              "installer-under-test.sh",
+              ...(ownedProcesses ? ["fetch.pids"] : []),
+            ].sort(),
+          );
+        };
+        const checkPreservation = { bootstrap: checkBootstrap, payload: () => {} };
+        checkPreservation[caller]();
+        const checkOutput = {
+          "oversized output": () => expect(result.stderr).not.toContain("0".repeat(32)),
+        };
+        (checkOutput[failure as keyof typeof checkOutput] ?? (() => {}))();
       } finally {
         sockets.forEach((socket) => socket.destroy());
         try {
