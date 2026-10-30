@@ -263,6 +263,8 @@ export interface SessionMetadata {
   fromDockerfile: string | null;
   fromImage?: string | null;
   hostMounts?: SandboxHostMount[];
+  /** Extra OpenClaw dashboard origins requested for this onboarding run (#13177). */
+  dashboardOrigins?: string[];
 }
 
 function structurallyInvalidHostMounts(source: unknown): boolean {
@@ -466,6 +468,8 @@ export interface SessionUpdates {
     gatewayName?: string;
     fromDockerfile?: string | null;
     fromImage?: string | null;
+    hostMounts?: SandboxHostMount[];
+    dashboardOrigins?: string[];
   };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
@@ -785,7 +789,18 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
     fromDockerfile: readString(value.fromDockerfile),
     fromImage: readString(value.fromImage),
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
+    ...dashboardOriginsMetadata(value.dashboardOrigins),
   };
+}
+
+/**
+ * Keep a list of strings, as recorded. Every reader validates the origins:
+ * the resume conflict check, the startup profile, and the registry.
+ */
+function dashboardOriginsMetadata(value: unknown): { dashboardOrigins?: string[] } {
+  if (!Array.isArray(value) || value.length === 0) return {};
+  if (!value.every((entry) => typeof entry === "string")) return {};
+  return { dashboardOrigins: [...value] };
 }
 
 function parseSandboxGpuSelection(value: unknown): Session["sandboxGpuSelection"] {
@@ -1145,6 +1160,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       ...(overrides.metadata?.hostMounts?.length
         ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
         : {}),
+      ...dashboardOriginsMetadata(overrides.metadata?.dashboardOrigins),
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined, sessionId) ??

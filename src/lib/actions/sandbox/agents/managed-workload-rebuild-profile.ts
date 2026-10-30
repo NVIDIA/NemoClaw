@@ -88,6 +88,11 @@ export function prepareManagedRebuildProfileHandoff(input: {
    * recorded origin and never reads `CHAT_UI_URL` from its own environment.
    */
   readonly recordedDashboardExternalUrl?: string | null;
+  /**
+   * The sandbox's registry `dashboardOrigins`. Rebuild replays exactly this
+   * record, so removing the origins at onboard also removes them here (#13177).
+   */
+  readonly recordedDashboardOrigins?: readonly string[];
 }): ManagedWorkloadRebuildHandoff {
   const { catalogHandoff, targetConfig, recreateOptions, messagingPlan } = input;
   const agent = catalogHandoff.agent;
@@ -175,6 +180,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
           ? "0.0.0.0"
           : undefined,
       wslExposure: previousDashboard.agent === "openclaw" && previousDashboard.wslExposure,
+      dashboardOrigins: agent === "openclaw" ? input.recordedDashboardOrigins : undefined,
       hermesDashboardState,
       webSearch: durableConfig.webSearchConfig,
       toolDisclosure: recreateOptions.toolDisclosure,

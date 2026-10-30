@@ -114,6 +114,7 @@ function openClawProfile(): ManagedStartupProfile {
       port: 18_789,
       bindAddress: "0.0.0.0",
       wslExposure: true,
+      extraOrigins: ["https://launchpad.example.test:8443"],
     },
     tools: {
       disclosure: "progressive",
@@ -331,6 +332,7 @@ describe("managed startup agent environment", () => {
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+      NEMOCLAW_DASHBOARD_ORIGINS: "https://launchpad.example.test:8443",
       NEMOCLAW_WSL_DASHBOARD_EXPOSURE: "1",
     });
     const expectedOpenClawRuntime = { ...result.configurationEnvironment };

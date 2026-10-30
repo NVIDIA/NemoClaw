@@ -4,7 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { isLoopbackDashboardUrl } from "../../dashboard/url.ts";
+import { isLoopbackDashboardUrl, readRecordedDashboardOrigins } from "../../dashboard/url.ts";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
@@ -185,6 +185,11 @@ export interface ManagedStartupOpenClawDashboard {
   readonly port: number;
   readonly bindAddress: "127.0.0.1" | "0.0.0.0";
   readonly wslExposure: boolean;
+  /**
+   * Extra browser origins that keep their own port (#13177). Omitted when no
+   * origin is set, so profiles without them keep their earlier encoding.
+   */
+  readonly extraOrigins?: readonly string[];
 }
 
 export interface ManagedStartupHermesDashboardDisabled {
@@ -530,6 +535,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("CHAT_UI_URL", "dashboard.url"),
     affordance("NEMOCLAW_DASHBOARD_BIND", "dashboard.bindAddress"),
     affordance("NEMOCLAW_WSL_DASHBOARD_EXPOSURE", "dashboard.wslExposure"),
+    affordance("NEMOCLAW_DASHBOARD_ORIGINS", "dashboard.extraOrigins"),
     affordance("NEMOCLAW_DASHBOARD_PORT", "dashboard.port", "runtime-env"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
@@ -1028,6 +1034,7 @@ const OPENCLAW_DASHBOARD_KEYS = new Set([
   "port",
   "bindAddress",
   "wslExposure",
+  "extraOrigins",
 ]);
 const HERMES_DASHBOARD_KEYS = new Set([
   "agent",
@@ -1563,6 +1570,20 @@ function requireHttpUrl(value: unknown, where: string): string {
   return pathname === "" ? parsed.origin : `${parsed.origin}${pathname}`;
 }
 
+/**
+ * Validate recorded extra dashboard origins: a non-empty, small list of
+ * distinct, normalized bare origins, so a hand-edited profile cannot add a
+ * malformed or duplicate origin.
+ */
+function requireDashboardExtraOrigins(value: unknown): readonly string[] {
+  return (
+    readRecordedDashboardOrigins(value) ??
+    invalid(
+      "dashboard.extraOrigins must be a non-empty list of distinct, normalized origins that use HTTPS, or HTTP on loopback",
+    )
+  );
+}
+
 function requireProxyUrl(
   value: unknown,
   allowedSchemes: ReadonlySet<string>,
@@ -1958,6 +1979,10 @@ function validateDashboard(
     if (configuredDashboardPort(url) !== port) {
       invalid("OpenClaw dashboard.port must match dashboard.url");
     }
+    const extraOrigins =
+      dashboard.extraOrigins === undefined
+        ? undefined
+        : requireDashboardExtraOrigins(dashboard.extraOrigins);
     return {
       agent,
       mode,
@@ -1965,6 +1990,7 @@ function validateDashboard(
       port,
       bindAddress,
       wslExposure,
+      ...(extraOrigins === undefined ? {} : { extraOrigins }),
     };
   }
   if (agent === "hermes") {

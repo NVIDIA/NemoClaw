@@ -722,11 +722,33 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 65,
+    timeoutMinutes: 80,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
+    owningPaths: [
+      ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
+      "test/e2e/live/json-envelope.ts",
+      // Dashboard-origin parsing, generation, recording, and rebuild replay (#13177).
+      "src/lib/dashboard/url.ts",
+      "scripts/generate-openclaw-config.mts",
+      "src/lib/onboard/managed-startup/onboard-profile.ts",
+      "src/lib/onboard/managed-startup/agent-environment.ts",
+      "src/lib/actions/sandbox/rebuild-env-isolation.ts",
+      "src/lib/actions/sandbox/agents/managed-workload-rebuild-profile.ts",
+      // Origin flag and resume handling, startup-profile schema, and rebuild/clone replay.
+      // Shared registry and onboarding-flow files only pass the list through; they stay out
+      // so unrelated onboarding changes do not select this dashboard target.
+      "src/lib/onboard/command.ts",
+      "src/lib/onboard/command-support.ts",
+      "src/lib/onboard/session-bootstrap.ts",
+      "src/lib/onboard/resume-config.ts",
+      "src/lib/onboard/sandbox-reuse.ts",
+      "src/lib/onboard/managed-startup/profile.ts",
+      "src/lib/onboard/managed-startup/profile-builder.ts",
+      "src/lib/actions/sandbox/rebuild-gpu-opt-out.ts",
+      "src/lib/onboard/workload/clone.ts",
+    ],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",

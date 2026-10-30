@@ -56,6 +56,7 @@ import { cloneSandboxWorkloadReceipt } from "./registry/workload";
 import {
   normalizePendingSandboxCreateIdentity,
   normalizeSandboxPolicyAttribution,
+  readRecordedDashboardOrigins,
   retainedDefaultSandbox,
 } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
@@ -591,6 +592,7 @@ export function registerSandbox(
       hermesApiPort: entry.hermesApiPort ?? undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
       dashboardExternalUrl: entry.dashboardExternalUrl ?? undefined,
+      dashboardOrigins: readRecordedDashboardOrigins(entry.dashboardOrigins) ?? undefined,
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,

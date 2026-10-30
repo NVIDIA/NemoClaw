@@ -396,6 +396,11 @@ function mapOpenClawProfile(
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE: booleanFlag(profile.dashboard.wslExposure),
+    // Only a profile with extra origins sets this, so older profiles map to the
+    // same environment as before (#13177).
+    ...(profile.dashboard.extraOrigins
+      ? { NEMOCLAW_DASHBOARD_ORIGINS: profile.dashboard.extraOrigins.join(",") }
+      : {}),
   };
 
   const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };

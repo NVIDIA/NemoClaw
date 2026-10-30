@@ -400,6 +400,9 @@
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
+        "test/generation/generate-openclaw-config-dashboard-origins.test.ts",
+        "src/lib/actions/sandbox/rebuild-dashboard-origins.test.ts",
+        "src/lib/onboard/session-bootstrap-dashboard-origins.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
     },

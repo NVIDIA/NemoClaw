@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildDashboardRemoteBindEnv,
@@ -111,5 +112,29 @@ describe("dashboard remote-bind E2E environment", () => {
         "18789",
       ),
     ).toBe(false);
+  });
+});
+
+describe("dashboard-remote-bind target ownership (#13177)", () => {
+  it.each([
+    "src/lib/dashboard/url.ts",
+    "scripts/generate-openclaw-config.mts",
+    "src/lib/onboard/managed-startup/onboard-profile.ts",
+    "src/lib/onboard/managed-startup/agent-environment.ts",
+    "src/lib/actions/sandbox/rebuild-env-isolation.ts",
+    "src/lib/actions/sandbox/agents/managed-workload-rebuild-profile.ts",
+    "src/lib/onboard/command.ts",
+    "src/lib/onboard/command-support.ts",
+    "src/lib/onboard/session-bootstrap.ts",
+    "src/lib/onboard/resume-config.ts",
+    "src/lib/onboard/sandbox-reuse.ts",
+    "src/lib/onboard/managed-startup/profile.ts",
+    "src/lib/onboard/managed-startup/profile-builder.ts",
+    "src/lib/actions/sandbox/rebuild-gpu-opt-out.ts",
+    "src/lib/onboard/workload/clone.ts",
+  ])("selects the live dashboard-origin owner when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "dashboard-remote-bind",
+    );
   });
 });

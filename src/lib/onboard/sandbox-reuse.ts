@@ -122,6 +122,8 @@ export interface ReusedSandboxDashboardStateInput {
    * changed OpenClaw dashboard origin.
    */
   cliName?: string;
+  /** Extra OpenClaw dashboard browser origins requested by this onboard run. */
+  dashboardOrigins?: readonly string[];
   updateReusedSandboxMetadata(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
@@ -155,8 +157,12 @@ export async function applyReusedSandboxDashboardState(
   const externalDashboardOrigin = input.env.CHAT_UI_URL;
   // Read before this reuse overwrites the record: the running OpenClaw
   // gateway's allowed origins were generated from it (#13177).
-  const previousExternalDashboardUrl =
-    (input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardExternalUrl ?? null;
+  const previousEntry = (input.getSandbox ?? registry.getSandbox)(input.sandboxName);
+  const previousExternalDashboardUrl = previousEntry?.dashboardExternalUrl ?? null;
+  const previousDashboardOrigins = previousEntry?.dashboardOrigins ?? [];
+  const managesOpenClawDashboard =
+    manageDashboard && (input.agent?.name ?? "openclaw") === "openclaw";
+  const dashboardOrigins = managesOpenClawDashboard ? [...(input.dashboardOrigins ?? [])] : [];
   if (
     manageDashboard &&
     input.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" &&
@@ -224,6 +230,9 @@ export async function applyReusedSandboxDashboardState(
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
     ...(manageDashboard ? { dashboardExternalUrl: externalDashboardUrl } : {}),
+    ...(managesOpenClawDashboard
+      ? { dashboardOrigins: dashboardOrigins.length > 0 ? dashboardOrigins : undefined }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });
@@ -240,6 +249,18 @@ export async function applyReusedSandboxDashboardState(
       externalDashboardUrl
         ? `  Dashboard origin changed to ${externalDashboardUrl}. The running sandbox still allows only its previous origins; run: ${rebuildCommand}`
         : `  Dashboard origin ${previousExternalDashboardUrl} was removed. The running sandbox still allows it until you run: ${rebuildCommand}`,
+    );
+  }
+  if (
+    managesOpenClawDashboard &&
+    input.cliName !== undefined &&
+    dashboardOrigins.join(",") !== previousDashboardOrigins.join(",")
+  ) {
+    const rebuildCommand = `${input.cliName} ${input.sandboxName} rebuild`;
+    (input.note ?? console.log)(
+      dashboardOrigins.length > 0
+        ? `  Dashboard origins changed to ${dashboardOrigins.join(", ")}. The running sandbox still allows only its previous origins; run: ${rebuildCommand}`
+        : `  Dashboard origins ${previousDashboardOrigins.join(", ")} were removed. The running sandbox still allows them until you run: ${rebuildCommand}`,
     );
   }
   return { chatUiUrl, dashboardPort, hermesDashboardState };

@@ -18,10 +18,36 @@ import { parseJsonFromText } from "./json-envelope.ts";
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
-const TEST_TIMEOUT_MS = 50 * 60_000;
+// Leaves 20 minutes of the 80-minute catalogue job for the shared 10-minute
+// cleanup and workflow finalization. Real runs take 6 to 8 minutes; the per-step
+// budgets below are ceilings, not expected durations.
+const TEST_TIMEOUT_MS = 60 * 60_000;
+const REBUILD_TIMEOUT_MS = 25 * 60_000;
+const EXTRA_DASHBOARD_ORIGIN = "https://launchpad.example.test:8443";
+// Rebuild must ignore these exported values and replay the recorded origins (#13177).
+const AMBIENT_CHAT_UI_URL = "https://ambient-ui.example.test";
+const AMBIENT_DASHBOARD_ORIGIN = "https://ambient.example.test:9443";
 
 function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return buildDashboardRemoteBindEnv(SANDBOX_NAME, extra);
+}
+
+/** Read the running gateway's allowed browser origins from inside the sandbox. */
+async function readAllowedOrigins(
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  artifactName: string,
+): Promise<string[]> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "python3",
+      "-c",
+      "import json; print(json.dumps(json.load(open('/sandbox/.openclaw/openclaw.json'))['gateway']['controlUi']['allowedOrigins']))",
+    ],
+    { artifactName, env: sandboxAccessEnv(), timeoutMs: 60_000 },
+  );
+  expect(result.exitCode, `read allowedOrigins failed\n${resultText(result)}`).toBe(0);
+  return parseJsonFromText(result.stdout) as string[];
 }
 
 function remoteHostCandidate(): string {
@@ -42,6 +68,7 @@ runDashboardRemoteBindTest(
         "stop sandbox and restart dashboard with remote binding",
         "verify all-interface dashboard forward",
         "audit exposed dashboard controls",
+        "rebuild and verify recorded dashboard origins",
       ],
     },
   },
@@ -63,6 +90,7 @@ runDashboardRemoteBindTest(
         "install.sh onboards a real OpenShell sandbox on the unified Ubuntu E2E runner",
         "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 creates an all-interface dashboard forward",
         "remote binding does not suppress the insecure dashboard audit findings",
+        "onboarding and rebuild apply the --dashboard-origin origin, and rebuild ignores exported CHAT_UI_URL and NEMOCLAW_DASHBOARD_ORIGINS",
         "terminal cleanup removes the sandbox and gateway",
       ],
     });
@@ -122,6 +150,7 @@ runDashboardRemoteBindTest(
       env: testEnv({
         ...hosted.env,
         NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
+        NEMOCLAW_DASHBOARD_ORIGINS: EXTRA_DASHBOARD_ORIGIN,
       }),
       redactionValues,
       timeoutMs: 25 * 60_000,
@@ -143,6 +172,9 @@ runDashboardRemoteBindTest(
     expect(cliProbe.exitCode, `required CLI probe failed\n${resultText(cliProbe)}`).toBe(0);
     expect(cliProbe.stdout).toContain("nemoclaw");
     expect(cliProbe.stdout).toContain("openshell");
+    expect(
+      await readAllowedOrigins(sandbox, "dashboard-remote-bind-origins-after-onboard"),
+    ).toContain(EXTRA_DASHBOARD_ORIGIN);
 
     progress.phase("stop sandbox and restart dashboard with remote binding");
     const stop = await host.nemoclaw([sandboxName, "stop"], {
@@ -221,5 +253,24 @@ runDashboardRemoteBindTest(
         }),
       ]),
     );
+
+    progress.phase("rebuild and verify recorded dashboard origins");
+    // Conflicting exported values must not replace the recorded origins.
+    const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+      artifactName: "dashboard-remote-bind-rebuild",
+      env: testEnv({
+        CHAT_UI_URL: AMBIENT_CHAT_UI_URL,
+        NEMOCLAW_DASHBOARD_ORIGINS: AMBIENT_DASHBOARD_ORIGIN,
+      }),
+      redactionValues,
+      timeoutMs: REBUILD_TIMEOUT_MS,
+    });
+    expect(rebuild.exitCode, `Sandbox rebuild failed\n${resultText(rebuild)}`).toBe(0);
+    const rebuiltOrigins = await readAllowedOrigins(
+      sandbox,
+      "dashboard-remote-bind-origins-after-rebuild",
+    );
+    expect(rebuiltOrigins).toContain(EXTRA_DASHBOARD_ORIGIN);
+    expect(rebuiltOrigins.join(" ")).not.toContain("ambient");
   },
 );
