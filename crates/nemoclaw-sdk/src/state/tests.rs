@@ -643,6 +643,66 @@ fn typed_storage_bindings_compare_their_complete_identity() {
     }
 }
 
+/// An applied deployment keeps the cluster access it was applied with. A
+/// binding made with the pod's service account matches its compiled row, and
+/// differs from one that names a kubeconfig, in both directions.
+#[test]
+fn kubernetes_bindings_compare_how_they_reach_the_cluster() {
+    const ADDRESS: &str = "openshell_kubernetes_storage.runtime";
+    let generations = [
+        crate::kubernetes::GATEWAY_KIND,
+        crate::kubernetes::STORAGE_KIND,
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let compiled = |kubeconfig: bool| -> crate::backend::Row {
+        let mut value = serde_json::to_value(
+            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap(),
+        )
+        .unwrap();
+        value["spec"]["gateway"] = serde_json::json!({
+            "management": "managed", "runtime": {"provider": "kubernetes"},
+            "endpoint": "https://127.0.0.1:17671",
+            "kubernetes": {"namespace": "test-agents", "authentication": {"profile": "development"}}
+        });
+        if kubeconfig {
+            value["spec"]["gateway"]["kubernetes"]["kubeconfig"] =
+                serde_json::json!({"env": "TEST_KUBECONFIG"});
+            value["spec"]["gateway"]["kubernetes"]["context"] = serde_json::json!("test-cluster");
+        }
+        value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+            serde_json::json!({"env": "TEST_IMAGE_METADATA"});
+        let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        crate::compile::runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.address == ADDRESS)
+            .unwrap()
+            .values
+    };
+    let bound = |values: &crate::backend::Row| {
+        let mut values = serde_json::to_value(values).unwrap();
+        values["id"] = serde_json::json!("namespace-uid");
+        read(&state(serde_json::json!([
+            {"address": ADDRESS, "mode": "managed", "values": values}
+        ])))
+        .unwrap()
+        .remove(ADDRESS)
+        .unwrap()
+    };
+    let (kubeconfig, pod) = (compiled(true), compiled(false));
+    let differing: Vec<&String> = kubeconfig
+        .keys()
+        .filter(|key| kubeconfig.get(*key) != pod.get(*key))
+        .collect();
+    assert_eq!(differing, ["context", "kubeconfig_env"]);
+    assert!(!bound(&kubeconfig).differs(&kubeconfig));
+    assert!(!bound(&pod).differs(&pod));
+    assert!(bound(&kubeconfig).differs(&pod));
+    assert!(bound(&pod).differs(&kubeconfig));
+}
+
 #[test]
 fn gateway_storage_bindings_record_their_typed_settings() {
     // Docker gateway storage omits its endpoint, which state records as null.

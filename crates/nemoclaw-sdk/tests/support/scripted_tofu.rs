@@ -19,6 +19,7 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -31,11 +32,13 @@ use std::{
 /// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
 /// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
 /// prints an empty state or plan. An `apply` that finds the saved record,
-/// `intent.json`, creates the control file `root.record-at-apply`.
+/// `intent.json`, creates the control file `root.record-at-apply`. Each call
+/// saves its environment as `root.SUBCOMMAND.environment`.
 const SCRIPT: &str = r##"#!/bin/sh
 control='@CONTROL@'
 stage=root
 printf '%s\n' "$stage $*" >> "$control/calls"
+env > "$control/$stage.$1.environment"
 case "$1" in
   init) ;;
   plan)
@@ -133,6 +136,22 @@ impl Scripted {
                     .join(" ")
             })
             .collect()
+    }
+
+    /// The environment the last `root SUBCOMMAND` call received, such as
+    /// `plan`, or `None` if no such call ran.
+    pub fn environment(&self, subcommand: &str) -> Option<BTreeMap<String, String>> {
+        let text = fs::read_to_string(
+            self.control()
+                .join(format!("root.{subcommand}.environment")),
+        )
+        .ok()?;
+        Some(
+            text.lines()
+                .filter_map(|line| line.split_once('='))
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        )
     }
 
     /// A deployment over this bundle and state directory whose

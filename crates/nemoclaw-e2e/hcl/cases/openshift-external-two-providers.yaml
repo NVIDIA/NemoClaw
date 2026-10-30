@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Two agents on an external gateway that runs OpenShell's driver for
+# OpenShift, with two hosted providers: an OpenClaw agent whose default route
+# uses the Anthropic Messages API and whose second route uses NVIDIA, and a
+# Hermes agent on NVIDIA. Each sandbox names the runner's metadata bundle image.
+# The runner points the gateway and both inference endpoints at its fixtures,
+# without the gateway's credential and TLS.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: openshift-two-providers
+  uid: 0c6f4b7e-2a91-4d3c-8e5f-7b9a1c2d3e4f
+spec:
+  gateway:
+    management: external
+    runtime:
+      provider: openshift
+    endpoint: https://openshell.example.com
+    credential: {env: GATEWAY_TOKEN}
+    tls:
+      ca: {env: GATEWAY_CA}
+      certificate: {env: GATEWAY_CERT}
+      key: {env: GATEWAY_KEY}
+  inferenceProviders:
+    nvidia:
+      provider: openai
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential: {env: NVIDIA_INFERENCE_API_KEY}
+    hosted:
+      provider: anthropic
+      api: anthropic-messages
+      endpoint: https://hosted.example/v1
+      credential: {env: HOSTED_API_KEY}
+  inferences:
+    smart-and-fast:
+      default: smart
+      routes:
+        - name: smart
+          providerRef: hosted
+          overrides:
+            model: hosted-model
+        - name: fast
+          providerRef: nvidia
+          overrides:
+            model: nvidia/nemotron-3.5-super-vl-120b-a12b
+  sandboxes:
+    assistant:
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: fixture/agent@sha256:e5dee78a2d23235e73acb1f7aa4cba799df73c1a149f730b4ce0ebb598358d32
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inferenceRef: smart-and-fast
+    researcher:
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: fixture/agent@sha256:e5dee78a2d23235e73acb1f7aa4cba799df73c1a149f730b4ce0ebb598358d32
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

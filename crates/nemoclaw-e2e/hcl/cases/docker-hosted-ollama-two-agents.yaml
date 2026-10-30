@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Two agents on one managed Docker gateway with different inference: an
+# OpenClaw agent on NVIDIA hosted inference and a Hermes agent on a managed
+# Ollama service. The integration runner points the gateway, engine, and hosted
+# endpoint at its fixtures and keeps the hosted path.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hosted-and-ollama
+  uid: 3b1f6c2e-8d4a-4f7b-9c1e-5a2d7e9f0b13
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17681
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.20.0.0/24
+  services:
+    ollama-server:
+      kind: ollama
+      hardware: {profile: dgx-spark}
+      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      model:
+        name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        contextTokens: 32768
+      memory:
+        gpuMemoryGiB: 16
+  inferenceProviders:
+    nvidia:
+      provider: openai
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+    local:
+      provider: openai
+      serviceRef: ollama-server
+  sandboxes:
+    assistant:
+      harness:
+        kind: nvidia.fabric.openclaw
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b
+    researcher:
+      harness:
+        kind: nvidia.fabric.hermes
+      network:
+        tier: isolated
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:0.6b

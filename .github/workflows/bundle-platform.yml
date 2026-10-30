@@ -189,6 +189,9 @@ jobs:
         env:
           LIFECYCLE_SHARD: ${{ matrix.shard }}
           LIFECYCLE_SHARDS: ${{ strategy.job-total }}
+          # The tofu test integration scenarios record each result and a failed
+          # scenario's redacted evidence here.
+          NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration
         run: >-
           .build/ci/nemoclaw-build ci lifecycle
           --partition "slice:${LIFECYCLE_SHARD}/${LIFECYCLE_SHARDS}"
@@ -202,6 +205,27 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+      - name: Summarize integration scenarios
+        if: always()
+        env:
+          RESULTS: ${{ runner.temp }}/hcl-integration/results.tsv
+        run: |
+          if [ -f "$RESULTS" ]; then
+            {
+              echo '| Integration scenario | Result |'
+              echo '|---|---|'
+              awk -F '\t' '{ printf "| `%s` | %s |\n", $1, $2 }' "$RESULTS"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Fixture credentials are redacted; the evidence holds only fixture data.
+      - name: Upload failed integration scenarios' evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcl-integration-evidence-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hcl-integration
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Each partition reports and enforces its own budget; this job reports the
   # platform's whole lifecycle suite in its summary, from the partitions'

@@ -179,18 +179,37 @@ impl Deployment {
                 crate::kubernetes::STATE_ENV.into(),
                 state.to_string_lossy().into_owned(),
             );
-            let kubeconfig = crate::kubernetes::kubeconfig_path(
-                environment
-                    .get(&target.kubeconfig.env)
-                    .ok_or(Error::State("explicit Kubernetes credential is missing"))?,
-            )?
-            .to_string_lossy()
-            .into_owned();
-            environment.insert(target.kubeconfig.env.clone(), kubeconfig.clone());
-            environment.insert(
-                crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
-                kubeconfig,
-            );
+            match &target.kubeconfig {
+                Some(reference) => {
+                    let kubeconfig = crate::kubernetes::kubeconfig_path(
+                        environment
+                            .get(&reference.env)
+                            .ok_or(Error::State("explicit Kubernetes credential is missing"))?,
+                    )?
+                    .to_string_lossy()
+                    .into_owned();
+                    environment.insert(reference.env.clone(), kubeconfig.clone());
+                    environment.insert(
+                        crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
+                        kubeconfig,
+                    );
+                }
+                // Providers use the pod's service account, as kube-rs and
+                // client-go do when no kubeconfig is configured. They read only
+                // these variables from the caller.
+                None => {
+                    for name in crate::kubernetes::POD_VARIABLES {
+                        let value = (self.pod_environment)(name)
+                            .filter(|value| !value.is_empty())
+                            .ok_or(Error::State(
+                                "the pod's in-cluster Kubernetes configuration is missing: \
+                                 KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be set; \
+                                 outside a pod, name gateway.kubernetes.kubeconfig and context",
+                            ))?;
+                        environment.insert(name.into(), value);
+                    }
+                }
+            }
         }
         Ok(environment)
     }
@@ -212,7 +231,7 @@ pub(super) fn gateway_environment(
     let gateway = &document.spec.gateway;
     let mut names = BTreeSet::new();
     if let Some(kubernetes) = gateway.as_kubernetes() {
-        names.insert(kubernetes.kubeconfig.env.as_str());
+        names.extend(kubernetes.kubeconfig.iter().map(|file| file.env.as_str()));
         names.extend(kubernetes.environment.iter().map(String::as_str));
         // An existing issuer's token authenticates every gateway request.
         names.extend(
@@ -247,6 +266,7 @@ pub(super) fn credential_environment<'a>(
             "PLUGIN_",
             "HELM_",
             "KUBE_",
+            "KUBERNETES_SERVICE_",
             "NEMOCLAW_INTERNAL_",
             "NEMOCLAW_MANAGED_K8S_",
         ]

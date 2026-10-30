@@ -94,6 +94,8 @@ mod json_schema;
 mod kubernetes_auth;
 #[path = "kubernetes_cluster.rs"]
 mod kubernetes_cluster;
+#[path = "kubernetes_cluster_access.rs"]
+mod kubernetes_cluster_access;
 #[path = "kubernetes_compile.rs"]
 mod kubernetes_compile;
 #[path = "kubernetes_connect.rs"]

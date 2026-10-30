@@ -146,7 +146,7 @@ impl Document {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
         if let Some(kubernetes) = g.as_kubernetes() {
-            names.push(kubernetes.kubeconfig.env.as_str());
+            names.extend(kubernetes.kubeconfig.iter().map(|file| file.env.as_str()));
             names.extend(kubernetes.environment.iter().map(String::as_str));
             names.extend(
                 kubernetes
