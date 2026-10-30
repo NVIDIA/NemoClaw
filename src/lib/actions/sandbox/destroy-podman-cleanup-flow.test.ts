@@ -58,11 +58,9 @@ it(
       "alpha",
       expect.objectContaining({ providerId: "podman" }),
     );
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
-      "nemoclaw-19080",
-      harness.runOpenshellSpy,
-      { runtimeProviderId: "podman" },
-    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function), {
+      runtimeProviderId: "podman",
+    });
     expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
   },
 );
@@ -96,7 +94,7 @@ it(
       "alpha",
       expect.objectContaining({ providerId: "podman", sandbox: null }),
     );
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw", harness.runOpenshellSpy, {
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw", expect.any(Function), {
       runtimeProviderId: "podman",
     });
     expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();

@@ -16,9 +16,10 @@ content:
   type: "reference"
 ---
 
-The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installing or rerunning it to suppress collection and delivery.
-Repeat it in any new shell used for NemoClaw CLI commands.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 <AgentOnly variant="openclaw">
@@ -272,6 +273,13 @@ If the source changes during observation, the command retries the complete obser
 Gemini config export stops with an unsupported-provider error because V1 cannot consume the Gemini document.
 The command writes no YAML and does not create or replace an output file, including with `--force`.
 Continue using the existing Gemini sandbox until V1 support is available.
+
+V1 config export reports OpenClaw image input as `unsupported` because it cannot preserve that setting.
+The command writes no YAML to standard output and does not create or replace an output file, including with `--force`.
+
+Keep the existing sandbox to retain image input.
+If you need an export, onboard a new sandbox with an unused name and `NEMOCLAW_INFERENCE_INPUTS=text`.
+Then export that text-only sandbox.
 
 </AgentOnly>
 
@@ -543,7 +551,23 @@ The host observes through any same-device pending state and verifies the final s
 
 </AgentOnly>
 
-Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. For a custom endpoint, the choice also includes the endpoint URL, the API family, and the name of the credential environment variable, but not the credential value. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A custom-endpoint choice recorded by an earlier NemoClaw release has no endpoint URL or API family. An interactive `--resume` run asks you to choose the provider and model again. A non-interactive `--resume` run stops with an incomplete custom-route error. In that case, run `$$nemoclaw onboard --fresh` and make the selection again. No sandbox exists yet at this point, so you do not need to remove one. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
+Before the configuration review, NemoClaw records the sandbox name and selected provider and model as an incomplete choice.
+For a custom endpoint, the choice also includes the endpoint URL, API family, and credential environment-variable name, but not the credential value.
+If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again.
+A custom-endpoint choice recorded by an earlier NemoClaw release has no endpoint URL or API family.
+An interactive `--resume` run asks you to choose the provider and model again.
+A non-interactive `--resume` run stops with an incomplete custom-route error.
+In that case, run `$$nemoclaw onboard --fresh` and make the selection again.
+No sandbox exists yet at this point, so you do not need to remove one.
+A non-interactive `--resume` run reuses the recorded choice and continues to inference setup.
+After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts.
+If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name.
+If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices.
+Run `$$nemoclaw onboard` to make new choices after exit.
+During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior.
+For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`.
+If onboarding returns without reaching the final `complete` state, the command exits with status `1`.
+When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
 <AgentOnly variant="openclaw">
 
@@ -720,7 +744,7 @@ Recreation without an explicit flag or environment value preserves the recorded 
 Choose the managed Deep Agents Code auto-approval capability during onboarding. A new sandbox defaults to `disabled`.
 Omitting the flag preserves the sandbox registry’s recorded capability, including a previously disabled capability, during resume or recreation.
 `thread-opt-in` permits explicit activation inside Deep Agents Code; onboarding does not activate an approval mode or run `dcode -y`.
-`thread-opt-in` is rejected for other agents and custom images. Pass `--dcode-auto-approval disabled` to clear a recorded capability when switching agents.
+NemoClaw rejects `thread-opt-in` for other agents and custom images before it starts onboarding. Pass `--dcode-auto-approval disabled` to clear a recorded capability when switching agents.
 Before sandbox registration, resume preserves the explicit choice saved in the onboarding session.
 An explicit capability change for an existing sandbox requires recreation through the existing onboarding lifecycle.
 See [Configure Thread Auto-Approval](../manage-sandboxes/operate-sandboxes/run-deep-agents-code#configure-thread-auto-approval) for activation, status, and revocation.
@@ -1367,7 +1391,7 @@ $$nemoclaw my-assistant connect [--probe-only]
 $$nemoclaw connect
 ```
 
-On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence. It validates a usable lease and exits without duplicate recovery. Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds. When it finds a stopped registered sandbox, it starts that sandbox through its recorded OpenShell gateway before recovery. It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway. If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance. A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence. A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
+On Linux, the `--probe-only` flag is the infrastructure producer for launch-readiness evidence. Its output identifies the target gateway before readiness checks. It validates a usable lease and exits without duplicate recovery. Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds. When it finds a stopped registered sandbox, it starts that sandbox through its recorded OpenShell gateway before recovery. It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway. If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance. A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence. A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
 
 Infrastructure must run the command as the same final numeric user that later runs `launch`. Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete. On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`. Do not redirect this authority with caller environment variables. Do not use a graphical or login-session identifier as the deployment ordering boundary. On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes. After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero. The next `launch` runs the complete preflight. On Linux, unsafe launch-readiness diagnostics can report the affected path, owner UID, permissions, a bounded error code, and repair guidance.
 They exclude receipt contents, environment values, and raw OS error messages.
@@ -1503,8 +1527,8 @@ For example, the wrapper preserves redirected input for `printf 'ping' | $$nemoc
 The producer must close standard input after writing the message.
 OpenShell starts the sandbox command only after standard input ends, so without an inline message NemoClaw reads piped input on the host first.
 It waits up to 30 seconds for the input to end, including for `--message-file /dev/stdin` and symlinks to stdin.
-A `--timeout <seconds>` that bounds the OpenShell wait above also sets this input wait.
-Each case in the preceding list instead keeps the 30-second input wait, including a `--timeout` after an unrecognized option or after `--`.
+Only a positive `--timeout <seconds>` that bounds the OpenShell wait above changes this input wait.
+Each case in the preceding list keeps the 30-second input wait, including a `--timeout` after an unrecognized option or after `--`.
 If the input deadline expires, the input exceeds 4 MiB, or standard input cannot be read, the command exits nonzero without starting the turn and prints guidance to close the producer or provide an inline message.
 
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON. Raw `stderr`, including structured JSON diagnostics, is forwarded unchanged. NemoClaw appends failed-tool or untrusted-child provenance only from the `stdout` JSON. The wrapper reads completion markers only from the final matching OpenClaw response envelope: a local `{ payloads, meta }` response or a gateway `{ status, result: { payloads, meta } }` response. It ignores earlier JSON progress or log records. It exits with status `1` when that metadata contains `error.kind: "incomplete_turn"`, `livenessState: "abandoned"`, or a `timeoutPhase` value, even when the envelope reports success. `replayInvalid: true` means replaying the turn may repeat side effects. The wrapper accepts it only with evidence of a completed run, a successful tool summary, and final assistant text matching the reply payload. Otherwise it exits with status `1` and the existing inspect-before-retry guidance. Marker-shaped values inside tool results, tool-call arguments, or other descendants do not change the exit status. A turn can run every tool successfully and still become abandoned before it produces a reply. The wrapper writes the unchanged JSON trace to `stdout` before it reports the incomplete turn, so the partial tool trace remains available. The wrapper writes the verdict, the detected markers, and verify-before-retry guidance to `stderr`. A `timeoutPhase` value names the phase the deadline fired in, so the wrapper writes deadline guidance in place of the generic incomplete-turn text. Tool calls in a partial trace may have already applied side effects, so verify what the turn changed before you retry it. The wrapper passes through an upstream non-zero exit status unchanged. Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path. Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags. If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
@@ -1626,6 +1650,7 @@ Host-side config, inference, gateway recovery, backup, policy, channel, and sand
 
 Restore sandbox readiness and re-establish host-side forwards without opening an SSH session.
 Use this after a sandbox crash or when `$$nemoclaw <name> status` reports a stopped sandbox or an unhealthy forward.
+The output identifies the target gateway before readiness checks.
 
 For a stopped standard sandbox, `recover` asks OpenShell to start that exact sandbox before it waits for readiness. If provider state appears active while OpenShell reports `Stopped`, recovery still submits the start through OpenShell so one lifecycle owner repairs the phase. If OpenShell cannot start the sandbox, recovery reports the failure and does not fall back to a direct provider-container mutation.
 
@@ -1786,7 +1811,7 @@ After the gateway and forward checks pass, `start` sends one inference request t
 
 ### `$$nemoclaw <name> status`
 
-Show sandbox-scoped status, health, and inference configuration for one registered sandbox. Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints. Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview. NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state. If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
+Show sandbox-scoped status, health, and inference configuration for one registered sandbox. Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints. Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview. Text output identifies the recorded gateway. When no gateway name is recorded, it shows the recorded port or `not recorded`. NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state. If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
 For a sandbox, status reports a clean `phase: "Stopped"` only when the persisted
 intentional-stop record agrees with a provider-confirmed `sandbox_container_stopped` result. In that
@@ -1806,6 +1831,7 @@ Pass `--json` to emit a structured per-sandbox report instead of the text render
 <AgentOnly variant="hermes">
 
 For a Hermes native NVIDIA route, `status` also verifies the agent's managed credential reference independently of the provider-path request.
+The verifier accepts either the current OpenShell-issued reference or the managed `${NVIDIA_INFERENCE_API_KEY}` template when all three native credential slots agree.
 If the verifier confirms an invalid or stale reference, `inferenceHealth` reports `ok: false`, `probed: false`, and `failureLabel: "unauthorized"`, even when the provider-path request succeeded.
 The text output reports `not probed` for the agent credential check. For a confirmed rejection, it directs you to `$$nemoclaw <name> rebuild` to refresh the managed credential.
 After rebuilding, rerun `$$nemoclaw <name> status`; healthy inference requires both a successful provider-path request and a verified managed credential reference.
@@ -1864,12 +1890,12 @@ On a normal status read, the command probes the selected provider path from insi
 | `not probed`   | NemoClaw could not run the authoritative route probe from a reachable sandbox.                                                                                                                                        |
 | `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing.                                                                                                                                |
 
-When another lifecycle operation is in progress and NemoClaw confirms that no Portable authority exists, status returns a best-effort, read-only snapshot that can show transitional state.
+When another lifecycle operation is in progress and NemoClaw confirms that no conflicting lifecycle authority exists, status returns a best-effort, read-only snapshot that can show transitional state.
 It does not run inference health checks or send an inference request.
 It does not repair the gateway, host forward, stop-intent record, or Hermes tool gateway broker.
 JSON output sets `inferenceProbeSuppressed` to `true`.
-If NemoClaw finds or cannot rule out Portable authority, status fails fast.
-If Portable authority appears during the snapshot, status reports a lifecycle conflict after it finishes the snapshot.
+If NemoClaw finds or cannot rule out a conflicting lifecycle authority, status fails fast.
+If a conflicting authority appears during the snapshot, status reports a lifecycle conflict after it finishes the snapshot.
 
 An authentication response on a shared gateway route probe confirms that the route is reachable, not that provider credentials are valid. For those shared routes, `$$nemoclaw <name> doctor` sends no inference request, so it reports an HTTP `401` or `403` route response as reachable and exits `0` where `status` reports `unauthorized`. Native hosted and Deep Agents Code, Hermes, and OpenClaw native local doctor checks verify the recorded provider identity and sandbox attachment, then require a successful inference request through the selected native endpoint. The native NVIDIA doctor probe verifies the sandbox-attached provider directly and requires a 2xx response. The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes. For supported remote providers, this diagnostic sends an authenticated request to the configured model and accepts only a recognized Chat Completions, streaming Chat Completions, or Anthropic Messages response. It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token output limit. If that host-side request reaches the time limit, `Inference (upstream)` reports `not probed` and leaves model health unverified. A confirmed timeout of the authoritative native NVIDIA request instead reports `degraded` after bounded retries. Host-side checks are diagnostic only and do not override the authoritative selected-provider result or determine the command exit status.
 
@@ -2233,7 +2259,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 
 ### `$$nemoclaw <name> destroy`
 
-Stop managed local inference resources, remove runtime-provider-owned resources created during onboarding, and delete the sandbox. This removes the sandbox from the registry. NemoClaw resolves the registry that owns the sandbox before it starts cleanup, even when another local OpenShell gateway is active. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
+Stop managed local inference resources, remove runtime-provider-owned resources created during onboarding, and delete the sandbox. This removes the sandbox from the registry. NemoClaw resolves the registry that owns the sandbox before it starts cleanup, even when another local OpenShell gateway is active. It sends the destroy and cleanup operations to the sandbox's recorded gateway without changing the active gateway selection. If `OPENSHELL_GATEWAY_ENDPOINT` is set, `destroy` refuses to probe or delete the sandbox; unset the variable and retry. For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
 `destroy` considers retirement of the host-global `nemoclaw-vllm` container for a sandbox with provider `vllm-local`, including Local NIM.
 It requires confirmed sandbox deletion and no remaining registered `vllm-local` consumer in any gateway state root.
@@ -2323,7 +2349,7 @@ By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
 These flags override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 
-When final-sandbox gateway cleanup is enabled or you accept its prompt, `destroy` confirms through `openshell sandbox list` that no live sandbox remains on the gateway.
+When final-sandbox gateway cleanup is enabled or you accept its prompt, `destroy` confirms through `openshell sandbox list` that no live sandbox remains on the target gateway. Sandboxes on other gateways do not block this cleanup. Registered or pending owners on the target gateway do block it.
 A listed sandbox counts as live unless it is in the `Error` or `Failed` phase and NemoClaw confirms that no matching Docker container is running.
 With the native Podman provider, NemoClaw does not probe Docker, so every listed sandbox counts as live and gateway cleanup requires an empty list.
 If the deleted sandbox is the only listed live sandbox, `destroy` polls for up to 30 seconds until that row is gone.

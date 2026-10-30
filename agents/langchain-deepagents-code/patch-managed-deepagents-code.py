@@ -10,7 +10,7 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.71 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.87 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
@@ -26,7 +26,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.71"
+EXPECTED_DCODE_VERSION = "0.1.87"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
@@ -449,7 +449,7 @@ def _tracing_enabled() -> bool:
     return False
 
 
-# Deep Agents Code 0.1.71 enables OpenAI prompt-cache affinity for every
+# Deep Agents Code 0.1.87 enables OpenAI prompt-cache affinity for every
 # ChatOpenAI-compatible endpoint. NVIDIA Endpoints rejects that OpenAI-specific
 # request field. Disable its dynamic injection at the final config boundary so
 # managed non-interactive calls retain only supported request fields (#10549).
@@ -512,7 +512,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.71 resolves and pins
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.87 resolves and pins
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
@@ -552,7 +552,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.71 cannot inject
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.87 cannot inject
 # managed progressive-disclosure or Relay middleware into both main and subagent
 # graphs, nor attach a metadata-only callback to the compiled graph. Without this
 # root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
@@ -652,7 +652,7 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         kwargs.get("mcp_server_info"),
         kwargs.get("mcp_tools"),
     )
-    # Deep Agents Code 0.1.71 passes the exact loaded MCP tool objects
+    # Deep Agents Code 0.1.87 passes the exact loaded MCP tool objects
     # separately from the status-oriented server metadata. The metadata can be
     # empty or lag the executable catalog, so it must not decide whether the
     # progressive middleware is installed.
@@ -758,16 +758,46 @@ def list_subagents(*args, **kwargs):
     return [{**subagent, "model": None} for subagent in subagents]
 '''
 
+NON_INTERACTIVE_THREAD_MARKER = '''    if quiet:
+        # Printed despite `-q`: scripts parse it to resume the thread later.
+        console.print(
+            f"Thread: {thread_id}", markup=False, highlight=False, soft_wrap=True
+        )
+'''
+# Managed JSON already carries the thread ID in completion metadata.
+NON_INTERACTIVE_THREAD_PATCH = NON_INTERACTIVE_THREAD_MARKER.replace(
+    "if quiet:", "if quiet and _nemoclaw_json_run.get() is None:", 1
+)
+
 NON_INTERACTIVE_ERROR_MARKER = '''    except Exception as e:
         logger.exception("Unexpected error during non-interactive execution")
-        console.print(
-            f"\\n[red]Unexpected error ({type(e).__name__}): "
-            f"{escape_markup(str(e))}[/red]"
-        )
+        if resume is not None and (conflict := _workspace_conflict_text(e)):
+            console.print(
+                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
+            )
+            return 1
+        if e.args and isinstance(e.args[0], dict):
+            # The server raised it; show its type and message, not the dict.
+            from deepagents_code.client.remote_client import format_agent_exception
+
+            detail = format_agent_exception(e)
+            console.print(f"\\n[red]Agent error: {escape_markup(detail)}[/red]")
+        else:
+            console.print(
+                f"\\n[red]Unexpected error ({type(e).__name__}): "
+                f"{escape_markup(str(e))}[/red]"
+            )
         return 1
 '''
 
-NON_INTERACTIVE_ERROR_PATCH = '''    except Exception:
+NON_INTERACTIVE_ERROR_PATCH = '''    except Exception as e:
+        # Upstream emits only fixed recovery text and allowlisted setting names.
+        # It never includes the exception message or workspace setting values.
+        if resume is not None and (conflict := _workspace_conflict_text(e)):
+            console.print(
+                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
+            )
+            return 1
         _nemoclaw_report_non_interactive_error(thread_id, console)
         return 1
 '''
@@ -1332,6 +1362,19 @@ def _build_server_env() -> dict[str, str]:
     ):
         env.pop(name, None)
     return env
+
+
+def _nemoclaw_mcp_pass_fds(env) -> tuple[int, ...]:
+    """Revalidate the snapshot before passing it through the server bootstrap."""
+    path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
+    if not path:
+        return ()
+    from deepagents_code._nemoclaw_managed import managed_mcp_server_binding
+
+    descriptor, binding = managed_mcp_server_binding(path)
+    if env.get("NEMOCLAW_DCODE_MCP_BINDING") != binding:
+        raise RuntimeError("Managed MCP binding changed before server launch")
+    return (descriptor,)
 '''
 
 SERVER_CONFIG_PATCH = r'''
@@ -1397,7 +1440,9 @@ MCP_EXPLICIT_CONFIG_MARKER = '''    if explicit_config_path:
             if project_context is not None
             else explicit_config_path
         )
-        configs.append(load_mcp_config(config_path))
+        explicit_config = load_mcp_config(config_path)
+        configs.append(explicit_config)
+        session_cwd_servers.update(explicit_config["mcpServers"])
 '''
 
 MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
@@ -1414,7 +1459,9 @@ MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
                 else explicit_config_path
             )
         )
-        configs.append(load_mcp_config(config_path))
+        explicit_config = load_mcp_config(config_path)
+        configs.append(explicit_config)
+        session_cwd_servers.update(explicit_config["mcpServers"])
 '''
 
 SERVER_ENV_OVERRIDES_MARKER = '''            env = _server_env_with_overrides(
@@ -1443,7 +1490,6 @@ SERVER_ENV_OVERRIDES_PATCH = '''            env = _server_env_with_overrides(
 
             # Revalidate and bind the exact managed MCP snapshot before creating
             # any launch artifacts. Initial start and restart share this path.
-            nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
             nemoclaw_mcp_binding_env = "NEMOCLAW_DCODE_MCP_BINDING"
             env.pop(nemoclaw_mcp_binding_env, None)
             nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
@@ -1452,37 +1498,13 @@ SERVER_ENV_OVERRIDES_PATCH = '''            env = _server_env_with_overrides(
                     managed_mcp_server_binding,
                 )
 
-                descriptor, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
-                nemoclaw_mcp_pass_fds = (descriptor,)
+                _, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
                 env[nemoclaw_mcp_binding_env] = binding
 '''
 
-SERVER_POPEN_MARKER = '''            self._process = subprocess.Popen(  # noqa: S603
-                cmd,
-                cwd=str(work_dir),
-                env=env,
-                stdout=self._log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=(sys.platform != "win32"),
-                creationflags=(
-                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-                ),
-            )
-'''
-
-SERVER_POPEN_PATCH = '''            self._process = subprocess.Popen(  # noqa: S603
-                cmd,
-                cwd=str(work_dir),
-                env=env,
-                stdout=self._log_file,
-                stderr=subprocess.STDOUT,
-                pass_fds=nemoclaw_mcp_pass_fds,
-                start_new_session=(sys.platform != "win32"),
-                creationflags=(
-                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-                ),
-            )
-'''
+# Preserve the upstream parent-death pipe alongside the managed MCP snapshot.
+SERVER_POPEN_MARKER = '                pass_fds=(reader,),\n'
+SERVER_POPEN_PATCH = '                pass_fds=(reader, *_nemoclaw_mcp_pass_fds(env)),\n'
 
 UPDATE_CHECK_PATCH = r'''
 
@@ -1892,11 +1914,12 @@ def main() -> None:
                 "Managed package server override patch is incomplete in "
                 f"{paths['server']}"
             )
-        if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_PATCH) != 1:
-            raise RuntimeError(
-                "Managed package non-interactive error patch is incomplete in "
-                f"{paths['non_interactive']}"
-            )
+        for patch in (NON_INTERACTIVE_ERROR_PATCH, NON_INTERACTIVE_THREAD_PATCH):
+            if texts["non_interactive"].count(patch) != 1:
+                raise RuntimeError(
+                    "Managed package non-interactive patch is incomplete in "
+                    f"{paths['non_interactive']}"
+                )
         if texts["main"].count(NON_INTERACTIVE_CALL_PATCH) != 1:
             raise RuntimeError(
                 f"Managed package JSON call patch is incomplete in {paths['main']}"
@@ -2089,11 +2112,12 @@ def main() -> None:
             "Expected one Deep Agents Code explicit MCP config marker in "
             f"{paths['mcp_tools']}"
         )
-    if texts["non_interactive"].count(NON_INTERACTIVE_ERROR_MARKER) != 1:
-        raise RuntimeError(
-            "Expected one Deep Agents Code non-interactive error marker in "
-            f"{paths['non_interactive']}"
-        )
+    for marker in (NON_INTERACTIVE_ERROR_MARKER, NON_INTERACTIVE_THREAD_MARKER):
+        if texts["non_interactive"].count(marker) != 1:
+            raise RuntimeError(
+                "Expected one Deep Agents Code non-interactive marker in "
+                f"{paths['non_interactive']}"
+            )
     if texts["main"].count(NON_INTERACTIVE_CALL_MARKER) != 1:
         raise RuntimeError(
             f"Expected one Deep Agents Code non-interactive call marker in {paths['main']}"
@@ -2207,6 +2231,10 @@ def main() -> None:
     transformed_non_interactive = texts["non_interactive"].replace(
         NON_INTERACTIVE_ERROR_MARKER,
         NON_INTERACTIVE_ERROR_PATCH,
+        1,
+    ).replace(
+        NON_INTERACTIVE_THREAD_MARKER,
+        NON_INTERACTIVE_THREAD_PATCH,
         1,
     )
     transformed["non_interactive"] = _append_patch(

@@ -34,6 +34,9 @@ export interface SuperviseOptions {
    *  PhaseOrchestrator's historic behavior. Lower values (e.g. 1 s)
    *  fit the fixture layer's tighter cleanup window. */
   killGraceMs?: number;
+  /** Opt in when a descendant may hold an output pipe after SIGKILL.
+   * Close both streams after this bounded drain, then reconcile the group. */
+  postKillOutputDrainMs?: number;
   /** External cancel. When aborted, the supervisor terminates the
    *  child group the same way it does on timeout but reports
    *  `timedOut: false`. */
@@ -94,7 +97,10 @@ export function superviseChild(
     let timedOut = false;
     let killTimer: NodeJS.Timeout | undefined;
     let reapTimer: NodeJS.Timeout | undefined;
+    let outputDrainTimer: NodeJS.Timeout | undefined;
     let pendingClose: SuperviseResult | undefined;
+    let observedExit: SuperviseResult | undefined;
+    let reapStarted = false;
     let terminationRequested = false;
     let killSent = false;
     const terminate = (): void => {
@@ -105,6 +111,15 @@ export function superviseChild(
         signalProcessGroup("SIGKILL");
         killSent = true;
         killTimer = undefined;
+        if (!pendingClose && opts.postKillOutputDrainMs !== undefined) {
+          outputDrainTimer = setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            waitForProcessGroupExit(
+              pendingClose ?? observedExit ?? { exitCode: null, signal: null, timedOut },
+            );
+          }, opts.postKillOutputDrainMs);
+        }
         if (pendingClose) waitForProcessGroupExit(pendingClose);
       }, killGraceMs);
     };
@@ -151,6 +166,7 @@ export function superviseChild(
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
       if (reapTimer) clearTimeout(reapTimer);
+      if (outputDrainTimer) clearTimeout(outputDrainTimer);
       if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
       resolve(result);
     };
@@ -161,11 +177,13 @@ export function superviseChild(
         process.kill(-pgid, 0);
         return true;
       } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "EPERM";
+        return (error as NodeJS.ErrnoException).code !== "ESRCH";
       }
     };
 
     const waitForProcessGroupExit = (result: SuperviseResult): void => {
+      if (reapStarted) return;
+      reapStarted = true;
       const deadline = Date.now() + PROCESS_GROUP_REAP_TIMEOUT_MS;
       const poll = (): void => {
         if (!processGroupIsRunning()) {
@@ -186,6 +204,9 @@ export function superviseChild(
 
     child.on("error", (err) => {
       settle({ exitCode: null, signal: null, timedOut, spawnError: err });
+    });
+    child.on("exit", (code, signal) => {
+      observedExit = { exitCode: code, signal, timedOut };
     });
     child.on("close", (code, signal) => {
       const result = { exitCode: code, signal, timedOut };

@@ -431,9 +431,16 @@ function unreachableBackupResult(error: string): sandboxState.BackupResult {
 }
 
 /**
- * Wait up to 180 seconds for a started sandbox's SSH transport, then run one
+ * Wait up to 180 seconds for a started sandbox's SSH transport, then run its
  * backup with a 120-second reserve. The shared transaction deadline retains a
  * final 30 seconds for restoring the sandbox's stopped state.
+ *
+ * A sandbox started for backup may still be booting when its SSH transport
+ * first answers, so its same-UID process set keeps changing while the native
+ * capture quiesces and the capture fails with `nativeChurn` (the capture
+ * script's exit 21). Such a backup is retried within the backup share of the
+ * transaction until the boot settles or that share expires (#12867). A settled
+ * sandbox still runs exactly one backup, preserving the #11936 bound.
  */
 export async function backupStartedSandboxState(
   sandboxName: string,
@@ -445,19 +452,36 @@ export async function backupStartedSandboxState(
   const backupDeadlineMs = startedSandboxBackupWorkDeadline(transactionDeadlineMs);
   const readinessDeadlineMs = backupDeadlineMs - STARTED_BACKUP_FINAL_BACKUP_RESERVE_MS;
 
+  let sshReady = false;
   while (deps.now() < readinessDeadlineMs) {
     const probeDeadlineMs = Math.min(
       readinessDeadlineMs,
       deps.now() + STARTED_BACKUP_PROBE_ATTEMPT_TIMEOUT_MS,
     );
     if (deps.probe(sandboxName, probeDeadlineMs)) {
-      const result = deps.backup(
-        sandboxName,
-        backupDeadlineMs,
-        deps.deferSanitizationDeadlineCleanup,
-        deps.deferCompletionPublication,
-      );
-      if (deps.now() <= backupDeadlineMs) return result;
+      sshReady = true;
+      break;
+    }
+    const remainingReadinessMs = Math.floor(readinessDeadlineMs - deps.now());
+    if (remainingReadinessMs <= 0) break;
+    await deps.sleep(Math.min(Math.max(1, deps.delayMs), remainingReadinessMs));
+  }
+  if (!sshReady) {
+    return unreachableBackupResult("Sandbox SSH did not become ready before the backup deadline.");
+  }
+
+  // SSH is up but the sandbox's boot may still be settling. Run the backup,
+  // retrying only when the native capture reports the still-churning process
+  // set, and fail closed once the backup share of the transaction expires.
+  let lastChurnResult: sandboxState.BackupResult | undefined;
+  while (deps.now() < backupDeadlineMs) {
+    const result = deps.backup(
+      sandboxName,
+      backupDeadlineMs,
+      deps.deferSanitizationDeadlineCleanup,
+      deps.deferCompletionPublication,
+    );
+    if (deps.now() > backupDeadlineMs) {
       const deadlineError = "Sandbox backup exceeded its transaction deadline.";
       return {
         ...result,
@@ -465,10 +489,27 @@ export async function backupStartedSandboxState(
         error: result.error ? `${result.error} ${deadlineError}` : deadlineError,
       };
     }
-    const remainingReadinessMs = Math.floor(readinessDeadlineMs - deps.now());
-    if (remainingReadinessMs <= 0) break;
-    await deps.sleep(Math.min(Math.max(1, deps.delayMs), remainingReadinessMs));
+    if (!result.nativeChurn || result.success) return result;
+    lastChurnResult = result;
+    const remainingBackupMs = Math.floor(backupDeadlineMs - deps.now());
+    if (remainingBackupMs <= 0) {
+      const deadlineError = "Sandbox backup exceeded its transaction deadline.";
+      return {
+        ...result,
+        success: false,
+        error: result.error ? `${result.error} ${deadlineError}` : deadlineError,
+      };
+    }
+    await deps.sleep(Math.min(Math.max(1, deps.delayMs), remainingBackupMs));
   }
-
-  return unreachableBackupResult("Sandbox SSH did not become ready before the backup deadline.");
+  const deadlineError = "Sandbox backup exceeded its transaction deadline.";
+  return {
+    ...lastChurnResult,
+    success: false,
+    backedUpDirs: lastChurnResult?.backedUpDirs ?? [],
+    failedDirs: lastChurnResult?.failedDirs ?? [],
+    backedUpFiles: lastChurnResult?.backedUpFiles ?? [],
+    failedFiles: lastChurnResult?.failedFiles ?? [],
+    error: lastChurnResult?.error ? `${lastChurnResult.error} ${deadlineError}` : deadlineError,
+  };
 }

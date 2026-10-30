@@ -40,7 +40,7 @@ import {
   type ReasoningEffortRequest,
   resolveReasoningEffortRequest,
 } from "../inference/selection";
-import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { registryEntryGatewayPort, resolveGatewayName } from "../onboard/gateway-binding";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
@@ -256,7 +256,11 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
-  resolveContextWindowForModel: (provider: string, model: string) => number | null;
+  resolveContextWindowForModel: (
+    provider: string,
+    model: string,
+    gatewayPort: number,
+  ) => number | null;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue: (credentialEnv: string) => string;
   readNativeNvidiaCredentialHandle: (sandboxName: string, gatewayName: string) => Promise<string>;
@@ -915,9 +919,10 @@ export function patchHermesInferenceConfig(
 function resolveHermesContextWindowForSwitch(
   provider: string,
   model: string,
+  gatewayPort: number,
   deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
 ): number | undefined {
-  const contextWindow = deps.resolveContextWindowForModel(provider, model);
+  const contextWindow = deps.resolveContextWindowForModel(provider, model, gatewayPort);
   if (contextWindow != null) {
     deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
     return contextWindow;
@@ -934,11 +939,16 @@ function resolveOpenClawContextWindowForSwitch(
     provider: string;
     model: string;
     sandboxName: string;
+    gatewayPort: number;
     routeChanged: boolean;
   },
   deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
 ): number | null | undefined {
-  const contextWindow = deps.resolveContextWindowForModel(options.provider, options.model);
+  const contextWindow = deps.resolveContextWindowForModel(
+    options.provider,
+    options.model,
+    options.gatewayPort,
+  );
   if (contextWindow != null) {
     deps.log(`  Context window for '${options.model}': ${contextWindow} tokens`);
     return contextWindow;
@@ -1269,6 +1279,9 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
+  // Reject conflicting persisted gateway identity before committing a route.
+  // The later context-window lookup must use this same validated port.
+  const gatewayPort = registryEntryGatewayPort(entry);
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1949,7 +1962,7 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, deps);
+      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps);
       patched = patchHermesInferenceConfig(
         config,
         provider,
@@ -1970,6 +1983,7 @@ async function runInferenceSetWithoutHostLock(
           provider,
           model,
           sandboxName,
+          gatewayPort,
           routeChanged: openClawConfigSyncPending,
         },
         deps,
@@ -2266,7 +2280,8 @@ export async function runInferenceSet(
       lockedSelection.entry,
       deps.runtimeProviders,
     );
-    const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
+    // Validate both persisted binding fields before pending provider cleanup.
+    const gatewayName = resolveGatewayName(registryEntryGatewayPort(lockedSelection.entry));
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
       await reconcilePreviousOpenClawLocal({
         entry: lockedSelection.entry,

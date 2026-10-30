@@ -209,6 +209,7 @@ printf '%s  %s\n' "$digest" "$1"
         DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
         HERMES_BASE_REF: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
+        OPENCLAW_BASE_REF: "candidate",
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: fixture,
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: WORKFLOW_SHA,
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: COHORT,
@@ -295,6 +296,32 @@ describe("protected managed-image build contract", () => {
     expect(dockerCalls).toBe("");
   });
 
+  it("selects an immutable published OpenClaw base for a candidate multiarch build", () => {
+    const publishedOpenClawBase = `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`;
+    const { result, output, dockerCalls } = runBaseResolution(
+      "managed-image-multiarch-startup",
+      "Resolve digest-pinned platform base images",
+      { candidate: "true", env: { OPENCLAW_BASE_REF: publishedOpenClawBase } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(`openclaw=${publishedOpenClawBase}\nhermes=candidate\ndcode=candidate\n`);
+    expect(dockerCalls).toBe("");
+  });
+
+  it.each([
+    { name: "empty", reference: "" },
+    { name: "mutable", reference: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest" },
+  ])("rejects a $name OpenClaw base reference for a candidate multiarch build", ({ reference }) => {
+    const { result, output, dockerCalls } = runBaseResolution(
+      "managed-image-multiarch-startup",
+      "Resolve digest-pinned platform base images",
+      { candidate: "true", env: { OPENCLAW_BASE_REF: reference } },
+    );
+    expect(result.status).not.toBe(0);
+    expect(output).toBe("");
+    expect(dockerCalls).toBe("");
+  });
+
   it.each(["managed-image-multiarch-startup", "managed-image-protected-runtime"])(
     "rejects an invalid candidate selection in %s",
     (jobId) => {
@@ -328,7 +355,42 @@ describe("protected managed-image build contract", () => {
     expect(dockerCalls).toBe("");
   });
 
-  it.each(PROTECTED_MANAGED_IMAGE_AGENTS)(
+  it("verifies the published OpenClaw base selected by the PR CPU cache on GPU", () => {
+    const { result, output, dockerCalls, references } = runBaseResolution(
+      "managed-image-protected-runtime",
+      "Resolve digest-pinned amd64 runtime base images",
+      { candidate: "true", localBases: true, publishedAgent: "openclaw" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(
+      `openclaw=${references[0]}\nhermes=${references[1]}\ndcode=${references[2]}\n`,
+    );
+    expect(dockerCalls).toContain(`imagetools inspect ${references[0]} --raw`);
+  });
+
+  it("rejects changed bytes for the published OpenClaw base in a PR cache", () => {
+    const { result, output, dockerCalls, references } = runBaseResolution(
+      "managed-image-protected-runtime",
+      "Resolve digest-pinned amd64 runtime base images",
+      {
+        candidate: "true",
+        localBases: true,
+        publishedAgent: "openclaw",
+        mutate(cache) {
+          writeFileSync(
+            path.join(cache, "bin", "sha256sum"),
+            `#!/bin/sh\nprintf '%s  %s\\n' '${"f".repeat(64)}' "$1"\n`,
+          );
+        },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("exact base bytes do not match the prepared digest");
+    expect(output).toBe("");
+    expect(dockerCalls).toContain(`imagetools inspect ${references[0]} --raw`);
+  });
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rejects a published %s base in a PR cache",
     (publishedAgent) => {
       const { result, dockerCalls } = runBaseResolution(

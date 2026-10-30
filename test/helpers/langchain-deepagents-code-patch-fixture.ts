@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * The copied deepagents-code 0.1.71 fixture code below uses the following license.
+ * The fixture code adapted from deepagents-code 0.1.71 and 0.1.87 below uses the following license.
  *
  * MIT License
  *
@@ -171,7 +171,111 @@ class ApprovalMenu:
 `,
 };
 
-export function createPackageFixture(version = "0.1.71"): string {
+export const nonInteractivePackageSource = `
+from __future__ import annotations
+
+import logging
+import sys
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_shell_allow_list():
+    return ["bash"]
+
+
+class _Console:
+    def __init__(self, stderr=False):
+        self.file = sys.stderr if stderr else sys.stdout
+
+    def print(self, message, **kwargs):
+        print(message, file=self.file)
+
+
+def escape_markup(value):
+    return value
+
+
+def generate_thread_id():
+    return "thread-1"
+
+
+def _workspace_conflict_text(exc: BaseException) -> str | None:
+    from langgraph_sdk.errors import ConflictError
+    if not isinstance(exc, ConflictError):
+        return None
+    from deepagents_code.client.headless_resume import WORKSPACE_CONFLICT_MESSAGE
+    from deepagents_code.client.remote_client import workspace_conflict_diagnostics
+    from deepagents_code.workspace_diagnostics import SAFE_SNAPSHOT_FIELDS
+    diagnostics = workspace_conflict_diagnostics(exc)
+    changed = sorted({change.name for change in diagnostics.changes} & SAFE_SNAPSHOT_FIELDS if diagnostics is not None else set())
+    if not changed:
+        return WORKSPACE_CONFLICT_MESSAGE
+    return f"{WORKSPACE_CONFLICT_MESSAGE} Changed: {', '.join(changed)}."
+
+
+def _write_text(text):
+    print(text, end="", flush=True)
+
+
+def _write_newline():
+    print()
+
+
+async def _run_non_interactive_impl(*args, **kwargs):
+    del args
+    from deepagents_code.hooks.manager import HooksManager
+
+    HooksManager.create().dispatch()
+    if kwargs.get("message") == "fixture-json-task":
+        return 0
+    return kwargs
+
+
+async def _run_agent_loop(*args, **kwargs):
+    return await _run_non_interactive_impl(*args, **kwargs)
+
+
+async def run_non_interactive(*args, **kwargs):
+    quiet = kwargs.get("quiet", False)
+    console = _Console(stderr=quiet)
+    thread_id = generate_thread_id()
+    if quiet:
+        # Printed despite \`-q\`: scripts parse it to resume the thread later.
+        console.print(
+            f"Thread: {thread_id}", markup=False, highlight=False, soft_wrap=True
+        )
+    resume = kwargs.get("resume")
+    try:
+        result = await _run_agent_loop(*args, **kwargs)
+        return result
+    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        if resume is not None and (conflict := _workspace_conflict_text(e)):
+            console.print(
+                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
+            )
+            return 1
+        if e.args and isinstance(e.args[0], dict):
+            # The server raised it; show its type and message, not the dict.
+            from deepagents_code.client.remote_client import format_agent_exception
+
+            detail = format_agent_exception(e)
+            console.print(f"\\n[red]Agent error: {escape_markup(detail)}[/red]")
+        else:
+            console.print(
+                f"\\n[red]Unexpected error ({type(e).__name__}): "
+                f"{escape_markup(str(e))}[/red]"
+            )
+        return 1
+
+
+async def _run_startup_command(command, console, *, quiet):
+    del console, quiet
+    return command
+`;
+
+export function createPackageFixture(version = "0.1.87"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");
@@ -273,6 +377,12 @@ class APIError(LangGraphError):
 
 
 class APIStatusError(APIError):
+    def __init__(self, message, *, body=None):
+        super().__init__(message)
+        self.body = body
+
+
+class ConflictError(APIStatusError):
     pass
 
 
@@ -820,74 +930,90 @@ class HooksManager:
             Path(marker).touch()
 `,
   );
+  writeFixtureFile(packageDir, "client/non_interactive.py", nonInteractivePackageSource);
+  // Pinned 0.1.87 classifier dependencies; omit unrelated rendering/serialization methods.
   writeFixtureFile(
     packageDir,
-    "client/non_interactive.py",
+    "client/headless_resume.py",
+    `
+WORKSPACE_CONFLICT_MESSAGE = "Couldn't resume this thread because it was created with different settings. A thread keeps the directory, agent, approval, shell, sandbox, and MCP settings it started with, so threads from the interactive UI can't be resumed with -n. Rerun from the same directory with the same flags as the run that created it."
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "client/remote_client.py",
     `
 from __future__ import annotations
+from typing import cast
 
-import logging
+def workspace_conflict_diagnostics(exc: BaseException) -> WorkspaceDiagnostics | None:
+    from deepagents_code.workspace_diagnostics import WorkspaceDiagnostics
+    body = getattr(exc, 'body', None)
+    if not isinstance(body, dict):
+        return None
+    return WorkspaceDiagnostics.from_dict(cast('dict[str, Any]', body).get('diagnostics'))
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "workspace_diagnostics.py",
+    `
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import cast
 
-logger = logging.getLogger(__name__)
+SAFE_SNAPSHOT_FIELDS = frozenset({'allow_fs_tools', 'assistant_id', 'auto_approve', 'enable_ask_user', 'enable_interpreter', 'enable_memory', 'enable_shell', 'enable_skills', 'interactive', 'interpreter_ptc', 'interpreter_ptc_acknowledge_unsafe', 'interrupt_shell_only', 'no_mcp', 'recursion_limit', 'sandbox_type', 'shell_allow_list', 'trust_project_extensions', 'trust_project_mcp'})
 
+@dataclass(frozen=True)
+class FieldChange:
+    name: str
+    bound: object = field(default=None)
+    current: object = field(default=None)
+    state: Literal['changed', 'values_unavailable'] = 'changed'
 
-def _resolve_shell_allow_list():
-    return ["bash"]
+@dataclass(frozen=True)
+class WorkspaceDiagnostics:
+    category: _DiagnosticCategory
+    reason: str
+    changes: tuple[FieldChange, ...] = ()
+    snapshot_status: Literal['current', 'unavailable'] = 'current'
+    binding_schema_version: int | None = None
+    server_schema_version: int | None = None
 
+    @classmethod
+    def from_dict(cls, data: object) -> WorkspaceDiagnostics | None:
+        if not isinstance(data, dict):
+            return None
+        category = data.get('category')
+        reason = data.get('reason')
+        snapshot_status = data.get('snapshot_status')
+        if not isinstance(category, str) or not isinstance(reason, str) or (not isinstance(snapshot_status, str)) or (snapshot_status not in {'current', 'unavailable'}):
+            return None
+        changes: list[FieldChange] = []
+        raw_changes = data.get('changes')
+        if isinstance(raw_changes, list):
+            for item in raw_changes:
+                parsed = _parse_field_change(item)
+                if parsed is None:
+                    return None
+                changes.append(parsed)
+        binding_schema = data.get('binding_schema_version')
+        server_schema = data.get('server_schema_version')
+        return cls(category=cast('_DiagnosticCategory', category), reason=reason, changes=tuple(changes), snapshot_status=snapshot_status, binding_schema_version=binding_schema if isinstance(binding_schema, int) else None, server_schema_version=server_schema if isinstance(server_schema, int) else None)
 
-class _Console:
-    def print(self, message):
-        print(message)
-
-
-def escape_markup(value):
-    return value
-
-
-def generate_thread_id():
-    return "thread-1"
-
-
-def _write_text(text):
-    print(text, end="", flush=True)
-
-
-def _write_newline():
-    print()
-
-
-async def _run_non_interactive_impl(*args, **kwargs):
-    del args
-    from deepagents_code.hooks.manager import HooksManager
-
-    HooksManager.create().dispatch()
-    if kwargs.get("message") == "fixture-json-task":
-        return 0
-    return kwargs
-
-
-async def _run_agent_loop(*args, **kwargs):
-    return await _run_non_interactive_impl(*args, **kwargs)
-
-
-async def run_non_interactive(*args, **kwargs):
-    console = _Console()
-    thread_id = generate_thread_id()
-    try:
-        result = await _run_agent_loop(*args, **kwargs)
-        return result
-    except Exception as e:
-        logger.exception("Unexpected error during non-interactive execution")
-        console.print(
-            f"\\n[red]Unexpected error ({type(e).__name__}): "
-            f"{escape_markup(str(e))}[/red]"
-        )
-        return 1
-
-
-async def _run_startup_command(command, console, *, quiet):
-    del console, quiet
-    return command
+def _parse_field_change(item: object) -> FieldChange | None:
+    if not isinstance(item, dict):
+        return None
+    entry = cast('dict[str, object]', item)
+    name = entry.get('name')
+    if not isinstance(name, str):
+        return None
+    state = entry.get('state')
+    if state == 'values_unavailable':
+        return FieldChange(name=name, state='values_unavailable')
+    if state == 'changed':
+        return FieldChange(name=name, bound=entry.get('bound'), current=entry.get('current'))
+    return None
 `,
   );
   writeFixtureFile(

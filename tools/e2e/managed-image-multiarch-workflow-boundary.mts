@@ -50,6 +50,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Checkout trusted Hermes resolver",
   "Bind protected managed-image Buildx configuration",
   "Set up protected managed-image Buildx",
+  "Reuse only an input-equivalent published OpenClaw base",
   "Download reviewed OpenShell SDK archive",
   "Prepare E2E workspace",
   "Install reviewed OpenShell SDK archive without package credentials",
@@ -64,7 +65,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "75e088845fc2948988d198d5a42e518837665b419c101cc1a63ed8e174de8a38";
+  "4aac1e314be7d6acbbcc5ac689d74f3489ab7fe2c8cdf8ee430dcf324ff11c16";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -314,12 +315,36 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       repository: "${{ github.repository }}",
       ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
       path: TRUSTED_HERMES_RESOLVER_ROOT,
-      "sparse-checkout": ".github/actions/resolve-reviewed-hermes-platform",
+      "sparse-checkout":
+        ".github/actions/resolve-reviewed-hermes-platform\nscripts/checks/resolve-managed-pr-base.sh\nscripts/lib/dockerfile-copy-sources.mts\n",
       "fetch-depth": 1,
       "persist-credentials": false,
     },
   );
-
+  const openclawBase = requireStep(
+    errors,
+    steps,
+    "Reuse only an input-equivalent published OpenClaw base",
+  );
+  if (
+    openclawBase?.id !== "openclaw-base" ||
+    openclawBase?.if !== "${{ inputs.checkout_sha != '' }}"
+  ) {
+    errors.push(`${JOB_ID} OpenClaw base resolution must bind a PR-only output`);
+  }
+  requireValues(errors, `${JOB_ID} OpenClaw base resolver env`, record(openclawBase?.env), {
+    AGENT: "openclaw",
+    BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+    BASE_DOCKERFILE: "Dockerfile.base",
+    BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+    BASE_SHA: "${{ inputs.base_sha }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
+    PLATFORM: "${{ matrix.platform }}",
+    RESOLUTION_MODE: "reference-or-candidate",
+  });
+  if (openclawBase?.run !== ".trusted-hermes-resolver/scripts/checks/resolve-managed-pr-base.sh") {
+    errors.push(`${JOB_ID} must execute the trusted OpenClaw base resolver`);
+  }
   const buildxConfig = requireStep(
     errors,
     steps,
@@ -413,11 +438,13 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     DCODE_BASE_CONTRACT: "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
     HERMES_BASE_REF:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}",
+    OPENCLAW_BASE_REF: "${{ steps.openclaw-base.outputs.ref }}",
     PLATFORM: "${{ matrix.platform }}",
   });
   requireFragments(errors, bases, [
     'case "$CANDIDATE_BASES" in',
-    "printf 'openclaw=candidate\\nhermes=candidate\\ndcode=candidate\\n'",
+    '[[ "$OPENCLAW_BASE_REF" == candidate ||',
+    `printf 'openclaw=%s\\nhermes=candidate\\ndcode=candidate\\n' "$OPENCLAW_BASE_REF"`,
     'arch="${PLATFORM#linux/}"',
     'docker buildx imagetools inspect "$alias" --raw',
     '.platform.os == "linux" and .platform.architecture == $arch',

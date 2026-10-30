@@ -19,9 +19,10 @@ content:
 {/* markdownlint-disable MD014 */}
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
-Installer reruns and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before a rerun to suppress collection and delivery.
-Repeat it in any new shell used for NemoClaw CLI commands.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 <Note>
@@ -53,6 +54,19 @@ If `$$nemoclaw` reports that its compiled CLI is missing or incomplete, an earli
 Rerun the installer command that you used to install NemoClaw.
 The installer replaces the incomplete CLI, then attempts to recover existing sandboxes before onboarding.
 Follow any recovery guidance that the installer prints, then rerun `$$nemoclaw`.
+
+### Installer Cannot Look Up the Requested Release
+
+If a managed install or upgrade cannot look up the requested install reference, the installer may already have removed the existing CLI source checkout.
+The `$$nemoclaw` command can then fail until you resolve the lookup issue and rerun the installer.
+Follow the diagnostic that it prints:
+
+- For `Timed out looking up install ref`, check network access to `github.com`, then retry.
+- For `Requested install ref ... is not available`, check `NEMOCLAW_INSTALL_TAG` and `NEMOCLAW_INSTALL_REF`, then retry.
+- For `Could not verify install ref`, check repository access and the Git diagnostic, then retry.
+
+A Git message that reports elapsed milliseconds does not establish a timeout by itself.
+The installer reports it only as diagnostic context.
 
 ### Installer fails on unsupported platform
 
@@ -98,16 +112,14 @@ command -v sha256sum || command -v shasum
 
 This applies to a source checkout, not to an installed release.
 
-Node.js derives its default old-space limit from host memory. On a host with 8 GB of RAM, that limit is about 2.2 GB. The CLI type check needs more heap than that limit, so `./scripts/dev-setup.sh` stops at the type-check step and Node.js reports `JavaScript heap out of memory`.
-
-Raise the limit, then run setup again:
+Contributor setup gives CLI and plugin type checks a 6 GiB Node.js heap by default unless `NODE_OPTIONS` already sets a heap limit. This is a ceiling, not a memory reservation, but the checks can use substantial host memory. If a type check reports `JavaScript heap out of memory` on a low-memory host, free memory or configure swap before retrying; see [Prerequisites](../get-started/prerequisites#hardware). Only raise the heap limit when the host has spare memory:
 
 ```bash
-export NODE_OPTIONS=--max-old-space-size=5120
+export NODE_OPTIONS=--max-old-space-size=8192
 ./scripts/dev-setup.sh
 ```
 
-Keep that variable set for later type-check, build, and test commands.
+Setup preserves other `NODE_OPTIONS` values. Keep the larger heap limit set for later type-check, build, and test commands when those commands also need it.
 
 ### Image push fails with out-of-memory errors
 
@@ -1007,6 +1019,16 @@ Newer Colima versions use the XDG base directory (`~/.config/colima/default/dock
 ```bash
 colima status
 ```
+
+### Onboarding Finds an OpenShell Provider Without a NemoClaw Ownership Receipt
+
+NemoClaw refuses to change an existing native OpenShell provider when it cannot find the matching ownership receipt. The provider can remain after you remove NemoClaw state but preserve OpenShell, such as after uninstalling with `--keep-openshell`.
+
+First, check whether a sandbox on the named gateway uses that provider. If none does, run the `openshell provider delete` command from the error, then rerun onboarding. The command names and shell-quotes the target gateway and provider.
+
+<Warning>
+Do not delete the provider if any sandbox uses it. Deleting it can stop inference for that sandbox.
+</Warning>
 
 ### Sandbox build is slow or hangs (under-provisioned container runtime)
 

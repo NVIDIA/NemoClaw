@@ -20,8 +20,6 @@ vi.mock("../../../src/lib/onboard/openshell-version.ts", async (original) => ({
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   configureLocalInferenceRoute,
-  assertLocalInferenceAgentResponse,
-  localInferenceAgentCommand,
   localInferenceProbe,
   managedImageLocalInferenceBaseUrl,
   createManagedImageSandboxWithDiagnostics,
@@ -258,102 +256,6 @@ function runNativeQualificationProbe(handle: string, model = "fixture-model") {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
-
-describe("protected local inference agent response", () => {
-  it.each([
-    { response: "", expected: 'response=""' },
-    { response: "unexpected answer", expected: 'response="unexpected answer"' },
-    { response: "fixture-private-value", expected: 'response="<REDACTED>"' },
-    { response: "x".repeat(600), expected: `response="${"x".repeat(512)}"` },
-  ])("reports bounded, redacted rejected output [%#]", ({ response, expected }) => {
-    expect(() =>
-      assertLocalInferenceAgentResponse(
-        {
-          agent: "hermes",
-          image: IMAGE,
-          sandbox: VALID_SANDBOX,
-          localProvider: "ollama",
-          model: "fixture-model",
-        },
-        response,
-        { NVIDIA_API_KEY: "fixture-private-value" },
-      ),
-    ).toThrow(expected);
-  });
-  const openclaw = {
-    status: "ok",
-    result: {
-      meta: { aborted: false, agentMeta: { provider: "inference", model: "fixture-model" } },
-      payloads: [{ text: "PONG" }],
-    },
-  };
-  const dcode = { data: { status: "success", exit_code: 0, response: "PONG" } };
-  const input = (agent: "openclaw" | "hermes" | "langchain-deepagents-code") => ({
-    agent,
-    image: IMAGE,
-    sandbox: VALID_SANDBOX,
-    localProvider: "ollama" as const,
-    model: "fixture-model",
-  });
-
-  it.each([
-    ["openclaw", JSON.stringify(openclaw), "openclaw"],
-    ["hermes", "PONG\n", "hermes"],
-    ["langchain-deepagents-code", JSON.stringify(dcode), "dcode"],
-  ] as const)(
-    "uses %s's configured route and accepts its assistant response",
-    (agent, stdout, binary) => {
-      const command = localInferenceAgentCommand(input(agent));
-      expect(command[0]).toBe(binary);
-      expect(command).not.toContain("--model");
-      expect(command).not.toContain("--provider");
-      expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
-    },
-  );
-
-  it.each([
-    [
-      "openclaw",
-      JSON.stringify({ ...openclaw, result: { ...openclaw.result, payloads: [], prompt: "PONG" } }),
-    ],
-    ["hermes", "request failed; prompt was PONG"],
-    [
-      "langchain-deepagents-code",
-      JSON.stringify({ data: { ...dcode.data, response: "", prompt: "PONG" } }),
-    ],
-    [
-      "langchain-deepagents-code",
-      JSON.stringify({ data: { ...dcode.data, status: "turn_limit" } }),
-    ],
-    ["langchain-deepagents-code", JSON.stringify({ data: { ...dcode.data, exit_code: 1 } })],
-    ["openclaw", "not JSON"],
-    ["langchain-deepagents-code", "null"],
-  ] as const)("rejects %s diagnostics or an incomplete turn", (agent, stdout) => {
-    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).toThrow();
-  });
-
-  it.each([
-    ["aborted", { ...openclaw.result.meta, aborted: true }],
-    [
-      "wrong provider",
-      { ...openclaw.result.meta, agentMeta: { provider: "nvidia", model: "fixture-model" } },
-    ],
-    [
-      "wrong model",
-      { ...openclaw.result.meta, agentMeta: { provider: "inference", model: "other-model" } },
-    ],
-  ])("rejects an OpenClaw %s result even when its text is PONG", (_reason, meta) => {
-    expect(() =>
-      assertLocalInferenceAgentResponse(
-        input("openclaw"),
-        JSON.stringify({
-          ...openclaw,
-          result: { ...openclaw.result, meta },
-        }),
-      ),
-    ).toThrow("configured local model");
-  });
-});
 
 it.each([
   "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",

@@ -15,6 +15,7 @@ import {
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 const GPU_PROOF = {
@@ -115,76 +116,64 @@ describe("handleSandboxState resume recreation", () => {
     },
   );
 
-  it("recreates a ready sandbox when its baked reasoning capability drifted (#7570)", async () => {
-    const session = createSession({ sandboxName: "saved" });
-    session.steps.sandbox.status = "complete";
-    const journal = bindJournaledRecreate(session);
-    const { deps, calls } = createDeps(
-      {
-        getSandboxReuseState: () => "ready",
-        getSandboxRecreateObservation: journal.observe,
-        getSandboxRegistryEntry: () => ({
-          name: "saved",
-          provider: "compatible-endpoint",
-          model: "model",
-          endpointUrl: "https://chat.example",
-          credentialEnv: "COMPATIBLE_API_KEY",
-          preferredInferenceApi: "openai-completions",
-          compatibleEndpointReasoning: "false",
-          toolDisclosure: "progressive",
-        }),
-        createSandbox: journal.completeCreate,
-      },
-      session,
-    );
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "saved",
-      provider: "compatible-endpoint",
-      endpointUrl: "https://chat.example",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      compatibleEndpointReasoning: "true",
-    });
-
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
-    );
-    expect(calls.recordSkip).not.toHaveBeenCalled();
-    expect(journal.completeCreate).toHaveBeenCalledWith(
-      expect.anything(),
-      "model",
-      "compatible-endpoint",
-      "openai-completions",
-      "saved",
-      null,
-      [],
-      null,
-      null,
-      null,
-      expect.anything(),
-      null,
-      [],
-      null,
-      {
-        sessionId: session.sessionId,
-        selection: {
-          provider: "compatible-endpoint",
-          model: "model",
-          endpointUrl: "https://chat.example",
-          endpointSource: null,
-          credentialEnv: "COMPATIBLE_API_KEY",
-          preferredInferenceApi: "openai-completions",
-          compatibleEndpointReasoning: "true",
-          compatibleEndpointReasoningEffort: null,
-          nimContainer: null,
+  it.each([
+    ["recorded", "false"],
+    ["missing", undefined],
+  ] as const)(
+    "reuses a ready sandbox with %s reasoning capability when it drifts without an explicit recreate (#13732)",
+    async (_case, recordedReasoning) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const journal = bindJournaledRecreate(session);
+      const { deps, calls } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRecreateObservation: journal.observe,
+          getSandboxRegistryEntry: () => ({
+            name: "saved",
+            provider: "compatible-endpoint",
+            model: "model",
+            endpointUrl: "https://chat.example",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            preferredInferenceApi: "openai-completions",
+            ...(recordedReasoning === undefined
+              ? {}
+              : { compatibleEndpointReasoning: recordedReasoning }),
+            toolDisclosure: "progressive",
+          }),
+          createSandbox: journal.completeCreate,
         },
-      },
-      expect.objectContaining({ compatibleEndpointReasoning: "true", recreate: true }),
-      undefined,
-    );
-  });
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        provider: "compatible-endpoint",
+        endpointUrl: "https://chat.example",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        compatibleEndpointReasoning: "true",
+      });
+
+      // A plain resume must not delete a Ready sandbox to bake the reasoning
+      // capability; the recorded value wins and only an explicit
+      // --recreate-sandbox changes it (#13732).
+      expect(calls.note).not.toHaveBeenCalledWith(
+        "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
+      );
+      expect(calls.note).toHaveBeenCalledWith(
+        "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+      );
+      expect(calls.recordSkip).toHaveBeenCalled();
+      expect(journal.completeCreate).not.toHaveBeenCalled();
+      const fingerprint = session.checkpoint?.effectGroups.sandbox_create?.fingerprint;
+      expect(fingerprint).toContain(
+        `compatible-endpoint|model|openai-completions|${recordedReasoning ?? ""}|`,
+      );
+      expect(fingerprint).not.toContain("compatible-endpoint|model|openai-completions|true|");
+    },
+  );
 
   it("honors explicit recreate requests for completed ready sandboxes", async () => {
     const session = createSession({

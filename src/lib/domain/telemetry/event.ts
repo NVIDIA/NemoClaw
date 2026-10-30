@@ -48,11 +48,23 @@ export function isTelemetryConfigurationKey(key: unknown): boolean {
 
 export function readTelemetryTestLabel(env: Readonly<NodeJS.ProcessEnv>): string | null {
   const value = env.NEMOCLAW_TELEMETRY_TEST_LABEL;
-  if (value === undefined) return "";
-  return value.length <= 96 &&
-    /^qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2}$/.test(value)
-    ? value
-    : null;
+  if (
+    value !== undefined &&
+    (value.length > 96 ||
+      !/^qa-[a-z0-9][a-z0-9-]{0,31}:[a-z0-9][a-z0-9-]{0,39}:attempt-[1-9][0-9]{0,2}$/.test(value))
+  )
+    return null;
+  if (env.CI === "true" || env.CI === "1" || env.GITHUB_ACTIONS === "true") {
+    // CI labels describe the source run; they do not authenticate GitHub identity.
+    if (
+      env.GITHUB_ACTIONS === "true" &&
+      /^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID ?? "") &&
+      /^[1-9][0-9]{0,2}$/.test(env.GITHUB_RUN_ATTEMPT ?? "")
+    )
+      return `qa-ci:gh-${env.GITHUB_RUN_ID}:attempt-${env.GITHUB_RUN_ATTEMPT}`;
+    return "qa-ci:generic:attempt-1";
+  }
+  return value ?? "";
 }
 
 export interface TelemetryTargetReceipt {

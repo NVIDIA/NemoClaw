@@ -961,7 +961,10 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private sandboxCreateFingerprintPrefix(sandboxName: string): string {
+  private sandboxCreateFingerprintPrefix(
+    sandboxName: string,
+    recordedReasoning?: string | null,
+  ): string {
     const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
       this.options.agent,
       !this.options.fromDockerfile,
@@ -973,7 +976,11 @@ class SandboxStateFlow<
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
       ...Object.values(
-        compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
+        compatibleEndpointReasoningForCreateIntent(
+          recordedReasoning === undefined
+            ? this.options.compatibleEndpointReasoning
+            : recordedReasoning,
+        ),
       ),
       this.options.fromDockerfile ?? "",
     ].join("|");
@@ -982,9 +989,10 @@ class SandboxStateFlow<
   private currentSandboxCreateFingerprint(
     sandboxName: string,
     createIntent?: ResolvedSandboxCreateIntent,
+    recordedReasoning?: string | null,
   ): string {
     const lightFingerprint = [
-      this.sandboxCreateFingerprintPrefix(sandboxName),
+      this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
@@ -1434,6 +1442,7 @@ class SandboxStateFlow<
 
   private async reuseSandbox(
     state: SandboxStepState<WebSearchConfig>,
+    note?: string,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
@@ -1464,6 +1473,7 @@ class SandboxStateFlow<
         });
       }
       this.backfillReusedSandboxFidelity(state);
+      if (note) this.deps.note(note);
       this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
@@ -1503,10 +1513,14 @@ class SandboxStateFlow<
         return current;
       }
       if (!checkpoint.effectGroups.sandbox_create) {
+        // A reused Ready sandbox was built with its registry value, not the
+        // reasoning value saved by the interrupted onboarding request.
+        const recordedReasoning =
+          this.deps.getSandboxRegistryEntry(sandboxName)?.compatibleEndpointReasoning ?? null;
         recordCheckpointEffectGroup(
           current,
           "sandbox_create",
-          this.currentSandboxCreateFingerprint(sandboxName),
+          this.currentSandboxCreateFingerprint(sandboxName, undefined, recordedReasoning),
         );
       }
       if (!checkpoint.effectGroups.sandbox_register) {
@@ -2904,7 +2918,7 @@ class SandboxStateFlow<
     }
     const completedState =
       decision.kind === "reuse"
-        ? await this.reuseSandbox(initialState)
+        ? await this.reuseSandbox(initialState, decision.note)
         : await this.recreateSandbox(initialState, decision);
     return this.complete(completedState);
   }

@@ -26,6 +26,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/hermes-wrapper.py", mode: "100755" },
   { path: "agents/hermes/host/managed-tool-gateway-matrix.json", mode: "100644" },
   { path: "agents/hermes/image-build-probes.py", mode: "100644" },
+  { path: "agents/hermes/install-switchyard.py", mode: "100644" },
   { path: "agents/hermes/managed_policy.py", mode: "100644" },
   { path: "agents/hermes/mcp-config-transaction.py", mode: "100755" },
   { path: "agents/hermes/migrate-dashboard-state.py", mode: "100755" },
