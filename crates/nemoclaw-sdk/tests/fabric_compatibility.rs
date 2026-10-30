@@ -555,6 +555,35 @@ fn the_bundled_adapters_accept_their_p0_interfaces_only() {
     }
 }
 
+/// The bundled Deep Agents Code adapter declares its terminal, which has no
+/// port: `enabled` is its only field.
+#[test]
+fn the_bundled_deep_agents_code_adapter_accepts_its_terminal_without_a_port() {
+    let catalog = FabricCatalog::bundled();
+    let adapter = "nvidia.fabric.langchain.deepagents-code";
+    for terminal in [
+        json!({}),
+        json!({"enabled": true}),
+        json!({"enabled": false}),
+    ] {
+        assert!(
+            rejected_interfaces(&catalog, adapter, json!({ "terminal": terminal })).is_empty(),
+            "{terminal}"
+        );
+    }
+    assert_eq!(
+        rejected_interfaces(
+            &catalog,
+            adapter,
+            json!({"terminal": {"port": 7681}, "dashboard": {"port": 9119}})
+        ),
+        [
+            "harness.settings.interfaces.dashboard",
+            "harness.settings.interfaces.terminal.port"
+        ]
+    );
+}
+
 #[test]
 fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK

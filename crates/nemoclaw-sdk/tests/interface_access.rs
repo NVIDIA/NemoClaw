@@ -73,6 +73,7 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                     "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-openclaw-1/interfaces/dashboard.token"
                         .into()
                 ),
+                launcher: None,
                 sign_in: SignIn::TokenInUrlFragment,
             },
             InterfaceAccess {
@@ -83,6 +84,7 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                     "/sandbox/artifacts/.fabric/hermes/runtimes/rt-hermes-1/interfaces/api.token"
                         .into()
                 ),
+                launcher: None,
                 sign_in: SignIn::BearerToken,
             },
         ]
@@ -119,9 +121,65 @@ async fn an_interface_without_a_token_reports_no_token_path() {
             interface: "dashboard".into(),
             port: Some(9119),
             token_path: None,
+            launcher: None,
             sign_in: SignIn::None,
         }]
     );
+}
+
+/// Deep Agents Code's terminal has no port or token: apply reports its launcher
+/// for the current runtime, which a person runs with `openshell sandbox exec`.
+#[tokio::test]
+async fn apply_reports_a_terminal_interface_with_its_launcher() {
+    let mut value = crate::support::fixture("local.yaml");
+    value["spec"]["sandboxes"]["assistant"]["harness"] = json!({
+        "kind": "nvidia.fabric.langchain.deepagents-code",
+        "settings": {"approval_mode": "auto", "interfaces": {"terminal": {}}}});
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let launcher =
+        "/sandbox/artifacts/.fabric/deepagents-code/runtimes/rt-dcode-1/interfaces/terminal";
+    let result = apply(&document, &[("assistant", "rt-dcode-1")]).await;
+    assert_eq!(
+        result.interfaces,
+        [InterfaceAccess {
+            sandbox: "assistant".into(),
+            interface: "terminal".into(),
+            port: None,
+            token_path: None,
+            launcher: Some(launcher.into()),
+            sign_in: SignIn::SandboxExec,
+        }]
+    );
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        json["interfaces"],
+        json!([{"sandbox": "assistant", "interface": "terminal", "launcher": launcher, "signIn": "sandbox_exec"}])
+    );
+
+    // A disabled terminal is not reported.
+    value["spec"]["sandboxes"]["assistant"]["harness"]["settings"]["interfaces"]["terminal"] =
+        json!({"enabled": false});
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    assert!(
+        apply(&document, &[("assistant", "rt-dcode-1")])
+            .await
+            .interfaces
+            .is_empty()
+    );
+}
+
+/// Without a runtime ID in the state, the launcher's path isn't known.
+#[tokio::test]
+async fn a_terminal_without_a_recorded_runtime_reports_no_launcher() {
+    let mut value = crate::support::fixture("local.yaml");
+    value["spec"]["sandboxes"]["assistant"]["harness"] = json!({
+        "kind": "nvidia.fabric.langchain.deepagents-code",
+        "settings": {"approval_mode": "yolo", "interfaces": {"terminal": {"enabled": true}}}});
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let result = apply(&document, &[("assistant", "")]).await;
+    assert_eq!(result.interfaces.len(), 1);
+    assert_eq!(result.interfaces[0].launcher, None);
+    assert_eq!(result.interfaces[0].sign_in, SignIn::SandboxExec);
 }
 
 /// Without interfaces, the result has none and its JSON omits the key.

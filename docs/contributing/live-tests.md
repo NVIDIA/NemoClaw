@@ -461,8 +461,9 @@ nemoclaw-e2e's `deepagents_code_terminal::the_deep_agents_code_terminal_answers_
 It starts an OpenAI-compatible stand-in on the default Docker bridge's gateway address, which needs no credential and answers `Reply with token TOKEN` with `REPLY-` and the token in capitals, and points the document's inference provider at it.
 It checks:
 
+- Apply's JSON result reports the terminal with the current runtime's launcher.
 - An invocation through Fabric's bridge gets the stand-in's reply.
-- Running the reported command in a pseudo-terminal from util-linux's `script` opens `dcode`'s terminal UI; after Escape skips its first-run questions, one prompt gets the stand-in's reply, which the stand-in received for the configured model.
+- Running the reported launcher with `openshell sandbox exec -n SANDBOX --tty` in a pseudo-terminal from util-linux's `script` opens `dcode`'s terminal UI; after Escape skips its first-run questions, one prompt gets the stand-in's reply, which the stand-in received for the configured model.
 - Destroy succeeds.
 
 OpenShell's access control is the only authentication.

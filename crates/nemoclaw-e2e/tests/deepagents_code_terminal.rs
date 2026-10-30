@@ -12,7 +12,7 @@
 use fabric_provider::AgentBridge as _;
 use nemoclaw_e2e::state::{runtime_id, sandbox_binding};
 use nemoclaw_sdk::{
-    CancellationToken, Deployment, OperationResult, Outcome,
+    CancellationToken, Deployment, InterfaceAccess, OperationResult, Outcome, SignIn,
     config::{Document, Gateway},
 };
 use openshell_provider::{EnvironmentSecrets, OpenShell};
@@ -402,9 +402,21 @@ async fn the_deep_agents_code_terminal_answers_a_prompt_with_the_generated_confi
         "{result}"
     );
 
-    // A person opens the terminal UI with the launcher the adapter wrote.
+    // A person opens the terminal UI with the launcher apply reported, which
+    // the adapter wrote for the current runtime.
     let launcher = format!(
         "/sandbox/artifacts/.fabric/deepagents-code/runtimes/{runtime}/interfaces/terminal"
+    );
+    assert_eq!(
+        applied.interfaces,
+        [InterfaceAccess {
+            sandbox: sandbox.name.into(),
+            interface: "terminal".into(),
+            port: None,
+            token_path: None,
+            launcher: Some(launcher.clone()),
+            sign_in: SignIn::SandboxExec,
+        }]
     );
     let home = tempfile::tempdir().unwrap();
     let gateway_endpoint = document.spec.gateway.connection().endpoint.to_string();
