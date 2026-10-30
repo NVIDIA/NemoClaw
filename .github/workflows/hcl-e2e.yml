@@ -27,11 +27,9 @@ jobs:
       matrix:
         include:
           - case: docker-openclaw-nvidia
-            deployment: docker-openclaw-nvidia
             runner: ubuntu-24.04
             secret: NVIDIA_API_KEY
           - case: docker-openclaw-vllm
-            deployment: docker-openclaw-vllm-rtx-pro-6000
             # This NVIDIA GPU runner is already used by the main E2E workflow.
             runner: linux-amd64-gpu-rtxpro6000-latest-1
             secret: ""
@@ -43,7 +41,6 @@ jobs:
       cancel-in-progress: false
     env:
       CASE: ${{ matrix.case }}
-      DEPLOYMENT: ${{ matrix.deployment }}
       TEST_PLATFORM: linux_amd64
       AGENT_PLATFORM: linux/amd64
       CARGO_INCREMENTAL: "0"
@@ -85,7 +82,7 @@ jobs:
           [[ "$agent_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           # Match the existing live suites' local image-ID pins in the containerd store.
           sed "s#nc-fabric@sha256:[0-9a-f]\{64\}#nc-fabric@$agent_digest#g" \
-            "crates/nemoclaw-e2e/hcl/cases/$DEPLOYMENT.yaml" > "$deployment"
+            "crates/nemoclaw-e2e/hcl/cases/$CASE.yaml" > "$deployment"
           if [[ "$CASE" == docker-openclaw-vllm ]]; then
             docker buildx bake vllm --load
             digest=$(docker image inspect --format '{{.Id}}' nc-prototype-vllm:rust-v1)
