@@ -937,10 +937,13 @@ restarting the native gateway for the initial inference route, as external-image
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
 The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
-Both endpoints use the runner's private address through the existing explicit private-host trust setting.
+Both Anthropic-variant endpoints use public HTTPS quick tunnels from the verified cloudflared package.
+Rootless Pasta copies the runner's primary IP into its namespace, so that IP cannot identify the host fixture there.
+The local HTTP hop stays on the runner; host and sandbox probes use the same public endpoint without private-host trust overrides.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+The interactive policy-preset sequencing fixture uses the same public HTTPS transport and retains its Personal shared-route assertions.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
 The baseline model expectation comes from the environment passed to installation.

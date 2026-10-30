@@ -1194,13 +1194,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   managedRuntimeTarget("onboard-policy-preset-sequencing", {
     displayName: "Onboarding: preserves policy preset step order",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; no inference endpoint",
+    environmentOrInferenceEndpoint: "Ubuntu; public HTTPS compatible inference fixture",
     profile: "standard",
     timeoutMinutes: 60,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/onboard-interactive-pty.ts"],
+    owningPaths: [
+      "test/e2e/live/onboard-interactive-pty.ts",
+      "test/e2e/live/cloudflared-prerequisite.ts",
+      "test/e2e/live/mcp-bridge-servers.ts",
+    ],
     environment: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
   }),
   managedRuntimeTarget("onboard-resume", {
@@ -1319,6 +1323,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/native-provider/",
       "src/lib/onboard/setup-inference.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "test/e2e/live/openclaw-anthropic-provider.ts",
+      "test/e2e/live/cloudflared-prerequisite.ts",
+      "test/e2e/live/mcp-bridge-servers.ts",
     ],
     environment: {
       ...nonInteractive,

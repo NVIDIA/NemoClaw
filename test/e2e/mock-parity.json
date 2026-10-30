@@ -893,6 +893,7 @@
       "liveSources": [
         "test/e2e/fixtures/inference-routing-openclaw-native.ts",
         "test/e2e/live/openclaw-inference-switch-helpers.ts",
+        "test/e2e/live/openclaw-anthropic-provider.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/live/public-nvidia-switch-provider.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",

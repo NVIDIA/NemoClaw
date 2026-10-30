@@ -49,7 +49,7 @@ describe("onboard-policy-preset-sequencing workflow boundary", () => {
 });
 
 it.each(["docker", "podman"])(
-  "advertises a host-routable endpoint to the interactive %s onboarding probe",
+  "uses a public endpoint for interactive %s onboarding without trusting private hosts (#6042)",
   async (runtime) => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     const captured = vi.fn();
@@ -69,6 +69,18 @@ it.each(["docker", "podman"])(
       vi.resetModules();
       vi.doMock("../fixtures/e2e-test.ts", () => ({ expect, test: captured }));
       vi.doMock("../live/onboard-interactive-pty.ts", () => ({ driveInteractiveCommand: drive }));
+      vi.doMock("../live/cloudflared-prerequisite.ts", () => ({
+        resolveVerifiedCloudflaredBinary: async () => "/verified/cloudflared",
+      }));
+      vi.doMock("../live/mcp-bridge-servers.ts", () => ({
+        startPublicMcpHttpsTunnel: async (options: { server: { port: number } }) => {
+          const response = await fetch(`http://127.0.0.1:${options.server.port}/v1/models`, {
+            method: "HEAD",
+          });
+          expect(response.status).toBe(200);
+          return { origin: "https://personal.trycloudflare.com" };
+        },
+      }));
       await import("../live/onboard-policy-preset-sequencing.test.ts");
       const { startTestProgress } = await import("../fixtures/progress.ts");
       const progress = startTestProgress(
@@ -92,16 +104,18 @@ it.each(["docker", "podman"])(
         }),
       ).rejects.toBe(stop);
       const options = drive.mock.calls[0]![0];
-      expect(options.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS).toBe("10.20.30.40");
+      expect(options.env.NEMOCLAW_TRUSTED_PRIVATE_HOSTS).toBeUndefined();
       const endpoint = String(
         options.rules.find((rule) => rule.trigger === "OpenAI-compatible base URL")!.response,
       ).trim();
-      expect(new URL(endpoint).hostname).toBe("10.20.30.40");
-      expect(command).toHaveBeenCalledOnce();
+      expect(endpoint).toBe("https://personal.trycloudflare.com/v1");
+      expect(command).not.toHaveBeenCalled();
     } finally {
       const result = await cleanup.runAll();
       vi.doUnmock("../fixtures/e2e-test.ts");
       vi.doUnmock("../live/onboard-interactive-pty.ts");
+      vi.doUnmock("../live/cloudflared-prerequisite.ts");
+      vi.doUnmock("../live/mcp-bridge-servers.ts");
       vi.unstubAllEnvs();
       Object.defineProperty(process, "platform", platform);
       assertCleanupPassed(result);
