@@ -39,6 +39,12 @@ Use labels for:
 
 ## Canonical Label Families
 
+### Architecture Refactor
+
+| Label | Applies To | Description |
+|---|---|---|
+| `v1` | Issue, PR | Work in the next NemoClaw architecture refactor on the `v1` branch. |
+
 ### PR Type
 
 Apply one PR type label to a non-draft PR when there is enough evidence.

@@ -19,6 +19,9 @@ They apply to Issue Type, labels, Project fields, comments, and questions.
 - Do not add `needs: triage` during triage.
   Use `questions_for_author` without a `needs:*` label when the item can still progress.
 - Do not recommend `PRR` during triage. Maintainers and PRR workflows reserve this label for Product Readiness Reviews.
+- Add `v1` for PRs targeting `v1`, feature issues (including Epics and Tasks) intended for v1,
+  or issues tested against an identified v1 build, regardless of outcome.
+  API/schema versions, model names, and planned tests alone do not qualify.
 
 ## Issue Flow
 
