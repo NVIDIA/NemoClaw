@@ -39,7 +39,7 @@ import {
   type EndpointDnsLookupFn,
   parseTrustedPrivateInferenceHostsFromEnv,
 } from "../inference/endpoint-ssrf-preflight";
-import { shouldForceCompletionsApi } from "../validation";
+import { isChatCompletionsPreference } from "../domain/inference/preferred-api";
 import {
   getProbeRecovery,
   getTransportRecoveryMessage,
@@ -501,7 +501,7 @@ export function createInferenceSelectionValidationHelpers(
       calibrateTimeouts: true,
       requireResponsesToolCalling: !reasoningEnabled,
       skipResponsesProbe:
-        reasoningEnabled || shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
+        reasoningEnabled || isChatCompletionsPreference(process.env.NEMOCLAW_PREFERRED_API),
       probeStreaming: !reasoningEnabled,
       pinnedAddresses,
       trustedPrivateCapability,
