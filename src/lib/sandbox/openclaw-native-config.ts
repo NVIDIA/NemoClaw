@@ -21,6 +21,11 @@ const {
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 }: typeof import("../inference/native-nvidia/contract") = require("../inference/native-nvidia/contract");
 const {
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  isLocalInferenceProvider,
+  qualifiedNativeLocalEndpointUrl,
+}: typeof import("../inference/native-local/agent-config") = require("../inference/native-local/agent-config");
+const {
   nativeHostedAgentConfig,
 }: typeof import("../inference/native-provider/agent-config") = require("../inference/native-provider/agent-config");
 const {
@@ -122,6 +127,10 @@ const materializeNativeProviderHandle = [
   "    stream.truncate()",
 ].join("\n");
 
+/**
+ * Identifies, validates, and extracts native provider handle update metadata
+ * from an OpenClaw configuration update batch.
+ */
 function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   const matching = updates.filter(({ dotpath, value }) => {
     if (!dotpath.startsWith("models.providers.") || !isConfigObject(value)) return false;
@@ -131,11 +140,16 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
       !/^openshell:resolve:env:[A-Z][A-Z0-9_]*$/u.test(value.apiKey)
     )
       return false;
+    const isLocal = value.apiKey === `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`;
+    if (isLocal) {
+      return true;
+    }
     const headers = isConfigObject(value.headers) ? value.headers : {};
     const provider = headers["X-NemoClaw-Upstream-Provider"];
     return (
       typeof provider === "string" &&
-      (Boolean(fixedNativeProvider(provider)) ||
+      (isLocalInferenceProvider(provider) ||
+        Boolean(fixedNativeProvider(provider)) ||
         (typeof value.baseUrl === "string" &&
           Boolean(nativeHostedAgentConfig(provider, value.baseUrl))))
     );
@@ -146,20 +160,29 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   if (!isConfigObject(value)) throw new Error("Invalid native provider config update");
   const headers = isConfigObject(value.headers) ? value.headers : {};
   const provider = headers["X-NemoClaw-Upstream-Provider"];
+  const isLocal = value.apiKey === `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`;
   const native =
     value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
       ? {
           credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
           apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
         }
-      : typeof provider === "string" && typeof value.baseUrl === "string"
-        ? nativeHostedAgentConfig(provider, value.baseUrl)
-        : undefined;
+      : isLocal
+        ? {
+            credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+            apiKey: `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`,
+          }
+        : typeof provider === "string" && typeof value.baseUrl === "string"
+          ? nativeHostedAgentConfig(provider, value.baseUrl)
+          : undefined;
   if (!native) {
     throw new Error("Native provider identity does not match its credential placeholder");
   }
   if (value.apiKey !== native.apiKey || typeof value.baseUrl !== "string") {
     throw new Error("Native provider credential placeholder or endpoint does not match");
+  }
+  if (isLocal && !qualifiedNativeLocalEndpointUrl(value.baseUrl)) {
+    throw new Error("Native provider endpoint does not match");
   }
   if (
     value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER &&
@@ -174,12 +197,21 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   ) {
     throw new Error("Native NVIDIA provider identity does not match its credential placeholder");
   }
+  if (
+    isLocal &&
+    provider !== undefined &&
+    !isLocalInferenceProvider(provider)
+  ) {
+    throw new Error("Native local provider identity does not match its credential placeholder");
+  }
   const logicalProvider =
     value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
       ? "nvidia-prod"
-      : typeof provider === "string"
-        ? provider
-        : null;
+      : isLocal
+        ? (typeof provider === "string" ? provider : "ollama-local")
+        : typeof provider === "string"
+          ? provider
+          : null;
   const providerKey = nativeOpenClawProviderKey(
     logicalProvider,
     typeof value.api === "string" ? value.api : null,

@@ -7,6 +7,7 @@ import {
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
 } from "../native-nvidia/contract";
+import { isLocalInferenceProvider } from "../native-local/agent-config";
 import { hostedNativeProvider } from "./hosted";
 import { hostedNativeProviderForAttachment } from "./hosted-attachment";
 import type { NativeProviderAttachment, NativeProviderDefinition } from "./contract";
@@ -32,6 +33,7 @@ export function nativeOpenClawProviderKey(
   provider: string | null | undefined,
   inferenceApi?: string | null,
 ): "openai" | "anthropic" | "inference" | undefined {
+  if (isLocalInferenceProvider(provider)) return "inference";
   if (provider === "compatible-endpoint") return "inference";
   if (provider === "compatible-anthropic-endpoint")
     return inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
