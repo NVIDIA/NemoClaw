@@ -166,6 +166,27 @@ function makeStagedHermesMessagingPlan() {
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
 
+  it.each([
+    ["NEMOCLAW_RAM", "8GB"],
+    ["NEMOCLAW_CPU", "bogus"],
+    ["NEMOCLAW_CPU", "101%"],
+    ["NEMOCLAW_CPU", "1e-2147483649"],
+    ["NEMOCLAW_CPU", "0e2147483648"],
+  ])("rejects invalid %s=%s before backup or deletion (#13623)", async (name, value) => {
+    vi.stubEnv(name, value);
+    const beforeBackup = vi.fn();
+    const harness = createRebuildFlowHarness({ beforeBackup });
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Invalid rebuild resource limit");
+      expect(beforeBackup).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rebuilds native local %s with only its scoped provider",
     async (agent) => {
