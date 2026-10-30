@@ -1524,6 +1524,7 @@ export function createSetupInference(
               gatewayName,
               sandboxName: sandboxName!,
               recordedSandbox,
+              rebuildSandboxPolicyDocument: options.rebuildSandboxPolicyDocument,
               reader: deps.sandboxPolicyReader,
               redactDiagnostic: (message) => hostLocalInferenceFailureDetail(message, deps),
             });

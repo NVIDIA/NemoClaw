@@ -70,11 +70,10 @@ test(
     });
 
     progress.phase("start the hosted custom compatible-endpoint fixture");
-    // Advertise a runner address instead of the OpenShell-managed host alias.
-    // That keeps this fixture in the hosted-custom classification while the
-    // explicit trust entry admits the private E2E address through SSRF checks.
+    // Hosted probes need the runner address; Podman's link-local sandbox alias
+    // remains forbidden by SSRF admission even with an explicit trust entry.
     const hostedEndpointAddress = (
-      await discoverHostAddress(host, "host-address-for-hosted-custom-personal")
+      await discoverHostAddress(host, "host-address-for-hosted-custom-personal", {})
     ).address;
     const onboardEnv = {
       ...buildAvailabilityProbeEnv(),

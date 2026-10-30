@@ -327,6 +327,7 @@ describe("custom native onboarding policy admission", () => {
     registration: Pick<SandboxEntry, "createdAt" | "pendingRouteReservation"> | null = {
       createdAt: "2026-10-28T00:00:00Z",
     },
+    setupOptions: Record<string, unknown> = {},
   ) {
     const binding = {
       provider: "compatible-endpoint",
@@ -407,13 +408,43 @@ describe("custom native onboarding policy admission", () => {
         binding.credentialEnv,
         null,
         [],
-        { skipHostInferenceSmoke: true },
+        { skipHostInferenceSmoke: true, ...setupOptions },
       );
     return { ...h, adapter, readSandboxPolicy, writeAuthority, select };
   }
 
   const policy = (pins = "") =>
     `version: 1\nnetwork_policies:\n  existing_policy:\n    endpoints:\n      - host: '*.example.com'\n        port: 443\n${pins}`;
+
+  const generatedPolicy =
+    "  _provider_previous_custom:\n    endpoints:\n      - host: api.example.com\n        port: 443\n";
+  const matchingPolicyWithGeneratedRule =
+    policy("        allowed_ips: [8.8.8.8]\n") + generatedPolicy;
+
+  it.each([
+    { source: "live", setupOptions: {} },
+    {
+      source: "retained rebuild",
+      setupOptions: { rebuildSandboxPolicyDocument: matchingPolicyWithGeneratedRule },
+    },
+  ])(
+    "ignores generated rules in the $source policy before provider setup",
+    async ({ setupOptions }) => {
+      const h = fixture(matchingPolicyWithGeneratedRule, undefined, setupOptions);
+      await expect(h.select()).resolves.toMatchObject({ ok: true });
+      expect(h.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(h.writeAuthority).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("refuses a retained base conflict beside a generated rule before provider setup", async () => {
+    const h = fixture(policy() + generatedPolicy);
+    await expect(h.select()).rejects.toThrow(/existing_policy.*IP pins/);
+    expect(h.adapter.createProvider).not.toHaveBeenCalled();
+    expect(h.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(h.writeAuthority).not.toHaveBeenCalled();
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
 
   it.each(["", "        allowed_ips: [1.1.1.1]\n"])(
     "rejects existing sandbox pin conflicts before provider mutation (%j)",
@@ -461,6 +492,33 @@ describe("custom native onboarding policy admission", () => {
     expect(h.adapter.createProvider).toHaveBeenCalledOnce();
     expect(h.writeAuthority).toHaveBeenCalledOnce();
   });
+
+  it("admits a rebuilt provider using its retained policy after sandbox deletion", async () => {
+    const h = fixture(policy(), undefined, {
+      rebuildSandboxPolicyDocument: policy("        allowed_ips: [8.8.8.8]\n"),
+    });
+    h.readSandboxPolicy.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "sandbox was deleted for rebuild" },
+    });
+    await expect(h.select()).resolves.toMatchObject({ ok: true });
+    expect(h.readSandboxPolicy).not.toHaveBeenCalled();
+    expect(h.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(h.writeAuthority).toHaveBeenCalledOnce();
+  });
+
+  it.each([policy(), "version: 1\nnetwork_policies: []\n"])(
+    "rejects an incompatible retained rebuild policy before provider mutation (%j)",
+    async (rebuildSandboxPolicyDocument) => {
+      const h = fixture(policy("        allowed_ips: [8.8.8.8]\n"), undefined, {
+        rebuildSandboxPolicyDocument,
+      });
+      await expect(h.select()).rejects.toThrow();
+      expect(h.readSandboxPolicy).not.toHaveBeenCalled();
+      expect(h.adapter.createProvider).not.toHaveBeenCalled();
+      expect(h.writeAuthority).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([null, { pendingRouteReservation: true as const }])(
     "prepares a provider before sandbox creation without reading an absent policy (%j)",

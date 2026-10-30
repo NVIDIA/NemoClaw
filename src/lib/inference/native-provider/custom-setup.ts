@@ -33,9 +33,12 @@ export async function readCustomNativeSandboxPolicy(input: {
   gatewayName: string;
   sandboxName: string;
   recordedSandbox: Pick<SandboxEntry, "createdAt" | "pendingRouteReservation"> | null | undefined;
+  rebuildSandboxPolicyDocument?: string;
   reader?: Pick<OpenShellSandboxPolicyReader, "readSandboxPolicy">;
   redactDiagnostic: (message: string) => string;
 }): Promise<string | null> {
+  // Rebuild has removed the live sandbox; its retained rules still constrain the replacement.
+  if (input.rebuildSandboxPolicyDocument !== undefined) return input.rebuildSandboxPolicyDocument;
   if (!input.recordedSandbox || isRouteOnlySandboxReservation(input.recordedSandbox)) return null;
   const policy = await (input.reader ?? cliOpenShellSandboxPolicyReader).readSandboxPolicy({
     target: { kind: "named", gatewayName: input.gatewayName },

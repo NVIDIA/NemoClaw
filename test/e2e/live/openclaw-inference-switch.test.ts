@@ -310,7 +310,7 @@ function closeServer(server: Server): Promise<void> {
 
 async function startMockAnthropicProvider(host: HostCliClient): Promise<MockAnthropicProvider> {
   const nativeHost = SWITCH_NATIVE_CUSTOM
-    ? (await discoverHostAddress(host, "native-anthropic-endpoint-address")).address
+    ? (await discoverHostAddress(host, "native-anthropic-endpoint-address", {})).address
     : undefined;
   let binding: CompatibleAnthropicSwitchBinding;
 
@@ -890,8 +890,8 @@ test(
       e2ePhases: [
         "confirm the selected runtime and choose the baseline provider",
         "clear existing inference-switch state",
-        "onboard a custom-image baseline OpenClaw",
-        "prove the selected route after custom-image onboarding",
+        "onboard baseline OpenClaw",
+        "prove the selected route after onboarding",
         "prove the selected route after gateway restart",
         "prove the selected route after rebuild",
         "prepare the switched provider and endpoint",
@@ -912,8 +912,10 @@ test(
       switchInferenceApi: SWITCH_INFERENCE_API,
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
-        "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
-        "fresh custom-image onboarding replaces the baked primary route with the selected model",
+        runtimeProvider.id === "podman"
+          ? "stock onboard selects the OpenClaw image from the selected managed-image cohort without a Dockerfile build"
+          : "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
+        "fresh onboarding initializes the primary route with the selected model; the Docker fixture replaces a deliberately incorrect baked route",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
         "nemoclaw inference set switches the running sandbox route",
@@ -936,10 +938,10 @@ test(
     const useMockBaseline =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
-    // OpenShell reaches this fixture from its gateway network namespace, where
-    // the runner's loopback address is not routable.
+    // A hosted endpoint must be reachable by host probes as well as the sandbox.
+    // Podman's link-local host alias is intentionally rejected by SSRF admission.
     const nativeBaselineHost = SWITCH_NATIVE_CUSTOM
-      ? (await discoverHostAddress(host, "native-baseline-endpoint-address")).address
+      ? (await discoverHostAddress(host, "native-baseline-endpoint-address", {})).address
       : undefined;
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startMockOpenClawBaselineProvider(progress, nativeBaselineHost)
@@ -968,7 +970,8 @@ test(
     cleanup.trackDisposable("close switched Anthropic provider", async () => {
       await mockProvider?.close();
     });
-    const customDockerfile = writeCustomOpenClawDockerfile(home);
+    const imageArgs =
+      runtimeProvider.id === "podman" ? [] : ["--from", writeCustomOpenClawDockerfile(home)];
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-openclaw-inference-switch",
       env: commandEnv(home),
@@ -990,22 +993,19 @@ test(
     progress.phase("clear existing inference-switch state");
     await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
-    progress.phase("onboard a custom-image baseline OpenClaw");
-    const onboard = await host.nemoclaw(
-      ["onboard", "--non-interactive", "--yes", "--from", customDockerfile],
-      {
-        artifactName: "onboard-custom-image-openclaw-inference-switch",
-        env: commandEnv(home, {
-          ...baseline.env,
-          ...(nativeBaselineHost
-            ? { NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: nativeBaselineHost }
-            : {}),
-          NEMOCLAW_RECREATE_SANDBOX: "1",
-        }),
-        redactionValues,
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      },
-    );
+    progress.phase("onboard baseline OpenClaw");
+    const onboard = await host.nemoclaw(["onboard", "--non-interactive", "--yes", ...imageArgs], {
+      artifactName: "onboard-custom-image-openclaw-inference-switch",
+      env: commandEnv(home, {
+        ...baseline.env,
+        ...(nativeBaselineHost
+          ? { NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: nativeBaselineHost }
+          : {}),
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+      }),
+      redactionValues,
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    });
     const onboardText = resultText(onboard);
     const providerValidationUnavailable =
       onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText);
@@ -1047,7 +1047,7 @@ test(
           model: baseline.model,
           inferenceApi: "openai-completions",
           artifactName: `openclaw-gateway-inference-initial-route-${artifactSuffix}`,
-          phase: `prove initial custom-image route ${artifactSuffix}`,
+          phase: `prove initial route ${artifactSuffix}`,
         },
         undefined,
         baselineProvider,
@@ -1057,7 +1057,7 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
     };
 
-    progress.phase("prove the selected route after custom-image onboarding");
+    progress.phase("prove the selected route after onboarding");
     await verifyInitialRoute("after-onboard");
 
     progress.phase("prove the selected route after gateway restart");
@@ -1195,11 +1195,11 @@ test(
       status: "passed",
       assertions: {
         runtimeProviderAvailable: true,
-        customImageOnboardingCompleted: onboard.exitCode === 0,
-        customImageInitialRouteSelected: true,
-        customImageRouteSurvivedGatewayRestart: true,
-        customImageRouteSurvivedRebuild: true,
-        customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
+        baselineOnboardingCompleted: onboard.exitCode === 0,
+        baselineInitialRouteSelected: true,
+        baselineRouteSurvivedGatewayRestart: true,
+        baselineRouteSurvivedRebuild: true,
+        baselineGatewayReachedFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,

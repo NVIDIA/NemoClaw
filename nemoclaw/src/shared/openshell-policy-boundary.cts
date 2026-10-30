@@ -515,7 +515,9 @@ export function assertOpenShellPolicyEndpointPins(
   const destination = new URL(endpointUrl);
   const host = normalizedHost(destination.hostname);
   const port = Number(destination.port || (destination.protocol === "https:" ? 443 : 80));
-  const policies = parseOpenShellPolicy(document).policy.network_policies ?? {};
+  const policies = withoutProviderComposedPolicies(
+    parseOpenShellPolicy(document).policy.network_policies ?? {},
+  );
   const expected = normalizedPins(allowedIps);
   for (const [name, policy] of Object.entries(policies)) {
     if (

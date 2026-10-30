@@ -923,12 +923,15 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
-The `openclaw-inference-switch` target owns fresh custom-image route initialization.
-Its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff;
-the successful onboard and authenticated baseline request require a ready sandbox from that image.
+The `openclaw-inference-switch` target owns baseline route initialization, lifecycle, and provider switching.
+Its Docker variant also owns fresh custom-image route initialization.
+On Docker, its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff.
+Podman uses stock managed-image onboarding because its driver does not support Dockerfile workloads.
+The host fixture checks its durable managed-image receipt against the selected cohort before post-onboarding probes.
+Both paths require a ready sandbox and an authenticated baseline request from the selected image.
 The deterministic build, inspect, create-reference, and failed-build stop checks live in
 `test/onboarding/onboard-custom-dockerfile.test.ts`.
-Its fixture contains only a different baked model and stale limits.
+The Dockerfile fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.

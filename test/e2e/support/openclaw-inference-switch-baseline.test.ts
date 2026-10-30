@@ -18,7 +18,9 @@ vi.mock("../fixtures/managed-image-receipt.ts", () => ({
 }));
 
 const disposables: Array<() => unknown> = [];
+const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(async () => {
+  Object.defineProperty(process, "platform", platform);
   for (const dispose of disposables.splice(0).reverse()) await dispose();
   vi.doUnmock("../live/openclaw-inference-switch-helpers.ts");
   vi.restoreAllMocks();
@@ -52,16 +54,17 @@ async function loadNativeSwitchRun(nativeCustom = false) {
 
 it.each(
   [false, true].flatMap((nativeCustom) =>
-    ["6.8.0-generic", "6.6.87.2-microsoft-standard-WSL2"].map((release) => ({
-      nativeCustom,
-      release,
-    })),
+    ["6.8.0-generic", "6.6.87.2-microsoft-standard-WSL2"].flatMap((release) =>
+      ["docker", "podman"].map((runtime) => ({ nativeCustom, release, runtime })),
+    ),
   ),
 )(
-  "selects the authenticated baseline with native custom=$nativeCustom on $release",
-  async ({ nativeCustom, release }) => {
+  "selects the authenticated baseline with native custom=$nativeCustom on $runtime and $release",
+  async ({ nativeCustom, release, runtime }) => {
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
     vi.spyOn(os, "release").mockReturnValue(release);
-    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "docker");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", runtime);
+    vi.stubEnv("OPENSHELL_PODMAN_SOCKET", "/run/user/1001/podman/podman.sock");
     const { progress, run } = await loadNativeSwitchRun(nativeCustom);
     const result = { exitCode: 0, stdout: "", stderr: "" };
     const stop = new Error("onboarding captured");
@@ -91,15 +94,23 @@ it.each(
           ),
         },
         progress,
-        runtimeProvider: { requireAvailable: vi.fn() },
+        runtimeProvider: { id: runtime, requireAvailable: vi.fn() },
         sandbox: { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() },
         secrets: { required },
       }),
     ).rejects.toBe(stop);
     expect(required.mock.calls).toEqual(nativeCustom ? [] : [["NVIDIA_API_KEY"]]);
     const args = nemoclaw.mock.calls[0]![0];
-    const customDockerfile = args[args.indexOf("--from") + 1];
-    expect(fs.readFileSync(customDockerfile, "utf8")).toContain("ARG NEMOCLAW_MESSAGING_PLAN_B64=");
+    expect(args).toEqual([
+      "onboard",
+      "--non-interactive",
+      "--yes",
+      ...(runtime === "docker" ? ["--from", expect.any(String)] : []),
+    ]);
+    const customDockerfile = args[4];
+    expect(customDockerfile ? fs.readFileSync(customDockerfile, "utf8") : null).toEqual(
+      runtime === "docker" ? expect.stringContaining("ARG NEMOCLAW_MESSAGING_PLAN_B64=") : null,
+    );
     const options = nemoclaw.mock.calls[0]![1];
     const environment = options.env;
     expect(environment.NEMOCLAW_PROVIDER).toBe("custom");

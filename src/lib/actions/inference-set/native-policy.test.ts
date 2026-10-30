@@ -16,6 +16,7 @@ function fixture(
   host: string,
   endpoint: Record<string, unknown> | null,
   allowedIps: readonly string[] = ["8.8.8.8"],
+  providerPolicies: Record<string, unknown> = {},
 ) {
   const definition = customNativeProvider({
     provider: "compatible-endpoint",
@@ -26,9 +27,12 @@ function fixture(
   });
   const document = YAML.stringify({
     version: 1,
-    network_policies: endpoint
-      ? { existing_policy: { endpoints: [endpoint], binaries: [{ path: "/usr/bin/node" }] } }
-      : {},
+    network_policies: {
+      ...providerPolicies,
+      ...(endpoint
+        ? { existing_policy: { endpoints: [endpoint], binaries: [{ path: "/usr/bin/node" }] } }
+        : {}),
+    },
   });
   const readSandboxPolicy = vi.fn<OpenShellSandboxPolicyReader["readSandboxPolicy"]>(async () => ({
     ok: true,
@@ -101,6 +105,41 @@ function fixture(
 }
 
 describe("custom native provider policy admission", () => {
+  const previousProviderPolicy = {
+    _provider_nvidia_prod: { endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }] },
+  };
+
+  it.each([null, { host: "integrate.api.nvidia.com", port: 443, allowed_ips: ["8.8.8.8"] }])(
+    "replaces a generated NVIDIA rule with non-conflicting base rules (%j)",
+    async (endpoint) => {
+      const test = fixture(
+        "integrate.api.nvidia.com",
+        endpoint,
+        ["8.8.8.8"],
+        previousProviderPolicy,
+      );
+      await expect(test.select()).resolves.toMatchObject({ attachmentChanged: true });
+      expect(test.createProvider).toHaveBeenCalledOnce();
+      expect(test.beforeAttach).toHaveBeenCalledOnce();
+      expect(test.attachProvider).toHaveBeenCalledOnce();
+      expect(test.writeAuthority).toHaveBeenCalled();
+    },
+  );
+
+  it("refuses retained base conflicts before replacing a generated NVIDIA rule", async () => {
+    const test = fixture(
+      "integrate.api.nvidia.com",
+      { host: "*.api.nvidia.com", port: 443 },
+      ["8.8.8.8"],
+      previousProviderPolicy,
+    );
+    await expect(test.select()).rejects.toThrow(/existing_policy.*IP pins/);
+    expect(test.createProvider).not.toHaveBeenCalled();
+    expect(test.beforeAttach).not.toHaveBeenCalled();
+    expect(test.attachProvider).not.toHaveBeenCalled();
+    expect(test.writeAuthority).not.toHaveBeenCalled();
+  });
+
   it.each(["integrate.api.nvidia.com", "openrouter.ai"])(
     "refuses an unpinned %s policy before creating a provider (#13904)",
     async (host) => {

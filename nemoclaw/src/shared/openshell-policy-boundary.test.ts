@@ -265,6 +265,34 @@ describe("OpenShell endpoint pin admission", () => {
     },
   });
 
+  it.each(["_provider_nvidia_prod", "_provider_previous_custom"])(
+    "ignores replaceable %s entries returned in base-policy output",
+    (name) => {
+      const base = YAML.stringify({
+        version: 1,
+        network_policies: {
+          [name]: { endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }] },
+        },
+      });
+      expect(() =>
+        assertOpenShellPolicyEndpointPins(base, "https://integrate.api.nvidia.com/v1", ["8.8.8.8"]),
+      ).not.toThrow();
+    },
+  );
+
+  it("refuses a retained base-rule conflict beside a replaceable provider rule", () => {
+    const base = YAML.stringify({
+      version: 1,
+      network_policies: {
+        _provider_nvidia_prod: { endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }] },
+        existing_policy: { endpoints: [{ host: "*.api.nvidia.com", port: 443 }] },
+      },
+    });
+    expect(() =>
+      assertOpenShellPolicyEndpointPins(base, "https://integrate.api.nvidia.com/v1", ["8.8.8.8"]),
+    ).toThrow(/existing_policy.*IP pins.*No provider was changed/);
+  });
+
   it("refuses an unpinned wildcard overlap at the canonical policy boundary", () => {
     expect(() =>
       assertOpenShellPolicyEndpointPins(document, "https://api.example.com/v1", ["8.8.8.8"]),
