@@ -100,7 +100,8 @@ The following boundaries need coordination; these notes do not claim upstream ac
 | Owner | Work or agreement |
 |---|---|
 | NeMo-Fabric | Report a harness process that exited as failed rather than unknown, so refresh can start it again ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)). |
-| NeMo-Fabric | Configuring OpenClaw's dashboard and web search ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360), [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Configuring OpenClaw's web search ([#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Reporting each runtime's interfaces from its handle, instead of the P0 conventions NemoClaw follows ([NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565)), and interface tokens the agent's own tools can't read, an interface check, and exposed service URLs ([NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566)). |
 | OpenShell | Qualify completed sandbox stop as the boundary that terminates all old workload processes before start, while retaining required data; request implementation changes only for demonstrated gaps. |
 
 ## Observation Limits

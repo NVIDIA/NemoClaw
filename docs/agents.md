@@ -70,6 +70,13 @@ On success, inspect `result.status` and `result.output.response`; a successful c
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
+## Native Interfaces
+
+OpenClaw's Control UI and Hermes's API server and dashboard are native interfaces that the agent's Fabric runtime serves inside its sandbox.
+Enable them under `harness.settings.interfaces` with an exact `port`, then reach them as [Reach an Agent Interface](interfaces.md#reach-an-agent-interface) describes.
+Fabric's adapter starts each interface, generates its token, and stops it with the runtime; NemoClaw rejects interface names and fields that the image's adapter doesn't declare while planning, and after apply prints the commands that forward each interface and read its token.
+The agent's own tools can read those tokens and reach the interfaces, so the agent can sign in to its own interfaces; Hermes's dashboard has no sign-in, and its browser chat runs the agent without approvals.
+
 ## Native Controls at Initialization
 
 Author native controls through the selected adapter's settings and model schemas.
