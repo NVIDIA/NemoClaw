@@ -8,7 +8,14 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
-import { describe, expect, it } from "vitest";
+import { parse as parseToml } from "smol-toml";
+import { describe, expect, it, onTestFinished } from "vitest";
+import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+  serializeHermesSwitchyardRouting,
+} from "../../src/lib/hermes-switchyard-routing";
 import { expectManagedToolDiscoveryRuntimeImageContract } from "../support/managed-bootstrap-image-contract";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -18,6 +25,83 @@ const dockerfiles = [
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
 ] as const;
+
+function runSwitchyardBundleInstall(transformDeployment = (deployment: string) => deployment) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-switchyard-bundle-"));
+  onTestFinished(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  const routing = createHermesSwitchyardRoutingIntent({
+    efficient: { provider: "nvidia-prod", model: "efficient-model" },
+    capable: { provider: "openai-api", model: "capable-model" },
+  });
+  const environment = {
+    [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+  };
+  const serialized = serializeHermesSwitchyardRouting(routing);
+  const paths = {
+    relayPluginStateSource: path.join(fixture, "staged-state.json"),
+    relayPluginStateTarget: path.join(fixture, "installed-state.json"),
+    relayPluginsSource: path.join(fixture, "staged-relay.toml"),
+    relayPluginsTarget: path.join(fixture, "installed-relay.toml"),
+    switchyardDeploymentSource: path.join(fixture, "staged-deployment.toml"),
+    switchyardDeploymentTarget: path.join(fixture, "installed-deployment.toml"),
+  };
+  const deployment = transformDeployment(serialized.switchyardDeploymentToml);
+  const artifacts = [
+    [paths.relayPluginStateSource, paths.relayPluginStateTarget, serialized.relayPluginStateJson],
+    [paths.relayPluginsSource, paths.relayPluginsTarget, serialized.relayPluginsToml],
+    [paths.switchyardDeploymentSource, paths.switchyardDeploymentTarget, deployment],
+  ] as const;
+  for (const [source, target, contents] of artifacts) {
+    fs.writeFileSync(source, contents, { mode: 0o600 });
+    fs.writeFileSync(target, "previous configuration", { mode: 0o444 });
+  }
+  // Simulate root ownership only; real file operations stay inside the temporary fixture.
+  // This exercises bundled installation, not privileged image ownership or live inference.
+  const script = `
+    const fs = require("node:fs");
+    for (const name of ["fstatSync", "lstatSync"]) {
+      const original = fs[name];
+      fs[name] = (...args) => new Proxy(original(...args), {
+        get(target, property) {
+          if (property === "uid" || property === "gid") {
+            return typeof target[property] === "bigint" ? 0n : 0;
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    }
+    fs.fchownSync = (_descriptor, uid, gid) => {
+      if (uid !== 0 || gid !== 0) throw new Error("unexpected ownership request");
+    };
+    const [bundle, environment, paths] = process.argv.slice(1);
+    try {
+      const runtime = require(bundle);
+      runtime.installHermesSwitchyardRoutingFiles(
+        JSON.parse(environment), JSON.parse(paths), { uid: 0, gid: 0 },
+      );
+      runtime.verifyHermesSwitchyardRoutingFiles(JSON.parse(environment), JSON.parse(paths));
+    } catch (error) {
+      process.stderr.write(error.message + "\\n");
+      process.exitCode = 1;
+    }
+  `;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      script,
+      path.join(
+        repoRoot,
+        "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
+      ),
+      JSON.stringify(environment),
+      JSON.stringify(paths),
+    ],
+    { cwd: fixture, encoding: "utf8", timeout: 10_000 },
+  );
+  return { result, artifacts, paths, deployment, serialized };
+}
 
 function createCacheSeedFixture(): {
   cache: string;
@@ -214,7 +298,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "1da7f29d6e7305384d1da0fb29b00c6ff89658b656c3a241f0ae1e9319876a83",
+      expectedHash: "b19a3742e5a53ef9f29080cd80848276e0216252c989b57d4c8a8a10901297a5",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {
@@ -258,6 +342,60 @@ describe("MCP tool discovery image contract", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("usage: managed-startup-image-runtime");
+  });
+
+  it("installs both bounded Switchyard clients from the shipped startup bundle", () => {
+    const { result, paths, artifacts } = runSwitchyardBundleInstall();
+    expect(result).toMatchObject({ status: 0, stdout: "", stderr: "" });
+    const installed = parseToml(fs.readFileSync(paths.switchyardDeploymentTarget, "utf8"));
+    // Literal policy expectations remain independent of the source serializer used for staging.
+    expect(installed.llm_clients).toEqual({
+      efficient: expect.objectContaining({
+        timeout_ms: 120_000,
+        max_retries: 0,
+        forward_auth: false,
+      }),
+      capable: expect.objectContaining({
+        timeout_ms: 120_000,
+        max_retries: 0,
+        forward_auth: false,
+      }),
+    });
+    expect(installed.routes).toMatchObject({ switchyard: { classifier_target: "capable" } });
+    expect(
+      artifacts.map(([source, target]) => ({
+        staged: fs.existsSync(source),
+        contents: fs.readFileSync(target, "utf8"),
+        mode: fs.statSync(target).mode & 0o777,
+      })),
+    ).toEqual(artifacts.map(([, , contents]) => ({ staged: false, contents, mode: 0o444 })));
+  });
+
+  it("rejects stale Switchyard client policy without changing staged or installed files", () => {
+    const { result, artifacts, deployment, serialized } = runSwitchyardBundleInstall((value) =>
+      value.replaceAll(/^timeout_ms = 120000\nmax_retries = 0\n/gm, ""),
+    );
+    expect(deployment).not.toBe(serialized.switchyardDeploymentToml);
+    expect(result).toMatchObject({
+      status: 1,
+      stdout: "",
+      stderr: expect.stringContaining("generated Hermes routing artifact is invalid:"),
+    });
+    expect(
+      artifacts.map(([source, target]) => ({
+        staged: fs.readFileSync(source, "utf8"),
+        installed: fs.readFileSync(target, "utf8"),
+        sourceMode: fs.statSync(source).mode & 0o777,
+        targetMode: fs.statSync(target).mode & 0o777,
+      })),
+    ).toEqual(
+      artifacts.map(([, , contents]) => ({
+        staged: contents,
+        installed: "previous configuration",
+        sourceMode: 0o600,
+        targetMode: 0o444,
+      })),
+    );
   });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {

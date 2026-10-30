@@ -953,7 +953,15 @@ function verifyCommittedRoutingFile(target: string, expected: Buffer): void {
     Number(installed.stat.mode & 0o777n) !== 0o444 ||
     !installed.bytes.equals(expected)
   ) {
-    fail(`committed Hermes routing artifact drifted: ${target}`);
+    fail(
+      `committed Hermes routing artifact drifted: ${target}\n` +
+        "Hermes startup stopped because its protected routing configuration does not match this image.\n" +
+        "Do not edit the protected routing files to bypass this check.\n" +
+        "To start a fresh Hermes sandbox, run on the host:\n" +
+        "  nemoclaw onboard --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
+        "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
+        "This creates a fresh workspace; it does not restore your previous data. Keep the failed sandbox until you have recovered any needed data.",
+    );
   }
 }
 

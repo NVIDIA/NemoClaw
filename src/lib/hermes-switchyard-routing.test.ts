@@ -151,6 +151,45 @@ describe("Hermes Switchyard routing", () => {
     });
   });
 
+  it.each(HERMES_SWITCHYARD_PROVIDERS)(
+    "sets finite deadlines and zero retries for both %s clients, including judge reuse (#13865)",
+    (provider) => {
+      const serialized = serializeHermesSwitchyardRouting(
+        createHermesSwitchyardRoutingIntent({
+          efficient: { provider, model: "efficient-model" },
+          capable: { provider, model: "capable-model" },
+        }),
+      );
+      const deployment = parseToml(serialized.switchyardDeploymentToml);
+      const clientPolicy = { timeout_ms: 120_000, max_retries: 0, forward_auth: false };
+
+      expect(deployment.llm_clients).toEqual({
+        efficient: expect.objectContaining(clientPolicy),
+        capable: expect.objectContaining(clientPolicy),
+      });
+      expect(deployment.routes).toMatchObject({
+        switchyard: { classifier_target: "capable" },
+      });
+    },
+  );
+
+  it.each([
+    ["efficient", "timeout_ms", 0],
+    ["efficient", "max_retries", 1],
+    ["efficient", "forward_auth", true],
+    ["capable", "timeout_ms", 0],
+    ["capable", "max_retries", 1],
+    ["capable", "forward_auth", true],
+  ] as const)("rejects the %s target's %s override (#13865)", (role, field, value) => {
+    const intent = routing();
+    expect(() =>
+      serializeHermesSwitchyardRouting({
+        ...intent,
+        [role]: { ...intent[role], [field]: value },
+      }),
+    ).toThrow(`routing.${role} contains unknown fields`);
+  });
+
   it.each([
     [
       "unknown provider",
