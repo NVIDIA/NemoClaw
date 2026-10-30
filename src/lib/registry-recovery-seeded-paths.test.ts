@@ -178,6 +178,40 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     });
   });
 
+  it("keeps a persisted gpuEnabled flag when the session seed has no GPU source of truth", async () => {
+    mockRegistryState.sandboxes.alpha = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      endpointUrl: null,
+      credentialEnv: "NVIDIA_API_KEY",
+      preferredInferenceApi: null,
+      gpuEnabled: true,
+      sandboxGpuEnabled: true,
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      endpointUrl: null,
+      credentialEnv: "NVIDIA_API_KEY",
+      preferredInferenceApi: null,
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
+
+    await recoverRegistryEntries({ requestedSandboxName: "missing-sandbox" });
+
+    // A confirmed session carries no gpuEnabled field, so recovery must not
+    // reset the persisted flag. Clobbering it to false would also leave the
+    // surviving sandboxGpuEnabled:true behind — an internally inconsistent row.
+    expect(mockRegistryState.sandboxes.alpha.gpuEnabled).toBe(true);
+    expect(mockRegistryState.sandboxes.alpha.sandboxGpuEnabled).toBe(true);
+  });
+
   it("skips invalid session and live sandbox names during seeded recovery", async () => {
     mockRegistryState.sandboxes.gamma = gammaEntry([]);
     mockRegistryState.defaultSandbox = "gamma";
