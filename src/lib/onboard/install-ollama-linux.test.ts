@@ -14,6 +14,7 @@ import {
   installOllamaOnLinux,
   OFFICIAL_OLLAMA_INSTALLER_SHA256,
   OFFICIAL_OLLAMA_INSTALLER_URL,
+  ollamaInstallerDownloadFailureMessage,
   resolveOllamaTarballArch,
   sha256File,
 } from "./install-ollama-linux";
@@ -456,6 +457,7 @@ describe("installOllamaOnLinux (system)", () => {
       return { stdout: "", stderr: "curl: (6)", exitCode: 6, timedOut: false };
     });
     const runShellImpl = vi.fn();
+    const errorLog = vi.fn();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -468,15 +470,64 @@ describe("installOllamaOnLinux (system)", () => {
             runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
             runCaptureExImpl,
             runShellImpl,
+            errorLog,
           }),
         ),
       ).toThrow("process.exit(6)");
       expect(fetchAttempts).toBe(4);
       expect(runShellImpl).not.toHaveBeenCalled();
       expect(fs.existsSync(installerPath)).toBe(false);
+      const message = errorLog.mock.calls[0]?.[0] as string;
+      expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
+      expect(message).toContain("raw.githubusercontent.com");
+      expect(message).toContain("curl reported:");
+      expect(message).toContain("Allow outbound HTTPS");
+      expect(message).toContain("rerun nemoclaw onboard");
     } finally {
       exitSpy.mockRestore();
     }
+  });
+
+  it("names the failed URL, host, and curl error with a recovery hint", () => {
+    const message = ollamaInstallerDownloadFailureMessage(
+      7,
+      "curl: (7) Failed to connect to raw.githubusercontent.com port 443",
+    );
+    expect(message).toContain("exit 7");
+    expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
+    expect(message).toContain("raw.githubusercontent.com (outbound HTTPS, port 443)");
+    // curl stderr is collapsed onto a single line and surfaced verbatim.
+    expect(message).toContain("Failed to connect to raw.githubusercontent.com port 443");
+    expect(message).toContain("Allow outbound HTTPS to raw.githubusercontent.com");
+    expect(message).toContain("export HTTPS_PROXY to a working proxy");
+    expect(message).toContain(`curl -fsSI "${OFFICIAL_OLLAMA_INSTALLER_URL}"`);
+    expect(message).toContain("rerun nemoclaw onboard");
+  });
+
+  it("omits the curl detail when stderr is empty", () => {
+    const message = ollamaInstallerDownloadFailureMessage(null, "");
+    expect(message).toContain("exit unknown");
+    expect(message).not.toContain("curl reported:");
+    expect(message).toContain("Allow outbound HTTPS");
+  });
+
+  it("redacts credential-bearing curl errors and ignores verbose proxy headers", () => {
+    const message = ollamaInstallerDownloadFailureMessage(
+      7,
+      "> Proxy-Authorization: Basic FAKE_PROXY_TOKEN\n" +
+        "* Connected through https://user:FAKE_PROXY_PASSWORD@proxy.example\n" +
+        "curl: (7) Failed to connect through https://user:FAKE_PROXY_PASSWORD@proxy.example",
+    );
+    expect(message).toContain("curl: (7) Failed to connect through");
+    expect(message).not.toContain("FAKE_PROXY_TOKEN");
+    expect(message).not.toContain("FAKE_PROXY_PASSWORD");
+    expect(message).not.toContain("Proxy-Authorization");
+  });
+
+  it("bounds a curl failure detail from the host environment", () => {
+    const message = ollamaInstallerDownloadFailureMessage(7, `curl: (7) ${"x".repeat(500)}`);
+    const detail = message.split("\n").find((line) => line.includes("curl reported:"));
+    expect(detail?.split("curl reported:")[1]?.trim().length).toBeLessThanOrEqual(240);
   });
 
   it("never executes a partially transferred installer (#9698)", () => {
