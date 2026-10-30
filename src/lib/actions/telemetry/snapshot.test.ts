@@ -31,7 +31,11 @@ import { isOperationEvent } from "../../domain/telemetry/schema";
 import {
   dcodeImageRef,
   dcodeProfileInput,
+  hermesImageRef,
+  hermesProfileInput,
+  imageRef,
   managedWorkload,
+  profileInput,
 } from "../../domain/config/export-source-test-fixture";
 import type { SandboxEntry } from "../../state/registry/types";
 
@@ -244,7 +248,7 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       },
     ],
   });
-  expect(event.parameters.configurations[0].agents[0].models[0].modelId).toBe("other");
+  expect(event.parameters.configurations[0].agents[0].models[0].modelId).toBe("gpt-4o");
   expect(event.parameters.configurations[1].agents).toHaveLength(1);
   expect(event.parameters.configurations[1].agents[0].models[0]).toMatchObject({
     modelId: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -286,6 +290,9 @@ async function collectNativeConfiguration(
   configPath: string,
   rawConfig: string,
   entryOverrides: Partial<SandboxEntry> = {},
+  extraResponses: Record<string, string> = {},
+  // A valid managed receipt supplies the sandbox OS; otherwise the collector runs `uname -s`.
+  unameReads = entryOverrides.workload ? 0 : 1,
 ) {
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
@@ -296,6 +303,7 @@ async function collectNativeConfiguration(
   const responses: Record<string, string> = {
     [JSON.stringify(["uname", "-s"])]: "Linux",
     [JSON.stringify(["cat", configPath])]: rawConfig,
+    ...extraResponses,
   };
   const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
     return (
@@ -332,13 +340,13 @@ async function collectNativeConfiguration(
     expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
     expect.objectContaining({ workspace: "native" }),
   );
-  expect(read).toHaveBeenCalledTimes(entryOverrides.workload ? 1 : 2);
+  expect(read).toHaveBeenCalledTimes(1 + unameReads + Object.keys(extraResponses).length);
   return event;
 }
 
 it.each([
   ["0.1.71", "0.1.71", "reported"],
-  ["private-build", "other", "unapproved"],
+  ["private-build", "private-build", "reported"],
 ])(
   "reports managed Deep Agents version %s as %s (#12376)",
   async (agentVersion, managedAgentVersion, managedAgentVersionStatus) => {
@@ -388,6 +396,235 @@ it.each(nativeModelCases)(
       agentsStatus: "collection_error",
       defaultAgentModel: { status: "collection_error" },
     });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+const hostedNvidiaEndpoint = "https://integrate.api.nvidia.com/v1";
+const hostedNvidiaModel = "nvidia/nemotron-3-ultra-550b-a55b";
+const hostedNvidiaProvenance = {
+  schemaVersion: 1,
+  model: hostedNvidiaModel,
+  provider: "nvidia-prod",
+  providerProfile: "nvidia",
+  modelSource: "custom",
+  apiFamily: "openai-completions",
+};
+
+function hostedNvidiaHermes(routedBaseUrl = hostedNvidiaEndpoint): Partial<SandboxEntry> {
+  const input = hermesProfileInput();
+  // Registry JSON stores the persisted messaging plan, not the in-memory plan type.
+  return {
+    model: hostedNvidiaModel,
+    provider: "nvidia-prod",
+    modelSelectionProvenance: hostedNvidiaProvenance,
+    // Settings a fresh onboard records, so only the model route decides completeness.
+    agentVersion: "0.21.3",
+    openshellDriver: "docker",
+    sandboxGpuEnabled: false,
+    webSearchEnabled: false,
+    observabilityEnabled: false,
+    appliedPolicySelection: { schemaVersion: 1, source: "verified_selection", tier: "balanced" },
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "native",
+        agent: "hermes",
+        workflow: "onboard",
+        disabledChannels: [],
+        channels: [],
+        credentialBindings: [],
+      },
+    },
+    imageTag: hermesImageRef,
+    workload: managedWorkload(
+      {
+        ...input,
+        inference: {
+          ...input.inference!,
+          routeProvider: "inference",
+          upstreamProvider: "nvidia-prod",
+          model: hostedNvidiaModel,
+          routedBaseUrl,
+          api: "openai-completions",
+        },
+      },
+      hermesImageRef,
+    ),
+  } as unknown as Partial<SandboxEntry>;
+}
+
+const hermesNativeConfig = (baseUrl: string) =>
+  `model:\n  default: ${hostedNvidiaModel}\n  provider: custom\n  base_url: "${baseUrl}"\n`;
+
+it("binds a hosted native Hermes route recorded in the startup profile (#13576)", async () => {
+  const event = await collectNativeConfiguration(
+    "hermes",
+    "/sandbox/.hermes/config.yaml",
+    hermesNativeConfig(hostedNvidiaEndpoint),
+    hostedNvidiaHermes(),
+  );
+  expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+    modelId: hostedNvidiaModel,
+    modelSource: "custom",
+    modelSourceStatus: "reported",
+    providerProfile: "nvidia",
+    providerStatus: "reported",
+  });
+  expect(event.parameters.collectionStatus).toBe("complete");
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+it.each([
+  [
+    "a native URL that differs from the recorded route",
+    "https://example.invalid/v1",
+    hostedNvidiaHermes(),
+    0,
+  ],
+  [
+    "no managed startup profile",
+    hostedNvidiaEndpoint,
+    { ...hostedNvidiaHermes(), imageTag: undefined, workload: undefined },
+    1,
+  ],
+  [
+    "an invalid managed receipt",
+    hostedNvidiaEndpoint,
+    { ...hostedNvidiaHermes(), imageTag: `${hermesImageRef.slice(0, -1)}d` },
+    1,
+  ],
+])(
+  "keeps an unrecorded upstream Hermes URL native with %s (#13576)",
+  async (_label, baseUrl, overrides, unameReads) => {
+    const event = await collectNativeConfiguration(
+      "hermes",
+      "/sandbox/.hermes/config.yaml",
+      hermesNativeConfig(baseUrl),
+      overrides,
+      {},
+      unameReads,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelSource: "unknown",
+      modelSourceStatus: "not_persisted",
+      providerProfile: "custom",
+    });
+    expect(event.parameters.collectionStatus).toBe("partial");
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+function hostedNvidiaWorkload(
+  input: ReturnType<typeof profileInput>,
+  reference: string,
+  routedBaseUrl: string,
+  primaryModelRef: string | null,
+) {
+  return managedWorkload(
+    {
+      ...input,
+      inference: {
+        ...input.inference!,
+        routeProvider: "inference",
+        upstreamProvider: "nvidia-prod",
+        model: hostedNvidiaModel,
+        routedBaseUrl,
+        api: "openai-completions",
+        primaryModelRef,
+      },
+    },
+    reference,
+  );
+}
+
+const hostedRouteBranches = [
+  {
+    agent: "openclaw",
+    configPath: "/sandbox/.openclaw/openclaw.json",
+    config: (baseUrl: string) =>
+      JSON.stringify({
+        agents: { defaults: { model: `inference/${hostedNvidiaModel}` }, entries: { main: {} } },
+        models: { providers: { inference: { api: "openai-completions", baseUrl } } },
+      }),
+    extraResponses: {
+      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
+        { id: "main", isDefault: true },
+      ]),
+    },
+    workload: (routedBaseUrl: string) => ({
+      imageTag: imageRef,
+      workload: hostedNvidiaWorkload(
+        profileInput(),
+        imageRef,
+        routedBaseUrl,
+        `inference/${hostedNvidiaModel}`,
+      ),
+    }),
+    nativeProviderProfile: "custom",
+  },
+  {
+    agent: "langchain-deepagents-code",
+    configPath: "/sandbox/.deepagents/config.toml",
+    config: (baseUrl: string) =>
+      `[models]\ndefault = "openai:${hostedNvidiaModel}"\n[models.providers.openai]\nbase_url = "${baseUrl}"\n`,
+    extraResponses: {},
+    workload: (routedBaseUrl: string) => ({
+      imageTag: dcodeImageRef,
+      workload: hostedNvidiaWorkload(dcodeProfileInput(), dcodeImageRef, routedBaseUrl, null),
+    }),
+    nativeProviderProfile: "openai",
+  },
+] as const;
+
+it.each(hostedRouteBranches)(
+  "binds the $agent hosted native route recorded in the startup profile (#13576)",
+  async ({ agent, configPath, config, extraResponses, workload }) => {
+    const event = await collectNativeConfiguration(
+      agent,
+      configPath,
+      config(hostedNvidiaEndpoint),
+      {
+        model: hostedNvidiaModel,
+        provider: "nvidia-prod",
+        modelSelectionProvenance: hostedNvidiaProvenance,
+        ...workload(hostedNvidiaEndpoint),
+      } as unknown as Partial<SandboxEntry>,
+      extraResponses,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelId: hostedNvidiaModel,
+      modelSource: "custom",
+      modelSourceStatus: "reported",
+      providerProfile: "nvidia",
+      providerStatus: "reported",
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+it.each(hostedRouteBranches)(
+  "keeps a $agent upstream URL that differs from the recorded route native (#13576)",
+  async ({ agent, configPath, config, extraResponses, workload, nativeProviderProfile }) => {
+    const event = await collectNativeConfiguration(
+      agent,
+      configPath,
+      config("https://example.invalid/v1"),
+      {
+        model: hostedNvidiaModel,
+        provider: "nvidia-prod",
+        modelSelectionProvenance: hostedNvidiaProvenance,
+        ...workload(hostedNvidiaEndpoint),
+      } as unknown as Partial<SandboxEntry>,
+      extraResponses,
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelSource: "unknown",
+      modelSourceStatus: "not_persisted",
+      providerProfile: nativeProviderProfile,
+    });
+    expect(event.parameters.collectionStatus).toBe("partial");
     expect(isOperationEvent(event)).toBe(true);
   },
 );

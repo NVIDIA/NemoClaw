@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type SpawnOptions } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { captureOpenshellCommandAsyncResult } from "../../adapters/openshell/command-execution";
 import {
   buildSandboxCommandEnvironment,
@@ -32,21 +32,42 @@ export function createSupervisedSandboxCommandReader(
   ) => Promise<OpenShellInferenceRouteResult>;
   dispose: () => void;
 } {
+  const children = new Set<ChildProcess>();
+  // Cleanup must not depend on the caller returning to the event loop.
+  const killChildren = () => {
+    for (const child of children) {
+      try {
+        if (!foreground && process.platform !== "win32" && child.pid)
+          process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+      }
+    }
+  };
   const listeners = { SIGTERM: new Set<() => void>(), SIGINT: new Set<() => void>() };
   const forwardTerm = () => {
     for (const listener of listeners.SIGTERM) listener();
   };
   const forwardProcessTerm = () => {
     forwardTerm();
+    killChildren();
     process.removeListener("SIGTERM", forwardProcessTerm);
     process.kill(process.pid, "SIGTERM");
   };
   const forwardInt = () => {
     for (const listener of listeners.SIGINT) listener();
+    killChildren();
     process.removeListener("SIGINT", forwardInt);
     process.kill(process.pid, "SIGINT");
   };
-  signal.addEventListener("abort", forwardTerm, { once: true });
+  const cancel = () => {
+    forwardTerm();
+    killChildren();
+  };
+  signal.addEventListener("abort", cancel, { once: true });
   process.on("SIGTERM", forwardProcessTerm);
   process.on("SIGINT", forwardInt);
   const signalSource = {
@@ -67,12 +88,17 @@ export function createSupervisedSandboxCommandReader(
       ...request,
       killGraceMs: 0,
       signalSource,
-      ...(foreground
-        ? {
-            spawnImpl: ((binary: string, args: readonly string[] = [], options?: SpawnOptions) =>
-              spawn(binary, [...args], { ...options, detached: false })) as typeof spawn,
-          }
-        : {}),
+      spawnImpl: ((binary: string, args: readonly string[] = [], options?: SpawnOptions) => {
+        if (signal.aborted) throw new Error("Native evidence cancelled");
+        const child = spawn(binary, [...args], {
+          ...options,
+          ...(foreground ? { detached: false } : {}),
+        });
+        children.add(child);
+        child.once("close", () => children.delete(child));
+        if (signal.aborted) killChildren();
+        return child;
+      }) as typeof spawn,
     });
   const executor = createCliOpenShellSandboxCommandExecutor({
     signalSource,
@@ -112,7 +138,8 @@ export function createSupervisedSandboxCommandReader(
       ).observeInferenceRoute(request);
     },
     dispose: () => {
-      signal.removeEventListener("abort", forwardTerm);
+      killChildren();
+      signal.removeEventListener("abort", cancel);
       process.removeListener("SIGTERM", forwardProcessTerm);
       process.removeListener("SIGINT", forwardInt);
     },

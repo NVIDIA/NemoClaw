@@ -192,6 +192,7 @@ The sandbox boundary limits where commands run and what external resources they 
 ## Headless Deep Agents Approval Boundary
 
 Interactive `dcode` sessions keep destructive tools behind the Deep Agents Code approval UI.
+For an `edit_file` request with a nonempty file path, its approval card shows the full requested path.
 Headless `dcode -n` is an explicit automation boundary with no approval UI.
 
 The managed headless path automatically approves non-shell tool requests such as file writes and edits, while still disabling shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP files, nested remote sandboxes, remote async subagents, and alternate model routes.

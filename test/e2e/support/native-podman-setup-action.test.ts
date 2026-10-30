@@ -975,7 +975,11 @@ exec /bin/bash "$@"
       ) ?? -1;
     const fixtureRemovalIndex = job.steps?.indexOf(fixtureRemoval!) ?? -1;
 
-    expect(job.needs).toEqual(["generate-matrix", "portable-podman-toolchain"]);
+    expect(job.needs).toEqual([
+      "generate-matrix",
+      "portable-podman-toolchain",
+      "package-openshell-sdk",
+    ]);
     expect(job["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
     expect(job.env).toMatchObject({
       E2E_DEFAULT_ENABLED: "0",
@@ -1052,6 +1056,8 @@ exec /bin/bash "$@"
       "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280",
     );
     expect(setupIndex).toBeGreaterThan(openshellInstallIndex);
+    expect(job.steps?.at(setupIndex + 1)?.name).toBe("Select pinned compatible Portable crun");
+    expect(job.steps?.at(restoreIndex - 1)?.name).toBe("Remove pinned Portable crun");
     expect(headroomIndex).toBeGreaterThan(setupIndex);
     expect(candidateCheckoutIndex).toBeGreaterThan(headroomIndex);
     expect(headroomRun).toContain("minimum=128");
@@ -1077,7 +1083,7 @@ exec /bin/bash "$@"
       headroomRun.indexOf("/sys/fs/cgroup$group/pids.current"),
     );
     expect(retainHeadroom?.if).toBe("always()");
-    expect(retainHeadroom?.run).toContain("portable-podman-process-headroom.json");
+    expect(retainHeadroom?.run).toContain("portable-podman-process-headroom");
     expect(retainHeadroomIndex).toBeGreaterThan(job.steps?.indexOf(live!) ?? -1);
     expect(uploadIndex).toBeGreaterThan(retainHeadroomIndex);
     expect(live).toMatchObject({
@@ -1106,9 +1112,6 @@ exec /bin/bash "$@"
     );
     expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
     expect(openshellInstallIndex).toBeGreaterThan(trustedCheckoutIndex);
-    expect(candidateCheckoutIndex).toBeGreaterThan(openshellInstallIndex);
-    expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
-    expect(setupIndex).toBeGreaterThanOrEqual(0);
     expect(uploadIndex).toBeGreaterThan(setupIndex);
     expect(restoreIndex).toBeGreaterThan(uploadIndex);
     expect(fixtureRemovalIndex).toBeGreaterThan(restoreIndex);

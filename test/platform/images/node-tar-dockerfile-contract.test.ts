@@ -74,6 +74,33 @@ const reviewedNpmUpgradeArguments = [
   "--archive",
   reviewedNpmArchivePath,
 ] as const;
+const dcodeUpgradeCommand = "node /scripts/upgrade-bundled-npm.mts";
+const reviewedDcodeUpgradeRun = [
+  "set -eu;",
+  'dcode_npm_cache="$(mktemp -d /tmp/nemoclaw-dcode-npm-cache.XXXXXX)";',
+  `trap 'rm -rf "$dcode_npm_cache"' EXIT;`,
+  `trap 'exit 1' HUP INT TERM;`,
+  'export NPM_CONFIG_CACHE="$dcode_npm_cache" npm_config_cache="$dcode_npm_cache";',
+  [dcodeUpgradeCommand, ...reviewedNpmUpgradeArguments].join(" "),
+].join(" ");
+
+function requireReviewedDcodeUpgradeRun(source: string): number {
+  const matches = dockerfileInstructions(source).filter(
+    (instruction) =>
+      instruction.keyword === "RUN" && instruction.body.includes(dcodeUpgradeCommand),
+  );
+  assert.equal(matches.length, 1, "Expected one DCode npm upgrade RUN");
+  const run = matches[0]!;
+  const body = run.body
+    .replace(/\\\r?\n/gu, " ")
+    .replace(/[ \t\r\n]+/gu, " ")
+    .trim();
+  assert.equal(body, reviewedDcodeUpgradeRun, "Unreviewed DCode npm upgrade RUN");
+  const positions = dockerfileRunCommandPositions(source, dcodeUpgradeCommand);
+  const expectedPosition = run.bodyStart + run.body.indexOf(dcodeUpgradeCommand);
+  assert.deepEqual(positions, [expectedPosition], "Expected one executable DCode npm upgrade");
+  return expectedPosition;
+}
 const hermesReviewedNpmArchivePath = "/scripts/npm-12.0.2.tgz";
 const hermesReviewedNpmUpgradeArguments = [
   ...npmRootArguments,
@@ -93,7 +120,7 @@ const pinnedBaseDockerfiles = [
   "agents/pi/Dockerfile.base",
 ] as const;
 const REVIEWED_NODE_BASE =
-  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+  "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
 const reviewedNodeBases = new Set<string>([REVIEWED_NODE_BASE]);
 const directNodeDockerfiles = [
   "Dockerfile",
@@ -120,7 +147,7 @@ interface DirectNodeStage {
 function directNodeStages(file: string, source: string): DirectNodeStage[] {
   const starts = [...source.matchAll(/^FROM(?:\s+--\S+)*\s+([^\s]+)(?:\s+AS\s+(\S+))?$/gmu)];
   return starts.flatMap((match, index) =>
-    match[1]!.startsWith("node:24.18.1-") || match[1] === "npm12"
+    match[1]!.startsWith("node:24.22.1-") || match[1] === "npm12"
       ? [
           {
             file,
@@ -362,7 +389,7 @@ describe("node-tar image remediation contract", () => {
     const file = "agents/langchain-deepagents-code/Dockerfile.base";
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const reviewedBase = REVIEWED_NODE_BASE;
-    const unreviewedBase = `node:24.18.1-trixie-slim@sha256:${"0".repeat(64)}`;
+    const unreviewedBase = `node:24.22.1-trixie-slim@sha256:${"0".repeat(64)}`;
     const changedSource = source.replaceAll(reviewedBase, unreviewedBase);
 
     expect(() => assertReviewedNodeBases(file, changedSource)).toThrow(
@@ -476,6 +503,29 @@ describe("node-tar image remediation contract", () => {
 });
 
 describe("reviewed npm image remediation contract", () => {
+  it("requires the exact isolated DCode npm cache wrapper (#13241)", () => {
+    const source = `RUN ${reviewedDcodeUpgradeRun}\n`;
+    expect(requireReviewedDcodeUpgradeRun(source)).toBe(source.indexOf(dcodeUpgradeCommand));
+  });
+
+  it.each([
+    ["missing cache isolation", `${dcodeUpgradeCommand} ${reviewedNpmUpgradeArguments.join(" ")}`],
+    ["cache creation", reviewedDcodeUpgradeRun.replace("mktemp -d", "mktemp")],
+    [
+      "exit cleanup",
+      reviewedDcodeUpgradeRun.replace(`trap 'rm -rf "$dcode_npm_cache"' EXIT;`, "trap : EXIT;"),
+    ],
+    ["additional command", `${reviewedDcodeUpgradeRun}; true`],
+    [
+      "duplicated upgrade",
+      `${reviewedDcodeUpgradeRun}; ${dcodeUpgradeCommand} ${reviewedNpmUpgradeArguments.join(" ")}`,
+    ],
+  ])("rejects a changed DCode npm wrapper: %s (#13241)", (_label, body) => {
+    expect(() => requireReviewedDcodeUpgradeRun(`RUN ${body}\n`)).toThrow(
+      "Unreviewed DCode npm upgrade RUN",
+    );
+  });
+
   it.each(dockerfiles)(
     "copies the shared npm identity validator into every $file stage",
     ({ file }) => {
@@ -509,13 +559,16 @@ describe("reviewed npm image remediation contract", () => {
         ? "COPY --from=hermes-npm-patch-payload / /"
         : directArchiveCopy;
     const archiveCopyIndex = source.indexOf(archiveCopy);
-    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
-      source,
-      "node /scripts/upgrade-bundled-npm.mts",
-      file === "agents/hermes/Dockerfile"
-        ? hermesReviewedNpmUpgradeArguments
-        : reviewedNpmUpgradeArguments,
-    ).commandStart;
+    const upgradeRun =
+      file === "agents/langchain-deepagents-code/Dockerfile"
+        ? requireReviewedDcodeUpgradeRun(source)
+        : requireSingleReviewedDockerfileRunCommand(
+            source,
+            "node /scripts/upgrade-bundled-npm.mts",
+            file === "agents/hermes/Dockerfile"
+              ? hermesReviewedNpmUpgradeArguments
+              : reviewedNpmUpgradeArguments,
+          ).commandStart;
     const firstPrivatePatch = source.indexOf(patchCommand);
 
     expect(archiveStage).toContain(archiveSource);
@@ -598,7 +651,7 @@ describe("reviewed npm image remediation contract", () => {
     expect(
       directNodeStages(
         "platform-fixture",
-        "FROM --platform=$BUILDPLATFORM node:24.18.1-trixie AS builder\nRUN npm ci\n",
+        "FROM --platform=$BUILDPLATFORM node:24.22.1-trixie AS builder\nRUN npm ci\n",
       ).map(({ file, name }) => `${file}:${name}`),
     ).toEqual(["platform-fixture:builder"]);
     const rootDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");

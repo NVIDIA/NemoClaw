@@ -375,6 +375,10 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
   ],
   ["test/e2e/fixtures/shell-probe.ts#run", { kind: "path", path: "this.progress" }],
   [
+    "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts#runPodmanBuild",
+    { kind: "path", path: "progress" },
+  ],
+  [
     "tools/e2e/dgx-station-cleanup.mts#runStationCleanupCommand",
     { kind: "path", path: "options.progress" },
   ],

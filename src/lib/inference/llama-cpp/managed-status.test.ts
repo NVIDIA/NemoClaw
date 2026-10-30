@@ -316,13 +316,14 @@ describe("managed llama.cpp status", () => {
     const runtimeEngine = engine(capture);
     const homeDir = temporaryHome();
     publishState(homeDir, runtimeEngine);
+    const probe = vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron" }));
 
     expect(
       inspectManagedLlamaCppStatus("spark-agent", {
         homeDir,
         engine: runtimeEngine,
         inspectExact,
-        probe: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron" })),
+        probe,
       }),
     ).toEqual({
       recipeId: RECIPE_ID,
@@ -337,6 +338,10 @@ describe("managed llama.cpp status", () => {
       homeDir,
       operation: { engine: runtimeEngine },
       paths: managedLlamaCppStatePaths(homeDir),
+    });
+    expect(probe).toHaveBeenCalledWith(expect.any(String), {
+      requestedModel: "nvidia-nemotron-3-nano-30b-a3b",
+      managedRuntime: true,
     });
   });
 

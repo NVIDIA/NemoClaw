@@ -36,9 +36,10 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Hermes">
-    The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-    Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
-    Repeat it in any new shell used for NemoClaw CLI commands.
+    NemoClaw collects operation telemetry to help improve the project.
+    Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+    Production delivery is not enabled.
+    To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
     Refer to [Operation Telemetry](/user-guide/hermes/security/best-practices#operation-telemetry) for details.
 
     Run the hosted installer.
@@ -475,7 +476,9 @@ Use these details when your first-run path needs more control.
     ```
 
     If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the OpenShell selection and NemoClaw registry.
-    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed selection.
+    Review the preceding configuration warning before recovery.
+    If integrity metadata is invalid, back up needed data and restore matching configuration and integrity files from a trusted backup, or create a fresh Hermes sandbox.
+    Rebuild preserves the native home and may retain the mismatch.
   </Accordion>
 </AccordionGroup>
 

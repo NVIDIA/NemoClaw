@@ -355,7 +355,7 @@ describe("complete managed-image publication workflow", () => {
     const setupNode = step(builder, "Set up Node.js", "base-image platform workflow");
     expect(setupNode).toMatchObject({
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-      with: { "node-version": "24.18.1" },
+      with: { "node-version": "24.22.1" },
     });
     const platformBuild = step(
       builder,
@@ -859,6 +859,92 @@ describe("complete managed-image publication workflow", () => {
       needsOutput("generate-matrix", "openshell_supervisor_image"),
     );
   });
+
+  it.each(
+    [
+      {
+        job: "pr-build-and-entrypoint",
+        reference: "${{ steps.contract.outputs.reference }}",
+        barrier: "Log in to GHCR for exact same-repository PR digest",
+      },
+      {
+        job: "build-and-validate",
+        reference: "${{ steps.validate.outputs.local_id }}",
+        barrier: "Capture exact managed image publication evidence",
+      },
+    ].flatMap((lane) => [0, 23].map((exitCode) => ({ ...lane, exitCode }))),
+  )(
+    "propagates Hermes package qualification status $exitCode before $job publication",
+    ({ job, reference, barrier, exitCode }) => {
+      const workflow = readWorkflow("managed-images.yaml");
+      expect(workflow.on?.pull_request?.paths).toEqual(
+        expect.arrayContaining([
+          "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+          "test/e2e/fixtures/hermes-switchyard-package.ts",
+        ]),
+      );
+      const builder = required(workflow.jobs?.[job], `missing ${job}`);
+      const qualification = step(builder, "Qualify Hermes root entrypoint and Switchyard package");
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-qualification-"));
+      const image = `sha256:${"a".repeat(64)}`;
+      try {
+        const environment = Object.fromEntries(
+          Object.entries(qualification.env ?? {}).map(([key, value]) => [
+            key,
+            String(value)
+              .replaceAll(reference, image)
+              .replaceAll("${{ github.workspace }}", directory),
+          ]),
+        );
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `
+npx() {
+  "$NODE" -e 'console.log(JSON.stringify({args: process.argv.slice(1), image: process.env.NEMOCLAW_HERMES_TEST_IMAGE, live: process.env.NEMOCLAW_RUN_LIVE_E2E, artifacts: process.env.E2E_ARTIFACT_DIR})); process.exit(Number(process.env.PROBE_EXIT));' -- "$@"
+}
+${required(qualification.run, "missing qualification command")}`,
+          ],
+          {
+            cwd: directory,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              ...environment,
+              NODE: process.execPath,
+              PROBE_EXIT: String(exitCode),
+            },
+          },
+        );
+        expect(result.status, result.stderr).toBe(exitCode);
+        expect(JSON.parse(result.stdout)).toEqual({
+          args: [
+            "--no-install",
+            "vitest",
+            "run",
+            "--project",
+            "e2e-live",
+            "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+          ],
+          image,
+          live: "1",
+          artifacts: `${directory}/e2e-artifacts/live/hermes-root-entrypoint-smoke`,
+        });
+        expect(qualification.if).toBe("matrix.agent == 'hermes'");
+        expect(qualification).not.toHaveProperty("continue-on-error");
+        expect(builder.steps!.indexOf(qualification)).toBeLessThan(
+          builder.steps!.indexOf(step(builder, barrier)),
+        );
+        const artifacts = step(builder, "Upload Hermes package qualification artifacts");
+        expect(artifacts.if).toBe("always() && matrix.agent == 'hermes'");
+        expect(artifacts.with?.path).toBe("e2e-artifacts/live/hermes-root-entrypoint-smoke/");
+        expect(artifacts.with?.name).toContain("${{ matrix.arch }}");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");

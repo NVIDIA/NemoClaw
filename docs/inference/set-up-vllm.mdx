@@ -259,7 +259,7 @@ Managed profiles and model-specific recipes use immutable image digests:
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 - Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 
-Image pulls from `nvcr.io` require NGC registry login.
+The pinned `nvcr.io/nvidia/vllm` images are public, so Docker pulls them without NGC registry login.
 The Station Nemotron 3.5 Super VL and Nemotron 3 Ultra recipes pull their vLLM images from Docker Hub instead.
 The two-Station page records the distributed recipe's image and runtime versions.
 
@@ -395,10 +395,15 @@ DGX Spark automatically selects its Qwen recipe from the detected unified-memory
 | At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
 
 The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+The admission floor uses detected total unified-memory capacity, not currently available memory.
+The separate GPU-memory preflight still checks available memory when `nvidia-smi` reports numeric values.
 It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
-It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
 Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
 Before installation, NemoClaw displays the selected hardware profile and context limit.
+
+For Express installation on a nominal 64 GB DGX Spark, keep automatic serving-profile selection (option 1).
+The fixed profile (option 2) retains its 64 GB detected-capacity floor.
+
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
@@ -413,7 +418,10 @@ $$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-3
 The profile serves the public [`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) checkpoint through a pinned ARM64 vLLM image.
 Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.65 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
 It uses vLLM's Python frontend because the pinned runtime's Rust frontend does not register the required `step3p5` reasoning and tool-call parsers.
-Physical single-DGX Spark validation of public revision `0dcd680e5585c791728c83342b311d0a0026dbeb` covered direct chat, automatic and named structured tool calls, a ten-request release workload with input lengths from 32,768 through 41,984 tokens and 2,048 output tokens per request, OpenClaw chat and file tools, and a cached restart.
+Physical single-DGX Spark validation of public revision `0dcd680e5585c791728c83342b311d0a0026dbeb` covered direct chat, automatic and named structured tool calls, a ten-request release workload with input lengths from 32,768 through 41,984 tokens and 2,048 output tokens per request, and a cached restart.
+<AgentOnly variant="openclaw">
+The same validation covered OpenClaw chat and file tools.
+</AgentOnly>
 Requests 2 through 10 averaged about 102 output tokens/s.
 At 0.65 utilization, the workload completed with about 33 GiB of host memory available and no NVIDIA kernel errors.
 
@@ -425,7 +433,10 @@ The fixed recipe intentionally rejects model and serve-argument overrides; use a
 
 <Note title="Reading Reasoning and Sizing max_tokens for Direct Callers">
 Nemotron 3.5 Lightning is a reasoning model that emits a hidden reasoning trace before its answer.
-Two behaviors surprise direct callers of the managed vLLM endpoint; the OpenClaw agent path is unaffected because it already requests a large budget.
+Two behaviors surprise direct callers of the managed vLLM endpoint.
+<AgentOnly variant="openclaw">
+The OpenClaw agent path is unaffected because it already requests a large budget.
+</AgentOnly>
 
 - **Read reasoning from `reasoning`, not `reasoning_content`.**
   The pinned vLLM runtime renamed the deprecated `reasoning_content` response field to `reasoning`, so `choices[].message.reasoning_content` is `null` even for prompts that reasoned heavily.
@@ -469,7 +480,9 @@ The pinned post-merge runtime image was verified on one physical DGX Spark.
 The managed `/v1/models` endpoint reported `muse-glimmer`.
 A direct chat request returned `391` and no other text, and a reasoning request returned separated reasoning in `message.reasoning`.
 A required structured tool request returned a named tool call.
+<AgentOnly variant="openclaw">
 A real OpenClaw TUI turn used one prompt and returned `391` through provider `inference` and model `muse-glimmer`.
+</AgentOnly>
 A managed stop and start preserved the image digest and managed inference route.
 The fixed profile does not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
 It rejects model and serve-argument overrides so its validated resource boundary remains reproducible.
@@ -634,9 +647,10 @@ If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reu
 Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
 Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit distributed-profile selection, profile requirements, and cleanup behavior.
 
-The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
-Repeat it in any new shell used for NemoClaw CLI commands.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 

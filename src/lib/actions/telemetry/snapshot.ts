@@ -5,12 +5,12 @@ import path from "node:path";
 import { createSupervisedSandboxCommandReader } from "./native-reader";
 import type { OpenShellInferenceRouteResult } from "../../adapters/openshell/inference-route";
 import {
-  approvedCategory,
+  observedString,
   classifyTelemetryAgent,
   classifyTelemetrySandboxOS,
-  COMPUTE_DRIVERS,
+  hasNativeTelemetryParser,
+  hasTelemetryCollectionError,
   dataRecord,
-  MANAGED_AGENT_VERSIONS,
   MESSAGING_CHANNELS,
   parseRuntimeRoster,
   projectRuntimeAgents,
@@ -29,7 +29,10 @@ import type {
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
-import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
+import {
+  readManagedRoutedBaseUrl,
+  readManagedWorkloadAuthority,
+} from "../../onboard/workload/authority";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding/identity";
 import { resolveAgentConfig } from "../../sandbox/agent-config";
 import { parseConfig } from "../../sandbox/config-format";
@@ -80,10 +83,7 @@ function projectConfiguration(
       sandboxOSStatus = "reported";
       imageOwnership = "managed";
       imageOwnershipStatus = "reported";
-      const version = approvedCategory(
-        entry.agentVersion,
-        MANAGED_AGENT_VERSIONS[harness.agentHarnessId] ?? [],
-      );
+      const version = observedString(entry.agentVersion);
       managedAgentVersion = version.value;
       managedAgentVersionStatus = version.status;
     } else if (workload?.kind === "external-image") {
@@ -117,11 +117,11 @@ function projectConfiguration(
   } catch {
     sandboxOSStatus = imageOwnershipStatus = managedAgentVersionStatus = "collection_error";
   }
-  const driver = approvedCategory(entry.openshellDriver, COMPUTE_DRIVERS);
+  const driver = observedString(entry.openshellDriver);
   const webSearch = booleanSetting(entry.webSearchEnabled);
   const observability = booleanSetting(entry.observabilityEnabled);
   if (
-    harness.agentHarnessStatus === "reported" &&
+    hasNativeTelemetryParser(harness.agentHarnessId) &&
     !DCODE_OBSERVABILITY_FEATURE.supportsAgent(entry.agent)
   ) {
     observability.status =
@@ -151,6 +151,10 @@ function projectConfiguration(
         : "reported";
   } else if (entry.sandboxGpuEnabled !== undefined) gpuStatus = "collection_error";
   const policy = readAppliedPolicySelection(entry.appliedPolicySelection);
+  const policyTier = observedString(
+    policy?.tier,
+    entry.appliedPolicySelection === undefined ? "not_persisted" : "collection_error",
+  );
   const policyWriteFailed = metadataErrors.some((error) => error.category === "policy_tier");
   const settings: TelemetrySettings = {
     computeDriver: driver.value,
@@ -163,14 +167,8 @@ function projectConfiguration(
     observabilityStatus: observability.status,
     imageOwnership,
     imageOwnershipStatus,
-    policyTier: policyWriteFailed ? "unknown" : (policy?.tier ?? "unknown"),
-    policyTierStatus: policyWriteFailed
-      ? "collection_error"
-      : policy
-        ? "reported"
-        : entry.appliedPolicySelection === undefined
-          ? "not_persisted"
-          : "collection_error",
+    policyTier: policyWriteFailed ? "unknown" : policyTier.value,
+    policyTierStatus: policyWriteFailed ? "collection_error" : policyTier.status,
   };
   let configuredMessagingChannels: string[] = [];
   let messagingStatus: ValueStatus =
@@ -240,10 +238,24 @@ async function collectRuntime(
     row.currentInferenceRouteStatus = "not_observed";
     return;
   }
+  // Only settled observations may update the row after cancellation.
+  let cancel: () => void = () => {};
+  const cancelled = new Promise<{ cancelled: true }>((resolve) => {
+    cancel = () => resolve({ cancelled: true });
+    options.signal.addEventListener("abort", cancel, { once: true });
+    if (options.signal.aborted) cancel();
+  });
+  const observe = async <T>(observation: Promise<T>): Promise<T> => {
+    const result = await Promise.race([observation.then((value) => ({ value })), cancelled]);
+    if ("cancelled" in result) throw new Error("Telemetry observation cancelled");
+    return result.value;
+  };
   let osObservation: Promise<void> | undefined;
   let routeObservation: Promise<void> | undefined;
   try {
-    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(entry);
+    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(entry, {
+      observationOnly: true,
+    });
     const gatewayName = resolveSandboxGatewayName(entry);
     const routeKey = JSON.stringify([gatewayName, runtimeSelection]);
     let route = options.routes.get(routeKey);
@@ -251,9 +263,11 @@ async function collectRuntime(
       const remaining = options.deadlineAt - Date.now();
       if (options.signal.aborted || remaining <= 0)
         throw new Error("Telemetry observation deadline reached");
-      route = reader.observeInferenceRoute(
-        { target: { kind: "named", gatewayName }, timeoutMs: remaining },
-        runtimeSelection,
+      route = observe(
+        reader.observeInferenceRoute(
+          { target: { kind: "named", gatewayName }, timeoutMs: remaining },
+          runtimeSelection,
+        ),
       );
       options.routes.set(routeKey, route);
     }
@@ -272,16 +286,18 @@ async function collectRuntime(
       const remaining = options.deadlineAt - Date.now();
       if (options.signal.aborted || remaining <= 0)
         throw new Error("Telemetry observation deadline reached");
-      return reader.read(
-        {
-          sandboxName: entry.name,
-          target: { kind: "named", gatewayName },
-          command,
-          timeoutMilliseconds: remaining,
-          timeoutKillSignal: "SIGKILL",
-          outputLimitBytes: 16 * 1024 * 1024,
-        },
-        runtimeSelection,
+      return observe(
+        reader.read(
+          {
+            sandboxName: entry.name,
+            target: { kind: "named", gatewayName },
+            command,
+            timeoutMilliseconds: remaining,
+            timeoutKillSignal: "SIGKILL",
+            outputLimitBytes: 16 * 1024 * 1024,
+          },
+          runtimeSelection,
+        ),
       );
     };
     if (row.sandboxOSStatus !== "reported") {
@@ -295,8 +311,8 @@ async function collectRuntime(
           row.sandboxOSStatus = "collection_error";
         });
     }
-    if (row.agentHarnessId === "other" || row.agentHarnessId === "unknown") {
-      row.agentsStatus = row.defaultAgentModel.status = row.agentHarnessStatus;
+    if (!hasNativeTelemetryParser(row.agentHarnessId)) {
+      row.agentsStatus = row.defaultAgentModel.status = "not_observed";
       return;
     }
     const config = resolveAgentConfig(entry.name, {
@@ -319,13 +335,15 @@ async function collectRuntime(
       managedAgentVersion: row.managedAgentVersion,
       managedAgentVersionStatus: row.managedAgentVersionStatus,
     };
+    // projectConfiguration already reports an invalid managed workload receipt.
+    const managedRoutedBaseUrl = readManagedRoutedBaseUrl(entry);
     Object.assign(
       row,
       projectRuntimeAgents(
         runtime,
         raw.status === "fulfilled" ? raw.value : null,
         roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors },
+        { ...entry, metadataErrors: options.metadataErrors, managedRoutedBaseUrl },
       ),
     );
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";
@@ -336,6 +354,7 @@ async function collectRuntime(
       row.sandboxOSStatus = "collection_error";
   } finally {
     await Promise.all([osObservation, routeObservation]);
+    options.signal.removeEventListener("abort", cancel);
   }
 }
 
@@ -431,7 +450,15 @@ export async function collectOperationSnapshot(options: {
   snapshot.configurations = entries.map((entry, index) =>
     projectConfiguration(entry, metadataErrors[index]),
   );
-  const reader = createSupervisedSandboxCommandReader(options.signal, true);
+  const controller = new AbortController();
+  const parentSignal = options.signal;
+  const cancel = () => controller.abort();
+  parentSignal.addEventListener("abort", cancel, { once: true });
+  const remaining = options.deadlineAt - Date.now();
+  const timer = setTimeout(cancel, Math.max(0, remaining));
+  if (parentSignal.aborted || remaining <= 0) cancel();
+  options = { ...options, signal: controller.signal };
+  const reader = createSupervisedSandboxCommandReader(options.signal);
   const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
   let nextIndex = 0;
   let observationIncomplete = false;
@@ -458,11 +485,14 @@ export async function collectOperationSnapshot(options: {
       ),
     );
   } finally {
+    controller.abort();
+    clearTimeout(timer);
+    parentSignal.removeEventListener("abort", cancel);
     reader.dispose();
   }
   snapshot.publishedEnvironmentCount = entries.length;
   snapshot.configuredRuntimeCount = snapshot.configurations.filter(
-    (row) => row.agentHarnessId !== "unknown",
+    (row) => row.agentHarnessStatus === "reported",
   ).length;
   snapshot.configuredAgentCount = snapshot.configurations.reduce(
     (count, row) => count + row.agents.length,
@@ -471,7 +501,7 @@ export async function collectOperationSnapshot(options: {
   const collectionError =
     inventoryError ||
     observationIncomplete ||
-    snapshot.configurations.some((row) => JSON.stringify(row).includes('"collection_error"'));
+    snapshot.configurations.some(hasTelemetryCollectionError);
   if (collectionError) {
     snapshot.collectionStatus = snapshot.configurations.length > 0 ? "partial" : "collection_error";
   }
@@ -483,7 +513,7 @@ export async function collectOperationSnapshot(options: {
     )
   )
     snapshot.countsStatus = "collection_error";
-  else if (snapshot.configurations.some((row) => row.agentHarnessId === "unknown"))
+  else if (snapshot.configurations.some((row) => row.agentHarnessStatus === "not_persisted"))
     snapshot.countsStatus = "not_persisted";
   else {
     const unknownRoster = snapshot.configurations.find((row) => row.agentsStatus !== "reported");

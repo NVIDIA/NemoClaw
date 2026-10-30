@@ -19,9 +19,10 @@ content:
 {/* markdownlint-disable MD014 */}
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
-Installer reruns and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before a rerun to suppress collection and delivery.
-Repeat it in any new shell used for NemoClaw CLI commands.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 <Note>
@@ -53,6 +54,19 @@ If `$$nemoclaw` reports that its compiled CLI is missing or incomplete, an earli
 Rerun the installer command that you used to install NemoClaw.
 The installer replaces the incomplete CLI, then attempts to recover existing sandboxes before onboarding.
 Follow any recovery guidance that the installer prints, then rerun `$$nemoclaw`.
+
+### Installer Cannot Look Up the Requested Release
+
+If a managed install or upgrade cannot look up the requested install reference, the installer may already have removed the existing CLI source checkout.
+The `$$nemoclaw` command can then fail until you resolve the lookup issue and rerun the installer.
+Follow the diagnostic that it prints:
+
+- For `Timed out looking up install ref`, check network access to `github.com`, then retry.
+- For `Requested install ref ... is not available`, check `NEMOCLAW_INSTALL_TAG` and `NEMOCLAW_INSTALL_REF`, then retry.
+- For `Could not verify install ref`, check repository access and the Git diagnostic, then retry.
+
+A Git message that reports elapsed milliseconds does not establish a timeout by itself.
+The installer reports it only as diagnostic context.
 
 ### Installer fails on unsupported platform
 
@@ -98,16 +112,14 @@ command -v sha256sum || command -v shasum
 
 This applies to a source checkout, not to an installed release.
 
-Node.js derives its default old-space limit from host memory. On a host with 8 GB of RAM, that limit is about 2.2 GB. The CLI type check needs more heap than that limit, so `./scripts/dev-setup.sh` stops at the type-check step and Node.js reports `JavaScript heap out of memory`.
-
-Raise the limit, then run setup again:
+Contributor setup gives CLI and plugin type checks a 6 GiB Node.js heap by default unless `NODE_OPTIONS` already sets a heap limit. This is a ceiling, not a memory reservation, but the checks can use substantial host memory. If a type check reports `JavaScript heap out of memory` on a low-memory host, free memory or configure swap before retrying; see [Prerequisites](../get-started/prerequisites#hardware). Only raise the heap limit when the host has spare memory:
 
 ```bash
-export NODE_OPTIONS=--max-old-space-size=5120
+export NODE_OPTIONS=--max-old-space-size=8192
 ./scripts/dev-setup.sh
 ```
 
-Keep that variable set for later type-check, build, and test commands.
+Setup preserves other `NODE_OPTIONS` values. Keep the larger heap limit set for later type-check, build, and test commands when those commands also need it.
 
 ### Image push fails with out-of-memory errors
 
@@ -568,6 +580,25 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ## Onboarding
 
+### Enable Native Local Inference on a Reused Gateway
+
+If onboarding reports that native local inference requires `providers_v2_enabled=true`, ask the gateway administrator to review attached providers and run the command printed in the error.
+For a gateway named `nemoclaw`, that command is:
+
+```bash
+openshell settings set -g nemoclaw --global --key providers_v2_enabled --value true --yes
+```
+
+NemoClaw does not change this setting on an existing gateway.
+After the administrator enables it, resume the failed onboarding session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
+If the setting is still missing, onboarding stops before creating the sandbox and retains the session for another attempt.
+
 ### Cgroup v2 errors during onboard
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
@@ -988,6 +1019,16 @@ Newer Colima versions use the XDG base directory (`~/.config/colima/default/dock
 ```bash
 colima status
 ```
+
+### Onboarding Finds an OpenShell Provider Without a NemoClaw Ownership Receipt
+
+NemoClaw refuses to change an existing native OpenShell provider when it cannot find the matching ownership receipt. The provider can remain after you remove NemoClaw state but preserve OpenShell, such as after uninstalling with `--keep-openshell`.
+
+First, check whether a sandbox on the named gateway uses that provider. If none does, run the `openshell provider delete` command from the error, then rerun onboarding. The command names and shell-quotes the target gateway and provider.
+
+<Warning>
+Do not delete the provider if any sandbox uses it. Deleting it can stop inference for that sandbox.
+</Warning>
 
 ### Sandbox build is slow or hangs (under-provisioned container runtime)
 
@@ -2085,7 +2126,11 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualified new local selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+On a normal status read with verified gateway and sandbox state, the main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the reachable path the agent uses. If gateway or sandbox state is not verified, status reports `Inference: not verified (gateway/sandbox state not verified)` and sends no inference request. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualified new local selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If a verified native NVIDIA attachment returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout after bounded retries, `status` reports `degraded` and exits `0`. The model response remains unverified. Run `$$nemoclaw <name> connect --probe-only` to require a successful inference request before accepting readiness. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+
+If status reports `Inference: not probed (another lifecycle operation is in progress)`, the unlocked read skipped provider-path and inference probes; JSON output sets `inferenceProbeSuppressed: true`. Wait for the lifecycle operation to finish and run status again before diagnosing the route or credential.
+
+For Hermes native NVIDIA routes, status also checks the managed credential reference in the Hermes configuration. If this check reports an invalid or stale credential, run `$$nemoclaw <name> rebuild --yes` to refresh it. Then rerun `$$nemoclaw <name> status` and confirm inference is healthy. If status reports that the installed image lacks the credential verifier, rebuild to install it, then rerun status. For other unavailable-verification results, follow the printed sandbox health and access recovery guidance.
 
 Hermes live qualification for the new local lifecycle remains pending.
 
@@ -2110,7 +2155,7 @@ $$nemoclaw onboard
 
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy. If Ollama times out during a cold model load, NemoClaw retries once with a 300-second probe budget before failing. If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
-`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe. The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` covers the inference-server validation probe and each request of the native local or provider-neutral inference check that onboarding and rebuild run inside the sandbox, with a 60-second minimum for that check. The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
 
 ### Sandbox onboard times out with "did not become ready within Ns"
 
@@ -2319,9 +2364,10 @@ $$nemoclaw <sandbox> channels add <channel>
 $$nemoclaw <sandbox> channels remove <channel>
 ```
 
-`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
-Both offer to rebuild the sandbox so the image reflects the new channel set.
-In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
+For channels with OpenShell gateway credentials, `channels add` registers those credentials and `channels remove` removes them.
+When a channel change requires rebuilding, the command prompts to rebuild the sandbox.
+In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), it queues that required rebuild for `$$nemoclaw <sandbox> rebuild`.
+For absent WhatsApp removal and session-cleanup prerequisites, refer to [Manage Messaging Channels](../manage-sandboxes/messaging-channels/manage-messaging-channels#remove-a-channel).
 Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for the supported channel IDs, prerequisites, and experimental status before enabling a channel.
 
 WeChat captures its bot token through a host-side QR scan during `$$nemoclaw onboard` or `channels add wechat`. You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
@@ -3158,7 +3204,11 @@ Other unexpected gateway exit statuses fail immediately and do not consume this 
 
 An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted host copy into a recreated sandbox or recreate from host-side onboarding configuration.
 
-If an integrity mismatch is reported or the sandbox still cannot start, rebuild it from registered configuration:
+If a Hermes configuration write reports `Hermes integrity metadata is not ready for a configuration write`, back up needed data before recovery.
+A rebuild preserves the native sandbox home and may retain this compatibility-hash mismatch.
+For an older Hermes sandbox with an OpenClaw `POLICY.md` file, follow [Explain Network Policy to Agents](../network-policy/explain-network-policy-to-agents).
+
+For other startup failures, rebuild from registered configuration:
 
 ```bash
 nemohermes <name> rebuild --yes

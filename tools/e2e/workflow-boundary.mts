@@ -776,6 +776,7 @@ const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
   ["test/helpers/openshell-components.ts", ["mcp-bridge"]],
+  ["test/e2e/live/mcp-bridge-servers.ts", ["mcp-bridge"]],
   ["test/e2e/live/openclaw-stopped-recovery.ts", ["mcp-bridge"]],
   ["test/e2e/live/openshell-driver-config-test-wrapper.ts", ["mcp-bridge"]],
 ]);
@@ -1307,15 +1308,22 @@ function validateFreeStandingJobSelector(
       : jobName === "mcp-bridge"
         ? ["base-image-publication", "generate-matrix", "package-openshell-sdk"]
         : jobName === "mcp-bridge-dev"
-          ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+          ? [
+              "base-image-publication",
+              "generate-matrix",
+              "openshell-dev-artifact",
+              "package-openshell-sdk",
+            ]
           : [
                 "mcp-bridge",
                 "openshell-credential-generation-window",
                 "cloud-onboard",
                 "messaging-providers",
               ].includes(jobName)
-            ? ["base-image-publication", "generate-matrix"]
-            : "generate-matrix";
+            ? ["base-image-publication", "generate-matrix", "package-openshell-sdk"]
+            : jobName === "openshell-gateway-auth-contract"
+              ? ["generate-matrix", "package-openshell-sdk"]
+              : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -1463,7 +1471,7 @@ function validateFreeStandingInventoryCoverage(
       jobIf === selectedJobsCondition(jobId) ||
       specialSelector ||
       (jobId === "llama-cpp-dgx-spark-qualification" &&
-        jobIf === "${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}") ||
+        jobIf === "${{ !cancelled() && needs.llama-cpp-dgx-spark-plan.result == 'success' }}") ||
       (jobId === "hermes-e2e" && jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
     if (!mappingIsRepresented) {
       errors.push(
@@ -1483,7 +1491,7 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   if (job.name !== "Shared E2E (${{ matrix.execution_id }})") {
     errors.push("shared E2E job name must expose the test ID");
   }
-  if (job.needs !== "generate-matrix") {
+  if (!isDeepStrictEqual(job.needs, ["generate-matrix", "package-openshell-sdk"])) {
     errors.push("shared E2E job must depend on generate-matrix");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.test_matrix != '[]' }}") {
@@ -1632,10 +1640,18 @@ function requireCanonicalDockerHubCleanupRun(
 ): void {
   if (!cleanupStep) return;
 
+  const expectedKeys = [...DOCKER_HUB_CLEANUP_KEYS];
+  if (jobName === "managed-image-protected-runtime") {
+    expectedKeys.push("timeout-minutes");
+    expectedKeys.sort();
+    if (cleanupStep["timeout-minutes"] !== 1) {
+      errors.push(`${jobName} Docker Hub cleanup must retain its one-minute finalization budget`);
+    }
+  }
   const cleanupKeys = Object.keys(cleanupStep).sort();
   if (
-    cleanupKeys.length !== DOCKER_HUB_CLEANUP_KEYS.length ||
-    cleanupKeys.some((key, index) => key !== DOCKER_HUB_CLEANUP_KEYS[index])
+    cleanupKeys.length !== expectedKeys.length ||
+    cleanupKeys.some((key, index) => key !== expectedKeys[index])
   ) {
     errors.push(`${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`);
   }
@@ -2931,6 +2947,165 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
   return errors;
 }
 
+type RecordValue = Record<string, unknown>;
+type Step = { name?: unknown; run?: unknown; if?: unknown };
+
+const RUNTIME =
+  "/usr/local/libexec/nemoclaw/portable-crun.${{ github.run_id }}.${{ github.run_attempt }}";
+const SHA256 = "2aa6b7024a9c9f153895c0d11ae233d3758f54844011c3a039e3e89048d01d42";
+
+function record(value: unknown): RecordValue {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as RecordValue) : {};
+}
+
+function step(steps: Step[], name: string): Step {
+  const matches = steps.filter((candidate) => candidate.name === name);
+  return matches.length === 1 ? matches[0]! : {};
+}
+
+function containsAll(run: unknown, fragments: string[]): boolean {
+  return typeof run === "string" && fragments.every((fragment) => run.includes(fragment));
+}
+
+function ordered(run: unknown, earlier: string, later: string): boolean {
+  if (typeof run !== "string") return false;
+  const first = run.indexOf(earlier);
+  return first >= 0 && run.indexOf(later) > first;
+}
+
+/** Protects the reviewed runtime downloaded before candidate checkout and its fail-closed teardown. */
+export function validatePortableCrunWorkflow(workflow: unknown): string[] {
+  const job = record(record(record(workflow).jobs)["portable-hermes-finalization"]);
+  const steps = Array.isArray(job.steps) ? (job.steps as Step[]) : [];
+  const select = step(steps, "Select pinned compatible Portable crun");
+  const probe = step(steps, "Prove Portable Podman OCI execution before Hermes");
+  const live = step(steps, "Run Portable Hermes finalization live Vitest test");
+  const retain = step(steps, "Retain Portable Podman process headroom");
+  const upload = step(steps, "Upload Portable Hermes finalization artifacts");
+  const remove = step(steps, "Remove pinned Portable crun");
+  const restore = step(steps, "Restore Docker and retire Portable Podman runtime");
+  const fallback = step(steps, "Remove pinned Portable crun after restoration");
+  const checkout = step(steps, "Check out the exact candidate");
+  const errors: string[] = [];
+
+  if (
+    !containsAll(select.run, [
+      "--proto '=https'",
+      "--proto-redir '=https'",
+      "--tlsv1.2",
+      "https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64",
+      `expected_sha=${SHA256}`,
+      "sha256sum --check --strict",
+      `runtime=${RUNTIME}`,
+      "sudo install --owner=root --group=root --mode=0755",
+      "sudo stat -c '%u:%g:%a'",
+      "sudo sha256sum",
+      "crun version 1.28",
+      "[engine.runtimes]",
+      'crun = ["%s"]',
+    ]) ||
+    !ordered(select.run, "sha256sum --check --strict", "sudo install")
+  )
+    errors.push(
+      "Portable crun must retain its HTTPS, digest, root-owned installation, and runtime mapping controls",
+    );
+
+  if (
+    !containsAll(select.run, [
+      '/usr/bin/systemctl --user restart "$service"',
+      'podman --url "unix://$socket" info --format json',
+      "podman info --format json",
+      "(.host.ociRuntime.path // .Host.OCIRuntime.Path) == $runtime",
+      "remoteServiceSelected: true",
+      "localCliSelected: true",
+    ]) ||
+    !ordered(select.run, 'restart "$service"', 'podman --url "unix://$socket" info')
+  )
+    errors.push(
+      "Portable crun must be selected by both the restarted API service and local build client",
+    );
+
+  if (
+    !containsAll(probe.run, [
+      'podman --url "unix://${OPENSHELL_PODMAN_SOCKET:?}" run --rm --pull=always',
+      "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
+    ]) ||
+    !containsAll(live.run, [`--runtime "${RUNTIME}"`])
+  ) {
+    errors.push(
+      "Portable crun must execute the pinned OCI probe and Hermes build through the selected runtime",
+    );
+  }
+
+  if (
+    !containsAll(retain.run, [
+      "portable-podman-crun-authority",
+      "portable-podman-process-headroom",
+    ]) ||
+    retain.if !== "always()"
+  ) {
+    errors.push("Portable crun selection and headroom evidence must survive failed jobs");
+  }
+
+  if (
+    remove.if !== "always()" ||
+    !containsAll(remove.run, [
+      `runtime=${RUNTIME}`,
+      'manager_state="$(/usr/bin/systemctl is-active',
+      'user_systemctl stop "$service.socket" "$service.service"',
+      'user_systemctl is-active "$service.socket"',
+      'user_systemctl is-active "$service.service"',
+      '"$socket_state" != inactive',
+      '"$service_state" != inactive',
+      '"$manager_state" != inactive',
+      "sudo test ! -L",
+      "sudo stat -c '%u:%g' \"$runtime\"",
+      "== 0:0",
+      'sudo rm -f -- "$runtime"',
+      'sudo test ! -e "$runtime"',
+    ]) ||
+    !ordered(remove.run, "user_systemctl stop", 'sudo rm -f -- "$runtime"') ||
+    !ordered(remove.run, '"$service_state" != inactive', 'sudo rm -f -- "$runtime"')
+  )
+    errors.push(
+      "Portable crun teardown must stop and verify the service before removing the root-owned runtime",
+    );
+
+  if (
+    fallback.if !== "always()" ||
+    !containsAll(fallback.run, [
+      `runtime=${RUNTIME}`,
+      'manager_state="$(/usr/bin/systemctl is-active',
+      "user_systemctl is-active nemoclaw-native-podman-e2e.socket",
+      "user_systemctl is-active nemoclaw-native-podman-e2e.service",
+      '"$socket_state" != inactive',
+      '"$service_state" != inactive',
+      '"$manager_state" != inactive',
+      'sudo test -f "$runtime"',
+      'sudo test ! -L "$runtime"',
+      "sudo stat -c '%u:%g'",
+      "== 0:0",
+      'sudo rm -f -- "$runtime"',
+      'sudo test ! -e "$runtime"',
+    ]) ||
+    !ordered(fallback.run, '"$service_state" != inactive', 'sudo rm -f -- "$runtime"')
+  )
+    errors.push("Portable crun must retain a safe post-restoration removal fallback");
+
+  const positions = [select, checkout, probe, live, retain, upload, remove, restore, fallback].map(
+    (item) => steps.indexOf(item),
+  );
+  if (
+    positions.some((position) => position < 0) ||
+    positions.some((position, index) => index > 0 && position <= positions[index - 1]!)
+  ) {
+    errors.push(
+      "Portable crun trust, evidence, and teardown steps must retain their reviewed order",
+    );
+  }
+  return errors;
+}
+
 /** Returns workflow contract violations before a caller dispatches E2E jobs with credentials or external resources. */
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
@@ -2951,6 +3126,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateTrustedHermesSwapWorkflow(workflow));
   errors.push(...validateRunnerComparisonWorkflowBoundary(workflow));
   errors.push(...validateNativePodmanDockerIsolationWorkflow(workflow));
+  errors.push(...validatePortableCrunWorkflow(workflow));
   errors.push(...validatePortableHermesCliArtifactRestoreAction(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
@@ -3065,7 +3241,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("native Podman staging must use exactly one reviewed action reference");
   }
   if (
-    generateMatrix.if !== undefined ||
+    generateMatrix.if !==
+      "${{ !cancelled() && (needs.package-openshell-sdk.result == 'success' || (needs.package-openshell-sdk.result == 'skipped' && inputs.checkout_sha != '' && (inputs.jobs == 'native-runtime-qualification-producer' || inputs.jobs == 'llama-cpp-dgx-spark-qualification') && inputs.targets == '')) }}" ||
     generateMatrix["continue-on-error"] !== undefined ||
     staging?.if !== undefined ||
     staging?.["continue-on-error"] !== undefined ||

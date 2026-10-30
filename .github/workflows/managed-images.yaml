@@ -62,6 +62,8 @@ on:
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
+      - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
@@ -147,7 +149,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -193,6 +195,8 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/patch-dependency-compatibility.py \
+            agents/langchain-deepagents-code/dependency-overrides.in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
             src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
@@ -539,7 +543,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -950,6 +954,27 @@ jobs:
             --image "$IMAGE_REFERENCE" \
             --platform "$PLATFORM"
 
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.contract.outputs.reference }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-pr-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Log in to GHCR for exact same-repository PR digest
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -1127,7 +1152,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1259,7 +1284,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1605,7 +1630,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
@@ -2143,7 +2168,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -2617,6 +2642,27 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.validate.outputs.local_id }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-publication-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Capture exact managed image publication evidence
         id: evidence

@@ -81,9 +81,10 @@ The default distro is `Ubuntu-24.04`.
 To reuse an existing distro named `Ubuntu`, pass `-DistroName Ubuntu`.
 
 The bootstrap script does not install NemoClaw itself.
-The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in the Ubuntu shell before installation to suppress collection and delivery.
-Repeat it in any new shell used for NemoClaw CLI commands.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each Ubuntu shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 When Windows preparation is complete, it opens Ubuntu and prints the standard installer command to run inside Ubuntu:
 

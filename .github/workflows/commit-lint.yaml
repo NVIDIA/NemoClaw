@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -40,3 +41,37 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+
+      - name: Check and test the validator
+        run: |
+          rustfmt --edition 2024 --check tools/ci/pr-session-report*.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings tools/ci/pr-session-report.rs -o "$RUNNER_TEMP/report-check"
+          "$RUNNER_TEMP/report-check" .github/SESSION_REPORT_TEMPLATE.md
+          rustc --edition=2024 -D warnings --test tools/ci/pr-session-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          REPORT_WORKFLOW=.github/workflows/commit-lint.yaml "$RUNNER_TEMP/adapter-tests"
+      - name: Check the posted opening report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        shell: bash
+        run: |
+          input="$RUNNER_TEMP/session-report"
+          mkdir -p "$input"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$input/description.md"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" > "$input/comments.json"
+          printf '%s\n' "$PR_AUTHOR_ID" > "$input/reporters.jsonl"
+          jq -r --argjson author "$PR_AUTHOR_ID" '.[][] | select(.user.id != $author and ((.body // "") | contains("<summary>Authoring session — opening</summary>"))) | .user.login' "$input/comments.json" | sort -u > "$input/reporters.txt"
+          while IFS= read -r login; do
+            gh api "repos/$GITHUB_REPOSITORY/collaborators/$login/permission" --jq 'select(.role_name == "maintain" or .role_name == "admin") | .user.id' >> "$input/reporters.jsonl"
+          done < "$input/reporters.txt"
+          jq -r --slurpfile reporters "$input/reporters.jsonl" '.[][] | select(.user.id as $id | $reporters | index($id)) | .body | @base64' "$input/comments.json" > "$input/report-comments.b64"
+          comments=()
+          while IFS= read -r encoded; do
+            path="$input/comment-${#comments[@]}.md"
+            printf '%s' "$encoded" | base64 --decode > "$path"
+            comments+=("$path")
+          done < "$input/report-comments.b64"
+          "$RUNNER_TEMP/report-check" --pr "$input/description.md" "${comments[@]}"

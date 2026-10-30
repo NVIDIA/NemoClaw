@@ -216,7 +216,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("does not mutate an external gateway registration when bulk cleanup is not owned (#11831)", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
-      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw", active: false }]))],
       [
         "openshell gateway remove nemoclaw",
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
@@ -289,7 +289,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("falls back to legacy gateway destroy only when gateway remove is unsupported", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
-      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw", active: false }]))],
       [
         "openshell gateway remove nemoclaw",
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
@@ -414,7 +414,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             return key === "openshell gateway list -o json"
               ? removeAttempted && postcondition !== undefined
                 ? postcondition
-                : ok(JSON.stringify([{ name: "nemoclaw" }]))
+                : ok(JSON.stringify([{ name: "nemoclaw", active: false }]))
               : (responses.get(key) ?? ok());
           },
           runDocker: () => ok(""),
