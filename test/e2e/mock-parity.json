@@ -482,6 +482,7 @@
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
       "fast": [
+        "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
