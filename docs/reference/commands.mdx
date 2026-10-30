@@ -262,6 +262,9 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 ### `$$nemoclaw config export <sandbox>`
 
 Export a supported registered OpenClaw, Hermes, or LangChain Deep Agents Code sandbox as a credential-value-free `nemoclaw.nvidia.com/v1alpha1` `NemoClawConfig` document.
+For sandboxes with an external component, export supports only protocol version 1 on hosted OpenClaw.
+Other external-component configurations stop without output.
+Refer to [Export a Component Requirement](../deployment/register-external-component#export-a-component-requirement) for activation evidence requirements.
 Version 1 accepts valid empty messaging plans, including plans left after removing the last channel.
 It rejects plans that retain channels or messaging effects and writes no YAML or output file.
 The command reads the registry and current OpenShell state without changing the sandbox.

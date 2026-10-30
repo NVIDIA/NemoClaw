@@ -52,6 +52,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "compatibleEndpointReasoning",
   "compatibleEndpointReasoningEffort",
   "credentialEnv",
+  "externalComponentSelection",
   "dashboardPort",
   "dashboardRemoteBindPrepared",
   "dcodeAutoApprovalMode",
@@ -160,6 +161,12 @@ export interface ObservedExportGateway {
   readonly port: number;
   readonly management: "nemoclaw" | "external" | "unknown";
   readonly stateRootOwned: boolean;
+  readonly externalComponent?: Readonly<{
+    componentId: string;
+    schemaVersion: 1 | 2;
+    registrationMatches: boolean;
+    evidenceDigest: string;
+  }> | null;
 }
 
 export interface ObservedExportEndpointEvidence {
@@ -364,7 +371,17 @@ const exportSourceFields = {
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,
   }),
-  gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  gateway: Type.Object({
+    name: LocalResourceNameSchema,
+    port: TcpPortSchema,
+    externalComponentRef: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: 64,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      }),
+    ),
+  }),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),

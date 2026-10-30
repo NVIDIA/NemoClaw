@@ -69,6 +69,7 @@ export function document(
     observability?: boolean;
     credentialReference?: string;
     gatewayEndpoint?: string;
+    externalComponentRef?: string;
     agent?: "openclaw" | "hermes";
     searchProvider?: "brave" | "tavily";
   } = {},
@@ -82,7 +83,13 @@ export function document(
       uid: "123e4567-e89b-42d3-a456-426614174000",
     },
     spec: {
-      gateway: { management: "managed", endpoint: gatewayEndpoint },
+      gateway: {
+        management: "managed",
+        endpoint: gatewayEndpoint,
+        ...(overrides.externalComponentRef
+          ? { externalComponentRef: overrides.externalComponentRef }
+          : {}),
+      },
       inferenceProviders: [
         {
           name: "hosted-compatible-endpoint",

@@ -49,6 +49,20 @@ const source = {
 } as unknown as VerifiedExportSource;
 
 describe("export config builder", () => {
+  it("places a verified component reference under the managed gateway (#11453)", () => {
+    const result = buildExportConfig(
+      {
+        ...source,
+        gateway: { ...source.gateway, externalComponentRef: "policy-governance" },
+      },
+      { documentName: alphaDocumentName, documentUid: firstUid },
+    );
+    expect(result.spec.gateway.externalComponentRef).toBe("policy-governance");
+    expect(
+      buildExportConfig(source, { documentName: alphaDocumentName, documentUid: firstUid }).spec
+        .gateway,
+    ).not.toHaveProperty("externalComponentRef");
+  });
   it.each([true, false])(
     "omits the gateway credential marker %s without changing authored policy or source (#12138)",
     (providerCredentialed) => {

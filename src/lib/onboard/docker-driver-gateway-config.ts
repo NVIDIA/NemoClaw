@@ -877,6 +877,23 @@ export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
   }
 }
 
+/** Read the current private gateway component binding without changing gateway state. */
+export function observeExternalComponentGatewayConfiguration(
+  stateDir: string,
+  openShellDriver?: string | null,
+): ExternalComponentGatewayConfiguration | null {
+  const runtime = resolveGatewayRuntimeProjection(
+    openShellDriver ? { OPENSHELL_DRIVERS: openShellDriver } : {},
+  );
+  const identity = existingGatewayIdentityFromConfig(stateDir, runtime);
+  try {
+    return identity?.externalComponent ?? null;
+  } finally {
+    if (identity?.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
+    if (identity?.configProof) closeRegularFileProof(identity.configProof);
+  }
+}
+
 function gatewayLocalTlsDir(gatewayEnv: Record<string, string>): string {
   const localTlsDir = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR?.trim();
   if (!localTlsDir) {

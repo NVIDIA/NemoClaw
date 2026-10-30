@@ -86,6 +86,7 @@ function createDeps(
     createExternalComponentActivationProof: vi.fn(() => activationProof),
     createExternalComponentActivationId: vi.fn(() => "4b5a8e18-f967-4e27-a3b2-f2cc315abe21"),
     activateExternalComponent: vi.fn(async () => ({ kind: "activated" as const })),
+    recordCompletedExternalComponentSelection: vi.fn(() => true),
     setExternalComponentActivationEvidence: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
@@ -97,6 +98,7 @@ function createDeps(
       createExternalComponentActivationProof: calls.createExternalComponentActivationProof,
       createExternalComponentActivationId: calls.createExternalComponentActivationId,
       activateExternalComponent: calls.activateExternalComponent,
+      recordCompletedExternalComponentSelection: calls.recordCompletedExternalComponentSelection,
       setExternalComponentActivationEvidence: calls.setExternalComponentActivationEvidence,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
@@ -221,6 +223,13 @@ describe("finalization handlers", () => {
       activationProof,
       "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
     );
+    expect(calls.recordCompletedExternalComponentSelection).toHaveBeenCalledWith("my-assistant", {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: sandboxIdentityFingerprint.replace(/^sha256:/u, ""),
+    });
     expect(calls.setExternalComponentActivationEvidence).toHaveBeenNthCalledWith(1, {
       ...activationEvidence,
       resultClass: "ambiguous",
@@ -230,12 +239,34 @@ describe("finalization handlers", () => {
       calls.activateExternalComponent.mock.invocationCallOrder[0],
     );
     expect(calls.activateExternalComponent.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.setDefaultSandbox.mock.invocationCallOrder[0],
+      calls.recordCompletedExternalComponentSelection.mock.invocationCallOrder[0],
     );
+    expect(
+      calls.recordCompletedExternalComponentSelection.mock.invocationCallOrder[0],
+    ).toBeLessThan(calls.setDefaultSandbox.mock.invocationCallOrder[0]);
     expect(result.stateResult).toMatchObject({
       type: "transition",
       next: "post_verify",
     });
+  });
+
+  it.each([
+    { failure: "refuses", write: () => false },
+    {
+      failure: "throws",
+      write: (): boolean => {
+        throw new Error("Registry write failed.");
+      },
+    },
+  ])("pauses when the selection write $failure (#11453)", async ({ write }) => {
+    const { deps, calls } = createDeps({ recordCompletedExternalComponentSelection: write });
+    const result = await handleFinalizationPhase({ ...baseOptions(deps), externalComponent });
+    expect(result.stateResult).toMatchObject({
+      type: "pause",
+      metadata: { reason: "external_component_activation_incomplete" },
+    });
+    expect(calls.setExternalComponentActivationEvidence).not.toHaveBeenCalledWith(null);
+    expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -281,6 +312,7 @@ describe("finalization handlers", () => {
         "sandboxName",
       );
       expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
+      expect(calls.recordCompletedExternalComponentSelection).not.toHaveBeenCalled();
       expect(calls.removeLegacy).not.toHaveBeenCalled();
       expect(calls.cleanupHost).not.toHaveBeenCalled();
       expect(calls.error).toHaveBeenCalledWith(
