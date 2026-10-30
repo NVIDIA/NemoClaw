@@ -219,4 +219,6 @@ export type OnboardOptions = {
   preparePortableHost?: typeof import("./experimental/portable-host-preparation").preparePortableExperimentalHost;
   /** Exact secret-free serving catalog identity selected by the generic profile UX. */
   servingProfileProvenance?: import("../inference/serving/types").ServingProfileProvenance | null;
+  /** Validated secret-free routing intent for managed Hermes onboarding. */
+  switchyardRouting?: import("../hermes-switchyard-routing").HermesSwitchyardRoutingIntent;
 };

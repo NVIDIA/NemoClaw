@@ -9,6 +9,16 @@ import path from "node:path";
 import { PEM_CERTIFICATE_RE_GLOBAL } from "../corporate-ca-policy";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import {
+  HERMES_RELAY_PLUGIN_STATE_FILE,
+  HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
+  HERMES_RELAY_PLUGINS_FILE,
+  HERMES_RELAY_PLUGINS_STAGING_FILE,
+  HERMES_SWITCHYARD_DEPLOYMENT_FILE,
+  HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  readHermesSwitchyardRoutingEnvironment,
+  serializeHermesSwitchyardRouting,
+} from "../../hermes-switchyard-routing";
+import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
   type ManagedStartupApplicationRuntimePlan,
@@ -78,6 +88,7 @@ const HERMES_MANAGED_CONFIG_FILES = [
 const HERMES_GENERATED_MANAGED_POLICY_FILE = "/sandbox/.hermes/managed-policy.json";
 const HERMES_INSTALLED_MANAGED_POLICY_FILE = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
 const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
+const MAX_HERMES_SWITCHYARD_CONFIG_BYTES = 128 * 1024;
 export const MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES =
   4 * Math.ceil(MAX_HERMES_MANAGED_POLICY_BYTES / 3) + 4096;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -899,6 +910,151 @@ export function installHermesManagedPolicy(
   fs.unlinkSync(source);
 }
 
+export interface HermesSwitchyardRoutingFilePaths {
+  readonly relayPluginStateSource: string;
+  readonly relayPluginStateTarget: string;
+  readonly relayPluginsSource: string;
+  readonly relayPluginsTarget: string;
+  readonly switchyardDeploymentSource: string;
+  readonly switchyardDeploymentTarget: string;
+}
+
+const HERMES_SWITCHYARD_ROUTING_PATHS: HermesSwitchyardRoutingFilePaths = {
+  relayPluginStateSource: `/sandbox/.hermes/${HERMES_RELAY_PLUGIN_STATE_STAGING_FILE}`,
+  relayPluginStateTarget: HERMES_RELAY_PLUGIN_STATE_FILE,
+  relayPluginsSource: `/sandbox/.hermes/${HERMES_RELAY_PLUGINS_STAGING_FILE}`,
+  relayPluginsTarget: HERMES_RELAY_PLUGINS_FILE,
+  switchyardDeploymentSource: `/sandbox/.hermes/${HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE}`,
+  switchyardDeploymentTarget: HERMES_SWITCHYARD_DEPLOYMENT_FILE,
+};
+
+function expectedSandboxOwnedRoutingSource(
+  target: string,
+  expected: Buffer,
+  sandboxIdentity: NumericIdentity,
+): StableRegularFile {
+  const source = readStableRegularFileSnapshot(target, MAX_HERMES_SWITCHYARD_CONFIG_BYTES);
+  if (
+    source.stat.uid !== BigInt(sandboxIdentity.uid) ||
+    source.stat.gid !== BigInt(sandboxIdentity.gid) ||
+    Number(source.stat.mode & 0o777n) !== 0o600 ||
+    !source.bytes.equals(expected)
+  ) {
+    fail(`generated Hermes routing artifact is invalid: ${target}`);
+  }
+  return source;
+}
+
+function verifyCommittedRoutingFile(target: string, expected: Buffer): void {
+  const installed = readStableRegularFileSnapshot(target, MAX_HERMES_SWITCHYARD_CONFIG_BYTES);
+  if (
+    installed.stat.uid !== 0n ||
+    installed.stat.gid !== 0n ||
+    Number(installed.stat.mode & 0o777n) !== 0o444 ||
+    !installed.bytes.equals(expected)
+  ) {
+    fail(`committed Hermes routing artifact drifted: ${target}`);
+  }
+}
+
+function assertRoutingFileAbsent(target: string): void {
+  try {
+    fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    fail(`could not inspect disabled Hermes routing artifact: ${target}`);
+  }
+  fail(`disabled Hermes routing left a stale artifact: ${target}`);
+}
+
+function removeStableRoutingSource(target: string, snapshot: StableRegularFile): void {
+  const current = fs.lstatSync(target, { bigint: true });
+  if (!sameStableFileMetadata(snapshot.stat, current)) {
+    fail(`Hermes routing artifact changed before source cleanup: ${target}`);
+  }
+  fs.unlinkSync(target);
+}
+
+/** Reconcile generated Switchyard configuration and Relay lifecycle state. */
+export function installHermesSwitchyardRoutingFiles(
+  configurationEnvironment: Readonly<NodeJS.ProcessEnv>,
+  paths: HermesSwitchyardRoutingFilePaths = HERMES_SWITCHYARD_ROUTING_PATHS,
+  sandboxIdentityInput?: NumericIdentity,
+): void {
+  const routing = readHermesSwitchyardRoutingEnvironment(configurationEnvironment);
+  if (!routing) {
+    // Remove activation first so no live Relay configuration can reference a
+    // deployment file while stale state is being cleared.
+    removeSafeRootFile(paths.relayPluginsTarget);
+    removeSafeRootFile(paths.relayPluginStateTarget);
+    removeSafeRootFile(paths.switchyardDeploymentTarget);
+    return;
+  }
+  const serialized = serializeHermesSwitchyardRouting(routing);
+  const expectedRelay = Buffer.from(serialized.relayPluginsToml, "utf8");
+  const expectedRelayState = Buffer.from(serialized.relayPluginStateJson, "utf8");
+  const expectedDeployment = Buffer.from(serialized.switchyardDeploymentToml, "utf8");
+  const sandboxIdentity =
+    sandboxIdentityInput ??
+    (() => {
+      const identity = readSandboxIdentity();
+      return { uid: Number(identity.uid), gid: Number(identity.gid) };
+    })();
+  const relaySource = expectedSandboxOwnedRoutingSource(
+    paths.relayPluginsSource,
+    expectedRelay,
+    sandboxIdentity,
+  );
+  const relayStateSource = expectedSandboxOwnedRoutingSource(
+    paths.relayPluginStateSource,
+    expectedRelayState,
+    sandboxIdentity,
+  );
+  const deploymentSource = expectedSandboxOwnedRoutingSource(
+    paths.switchyardDeploymentSource,
+    expectedDeployment,
+    sandboxIdentity,
+  );
+
+  // Install the referenced deployment and enabled lifecycle state before
+  // making the Relay plugin configuration visible.
+  atomicWriteRootFile(paths.switchyardDeploymentTarget, expectedDeployment, 0o444);
+  atomicWriteRootFile(paths.relayPluginStateTarget, expectedRelayState, 0o444);
+  atomicWriteRootFile(paths.relayPluginsTarget, expectedRelay, 0o444);
+  verifyCommittedRoutingFile(paths.switchyardDeploymentTarget, expectedDeployment);
+  verifyCommittedRoutingFile(paths.relayPluginStateTarget, expectedRelayState);
+  verifyCommittedRoutingFile(paths.relayPluginsTarget, expectedRelay);
+  removeStableRoutingSource(paths.switchyardDeploymentSource, deploymentSource);
+  removeStableRoutingSource(paths.relayPluginStateSource, relayStateSource);
+  removeStableRoutingSource(paths.relayPluginsSource, relaySource);
+}
+
+export function verifyHermesSwitchyardRoutingFiles(
+  configurationEnvironment: Readonly<NodeJS.ProcessEnv>,
+  paths: HermesSwitchyardRoutingFilePaths = HERMES_SWITCHYARD_ROUTING_PATHS,
+): void {
+  const routing = readHermesSwitchyardRoutingEnvironment(configurationEnvironment);
+  if (!routing) {
+    assertRoutingFileAbsent(paths.relayPluginsTarget);
+    assertRoutingFileAbsent(paths.relayPluginStateTarget);
+    assertRoutingFileAbsent(paths.switchyardDeploymentTarget);
+    return;
+  }
+  const serialized = serializeHermesSwitchyardRouting(routing);
+  verifyCommittedRoutingFile(
+    paths.relayPluginsTarget,
+    Buffer.from(serialized.relayPluginsToml, "utf8"),
+  );
+  verifyCommittedRoutingFile(
+    paths.relayPluginStateTarget,
+    Buffer.from(serialized.relayPluginStateJson, "utf8"),
+  );
+  verifyCommittedRoutingFile(
+    paths.switchyardDeploymentTarget,
+    Buffer.from(serialized.switchyardDeploymentToml, "utf8"),
+  );
+}
+
 /**
  * Restore the mutable Hermes image contract after its sandbox-side generator
  * atomically replaces config.yaml or .env with mode 0600. The mode transition
@@ -1548,6 +1704,7 @@ function applyAdapter(
       break;
     case "hermes":
       installHermesManagedPolicy();
+      installHermesSwitchyardRoutingFiles(mapped.configurationEnvironment);
       sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       // Normalize before the coordinator commits a newly applied profile so
       // the durable transaction never records generator-created 0600 files as
@@ -1613,6 +1770,7 @@ export async function applyManagedStartupImageProfile(
   if (expectedAgent === "hermes" && !result.adapterApplied) {
     // Committed startup replays still repair generator-created 0600 files.
     normalizeHermesManagedConfiguration();
+    verifyHermesSwitchyardRoutingFiles(mapped.configurationEnvironment);
   }
   let corporateCaMerged: boolean;
   if (result.adapterApplied) {

@@ -5,6 +5,10 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { isLoopbackDashboardUrl } from "../../dashboard/url.ts";
+import {
+  type HermesSwitchyardRoutingIntent,
+  validateHermesSwitchyardRoutingIntent,
+} from "../../hermes-switchyard-routing.ts";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
@@ -303,6 +307,8 @@ export interface ManagedStartupOpenClawConfig {
 export interface ManagedStartupHermesConfig {
   readonly agent: "hermes";
   readonly webSearch: ManagedStartupWebSearch;
+  /** Absent only on canonical profiles created before Switchyard integration. */
+  readonly switchyardRouting?: HermesSwitchyardRoutingIntent | null;
 }
 
 export interface ManagedStartupDcodeConfig {
@@ -558,6 +564,11 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
       "derived",
     ),
     affordance("NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "tools.enabledGateways"),
+    affordance(
+      "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
+      "agentConfig.switchyardRouting",
+      "runtime-env",
+    ),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
     affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
@@ -1061,7 +1072,7 @@ const OPENCLAW_CONFIG_KEYS = new Set([
 const LEGACY_OPENCLAW_CONFIG_KEYS = new Set([...OPENCLAW_CONFIG_KEYS, "deviceAuth"]);
 const LEGACY_DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
-const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
+const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch", "switchyardRouting"]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
 const PI_CONFIG_KEYS = new Set(["agent"]);
 const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
@@ -1896,7 +1907,16 @@ function validateAgentConfig(
   }
   if (agent === "hermes") {
     rejectUnknownKeys(config, HERMES_CONFIG_KEYS, "agentConfig");
-    return { agent, webSearch: validateWebSearch(config.webSearch, agent) };
+    const hasSwitchyardRouting = Object.hasOwn(config, "switchyardRouting");
+    const switchyardRouting =
+      !hasSwitchyardRouting || config.switchyardRouting === null
+        ? null
+        : validateHermesSwitchyardRoutingIntent(config.switchyardRouting);
+    return {
+      agent,
+      webSearch: validateWebSearch(config.webSearch, agent),
+      ...(hasSwitchyardRouting ? { switchyardRouting } : {}),
+    };
   }
 
   if (agent === "pi") {

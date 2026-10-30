@@ -27,6 +27,16 @@ import {
   applyMessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
 } from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
+import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
+  HERMES_RELAY_PLUGINS_ENV,
+  HERMES_RELAY_PLUGINS_FILE,
+  HERMES_RELAY_PLUGINS_STAGING_FILE,
+  HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../../src/lib/hermes-switchyard-routing.ts";
 import { testTimeout } from "../helpers/timeouts";
 import {
   withLegacyMessagingPlanEnv,
@@ -268,6 +278,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", "src", "lib", "hermes-switchyard-routing.ts"),
+    path.join(fixtureRoot, "src", "lib", "hermes-switchyard-routing.ts"),
+  );
   const nativeConfigDir = path.join("src", "lib", "inference", "native-provider");
   fs.mkdirSync(path.join(fixtureRoot, nativeConfigDir), { recursive: true });
   fs.copyFileSync(
@@ -281,6 +295,12 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   fs.copyFileSync(
     path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
     path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
+  );
+  const nativeNvidiaConfigDir = path.join("src", "lib", "inference", "native-nvidia");
+  fs.mkdirSync(path.join(fixtureRoot, nativeNvidiaConfigDir), { recursive: true });
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", nativeNvidiaConfigDir, "contract.ts"),
+    path.join(fixtureRoot, nativeNvidiaConfigDir, "contract.ts"),
   );
   const localConfigDir = "src/lib/inference/native-local";
   fs.mkdirSync(path.join(fixtureRoot, localConfigDir), { recursive: true });
@@ -426,6 +446,59 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(configYaml).not.toContain("mode: tools");
     expect(configYaml).not.toContain("searchDefaultLimit:");
     expect(configYaml).not.toContain("maxSearchLimit:");
+  });
+
+  it("generates the adaptive Switchyard route and private staging artifacts (#13862)", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/efficient-model" },
+      capable: { provider: "openai-api", model: "openai/capable-model" },
+    });
+    const { config, envFile } = generateBaseConfig({
+      [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+    });
+    const relayPluginsPath = path.join(tmpDir, ".hermes", HERMES_RELAY_PLUGINS_STAGING_FILE);
+    const relayPluginStatePath = path.join(
+      tmpDir,
+      ".hermes",
+      HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
+    );
+    const switchyardDeploymentPath = path.join(
+      tmpDir,
+      ".hermes",
+      HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+    );
+    const relayPluginsStats = fs.statSync(relayPluginsPath);
+    const relayPluginStateStats = fs.statSync(relayPluginStatePath);
+    const switchyardDeploymentStats = fs.statSync(switchyardDeploymentPath);
+
+    expect(config.model.default).toBe("switchyard");
+    expect(envFile).toContain(`${HERMES_RELAY_PLUGINS_ENV}=${HERMES_RELAY_PLUGINS_FILE}\n`);
+    expect(relayPluginsStats.size).toBeGreaterThan(0);
+    expect(relayPluginStateStats.size).toBeGreaterThan(0);
+    expect(switchyardDeploymentStats.size).toBeGreaterThan(0);
+    expect(relayPluginsStats.mode & 0o777).toBe(0o600);
+    expect(relayPluginStateStats.mode & 0o777).toBe(0o600);
+    expect(switchyardDeploymentStats.mode & 0o777).toBe(0o600);
+  });
+
+  it("removes stale Switchyard staging artifacts when routing is disabled (#13862)", () => {
+    const hermesDir = path.join(tmpDir, ".hermes");
+    const relayPluginsPath = path.join(hermesDir, HERMES_RELAY_PLUGINS_STAGING_FILE);
+    const relayPluginStatePath = path.join(hermesDir, HERMES_RELAY_PLUGIN_STATE_STAGING_FILE);
+    const switchyardDeploymentPath = path.join(
+      hermesDir,
+      HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+    );
+    fs.mkdirSync(hermesDir, { recursive: true });
+    fs.writeFileSync(relayPluginsPath, "stale relay activation");
+    fs.writeFileSync(relayPluginStatePath, "stale relay state");
+    fs.writeFileSync(switchyardDeploymentPath, "stale deployment");
+
+    generateBaseConfig();
+
+    expect(fs.existsSync(relayPluginsPath)).toBe(false);
+    expect(fs.existsSync(relayPluginStatePath)).toBe(false);
+    expect(fs.existsSync(switchyardDeploymentPath)).toBe(false);
   });
 
   it("restores direct tool exposure through the agent-neutral override", () => {

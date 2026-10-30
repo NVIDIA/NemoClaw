@@ -3,6 +3,10 @@
 
 import { Buffer } from "node:buffer";
 import { hasProviderlessInferenceEnvironment } from "../../../src/lib/providerless-inference.ts";
+import {
+  type HermesSwitchyardRoutingIntent,
+  readHermesSwitchyardRoutingEnvironment,
+} from "../../../src/lib/hermes-switchyard-routing.ts";
 
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 import { readToolDisclosureEnv } from "../../../src/lib/tool-disclosure.ts";
@@ -24,6 +28,7 @@ export type HermesBuildSettings = {
   toolDisclosure: "progressive" | "direct";
   webSearchProvider: HermesWebSearchProvider | null;
   managedImageCapabilityUnion: boolean;
+  switchyardRouting: HermesSwitchyardRoutingIntent | null;
   messagingCredentialPlaceholders: Array<{
     envKey: string;
     placeholder: string;
@@ -37,7 +42,13 @@ export type HermesBuildSettings = {
 /** Read and validate the environment consumed by the Hermes config generator. */
 export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSettings {
   const providerless = hasProviderlessInferenceEnvironment(env);
-  const model = providerless ? null : readRequiredEnv(env, "NEMOCLAW_MODEL");
+  const switchyardRouting = readHermesSwitchyardRoutingEnvironment(env);
+  if (providerless && switchyardRouting) {
+    throw new Error("Hermes Switchyard routing requires configured inference providers");
+  }
+  const model = providerless
+    ? null
+    : (switchyardRouting?.routeId ?? readRequiredEnv(env, "NEMOCLAW_MODEL"));
   const baseUrl = providerless ? "" : readRequiredEnv(env, "NEMOCLAW_INFERENCE_BASE_URL");
 
   return {
@@ -57,6 +68,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
       env,
       "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
     ),
+    switchyardRouting,
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",

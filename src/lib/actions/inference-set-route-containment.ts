@@ -16,6 +16,7 @@ import {
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../inference/ollama/contract";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { decodeManagedStartupProfile } from "../onboard/managed-startup/profile";
 import {
   isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl,
   isLoopbackNoAuthCompatibleEndpointUrl,
@@ -80,6 +81,34 @@ export interface InferenceSetProviderBinding {
 
 export interface HttpsPinProviderBinding extends InferenceSetProviderBinding {
   routeId: string;
+}
+
+/** Keep a managed Switchyard route active until onboarding performs an explicit transition. */
+export function assertHermesSwitchyardInferenceSetAvailable(
+  entry: SandboxEntry,
+  agentName: string,
+): void {
+  if (agentName !== "hermes" || entry.workload?.kind !== "managed-image") return;
+  let profile: ReturnType<typeof decodeManagedStartupProfile>;
+  try {
+    profile = decodeManagedStartupProfile(entry.workload.encodedProfile);
+  } catch {
+    throw new InferenceSetError(
+      `Cannot verify the managed startup profile for Hermes sandbox '${entry.name}'. Rebuild the sandbox before changing inference.`,
+      2,
+    );
+  }
+  if (
+    profile.agentConfig.agent === "hermes" &&
+    profile.agentConfig.switchyardRouting !== null &&
+    profile.agentConfig.switchyardRouting !== undefined
+  ) {
+    throw new InferenceSetError(
+      `Hermes adaptive Switchyard routing is enabled for sandbox '${entry.name}'. ` +
+        `inference set cannot replace its routed model. Re-onboard without --switchyard-config to use a single model.`,
+      2,
+    );
+  }
 }
 
 /** OpenShell's host verifier cannot resolve routes exposed only on its sandbox bridge. */

@@ -436,6 +436,29 @@ describe("managed workload onboard orchestration", () => {
     expect(ensurePreparedProfile).toHaveBeenCalledExactlyOnceWith(workload);
   });
 
+  it("rejects a legacy workload after Switchyard routing selects the managed image (#13862)", async () => {
+    const workload = {
+      source: {
+        kind: "legacy-dockerfile",
+        dockerfilePath: "/workspace/agents/hermes/Dockerfile",
+        reason: "runtime-unsupported",
+      },
+      release: "v0.0.0",
+      fallbackDiagnostic: null,
+    } as never;
+    const ensurePreparedProfile = vi.fn();
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => workload),
+      ensurePreparedProfile,
+    } as never;
+
+    await expect(prepareSandboxWorkloadForPortableLifecycle(runtime, false, true)).rejects.toThrow(
+      "Hermes Switchyard routing requires the managed Hermes image.",
+    );
+    expect(ensurePreparedProfile).not.toHaveBeenCalled();
+  });
+
   it("rejects an external image for Portable onboarding (#11932)", async () => {
     const workload = {
       source: {

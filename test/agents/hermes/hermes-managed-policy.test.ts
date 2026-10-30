@@ -43,6 +43,7 @@ const SETTINGS: HermesBuildSettings = {
   contextWindow: 128_000,
   toolDisclosure: "progressive",
   webSearchProvider: "tavily",
+  switchyardRouting: null,
   messagingCredentialPlaceholders: [
     {
       envKey: "DISCORD_BOT_TOKEN",

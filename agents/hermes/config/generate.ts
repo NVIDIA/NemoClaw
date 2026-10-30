@@ -9,6 +9,7 @@ import {
 } from "./managed-policy.ts";
 import { discoverModelSpecificSetups } from "./model-specific-setup.ts";
 import { type WrittenHermesConfig, writeHermesConfigFiles } from "./write-config.ts";
+import { serializeHermesSwitchyardRouting } from "../../../src/lib/hermes-switchyard-routing.ts";
 
 export type GenerateHermesConfigOptions = {
   env: NodeJS.ProcessEnv;
@@ -33,7 +34,7 @@ export function generateHermesConfig({
   log = console.log,
 }: GenerateHermesConfigOptions): GeneratedHermesConfig {
   const settings = readHermesBuildSettings(env);
-  if (settings.model !== null)
+  if (settings.model !== null && settings.switchyardRouting === null)
     discoverModelSpecificSetups(
       "hermes",
       {
@@ -49,7 +50,10 @@ export function generateHermesConfig({
   const config = policy.config;
   const envLines = policy.env_lines;
   finalizeHermesPlatformToolsets(config, settings);
-  const written = writeHermesConfigFiles(config, envLines, policy, homeDir);
+  const switchyardFiles = settings.switchyardRouting
+    ? serializeHermesSwitchyardRouting(settings.switchyardRouting)
+    : null;
+  const written = writeHermesConfigFiles(config, envLines, policy, switchyardFiles, homeDir);
 
   log(
     settings.model === null
@@ -58,6 +62,15 @@ export function generateHermesConfig({
   );
   log(`[config] Wrote ${written.envPath} (${written.envEntryCount} entries)`);
   log(`[config] Wrote ${written.policyPath} (schema=${policy.schema_version})`);
+  if (
+    written.relayPluginsPath &&
+    written.relayPluginStatePath &&
+    written.switchyardDeploymentPath
+  ) {
+    log(`[config] Wrote ${written.relayPluginsPath} (Relay plugin activation)`);
+    log(`[config] Wrote ${written.relayPluginStatePath} (Relay enabled state)`);
+    log(`[config] Wrote ${written.switchyardDeploymentPath} (adaptive route)`);
+  }
 
   return { settings, config, envLines, policy, written };
 }

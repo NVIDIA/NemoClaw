@@ -6,6 +6,8 @@ import {
   managedSandboxFeatureHasDrift,
 } from "./managed-sandbox-feature";
 
+export { isOpenclawAgent } from "./openclaw-otel-policy-presets";
+
 export const DCODE_AGENT_NAME = "langchain-deepagents-code";
 export const OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET = "observability-otlp-local";
 export const DCODE_ONLY_POLICY_PRESETS = new Set<string>([OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET]);

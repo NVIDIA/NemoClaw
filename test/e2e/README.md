@@ -8,8 +8,11 @@ Direct E2E coverage runs through Vitest.
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
-native loading and cleanup on the image's architecture. It does not install routing
-configuration or qualify provider routing. `test/agents/hermes/hermes-switchyard-package.test.ts`
+native loading and cleanup on the image's architecture. The isolated process loads the
+production-generated adaptive deployment with local upstream fixtures. It sends one request
+through the `switchyard` route and requires the classifier to select the efficient target.
+The probe does not call external providers or change the supervised gateway.
+`test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
 The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
 amd64 and arm64 runners against each job's built image. Both the PR build and publication
