@@ -15,6 +15,7 @@ import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ss
 import {
   sandboxDeleteAbsentMessage,
   sandboxDeleteFailureMessage,
+  sandboxCleanupReasonMessage,
 } from "../../domain/uninstall/messaging";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
@@ -164,6 +165,7 @@ export async function deleteSelectedGatewaySandbox(
   }
   if (result.kind === "failed" && !result.ambiguous) {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
+    runtime.warn(sandboxCleanupReasonMessage(result));
     return false;
   }
   const observer = createUninstallSandboxObserver(runtime.run, runtime.env);
@@ -195,11 +197,14 @@ export async function deleteAllSelectedGatewaySandboxes(
     { target: { kind: "selected" }, runtimeSelection },
   );
   if (result.kind !== "accepted") {
+    const invalidRequest =
+      result.error.kind === "command" && result.error.reason === "invalid_request";
     runtime.warn(
-      result.error.kind === "command" && result.error.reason === "invalid_request"
+      invalidRequest
         ? "OpenShell rejected the selected-gateway sandbox cleanup request."
         : "OpenShell sandbox cleanup was not accepted; preserving its state for retry.",
     );
+    if (!invalidRequest) runtime.warn(sandboxCleanupReasonMessage(result));
     return false;
   }
 
