@@ -45,13 +45,13 @@ gh() {{
     api\ repos/example/repo/collaborators/*/permission*)
       if [ "$scenario" = permission_failure ]; then return 42; fi
       case "$2" in
-        */maintainer/permission) identity='{{id: 9, permissions: {{maintain: true}}}}' ;;
-        */admin/permission) identity='{{id: 10, permissions: {{admin: true}}}}' ;;
-        */writer/permission) identity='{{id: 11, permissions: {{push: true}}}}' ;;
-        */triage/permission) identity='{{id: 12, permissions: {{triage: true}}}}' ;;
-        *) identity='{{id: 8, permissions: {{pull: true}}}}' ;;
+        */maintainer/permission) identity='{{role_name: "maintain", user: {{id: 9}}}}' ;;
+        */admin/permission) identity='{{role_name: "admin", user: {{id: 10}}}}' ;;
+        */writer/permission) identity='{{role_name: "write", user: {{id: 11}}}}' ;;
+        */triage/permission) identity='{{role_name: "triage", user: {{id: 12}}}}' ;;
+        *) identity='{{role_name: "read", user: {{id: 8}}}}' ;;
       esac
-      jq -n "{{user: $identity}}" | jq -r "${{@: -1}}" ;;
+      jq -n "$identity" | jq -r "${{@: -1}}" ;;
     *) return 43 ;;
   esac
 }}
