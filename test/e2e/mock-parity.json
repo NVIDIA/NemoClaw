@@ -271,7 +271,8 @@
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/security/admin-approval-helper.test.ts"
+        "test/security/admin-approval-helper.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {
@@ -558,6 +559,7 @@
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/install/install-npm-private-prefix.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts"
       ],
       "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"]
@@ -704,7 +706,8 @@
         "test/e2e/support/inference-adapter.test.ts",
         "test/e2e/support/security-posture.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts"
+        "test/helpers/e2e-answer-assertions.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {

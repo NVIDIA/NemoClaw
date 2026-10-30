@@ -2813,6 +2813,77 @@ try {
 ' "$source_path" "$destination_path" "$expected_identity"
 }
 
+user_local_executable_directory_safe() {
+  local current="$1" uid owner mode metadata mode_value
+  UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+  [[ "$current" == /* && "$current" != */../* && "$current" != */.. &&
+    "$current" != */./* && "$current" != */. ]] || return 1
+  uid="$(id -u)" || return 1
+  while :; do
+    UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+    [[ ! -L "$current" ]] || return 1
+    if [[ -e "$current" ]]; then
+      [[ -d "$current" ]] || return 1
+      if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
+        :
+      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
+        :
+      else
+        return 1
+      fi
+      read -r owner mode <<<"$metadata"
+      [[ "$owner" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      mode_value=$((8#$mode))
+      [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
+      if ((mode_value & 022)); then
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+      fi
+    fi
+    [[ "$current" != / ]] || return 0
+    current="${current%/*}"
+    [[ -n "$current" ]] || current=/
+  done
+}
+
+assert_npm_executable_prefix_safe() {
+  local npm_prefix="${1:-}"
+  [[ -n "$npm_prefix" ]] || error "Could not resolve the active npm executable directory."
+  local directory existing_parent parent_mode
+  if ! user_local_executable_directory_safe "$npm_prefix"; then
+    error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+  if [[ ! -e "$npm_prefix" && ! -L "$npm_prefix" ]]; then
+    existing_parent="$npm_prefix"
+    while [[ ! -e "$existing_parent" && ! -L "$existing_parent" ]]; do
+      existing_parent="${existing_parent%/*}"
+      [[ -n "$existing_parent" ]] || existing_parent=/
+    done
+    if parent_mode="$(stat -c '%a' -- "$existing_parent" 2>/dev/null)"; then
+      :
+    elif parent_mode="$(stat -f '%Lp' "$existing_parent" 2>/dev/null)"; then
+      :
+    else
+      error "Could not inspect npm executable directory $existing_parent."
+    fi
+    [[ "$parent_mode" =~ ^[0-7]{3,4}$ ]] || error "Could not inspect npm executable directory $existing_parent."
+    if (((8#$parent_mode) & 022)); then
+      error "Unsafe npm executable directory $npm_prefix. Create it under a private parent before linking the CLI."
+    fi
+  fi
+  for directory in "$npm_prefix/bin" "$npm_prefix/lib" "$npm_prefix/lib/node_modules"; do
+    if ! user_local_executable_directory_safe "$directory"; then
+      error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+    fi
+  done
+}
+
+assert_user_local_npm_prefix_safe() {
+  local npm_prefix="${1:-}"
+  case "$npm_prefix" in
+    "$HOME" | "$HOME/"*) assert_npm_executable_prefix_safe "$npm_prefix" ;;
+  esac
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
@@ -2838,6 +2909,10 @@ ensure_cli_shim() {
   if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
     return 1
   fi
+  assert_npm_executable_prefix_safe "${npm_bin%/bin}"
+  if ! user_local_executable_directory_safe "$(dirname "$NEMOCLAW_SHIM_DIR")"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   node_dir="$(dirname "$node_path")"
 
   # If npm placed the binary at the same path as the shim target (e.g. when
@@ -2848,6 +2923,10 @@ ensure_cli_shim() {
     refresh_path
     ensure_local_bin_in_profile
     return 0
+  fi
+
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
   fi
 
   assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"
@@ -2882,7 +2961,11 @@ EOF
     return 0
   fi
 
-  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  # The shim parent must not become group-writable under a permissive umask.
+  (umask g-w,o-w && mkdir -p "$NEMOCLAW_SHIM_DIR")
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
     || error "Could not create a temporary shim beside $shim_path."
   _cleanup_files+=("$temp_shim")
@@ -3118,13 +3201,17 @@ fix_npm_permissions() {
   if [[ -z "$npm_prefix" ]]; then
     return 0
   fi
+  assert_user_local_npm_prefix_safe "$npm_prefix"
 
   if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]]; then
     return 0
   fi
 
   info "npm global prefix '${npm_prefix}' is not writable — configuring user-local installs"
-  mkdir -p "$HOME/.npm-global"
+  assert_user_local_npm_prefix_safe "$HOME/.npm-global"
+  (umask g-w,o-w && mkdir -p "$HOME/.npm-global") \
+    || error "Could not create the user-local npm directory $HOME/.npm-global."
+  assert_user_local_npm_prefix_safe "$HOME/.npm-global"
   npm config set prefix "$HOME/.npm-global"
 
   # shellcheck disable=SC2016
@@ -3384,6 +3471,17 @@ finish_nemoclaw_install() {
   ensure_nemoclaw_shim || true
 }
 
+link_nemoclaw_cli() {
+  local source_root="$1" npm_prefix
+  npm_prefix="$(cd "$source_root" && npm config get prefix 2>/dev/null || true)"
+  assert_npm_executable_prefix_safe "$npm_prefix"
+  # shellcheck disable=SC2016  # $1 expands in the child shell.
+  spin "Linking ${_CLI_DISPLAY} CLI" bash -c \
+    'umask g-w,o-w; cd "$1" && npm link --ignore-scripts' _ "$source_root"
+  npm_prefix="$(cd "$source_root" && npm config get prefix 2>/dev/null || true)"
+  assert_npm_executable_prefix_safe "$npm_prefix"
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
@@ -3410,7 +3508,7 @@ install_nemoclaw() {
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link --ignore-scripts"
+    link_nemoclaw_cli "$NEMOCLAW_SOURCE_ROOT"
 
     _NEMOCLAW_CLI_INSTALL_MODE=source
   else
@@ -3457,7 +3555,7 @@ install_nemoclaw() {
       spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check"
       spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
       spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link --ignore-scripts"
+      link_nemoclaw_cli "$nemoclaw_src"
       restore_managed_source_lockfile "$nemoclaw_src" \
         || warn "Could not restore package-lock.json in ${nemoclaw_src} — the next install re-clones that checkout instead of reusing it."
     fi

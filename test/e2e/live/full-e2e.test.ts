@@ -1095,6 +1095,7 @@ test(
           cwd: REPO_ROOT,
           env: env({
             ...hosted.env,
+            NPM_CONFIG_PREFIX: path.join(os.homedir(), ".npm-global"),
             NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
             ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
           }),
