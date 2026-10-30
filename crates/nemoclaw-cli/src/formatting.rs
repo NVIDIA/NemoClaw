@@ -498,9 +498,79 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
     }
+    if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
+        output.push_str(&interface_access(result));
+    }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
     }
+    output
+}
+
+/// How to reach each enabled interface: the commands a person runs, under the
+/// gateway and workspace selection that the interface guide describes. Only
+/// the person's own retrieval command discloses a token.
+fn interface_access(result: &OperationResult) -> String {
+    use nemoclaw_sdk::SignIn;
+    let mut output = String::from("\nAgent interfaces:\n");
+    if let Some(connection) = &result.connection {
+        output.push_str("  In each terminal, select this deployment's gateway and workspace:\n");
+        let endpoint = terminal_text(&connection.gateway_endpoint);
+        if connection.plaintext_loopback() {
+            output.push_str(&format!(
+                "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
+            ));
+        } else {
+            output.push_str(&format!(
+                "    unset OPENSHELL_GATEWAY_ENDPOINT\n    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for {endpoint}\n"
+            ));
+        }
+        output.push_str(&format!(
+            "    export OPENSHELL_WORKSPACE={}\n",
+            terminal_text(&connection.workspace)
+        ));
+    }
+    for access in &result.interfaces {
+        let sandbox = terminal_text(&access.sandbox);
+        let interface = terminal_text(&access.interface);
+        match access.port {
+            Some(port) => {
+                output.push_str(&format!("  {sandbox}/{interface} on port {port}\n"));
+                output.push_str(&format!(
+                    "    Forward:  openshell forward service {sandbox} --target-port {port} --local 127.0.0.1:{port}\n"
+                ));
+            }
+            None => output.push_str(&format!("  {sandbox}/{interface}\n")),
+        }
+        let token = matches!(
+            access.sign_in,
+            SignIn::TokenInUrlFragment | SignIn::BearerToken
+        );
+        match &access.token_path {
+            Some(path) => output.push_str(&format!(
+                "    Token:    openshell sandbox exec -n {sandbox} --no-tty -- cat {}\n",
+                terminal_text(path)
+            )),
+            None if token => output.push_str(
+                "    Token:    unavailable; the deployment state records no runtime ID for this agent\n",
+            ),
+            None => {}
+        }
+        let port = access
+            .port
+            .map_or("PORT".to_owned(), |port| port.to_string());
+        output.push_str(&match access.sign_in {
+            SignIn::TokenInUrlFragment => format!(
+                "    Sign in:  open http://127.0.0.1:{port}/#token=TOKEN, replacing TOKEN with the token\n"
+            ),
+            SignIn::BearerToken => "    Sign in:  send the header Authorization: Bearer TOKEN, replacing TOKEN with the token\n".into(),
+            SignIn::None => "    Sign in:  none; anyone who can reach the forward can use it\n".into(),
+            SignIn::AdapterDocumented => "    Sign in:  see the adapter's documentation\n".into(),
+        });
+    }
+    output.push_str(
+        "  The agent's own tools can read these tokens and reach these ports; see docs/interfaces.md.\n",
+    );
     output
 }
 
@@ -692,6 +762,88 @@ mod tests {
                 serde_json::from_str(&render_error(&error, OutputFormat::Json, &context)).unwrap();
             assert_eq!(failed["warnings"], json!([message]));
         }
+    }
+
+    fn interfaces() -> Value {
+        json!([
+            {"sandbox": "assistant", "interface": "dashboard", "port": 18789,
+             "tokenPath": "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
+             "signIn": "token_in_url_fragment"},
+            {"sandbox": "reviewer", "interface": "api", "port": 8642,
+             "tokenPath": "/sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
+             "signIn": "bearer_token"},
+            {"sandbox": "reviewer", "interface": "dashboard", "port": 9119, "signIn": "none"}
+        ])
+    }
+
+    /// After apply, each enabled interface gets its forward, the command that
+    /// reads its token, and its sign-in, under this deployment's gateway and
+    /// workspace selection. The output names where the token is, never a token.
+    #[test]
+    fn apply_output_tells_how_to_reach_each_interface() {
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        for expected in [
+            "unset OPENSHELL_GATEWAY",
+            "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
+            "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
+            "Forward: openshell forward service assistant --target-port 18789 --local 127.0.0.1:18789",
+            "Token: openshell sandbox exec -n assistant --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
+            "Sign in: open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token",
+            "Forward: openshell forward service reviewer --target-port 8642 --local 127.0.0.1:8642",
+            "Token: openshell sandbox exec -n reviewer --no-tty -- cat /sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
+            "Sign in: send the header Authorization: Bearer TOKEN, replacing TOKEN with the token",
+            "Forward: openshell forward service reviewer --target-port 9119 --local 127.0.0.1:9119",
+            "Sign in: none; anyone who can reach the forward can use it",
+        ] {
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.split_whitespace().collect::<Vec<_>>().join(" ") == expected),
+                "missing {expected:?}:\n{text}"
+            );
+        }
+        // Only the two interfaces with a token get a command that reads one.
+        assert_eq!(text.matches("sandbox exec").count(), 2, "{text}");
+        let machine: Value = serde_json::from_str(&render(
+            &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
+            result,
+        ))
+        .unwrap();
+        assert_eq!(machine["interfaces"], interfaces());
+    }
+
+    /// A gateway the client can't reach as plaintext loopback is selected by
+    /// its OpenShell profile, which NemoClaw doesn't know.
+    #[test]
+    fn interface_access_selects_a_remote_gateway_by_profile() {
+        let connection = json!({"gatewayEndpoint": "https://gateway.example:443", "workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces()});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
+        assert!(
+            text.contains("unset OPENSHELL_GATEWAY_ENDPOINT\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME"),
+            "{text}"
+        );
+        assert!(text.contains("https://gateway.example:443"), "{text}");
+        assert!(
+            !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn results_without_interfaces_show_no_interface_access() {
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
+        assert!(!text.contains("openshell forward"), "{text}");
+        assert!(!text.contains("OPENSHELL_WORKSPACE"), "{text}");
     }
 
     #[test]

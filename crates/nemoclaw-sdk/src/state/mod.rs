@@ -325,6 +325,9 @@ pub(crate) struct StateBinding {
     pub authentication_profile: String,
     #[serde(default, deserialize_with = "nullable_list")]
     pub environment: Vec<String>,
+    /// The ID Fabric gave an agent's running runtime.
+    #[serde(default, deserialize_with = "nullable")]
+    pub runtime_id: String,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
 }
@@ -579,6 +582,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.context = attributes.context;
                 binding.authentication_profile = attributes.authentication_profile;
                 binding.environment = attributes.environment;
+                binding.runtime_id = attributes.runtime_id;
             }
         }
     }

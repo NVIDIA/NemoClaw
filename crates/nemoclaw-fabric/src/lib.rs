@@ -7,6 +7,7 @@ pub mod agent;
 pub mod capabilities;
 pub mod catalog;
 pub mod image_metadata;
+pub mod interfaces;
 #[cfg(feature = "client")]
 mod observe;
 

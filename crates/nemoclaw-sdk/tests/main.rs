@@ -86,6 +86,8 @@ mod inference_references;
 mod inference_settings;
 #[path = "inline_recipe.rs"]
 mod inline_recipe;
+#[path = "interface_access.rs"]
+mod interface_access;
 #[path = "interfaces.rs"]
 mod interfaces;
 #[path = "json_schema.rs"]

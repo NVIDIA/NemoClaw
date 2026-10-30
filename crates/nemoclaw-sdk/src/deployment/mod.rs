@@ -32,6 +32,7 @@ use std::{
     sync::Arc,
 };
 
+pub use nemoclaw_fabric::interfaces::{InterfaceAccess, SignIn};
 pub use timing::StepOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,6 +96,21 @@ pub struct DeploymentConnection {
     pub gateway_endpoint: String,
     pub workspace: String,
 }
+impl DeploymentConnection {
+    /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
+    /// a plaintext loopback endpoint. Others need an authenticated profile.
+    pub fn plaintext_loopback(&self) -> bool {
+        url::Url::parse(&self.gateway_endpoint).is_ok_and(|url| {
+            url.scheme() == "http"
+                && match url.host() {
+                    Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                    None => false,
+                }
+        })
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationResult {
@@ -114,6 +130,9 @@ pub struct OperationResult {
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "DiscoveryReport::is_empty")]
     pub discovery: DiscoveryReport,
+    /// After apply, how to reach each enabled agent interface; never a token.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interfaces: Vec<InterfaceAccess>,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -126,6 +145,7 @@ impl OperationResult {
             unverified: Vec::new(),
             retained: Vec::new(),
             discovery: DiscoveryReport::default(),
+            interfaces: Vec::new(),
         }
     }
 }
@@ -357,6 +377,7 @@ impl Deployment {
         record.mark_succeeded();
         store.save(&record)?;
         result.outcome = Outcome::Succeeded;
+        result.interfaces = interface_access(&document, &store, &bundle, cancel).await?;
         Ok(result)
     }
     async fn state_bindings(
@@ -395,6 +416,44 @@ impl Deployment {
         self.teardown_deployment(cancel, preview).await
     }
 }
+/// How to reach each sandbox's enabled interfaces, with the runtime IDs the
+/// applied state records. A deployment without interfaces reads no state.
+async fn interface_access(
+    document: &Document,
+    store: &Store,
+    bundle: &Bundle,
+    cancel: &CancellationToken,
+) -> Result<Vec<InterfaceAccess>, Error> {
+    let mut configurations = Vec::new();
+    for sandbox in document.sandboxes() {
+        let configuration = crate::fabric_config::for_sandbox(document, sandbox)?;
+        if configuration
+            .pointer("/harness/settings/interfaces")
+            .and_then(Value::as_object)
+            .is_some_and(|interfaces| !interfaces.is_empty())
+        {
+            configurations.push((sandbox.name, configuration));
+        }
+    }
+    if configurations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let bindings = store.bindings(&bundle.tofu(), cancel).await?;
+    Ok(configurations
+        .into_iter()
+        .flat_map(|(sandbox, configuration)| {
+            let runtime_id = bindings
+                .get(&format!(
+                    "{}.{sandbox}",
+                    nemoclaw_fabric::agent::RESOURCE_TYPE
+                ))
+                .map(|binding| binding.runtime_id.as_str())
+                .filter(|id| !id.is_empty());
+            nemoclaw_fabric::interfaces::access(sandbox, &configuration, runtime_id)
+        })
+        .collect())
+}
+
 /// The rows a plan may establish. Managed processes keep their bound
 /// specifications; every saved binding must belong to the deployment.
 fn expected_bindings(

@@ -290,6 +290,7 @@ mod live {
             unverified: vec![],
             retained: vec![],
             discovery: Default::default(),
+            interfaces: Vec::new(),
         }
     }
 
@@ -378,6 +379,7 @@ mod live {
                 unverified: vec![],
                 retained: retained.clone(),
                 discovery: Default::default(),
+                interfaces: Vec::new(),
             }
         );
         assert_eq!(
@@ -391,6 +393,7 @@ mod live {
                 unverified: vec![],
                 retained: retained.clone(),
                 discovery: Default::default(),
+                interfaces: Vec::new(),
             }
         );
         retained
