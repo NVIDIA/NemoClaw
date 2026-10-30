@@ -28,8 +28,8 @@ describe("destroy confirmation", () => {
     await expect(confirmSandboxDestroy("test-sb", { yes: true })).resolves.toBe(true);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH session detected (1 connection, PID 4242)");
-    expect(output).toContain("terminate the active session with a Broken pipe error");
+    expect(output).toContain("Active session detected (1 connection, PID 4242)");
+    expect(output).toContain("terminate the active session; running commands will be interrupted");
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -59,8 +59,8 @@ describe("destroy confirmation", () => {
     await expect(confirmSandboxDestroy("test-sb", { force: true })).resolves.toBe(true);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH sessions detected (2 connections, PIDs 4242, 4243)");
-    expect(output).toContain("terminate all active sessions with a Broken pipe error");
+    expect(output).toContain("Active sessions detected (2 connections, PIDs 4242, 4243)");
+    expect(output).toContain("terminate all active sessions; running commands will be interrupted");
   });
 
   it("stays silent on a pre-confirmed destroy with no active sessions (#9855)", async () => {
@@ -84,8 +84,8 @@ describe("destroy confirmation", () => {
     await expect(confirmSandboxDestroy("test-sb", {})).resolves.toBe(false);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH session detected (1 connection, PID 4242)");
-    expect(output.indexOf("Active SSH session detected")).toBeLessThan(
+    expect(output).toContain("Active session detected (1 connection, PID 4242)");
+    expect(output.indexOf("Active session detected")).toBeLessThan(
       output.indexOf("This cannot be undone."),
     );
   });
@@ -96,6 +96,6 @@ describe("destroy confirmation", () => {
 
     await expect(confirmSandboxDestroy("test-sb", { yes: true })).resolves.toBe(true);
 
-    expect(log.mock.calls.flat().join("\n")).not.toContain("Active SSH");
+    expect(log.mock.calls.flat().join("\n")).not.toContain("Active session");
   });
 });

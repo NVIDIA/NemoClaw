@@ -288,6 +288,10 @@ export function resolveSandboxStatusDcodeAutoApprovalMode(
   return normalizeDcodeAutoApprovalMode(sandbox.dcodeAutoApprovalMode);
 }
 
+export function resolveSandboxStatusSessionGatewayName(sandbox: registry.SandboxEntry): string {
+  return resolveSandboxGatewayName(sandbox);
+}
+
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
   let agentDisplayName = agentName === "openclaw" ? "OpenClaw" : agentName;
   let agentRuntime: SandboxStatusAgentInfo["agentRuntime"] = "gateway";

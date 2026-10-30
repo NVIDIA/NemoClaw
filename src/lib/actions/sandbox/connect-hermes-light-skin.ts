@@ -18,19 +18,23 @@ function warnHermesLightSkinFailure(action: string, error: unknown): void {
   console.error(`  ${YW}⚠${R} Could not ${action} retired Hermes light terminal skin${detail}`);
 }
 
-function removeHermesLightSkinFile(sandboxName: string): boolean {
+function removeHermesLightSkinFile(sandboxName: string, gatewayName?: string): boolean {
   const script = [
     "set -eu",
     'hermes_home="${HERMES_HOME:-/sandbox/.hermes}"',
     'skin_dir="$hermes_home/skins"',
     'rm -f "$skin_dir/nemoclaw-light.yaml"',
   ].join("\n");
-  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"], {
-    ignoreError: true,
-    input: script,
-    stdio: ["pipe", "ignore", "ignore"],
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+  const gatewayArgs = gatewayName === undefined ? [] : ["-g", gatewayName];
+  const result = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, ...gatewayArgs, "--", "sh", "-s"],
+    {
+      ignoreError: true,
+      input: script,
+      stdio: ["pipe", "ignore", "ignore"],
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  );
   if (result.status === 0 && !result.error && !result.signal) return true;
   warnHermesLightSkinFailure("remove", result.error ?? `exit ${result.status ?? result.signal}`);
   return false;
@@ -41,6 +45,7 @@ export function prepareHermesLightTerminalSkin(
   sandboxName: string,
   agent: ConnectAgent,
   _env: NodeJS.ProcessEnv,
+  gatewayName?: string,
 ): void {
   if (agent?.name !== "hermes") return;
 
@@ -63,5 +68,5 @@ export function prepareHermesLightTerminalSkin(
     warnHermesLightSkinFailure("update", error);
     return;
   }
-  removeHermesLightSkinFile(sandboxName);
+  removeHermesLightSkinFile(sandboxName, gatewayName);
 }

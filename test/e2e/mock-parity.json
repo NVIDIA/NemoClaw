@@ -593,9 +593,13 @@
         "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/openshell-sandbox-list.test.ts"
+        "test/e2e/support/openshell-sandbox-list.test.ts",
+        "test/e2e/support/onboard-interactive-pty.test.ts"
       ],
-      "liveSources": ["test/e2e/fixtures/openshell-sandbox-list.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/openshell-sandbox-list.ts",
+        "test/e2e/live/onboard-interactive-pty.ts"
+      ]
     },
     {
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",

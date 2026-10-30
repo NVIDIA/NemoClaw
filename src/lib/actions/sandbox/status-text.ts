@@ -25,6 +25,7 @@ import {
   isInferenceHealthFailing,
   normalizeSandboxStatusHostMounts,
   resolveSandboxStatusDcodeAutoApprovalMode,
+  resolveSandboxStatusSessionGatewayName,
   type SandboxStatusAgentInfo,
   type SandboxStatusRouteDrift,
   type SandboxStatusSnapshot,
@@ -219,15 +220,20 @@ function printAgentHarness(context: SandboxStatusTextContext): number | null {
   return printTerminalHarness(context);
 }
 
-function printActiveSessions(sandboxName: string): void {
+function printActiveSessions(sandboxName: string, sandbox: SandboxEntry): void {
   try {
     const openshell = resolveOpenshell();
     if (!openshell) return;
-    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(openshell));
+    const gatewayName = resolveSandboxStatusSessionGatewayName(sandbox);
+    const sessionResult = getActiveSandboxSessions(
+      sandboxName,
+      createSessionDeps(openshell),
+      gatewayName,
+    );
     if (!sessionResult.detected) return;
     const count = sessionResult.sessions.length;
     const sessions = count > 0 ? `${G}${count}${R}` : "none";
-    console.log(`    SSH sessions: ${sessions}`);
+    console.log(`    Active sessions: ${sessions}`);
   } catch {
     // Session detection is informational; an unavailable OpenShell client must
     // not suppress the primary sandbox and gateway health report.
@@ -356,7 +362,7 @@ export async function printSandboxDetails(
     `    Policies: ${livePolicies === null ? "unavailable" : livePolicies.join(", ") || "none"}`,
   );
   const agentExitCode = printAgentHarness(context);
-  printActiveSessions(sandboxName);
+  printActiveSessions(sandboxName, sb);
   await printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }
