@@ -256,14 +256,14 @@ describe("uninstall local model profile cleanup", () => {
       ],
       [JSON.stringify(["ps", "-a", "--format", "{{.Names}}"]), ok("nemoclaw-llama-cpp\n")],
       [
-        JSON.stringify(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]),
+        JSON.stringify(["ps", "-a", "--format", "{{.ID}}|{{.Image}}|{{.Names}}"]),
         ok(
           [
-            "id-head image nemoclaw-vllm",
-            "id-worker image nemoclaw-vllm-worker",
-            "id-cluster image nemoclaw-vllm-cluster-rank-0",
-            "id-llama image nemoclaw-llama-cpp",
-            "id-other image nemoclaw-helper",
+            "id-head|image|nemoclaw-vllm",
+            "id-worker|image|nemoclaw-vllm-worker",
+            "id-cluster|image|nemoclaw-vllm-cluster-rank-0",
+            "id-llama|image|nemoclaw-llama-cpp",
+            "id-other|image|nemoclaw-helper",
           ].join("\n"),
         ),
       ],

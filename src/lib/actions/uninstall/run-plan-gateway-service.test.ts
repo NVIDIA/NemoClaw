@@ -907,7 +907,7 @@ describe("uninstall OpenShell gateway user service", () => {
       ),
     ).toBe(recovery && dockerInstalled);
     expect(runDocker.mock.calls.map(([args]) => args)).toEqual(
-      dockerInstalled ? [["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], ["info"]] : [],
+      dockerInstalled ? [["ps", "-a", "--format", "{{.ID}}|{{.Image}}|{{.Names}}"], ["info"]] : [],
     );
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
@@ -958,7 +958,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "pgrep")).toBe(false);
     expect(kill).not.toHaveBeenCalled();
     expect(runDocker.mock.calls.map(([args]) => args)).toEqual([
-      ["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"],
+      ["ps", "-a", "--format", "{{.ID}}|{{.Image}}|{{.Names}}"],
     ]);
     expect(JSON.parse(fs.readFileSync(registryPath, "utf-8")).sandboxes).toEqual({});
 

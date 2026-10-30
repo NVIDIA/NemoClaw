@@ -140,7 +140,7 @@ async function failDockerCleanupOnce(
         },
         runDocker: (args) => {
           switch (args.join(" ")) {
-            case "ps -a --format {{.ID}} {{.Image}} {{.Names}}":
+            case "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}":
               return ok(inventory);
             case "volume inspect openshell-cluster-nemoclaw":
               return gatewayVolumePresent
@@ -192,7 +192,7 @@ async function failDockerCleanupOnce(
       selectedGatewayInventoryFailure = null;
     },
     addUnverifiedContainer: () => {
-      inventory = "unverified supervisor:test openshell-default--assistant-id\n";
+      inventory = "unverified|supervisor:test|openshell-default--assistant-id\n";
     },
   };
 }
