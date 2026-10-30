@@ -244,8 +244,8 @@ fn gateway_documents_parse_as_current_configuration() {
 
 /// The interface live test's document: OpenClaw's dashboard and Hermes's API
 /// server and dashboard, with a model endpoint on the gateway network's host
-/// address and a key the test supplies. Hermes's policy lets browser chat open
-/// a terminal.
+/// address and a key the test supplies. Both sandboxes take their image's
+/// default policy, which lets Hermes's browser chat open a terminal.
 #[cfg(feature = "sdk")]
 #[test]
 fn the_interfaces_document_enables_each_p0_interface() {
@@ -275,14 +275,11 @@ fn the_interfaces_document_enables_each_p0_interface() {
         sandboxes["hermes"]["harness"]["settings"]["interfaces"],
         serde_json::json!({"api": {"port": 8642}, "dashboard": {"port": 9119}})
     );
-    let writable =
-        sandboxes["hermes"]["network"]["policy"]["explicit"]["filesystem_policy"]["read_write"]
-            .as_array()
-            .unwrap();
-    for path in ["/dev/pts", "/sandbox"] {
-        assert!(
-            writable.iter().any(|granted| granted == path),
-            "{writable:?}"
+    for sandbox in ["claw", "hermes"] {
+        assert_eq!(
+            sandboxes[sandbox]["network"],
+            serde_json::json!({"tier": "isolated"}),
+            "{sandbox}"
         );
     }
 }

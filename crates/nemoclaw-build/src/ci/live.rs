@@ -123,13 +123,8 @@ pub struct InterfacesInputs<'a> {
 
 /// A managed Docker gateway with OpenClaw's dashboard and Hermes's API server
 /// and dashboard enabled. The model endpoint is the test's stand-in on the
-/// gateway network's host address, with a key the test supplies.
-///
-/// Hermes's browser chat runs its terminal UI in a pseudo-terminal, which the
-/// image's default filesystem policy doesn't allow, so the Hermes sandbox
-/// takes that policy with `/dev/pts` writable. OpenShell
-/// requires an explicit policy to name a network rule; the one here names a
-/// host nothing resolves.
+/// gateway network's host address, with a key the test supplies. Both
+/// sandboxes take their image's default policy.
 pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
     let InterfacesInputs {
         name,
@@ -144,18 +139,6 @@ pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
         .strip_suffix(".0/24")
         .map(|prefix| format!("{prefix}.1"))
         .expect("a /24 subnet");
-    let runtime: serde_json::Value =
-        serde_json::from_str(include_str!("../../../../image/fabric/runtime.json"))
-            .expect("the image runtime metadata is JSON");
-    let mut policy = runtime["policy"].clone();
-    if let Some(writable) = policy["filesystem_policy"]["read_write"].as_array_mut() {
-        writable.push("/dev/pts".into());
-    }
-    policy["network_policies"] = serde_json::json!({"unused": {
-        "name": "unused",
-        "endpoints": [{"host": "unused.example.test", "port": 443}],
-        "binaries": [{"path": "/opt/fabric/bin/python"}]
-    }});
     // JSON is a YAML flow mapping, so serializing cannot produce malformed YAML.
     format!(
         "apiVersion: nemoclaw.nvidia.com/v1alpha1
@@ -198,8 +181,7 @@ spec:
       image:
         ref: {hermes}
       network:
-        policy:
-          explicit: {policy}
+        tier: isolated
       harness:
         kind: nvidia.fabric.hermes
         settings: {{\"interfaces\": {{\"api\": {{\"port\": 8642}}, \"dashboard\": {{\"port\": 9119}}}}}}

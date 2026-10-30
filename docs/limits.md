@@ -54,7 +54,6 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
 | Deep Agents Code's terminal interface | [#14011](https://github.com/NVIDIA/NemoClaw/issues/14011) |
-| Hermes's browser chat needs read-write `/dev/pts` in the sandbox's filesystem policy, which the agent images' default policy doesn't grant; see [Hermes's browser chat](interfaces.md#hermess-browser-chat) | [#13969](https://github.com/NVIDIA/NemoClaw/issues/13969) |
 | Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) |
 | Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |

@@ -24,7 +24,8 @@ PROVENANCE = [{"source": "nemo-fabric-adapter-catalog"}]
 
 
 def read_adapters(path):
-    """Return the adapters a harness stage declared: their files and executables."""
+    """Return the adapters a harness stage declared: their files, executables, and
+    the paths their harness writes beyond the image's default policy."""
     if not path.exists():
         raise ValueError(f"{path} must declare the image's adapters")
     declared = json.loads(path.read_text())
@@ -34,7 +35,9 @@ def read_adapters(path):
         if (
             not adapter_id
             or not isinstance(entry, dict)
-            or not {"files", "binaries"} <= set(entry) <= {"files", "binaries", "descriptor"}
+            or not {"files", "binaries"}
+            <= set(entry)
+            <= {"files", "binaries", "descriptor", "read_write"}
         ):
             raise ValueError(f"{path} must give {adapter_id!r} its files and binaries")
         descriptor = entry.get("descriptor")
@@ -45,11 +48,12 @@ def read_adapters(path):
         ):
             raise ValueError(f"{path} must give {adapter_id!r} an absolute descriptor path")
         files, binaries = entry["files"], entry["binaries"]
-        if not isinstance(files, list) or not all(
-            isinstance(file, str) and file.startswith("/") and ".." not in file.split("/")
-            for file in files
-        ):
-            raise ValueError(f"{path} must list absolute paths for {adapter_id}")
+        for paths in (files, entry.get("read_write", [])):
+            if not isinstance(paths, list) or not all(
+                isinstance(file, str) and file.startswith("/") and ".." not in file.split("/")
+                for file in paths
+            ):
+                raise ValueError(f"{path} must list absolute paths for {adapter_id}")
         if not isinstance(binaries, list) or not all(
             isinstance(binary, str) and binary and "/" not in binary for binary in binaries
         ):
@@ -108,6 +112,14 @@ def installed(revision, source_sha256, *, adapters=ADAPTERS, runtime_manifest=RU
         {adapter_id: entry["binaries"] for adapter_id, entry in declared.items()},
         required=True,
     )
+    # A harness that writes outside the defaults, such as Hermes's browser chat
+    # opening pseudo-terminals, extends only its own image's default policy.
+    for entry in declared.values():
+        for path in entry.get("read_write", []):
+            filesystem = catalog["runtime"]["policy"].setdefault("filesystem_policy", {})
+            writable = filesystem.setdefault("read_write", [])
+            if path not in writable:
+                writable.append(path)
     files = {adapter_id: entry["files"] for adapter_id, entry in declared.items() if entry["files"]}
     if files:
         catalog["runtime_files"] = files

@@ -176,7 +176,9 @@ ENV HERMES_DISABLE_LAZY_INSTALLS=1
 # instead of building or installing their own, which the read-only, offline
 # sandbox would refuse.
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist HERMES_NODE=/usr/local/bin/node
-RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard"], "binaries": []}}' > /opt/nemoclaw/adapters.json
+# Browser chat runs Hermes's terminal UI in a pseudo-terminal, so this image's
+# default policy lets the agent open one; catalog.py adds read_write to it.
+RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard"], "binaries": [], "read_write": ["/dev/pts", "/dev/ptmx"]}}' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM common-wheels AS pi-build

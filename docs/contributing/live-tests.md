@@ -439,7 +439,7 @@ It checks:
 - No token appears in NemoClaw's output, its state directory, or the YAML, and destroy succeeds.
 
 It runs no model and needs no credentials; the stand-in's reply doesn't establish inference.
-Its document grants the Hermes sandbox read-write `/dev/pts`, which browser chat needs, through an explicit policy.
+Both sandboxes take their image's default policy; the test checks that the Hermes sandbox can open a pseudo-terminal, which browser chat needs, and the OpenClaw sandbox can't.
 
 Supply a verified bundle, the pinned OpenShell CLI, and an owned document like the one `cargo ci live-docker` writes: a fresh UID, free gateway port and subnet, the OpenClaw and Hermes images by digest, and an `openai` provider named `model` whose endpoint is the subnet's first address with a free port and whose credential is `NEMOCLAW_TEST_INTERFACES_MODEL_KEY`.
 The test sets that variable itself:

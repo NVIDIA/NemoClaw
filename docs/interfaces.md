@@ -164,44 +164,16 @@ Conversations in an interface aren't promised to share history with requests sen
 
 ### Hermes's Browser Chat
 
-Browser chat runs Hermes's terminal UI in a pseudo-terminal.
-Opening one needs read-write access to `/dev/pts`, which holds the `ptmx` device that `/dev/ptmx` links to, and the agent images' default filesystem policy doesn't grant it, so the chat fails with `out of pty devices`.
-Granting `/dev/ptmx` alone isn't enough.
-The API server and the rest of the dashboard work without it.
+Browser chat runs Hermes's terminal UI in a pseudo-terminal, which needs read-write access to `/dev/pts`, where the `ptmx` device that `/dev/ptmx` links to lives.
+The Hermes image's default filesystem policy grants read-write `/dev/pts` and `/dev/ptmx`, so a Hermes sandbox that omits `network` or declares `tier: isolated` can use browser chat.
+Other agent images' default policies grant neither.
 
-To use browser chat, give the Hermes sandbox an [explicit policy](sandbox-network.md#choose-a-policy) that copies the image's default filesystem and process settings, from `/opt/nemoclaw/runtime.json` in the image, and adds `/dev/pts` to `filesystem_policy.read_write`.
-For the bundled Hermes image:
+With those devices writable, every process in the Hermes sandbox, including the agent's own tools, can open pseudo-terminals.
+The image's catalog label lists the defaults under `runtime.policy.filesystem_policy`.
 
-```yaml
-sandboxes:
-  hermes:
-    network:
-      policy:
-        explicit:
-          version: 1
-          filesystem_policy:
-            include_workdir: false
-            read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
-            read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node, /dev/pts]
-          landlock:
-            compatibility: best_effort
-          process:
-            run_as_user: "10001"
-            run_as_group: "10001"
-          network_policies:
-            documentation:
-              name: documentation
-              endpoints:
-                - host: docs.example.com
-                  port: 443
-              binaries:
-                - path: /opt/fabric/bin/python
-```
-
-An explicit policy needs at least one rule in `network_policies`; replace the example rule with one your agent uses.
-NemoClaw still adds the agent's inference grants.
-Changing the policy replaces the sandbox.
-With `/dev/pts` writable, every process in the sandbox, including the agent's own tools, can open pseudo-terminals.
+An [explicit policy](sandbox-network.md#choose-a-policy) replaces the image's defaults.
+For browser chat, its `filesystem_policy.read_write` must list `/dev/pts`; `/dev/ptmx` alone isn't enough, and without `/dev/pts` the chat fails with `out of pty devices`.
+The API server and the rest of the dashboard work either way.
 
 ### Interface Failures
 

@@ -163,6 +163,18 @@ impl OpenShellCli {
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
+    /// Whether `ARGS` exits successfully in the sandbox.
+    fn succeeds(&self, sandbox: &str, args: &[&str]) -> bool {
+        self.command()
+            .args(["sandbox", "exec", "-n", sandbox, "--no-tty", "--"])
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    }
+
     /// The forward command apply reports, to a free local port.
     fn forward(&self, sandbox: &str, port: u16) -> Forward {
         let local = std::net::TcpListener::bind("127.0.0.1:0")
@@ -485,8 +497,20 @@ async fn openclaw_and_hermes_interfaces_work_through_forwards() {
         "the dashboard API answered without its session token"
     );
 
-    // Browser chat runs Hermes's terminal UI over a WebSocket; one message
-    // gets the model's reply through the forward.
+    // Browser chat runs Hermes's terminal UI in a pseudo-terminal. The Hermes
+    // image's default policy lets the agent open one; OpenClaw's doesn't.
+    let open_terminal = ["python3", "-c", "import pty; pty.openpty()"];
+    assert!(
+        cli.succeeds("hermes", &open_terminal),
+        "the Hermes image's default policy refuses a pseudo-terminal"
+    );
+    assert!(
+        !cli.succeeds("claw", &open_terminal),
+        "the OpenClaw image's default policy allows a pseudo-terminal"
+    );
+
+    // Browser chat runs over a WebSocket; one message gets the model's reply
+    // through the forward.
     let mut request = format!("ws://127.0.0.1:{}/api/pty?token={session}", console.local)
         .into_client_request()
         .unwrap();
