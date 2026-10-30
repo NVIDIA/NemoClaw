@@ -78,7 +78,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
     return JSON.stringify({
-      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", owned_by: "vllm", max_model_len: 65536 }],
     });
   }
   if (cmd.includes("docker images")) return "";
@@ -203,7 +203,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
     return JSON.stringify({
-      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", owned_by: "vllm", max_model_len: 65536 }],
     });
   }
   if (cmd.includes("docker images")) return "";
@@ -626,6 +626,7 @@ runner.runCapture = (command) => {
     return JSON.stringify({
       data: [{
         id: "muse-glimmer",
+        owned_by: "vllm",
         root: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
       }],
     });
@@ -711,6 +712,7 @@ runner.runCapture = (command) => {
     return JSON.stringify({
       data: [{
         id: "nemotron-ultra",
+        owned_by: "vllm",
         root: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
       }],
     });

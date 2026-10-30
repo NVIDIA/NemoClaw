@@ -53,6 +53,10 @@ Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up
 ## Use an Existing Server
 
 When vLLM is already running on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+NemoClaw treats an operator-run server as vLLM only when `/v1/models` reports at least one model with `owned_by: "vllm"`, which vLLM reports by default.
+A NemoClaw-managed vLLM container is detected through its recorded `/health` endpoint instead.
+For a llama.cpp server or another OpenAI-compatible server on that port, follow [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
+Local llama.cpp attaches only to an authenticated server on `127.0.0.1:8081`, as described in [Set Up llama.cpp](set-up-llama-cpp).
 On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to supply explicit standard-onboarding intent.
 
 Run onboarding.

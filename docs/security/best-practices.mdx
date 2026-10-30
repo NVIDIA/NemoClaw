@@ -384,6 +384,8 @@ If a required check fails after managed selection starts, onboarding stops befor
 Other Windows WSL Express installs also use WSL-local Ollama.
 Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration is enabled, `DOCKER_HOST` is unset, Docker uses the local `default` context, and Ollama has a loopback-only listener that is reachable from Docker and rejects unrecognized HTTP `Host` headers.
 An already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` appears in standard onboarding because selecting it is an explicit user action.
+NemoClaw treats an operator-run server as vLLM only when its `/v1/models` response reports a model with `owned_by: "vllm"`; use the OpenAI-compatible endpoint path for other servers on that port.
+A NemoClaw-managed vLLM container is detected through its recorded `/health` endpoint instead.
 Native N1x requires you to decline or disable Express or set `NEMOCLAW_PROVIDER=vllm` first.
 
 | Aspect | Detail |

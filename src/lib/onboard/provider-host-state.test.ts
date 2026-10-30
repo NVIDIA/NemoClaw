@@ -18,6 +18,7 @@ import {
 
 const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 const VALID_OLLAMA_TAGS_BODY = '{"models": [{"name": "llama3.2:latest"}]}';
+const VLLM_MODELS = '{"object":"list","data":[{"id":"m","object":"model","owned_by":"vllm"}]}';
 const REBINDING_PROBE_HOST_HEADER = "Host: rebinding.invalid";
 
 function windowsRouteProtection(
@@ -140,7 +141,7 @@ describe("detectInferenceProviderHostState", () => {
       hostCommandExists: vi.fn((command) => command === "ollama" || command === "docker"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
-        command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
+        command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? VLLM_MODELS : "",
       ),
       dockerCapture,
       detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(() => ({
@@ -259,17 +260,40 @@ describe("detectInferenceProviderHostState", () => {
     expect(dockerCapture).not.toHaveBeenCalled();
   });
 
-  it("does not treat curl connection status 000 as a running vLLM", () => {
+  it.each([
+    ["curl connection status 000", "000"],
+    ["a llama.cpp server (#13820)", VLLM_MODELS.replace('"vllm"', '"llamacpp"')],
+    ["a model list without an owner", '{"object":"list","data":[{"id":"m"}]}'],
+    ["a non-JSON response", "<html>ok</html>"],
+  ])("does not treat %s on port 8000 as a running vLLM", (_label, body) => {
     const state = detectWithDeps(
       buildDeps({
         runCapture: vi.fn((command) =>
-          command.join(" ").includes("127.0.0.1:8000/v1/models") ? "000" : "",
+          command.join(" ").includes("127.0.0.1:8000/v1/models") ? body : "",
         ),
       }),
     );
 
     expect(state.vllmRunning).toBe(false);
   });
+
+  it.each([
+    ["200", true],
+    ["503", false],
+  ])(
+    "treats managed vLLM /health status %s as running=%s without a model list",
+    (status, running) => {
+      const managedHealth = "http://127.0.0.1:8000/health";
+      const state = detectWithDeps(
+        buildDeps({
+          getLocalProviderAvailabilityEndpoint: vi.fn(() => managedHealth),
+          runCapture: vi.fn((command) => (command.join(" ").includes(managedHealth) ? status : "")),
+        }),
+      );
+
+      expect(state.vllmRunning).toBe(running);
+    },
+  );
 
   it("fails the vLLM running probe closed when managed endpoint resolution fails", () => {
     const runCapture = vi.fn(() => "200");
