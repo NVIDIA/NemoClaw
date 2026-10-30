@@ -264,3 +264,83 @@ Set `E2E_OUTPUT_DIR` to keep each run's logs apart.
 Results from a DGX with 7 free GPUs are in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md).
 Deep Agents at one chat in flight per user stayed at 5 GPUs, so 6c uses `INFLIGHT=3`.
 
+## Laptop client for 6a
+
+`v1-client-openclaw.sh` runs `kubectl exec` in each OpenClaw sandbox.
+The cluster API on the DGX listens on `127.0.0.1:6443`.
+Leave this tunnel open in one terminal. It prints nothing.
+
+```bash
+ssh -N -L 16443:127.0.0.1:6443 maggiez@10.184.164.109
+```
+
+`~/nemoclaw-v1-kube/config` is a copy of the DGX `~/.kube/config`.
+The `sed` command points that copy at the tunnel port.
+`terraform.tfstate` is the OpenClaw apply state. `.local/` is gitignored.
+Do not commit the kubeconfig or the state file.
+
+In a second terminal:
+
+```bash
+cd /Users/maggiez/Desktop/demoK8s/NemoClaw
+git fetch https://github.com/maggiezha/NemoClaw.git v1
+git checkout -B v1 FETCH_HEAD
+
+mkdir -p examples/kubernetes-gpu-autoscaling/v1/.local/gpu-autoscaling-openclaw
+mv /Users/maggiez/examples/kubernetes-gpu-autoscaling/v1/.local/gpu-autoscaling-openclaw/terraform.tfstate \
+  examples/kubernetes-gpu-autoscaling/v1/.local/gpu-autoscaling-openclaw/terraform.tfstate
+
+sed -i '' 's#https://127.0.0.1:6443#https://127.0.0.1:16443#' ~/nemoclaw-v1-kube/config
+export KUBECONFIG="${HOME}/nemoclaw-v1-kube/config"
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling-openclaw
+
+cd examples/kubernetes-gpu-autoscaling/v1
+TARGET_PODS=8 E2E_USERS=10 ./scripts/v1-client-openclaw.sh
+```
+
+`kubectl get pods` must list `user-0000` through `user-0009` as Running before the client starts.
+Leave `INFLIGHT` unset.
+The live HPA metric is `nemoclaw_llm_latency_avg_milliseconds`, so the client uses one chat in flight per user.
+
+## Laptop client for 6b
+
+`v1-client-hermes.sh` runs `kubectl exec` in each Hermes sandbox.
+The GPU chart must serve vLLM with model `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`.
+The client stops when that chart still serves Ollama.
+Use the same tunnel and `~/nemoclaw-v1-kube/config` as the 6a laptop client.
+Hermes state is `.local/gpu-autoscaling/terraform.tfstate`.
+Do not commit the kubeconfig or the state file.
+
+Leave this tunnel open in one terminal. It prints nothing.
+
+```bash
+ssh -N -L 16443:127.0.0.1:6443 maggiez@10.184.164.109
+```
+
+In a second terminal:
+
+```bash
+cd /Users/maggiez/Desktop/demoK8s/NemoClaw
+mkdir -p examples/kubernetes-gpu-autoscaling/v1/.local/gpu-autoscaling
+scp maggiez@10.184.164.109:/home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling/v1/.local/gpu-autoscaling/terraform.tfstate \
+  examples/kubernetes-gpu-autoscaling/v1/.local/gpu-autoscaling/terraform.tfstate
+
+export KUBECONFIG="${HOME}/nemoclaw-v1-kube/config"
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling
+
+cd examples/kubernetes-gpu-autoscaling/v1
+TARGET_PODS=8 E2E_USERS=10 ./scripts/v1-client-hermes.sh
+```
+
+`kubectl get pods` must list `user-0000` through `user-0009` as Running before the client starts.
+Leave `INFLIGHT` unset.
+The live HPA metric is `nemoclaw_llm_latency_avg_milliseconds`, so the client uses one chat in flight and `MAX_TOKENS=2048`.
+
+GPU utilization uses the same tunnel, kubeconfig, and state file.
+Switch the metric, then set two chats in flight:
+
+```bash
+./scripts/v1-set-hpa-metric.sh gpu_utilization
+INFLIGHT=2 MAX_TOKENS=1024 TARGET_PODS=8 E2E_USERS=10 ./scripts/v1-client-hermes.sh
+```
+
