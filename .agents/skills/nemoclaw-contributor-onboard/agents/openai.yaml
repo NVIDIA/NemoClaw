@@ -2,6 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 interface:
-  display_name: "NemoClaw Contributor Setup"
-  short_description: "Prepare a checkout for a first PR"
-  default_prompt: "Use $nemoclaw-contributor-onboard to set up this machine as a NemoClaw contributor and prepare it for a first PR."
+  display_name: "Set Up a Contributor Checkout"
+  short_description: "Set up, check, or repair a contributor checkout"
+  default_prompt: "Use $nemoclaw-contributor-onboard to set up this already-cloned NemoClaw checkout and check its readiness; run repair, CLI exposure, runtime onboarding, or the pinned agent only if I explicitly request it."
