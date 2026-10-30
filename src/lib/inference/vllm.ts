@@ -19,7 +19,6 @@ import {
   dockerStop,
 } from "../adapters/docker";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
-import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { runCurlProbe } from "../adapters/http/probe";
 import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
@@ -32,7 +31,7 @@ import {
   acquireHuggingFaceModel,
   hfDownloadAuthentication,
 } from "./model-acquisition/hugging-face";
-import { getGpuIndicesByName, isOpenAiModelListBody } from "./nim";
+import { buildModelListProbeCommand, getGpuIndicesByName, isOpenAiModelListResponse } from "./nim";
 import {
   buildLocalDualStationDockerEnv,
   buildLocalManagedVllmDockerEnv,
@@ -1296,20 +1295,13 @@ function vllmEndpointReady(baseUrl?: string): boolean {
     ).ok;
   }
   const response = runCapture(
-    [
-      "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`,
-      ]),
-    ],
+    buildModelListProbeCommand(
+      ["--connect-timeout", "2", "--max-time", "5"],
+      `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`,
+    ),
     { ignoreError: true },
   );
-  return isOpenAiModelListBody(response);
+  return isOpenAiModelListResponse(response);
 }
 
 function verifyDualStationVllmAuthBoundary(

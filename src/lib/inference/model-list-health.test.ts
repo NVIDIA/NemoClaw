@@ -15,7 +15,13 @@ vi.mock("../runner", async (importOriginal) => ({
 }));
 
 import { isLocalProviderProbeOutputHealthy } from "./local";
-import { isOpenAiModelListBody, nimStatusByName, waitForNimHealth } from "./nim";
+import {
+  buildModelListProbeCommand,
+  isOpenAiModelListBody,
+  isOpenAiModelListResponse,
+  nimStatusByName,
+  waitForNimHealth,
+} from "./nim";
 
 const MODELS_ENDPOINT = "http://127.0.0.1:8000/v1/models";
 
@@ -34,14 +40,37 @@ describe("model list health checks", () => {
     ["a non-array data field", '{"data":{}}'],
   ])("rejects %s as a vLLM models response", (_name, body) => {
     expect(isOpenAiModelListBody(body)).toBe(false);
-    expect(isLocalProviderProbeOutputHealthy(MODELS_ENDPOINT, body)).toBe(false);
+    expect(isLocalProviderProbeOutputHealthy(MODELS_ENDPOINT, `${body}\n200`)).toBe(false);
   });
 
-  it("accepts an OpenAI-style model list, even when empty", () => {
+  it("accepts an OpenAI-style model list with status 200, even when empty", () => {
     expect(isOpenAiModelListBody('{"data":[]}')).toBe(true);
-    expect(isLocalProviderProbeOutputHealthy(MODELS_ENDPOINT, '{"data":[{"id":"m"}]}\n')).toBe(
+    expect(isLocalProviderProbeOutputHealthy(MODELS_ENDPOINT, '{"data":[{"id":"m"}]}\n200')).toBe(
       true,
     );
+    expect(isLocalProviderProbeOutputHealthy(MODELS_ENDPOINT, '{"data":[]}\n200\n')).toBe(true);
+  });
+
+  it.each([
+    ["a redirect", "302"],
+    ["a client error", "404"],
+    ["a server error", "503"],
+    ["an accepted status", "202"],
+  ])("rejects a valid model list answered with %s", (_name, status) => {
+    const output = `{"data":[]}\n${status}`;
+    expect(isOpenAiModelListResponse(output)).toBe(false);
+    expect(isLocalProviderProbeOutputHealthy(MODELS_ENDPOINT, output)).toBe(false);
+  });
+
+  it("rejects model list output without a status line", () => {
+    expect(isOpenAiModelListResponse('{"data":[]}')).toBe(false);
+    expect(isOpenAiModelListResponse("\n200")).toBe(false);
+  });
+
+  it("asks curl to print the HTTP status after the body, keeping the URL last", () => {
+    const command = buildModelListProbeCommand(["--max-time", "5"], MODELS_ENDPOINT);
+    expect(command.slice(0, 2)).toEqual(["curl", "-sf"]);
+    expect(command.slice(-3)).toEqual(["--write-out", "\\n%{http_code}", MODELS_ENDPOINT]);
   });
 
   it("keeps Ollama tag probes and status-code probes unchanged", () => {
@@ -66,6 +95,21 @@ describe("model list health checks", () => {
     ).toBe(false);
   });
 
+  it("does not report NIM healthy for a model list answered with a redirect", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(
+      waitForNimHealth(9000, 60, {
+        container: "nemoclaw-nim-test",
+        runCaptureImpl: () => '{"data":[]}\n302',
+        inspectContainerState: () => "running",
+        readContainerLogs: () =>
+          "WARNING: Estimated memory (2 GB) exceeds usable GPU memory (1 GB).",
+      }),
+    ).toBe(false);
+  });
+
   it("checks the container before reporting NIM healthy", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -74,7 +118,7 @@ describe("model list health checks", () => {
     expect(
       waitForNimHealth(9000, 60, {
         container: "nemoclaw-nim-test",
-        runCaptureImpl: () => '{"data":[]}',
+        runCaptureImpl: () => '{"data":[]}\n200',
         inspectContainerState,
         readContainerLogs: () => "",
       }),
@@ -85,13 +129,14 @@ describe("model list health checks", () => {
   it("reports NIM healthy when the port returns a model list", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
-    expect(waitForNimHealth(9000, 60, { runCaptureImpl: () => '{"data":[]}' })).toBe(true);
+    expect(waitForNimHealth(9000, 60, { runCaptureImpl: () => '{"data":[]}\n200' })).toBe(true);
   });
 
   it.each([
     ["an HTML page", "<html>dev server</html>", false],
     ["a JSON error", '{"error":"nope"}', false],
-    ["a model list", '{"data":[]}', true],
+    ["a model list", '{"data":[]}\n200', true],
+    ["a model list answered with a redirect", '{"data":[]}\n302', false],
   ])(
     "reports a running NIM container healthy only for a model list: %s",
     (_name, body, healthy) => {

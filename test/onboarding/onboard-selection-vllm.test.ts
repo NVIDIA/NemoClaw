@@ -77,9 +77,10 @@ runner.runCapture = (command) => {
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
-    return JSON.stringify({
+    const body = JSON.stringify({
       data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
     });
+    return cmd.includes("--write-out") ? body + "\n200" : body;
   }
   if (cmd.includes("docker images")) return "";
   return "";
@@ -202,9 +203,10 @@ runner.runCapture = (command) => {
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
-    return JSON.stringify({
+    const body = JSON.stringify({
       data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
     });
+    return cmd.includes("--write-out") ? body + "\n200" : body;
   }
   if (cmd.includes("docker images")) return "";
   return "";
@@ -623,12 +625,13 @@ runner.runCapture = (command) => {
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
-    return JSON.stringify({
+    const body = JSON.stringify({
       data: [{
         id: "muse-glimmer",
         root: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
       }],
     });
+    return cmd.includes("--write-out") ? body + "\n200" : body;
   }
   if (cmd.includes("docker images")) return "";
   return "";
@@ -708,12 +711,13 @@ runner.runCapture = (command) => {
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
-    return JSON.stringify({
+    const body = JSON.stringify({
       data: [{
         id: "nemotron-ultra",
         root: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
       }],
     });
+    return cmd.includes("--write-out") ? body + "\n200" : body;
   }
   if (cmd.includes("docker images")) return "";
   return "";
