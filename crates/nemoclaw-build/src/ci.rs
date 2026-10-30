@@ -286,31 +286,50 @@ pub fn install_nextest(
     } else {
         "cargo-nextest"
     };
+    install_executable(archive, destination, name, "nextest")
+}
+
+/// Extract the single `openshell` CLI executable from a verified release.
+pub fn install_openshell(archive: &[u8], destination: &Path) -> Result<PathBuf, String> {
+    install_executable(archive, destination, "openshell", "OpenShell CLI")
+}
+
+/// Install the one executable `name` that a gzipped tar archive holds,
+/// refusing any other entry.
+fn install_executable(
+    archive: &[u8],
+    destination: &Path,
+    name: &str,
+    tool: &str,
+) -> Result<PathBuf, String> {
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(Cursor::new(archive)));
     let mut binary = None;
-    for entry in tar.entries().map_err(|_| "invalid nextest archive")? {
-        let mut entry = entry.map_err(|_| "invalid nextest archive entry")?;
+    for entry in tar
+        .entries()
+        .map_err(|_| format!("invalid {tool} archive"))?
+    {
+        let mut entry = entry.map_err(|_| format!("invalid {tool} archive entry"))?;
         let path = entry
             .path()
-            .map_err(|_| "invalid nextest archive path")?
+            .map_err(|_| format!("invalid {tool} archive path"))?
             .into_owned();
         if binary.is_some()
             || path != Path::new(name)
             || !entry.header().entry_type().is_file()
             || entry.size() > 256 << 20
         {
-            return Err("nextest archive must contain only its executable".into());
+            return Err(format!("{tool} archive must contain only its executable"));
         }
         let mut bytes = Vec::new();
         entry
             .read_to_end(&mut bytes)
-            .map_err(|_| "incomplete nextest archive entry")?;
+            .map_err(|_| format!("incomplete {tool} archive entry"))?;
         binary = Some(bytes);
     }
-    let binary = binary.ok_or("nextest archive lacks its executable")?;
+    let binary = binary.ok_or_else(|| format!("{tool} archive lacks its executable"))?;
     replace_directory(destination, |root| {
         let path = root.join(name);
-        fs::write(&path, &binary).map_err(|_| "cannot write nextest")?;
+        fs::write(&path, &binary).map_err(|_| format!("cannot write {tool}"))?;
         make_executable(&path)
     })?;
     Ok(destination.join(name))
@@ -337,9 +356,13 @@ pub const COMMIT_IMAGES: &str = "ghcr.io/nvidia/nemoclaw/v1-ci";
 /// agent image, which getting started deploys.
 pub const LIVE_AGENT: (&str, &str) = ("openclaw", "nvidia.fabric.openclaw");
 
+/// The Hermes agent image, whose interfaces the Docker live suite checks with
+/// OpenClaw's.
+pub const LIVE_HERMES: &str = "hermes";
+
 /// The pushed images the live suites can pull instead of building: the agent,
-/// the reference image, and the proxy.
-pub const LIVE_PULLED: [&str; 3] = [LIVE_AGENT.0, "dummy", "ollama-proxy"];
+/// Hermes, the reference image, and the proxy.
+pub const LIVE_PULLED: [&str; 4] = [LIVE_AGENT.0, LIVE_HERMES, "dummy", "ollama-proxy"];
 
 /// The reference `v1` pushed for `name` at `commit` on one Linux architecture.
 pub fn commit_image(name: &str, commit: &str, arch: &str) -> String {

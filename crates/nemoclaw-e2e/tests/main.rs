@@ -42,6 +42,8 @@ mod helm_recovery;
 mod hcl_integration;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
+#[path = "interfaces_live.rs"]
+mod interfaces_live;
 #[cfg(unix)]
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;

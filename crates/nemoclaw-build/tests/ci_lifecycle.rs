@@ -444,7 +444,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 }
 
 #[test]
-fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compressed() {
+fn live_images_builds_the_agent_hermes_dummy_and_proxy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     let output = fixture.run(&["live-images"]);
@@ -454,10 +454,10 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds OpenClaw and the reference dummy, under the shared prefix
-    // the live steps load: each exports its catalog, then builds its labeled
-    // stage.
-    for name in ["openclaw", "dummy"] {
+    // ARM64 builds OpenClaw, Hermes and the reference dummy, under the shared
+    // prefix the live steps load: each exports its catalog, then builds its
+    // labeled stage.
+    for name in ["openclaw", "hermes", "dummy"] {
         assert!(
             log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
             "{log}"
@@ -487,7 +487,7 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
         "{archive}"
     );
 }

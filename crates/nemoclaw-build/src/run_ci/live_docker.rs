@@ -35,6 +35,27 @@ fn by_digest(repository: &str, tag: &str) -> Result<String> {
     Ok(format!("{repository}@{id}"))
 }
 
+/// Where the pinned OpenShell CLI is installed, by its archive's checksum.
+fn openshell_path(pins: &Pins, platform: &str) -> Result<PathBuf> {
+    let artifact = artifact(pins, platform, "openshell")?;
+    Ok(std::path::absolute(
+        Path::new(".tools")
+            .join(format!("openshell-{}", &artifact.sha256[..12]))
+            .join("openshell"),
+    )?)
+}
+
+/// Install the pinned OpenShell CLI, verified by checksum, unless it is there.
+pub(super) async fn install_openshell(pins: &Pins, platform: &str) -> Result<()> {
+    let path = openshell_path(pins, platform)?;
+    if !path.is_file() {
+        let bytes = download(artifact(pins, platform, "openshell")?).await?;
+        let directory = path.parent().ok_or("the OpenShell CLI has no directory")?;
+        ci::install_openshell(&bytes, directory)?;
+    }
+    Ok(())
+}
+
 fn ollama_base() -> Result<String> {
     let dockerfile = fs::read_to_string("image/ollama/Dockerfile")?;
     dockerfile
@@ -209,11 +230,13 @@ fn prepare(
                 .images
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
+            live_images::build_hermes(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
             live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
+    let hermes = by_digest(&prefix, live_images::HERMES)?;
     // The lifecycle runs an image derived from the reference image, so it
     // also checks that derived images deploy.
     live_images::build_derived(&prefix)?;
@@ -280,6 +303,27 @@ fn prepare(
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
+    // OpenClaw's and Hermes's interfaces share one gateway and model stand-in.
+    let interfaces = {
+        let uid = live::uuid()?;
+        let subnet = live::free_subnet(&used, &subnets)?;
+        subnets.push(subnet.clone());
+        let path = inputs.join("live-interfaces.yaml");
+        fs::write(
+            &path,
+            live::interfaces_document(&live::InterfacesInputs {
+                name: "live-interfaces",
+                uid: &uid,
+                port: live::free_port()?,
+                subnet: &subnet,
+                openclaw: &agent,
+                hermes: &hermes,
+                model_port: live::free_port()?,
+            }),
+        )?;
+        owned.uids.push(uid);
+        path
+    };
     let path = |path: &Path| path.display().to_string();
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
@@ -304,6 +348,14 @@ fn prepare(
             path(&second),
         ),
         ("NEMOCLAW_TEST_DUMMY_DOCUMENT".into(), path(&lifecycle)),
+        (
+            "NEMOCLAW_TEST_INTERFACES_DOCUMENT".into(),
+            path(&interfaces),
+        ),
+        (
+            "NEMOCLAW_TEST_OPENSHELL".into(),
+            path(&openshell_path(pins, platform)?),
+        ),
     ]
     .into_iter()
     .chain([(

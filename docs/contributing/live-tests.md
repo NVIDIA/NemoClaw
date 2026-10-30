@@ -423,6 +423,38 @@ A failed run keeps the state directory and prints its path, because the gateway 
 `cargo ci live-docker` removes every resource labeled with the document's UID, and the gateway's sandbox objects, after the suite.
 To remove the retained storage after a manual run, follow [Remove Retained Resources](../usage.md#remove-retained-resources); after a successful run there is no state directory, so skip that procedure's destroy check.
 
+## Agent Interfaces
+
+nemoclaw-e2e's `interfaces_live::openclaw_and_hermes_interfaces_work_through_forwards` test deploys OpenClaw's dashboard and Hermes's API server and dashboard through a managed Docker gateway and reaches them as [Reach an Agent Interface](../interfaces.md#reach-an-agent-interface) describes.
+It starts a model stand-in in the test process, which answers every chat completion with a value unique to the run and records whether each request carried the run's model key.
+It checks:
+
+- Planning rejects `harness.settings.interfaces.terminal` for OpenClaw before creating anything.
+- Apply reports each interface's port, token path and sign-in.
+- Through `openshell forward service`, OpenClaw's Control UI loads and its configuration endpoint accepts the token that the reported `openshell sandbox exec` command reads, and refuses a missing or wrong one.
+- Hermes's API server accepts its token, refuses a missing or wrong one, and answers a chat completion through the stand-in.
+- Hermes's dashboard page loads, its API accepts the session token the page carries and refuses a request without it, and one browser chat message gets the stand-in's reply.
+- Every chat completion the stand-in received carried the configured key.
+- After the test kills Hermes's dashboard process in the sandbox, plan reports no change and the API server still answers.
+- No token appears in NemoClaw's output, its state directory, or the YAML, and destroy succeeds.
+
+It runs no model and needs no credentials; the stand-in's reply doesn't establish inference.
+Its document grants the Hermes sandbox read-write `/dev/pts`, which browser chat needs, through an explicit policy.
+
+Supply a verified bundle, the pinned OpenShell CLI, and an owned document like the one `cargo ci live-docker` writes: a fresh UID, free gateway port and subnet, the OpenClaw and Hermes images by digest, and an `openai` provider named `model` whose endpoint is the subnet's first address with a free port and whose credential is `NEMOCLAW_TEST_INTERFACES_MODEL_KEY`.
+The test sets that variable itself:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_INTERFACES_DOCUMENT=/absolute/path/to/interfaces.yaml \
+NEMOCLAW_TEST_OPENSHELL=/absolute/path/to/openshell \
+cargo test -p nemoclaw-e2e --test integration \
+  interfaces_live::openclaw_and_hermes_interfaces_work_through_forwards -- --ignored --exact
+```
+
+The stand-in listens on every host address at that port while the test runs.
+A failed run keeps the state directory and prints its path; remove the deployment with the bundle's `nemoclaw destroy --state-dir PATH` and the same variable set to any value.
+
 ## Docker Gateway Recovery
 
 nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed gateway's runtime resources with a real gateway, Docker, both providers, and OpenTofu.
