@@ -656,18 +656,13 @@ switch (args.slice(0, 2).join(" ")) {
     },
   );
 
-  it("scopes authenticated Tavily credentials to its check environment (#13082)", () => {
-    const base = { TAVILY_API_KEY: "ambient-key", OTHER_SECRET: "unrelated-key" };
-    const ordinary = buildCloudExperimentalCommandEnv("sandbox", "inference-key", base);
-    const authenticated = buildCloudExperimentalCommandEnv("sandbox", "inference-key", base, {
-      tavilyApiKey: "tavily-fixture-key",
-    });
-    expect(ordinary).not.toHaveProperty("TAVILY_API_KEY");
-    expect(authenticated).toMatchObject({
-      TAVILY_API_KEY: "tavily-fixture-key",
+  it("keeps Tavily credentials out of the cloud check environment (#13082)", () => {
+    const env = buildCloudExperimentalCommandEnv("sandbox", "inference-key", {
+      TAVILY_API_KEY: "ambient-key",
       NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
     });
-    expect(authenticated).not.toHaveProperty("OTHER_SECRET");
+    expect(env).not.toHaveProperty("TAVILY_API_KEY");
+    expect(env).not.toHaveProperty("NEMOCLAW_E2E_TAVILY_AUTHENTICATED");
     expect(
       canonicalTargets().find(
         (target) => target.id === "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -675,113 +670,73 @@ switch (args.slice(0, 2).join(" ")) {
     ).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
   });
 
-  it("passes the optional Tavily secret only to its live check (#13082)", async () => {
-    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-caller-"));
-    const run = vi.fn(async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
-      shellResult(0, ""),
-    );
-    const script = "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
-    try {
-      await runE2eCloudExperimentalChecks(
-        "ubuntu-repo-cloud-langchain-deepagents-code",
-        "sandbox",
-        [script, DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS[0]],
-        {
-          artifacts: new ArtifactSink(artifactRoot),
-          cleanup: new CleanupRegistry(),
-          host: new HostCliClient({ run }),
-          secrets: new SecretStore({ TAVILY_API_KEY: "tavily-fixture-key" }, (note) => {
-            throw new Error(note);
-          }),
-        },
+  it.each([undefined, "", "tavily-fixture-key"])(
+    "runs the credential-free Tavily check when its key is %s (#13082)",
+    async (tavilyKey) => {
+      const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-free-"));
+      const run = vi.fn(async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+        shellResult(0, ""),
       );
-      expect(run).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ command: "bash", args: [path.join(process.cwd(), script)] }),
-        expect.objectContaining({
-          env: expect.objectContaining({
-            TAVILY_API_KEY: "tavily-fixture-key",
-            NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
-          }),
-          redactionValues: expect.arrayContaining(["tavily-fixture-key"]),
-        }),
-      );
-      expect(run).toHaveBeenCalledTimes(3);
-      expect(run.mock.calls[0]?.[1]?.env).not.toHaveProperty("TAVILY_API_KEY");
-      expect(run.mock.calls[2]?.[1]?.env).not.toHaveProperty("TAVILY_API_KEY");
-    } finally {
-      fs.rmSync(artifactRoot, { recursive: true, force: true });
-    }
-  });
-
-  it.each([shellResult(1, "Tavily denial failed"), shellResult(0, "SKIP: Tavily unavailable")])(
-    "rejects an authenticated Tavily check that fails or skips (%j)",
-    async (result) => {
-      const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-failure-"));
-      const run = vi.fn().mockResolvedValueOnce(shellResult(0, "")).mockResolvedValueOnce(result);
+      const tavilyScript =
+        "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
+      const nextScript =
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh";
       try {
-        await expect(
-          runE2eCloudExperimentalChecks(
-            "ubuntu-repo-cloud-langchain-deepagents-code",
-            "sandbox",
-            ["test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh"],
-            {
-              artifacts: new ArtifactSink(artifactRoot),
-              cleanup: new CleanupRegistry(),
-              host: new HostCliClient({ run }),
-              secrets: new SecretStore({ TAVILY_API_KEY: "tavily-fixture-key" }, (note) => {
-                throw new Error(note);
-              }),
-            },
-          ),
-        ).rejects.toThrow();
+        await runE2eCloudExperimentalChecks(
+          "ubuntu-repo-cloud-langchain-deepagents-code",
+          "sandbox",
+          [tavilyScript, nextScript],
+          {
+            artifacts: new ArtifactSink(artifactRoot),
+            cleanup: new CleanupRegistry(),
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({ TAVILY_API_KEY: tavilyKey }, (note) => {
+              throw new Error(note);
+            }),
+          },
+        );
+        expect(run.mock.calls.map(([command]) => command)).toEqual([
+          expect.objectContaining({ command: "openshell" }),
+          expect.objectContaining({
+            command: "bash",
+            args: [path.join(process.cwd(), tavilyScript)],
+          }),
+          expect.objectContaining({
+            command: "bash",
+            args: [path.join(process.cwd(), nextScript)],
+          }),
+        ]);
+        const tavilyEnv = run.mock.calls[1]?.[1]?.env;
+        expect(tavilyEnv).not.toHaveProperty("TAVILY_API_KEY");
+        expect(tavilyEnv).not.toHaveProperty("NEMOCLAW_E2E_TAVILY_AUTHENTICATED");
       } finally {
         fs.rmSync(artifactRoot, { recursive: true, force: true });
       }
     },
   );
 
-  it.each([undefined, ""])("skips only Tavily when its optional key is %s", async (tavilyKey) => {
-    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-optional-"));
-    const run = vi.fn(async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
-      shellResult(0, ""),
-    );
-    const tavilyScript =
-      "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
-    const nextScript = "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh";
+  it("fails the target when the credential-free Tavily check fails (#13082)", async () => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-failure-"));
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(shellResult(0, ""))
+      .mockResolvedValueOnce(shellResult(1, "Tavily denial failed"));
     try {
-      await runE2eCloudExperimentalChecks(
-        "ubuntu-repo-cloud-langchain-deepagents-code",
-        "sandbox",
-        [tavilyScript, nextScript],
-        {
-          artifacts: new ArtifactSink(artifactRoot),
-          cleanup: new CleanupRegistry(),
-          host: new HostCliClient({ run }),
-          secrets: new SecretStore({ TAVILY_API_KEY: tavilyKey }, (note) => {
-            throw new Error(note);
-          }),
-        },
-      );
-      expect(run.mock.calls.map(([command]) => command)).toEqual([
-        expect.objectContaining({ command: "openshell" }),
-        expect.objectContaining({ command: "bash", args: [path.join(process.cwd(), nextScript)] }),
-      ]);
-      expect(
-        JSON.parse(
-          fs.readFileSync(
-            path.join(
-              artifactRoot,
-              "actions/cloud-experimental-09-deepagents-code-tavily-opt-in-skipped.json",
-            ),
-            "utf8",
-          ),
+      await expect(
+        runE2eCloudExperimentalChecks(
+          "ubuntu-repo-cloud-langchain-deepagents-code",
+          "sandbox",
+          ["test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh"],
+          {
+            artifacts: new ArtifactSink(artifactRoot),
+            cleanup: new CleanupRegistry(),
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({}, (note) => {
+              throw new Error(note);
+            }),
+          },
         ),
-      ).toEqual({
-        scriptPath: tavilyScript,
-        status: "skipped",
-        reason: "TAVILY_API_KEY is not available",
-      });
+      ).rejects.toThrow();
     } finally {
       fs.rmSync(artifactRoot, { recursive: true, force: true });
     }

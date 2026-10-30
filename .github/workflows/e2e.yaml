@@ -3292,7 +3292,6 @@ jobs:
         env:
           E2E_TARGET_ID: ${{ matrix.id }}
           NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
-          TAVILY_API_KEY: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.TAVILY_API_KEY || '' }}
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail

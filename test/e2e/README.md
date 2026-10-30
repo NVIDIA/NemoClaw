@@ -32,13 +32,13 @@ NVIDIA endpoint keeps its existing request shape. The headless check verifies
 that malformed native inference evidence stops connect before session attach;
 native response bodies remain absent from diagnostics.
 
-The `ubuntu-repo-cloud-langchain-deepagents-code` target requires `NVIDIA_INFERENCE_API_KEY`.
-`TAVILY_API_KEY` is optional and remains subject to the workflow's credential trust rules.
-When the Tavily key is absent, the runner skips only the Tavily check and records the reason in
-`actions/cloud-experimental-09-deepagents-code-tavily-opt-in-skipped.json`. Onboarding, the other cloud checks,
-and required configuration-export validation still run.
-When the key is present, the Tavily check enables `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`,
-registers a uniquely named disposable provider on the host, and attaches it to the test sandbox.
+The `ubuntu-repo-cloud-langchain-deepagents-code` target requires only `NVIDIA_INFERENCE_API_KEY`.
+It always runs the Tavily check without a Tavily credential: managed Python may reach the preset,
+system and project Python are denied, and the preset's removal denies managed Python again.
+A failure of that check fails the target. The workflow forwards no Tavily credential.
+Authenticated Tavily qualification is manual. An operator runs the check directly with
+`NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1` and a real `TAVILY_API_KEY` held on the host;
+the check registers a uniquely named disposable provider on the host and attaches it to the test sandbox.
 The real key stays in the host/gateway credential path. Sandbox Python submits a placeholder
 that OpenShell rewrites at egress. The check requires HTTP 200 before removal and a new
 `DENIED` audit event for `api.tavily.com:443` afterward.

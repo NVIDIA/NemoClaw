@@ -52,8 +52,6 @@ export type CloudExperimentalChecksEvidence = {
 };
 
 const DEEPAGENTS_CODE_ONBOARDING = "cloud-langchain-deepagents-code";
-const DEEPAGENTS_CODE_TAVILY_CHECK =
-  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
 const DEEPAGENTS_CODE_TUI_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh";
 const DEEPAGENTS_CODE_CONNECT_HINT = {
@@ -82,11 +80,7 @@ export function buildCloudExperimentalCommandEnv(
   sandboxName: string,
   apiKey: string,
   base: NodeJS.ProcessEnv = process.env,
-  options: {
-    dcodeBaseImageReference?: string;
-    forwardDcodeBaseImage?: boolean;
-    tavilyApiKey?: string;
-  } = {},
+  options: { dcodeBaseImageReference?: string; forwardDcodeBaseImage?: boolean } = {},
 ): NodeJS.ProcessEnv {
   const candidateDcodeBaseImage =
     options.dcodeBaseImageReference ?? base[DCODE_BASE_IMAGE_ENV]?.trim();
@@ -109,9 +103,6 @@ export function buildCloudExperimentalCommandEnv(
     REPO: REPO_ROOT,
     SANDBOX_NAME: sandboxName,
     ...(dcodeBaseImage ? { [DCODE_BASE_IMAGE_ENV]: dcodeBaseImage } : {}),
-    ...(options.tavilyApiKey
-      ? { TAVILY_API_KEY: options.tavilyApiKey, NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1" }
-      : {}),
   };
 }
 
@@ -263,9 +254,6 @@ export async function runE2eCloudExperimentalChecks(
   },
 ): Promise<void> {
   const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
-  const tavilyApiKey = checkScripts.includes(DEEPAGENTS_CODE_TAVILY_CHECK)
-    ? context.secrets.optional("TAVILY_API_KEY")
-    : undefined;
   await context.artifacts.writeJson(
     "e2e-cloud-experimental-checks.json",
     buildCloudExperimentalChecksEvidence(targetId, sandboxName, checkScripts),
@@ -294,13 +282,6 @@ export async function runE2eCloudExperimentalChecks(
     );
   }
   for (const scriptPath of checkScripts) {
-    if (scriptPath === DEEPAGENTS_CODE_TAVILY_CHECK && !tavilyApiKey) {
-      await context.artifacts.writeJson(
-        `actions/cloud-experimental-${path.basename(scriptPath, ".sh")}-skipped.json`,
-        { scriptPath, status: "skipped", reason: "TAVILY_API_KEY is not available" },
-      );
-      continue;
-    }
     const result =
       scriptPath === DEEPAGENTS_CODE_TUI_CHECK
         ? await runDcodeTuiCheck(sandboxName, scriptPath, apiKey, context)
@@ -310,9 +291,8 @@ export async function runE2eCloudExperimentalChecks(
             env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
               dcodeBaseImageReference: context.dcodeBaseImageReference,
               forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
-              tavilyApiKey: scriptPath === DEEPAGENTS_CODE_TAVILY_CHECK ? tavilyApiKey : undefined,
             }),
-            redactionValues: [apiKey, ...(tavilyApiKey ? [tavilyApiKey] : [])],
+            redactionValues: [apiKey],
             timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
           });
     assertRequiredCloudExperimentalResult(scriptPath, result);
