@@ -193,58 +193,37 @@ NEMOCLAW_V1_STATE_DIR=.local/gpu-autoscaling ./scripts/invoke.sh
 
 ## Load tests
 
-[`client-hermes.sh`](scripts/client-hermes.sh), [`client-openclaw.sh`](scripts/client-openclaw.sh), and [`client-deepagents.sh`](scripts/client-deepagents.sh) send each prompt as `fabric-agent-ctl invoke` inside the sandbox. They read Fabric runtime ids from the state directory and stop new chats at `TARGET_PODS` GPUs (default 8). Apply a file with at least `E2E_USERS` sandboxes first. Every sandbox pod must be Ready.
+The DGX serves inference and prints the HPA. A client only sends chats. The same client flags work on the DGX and on a laptop. The client does not set `maxReplicas` and does not print the HPA.
+
+On the DGX, leave this watch running. It prints the live metric.
 
 ```bash
-export PATH="/home/maggiez/NemoClaw-v1/dist/linux_amd64/bin:${HOME}/.local/openshell-0.1.4:${HOME}/.local/bin:${PATH}"
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
+./scripts/get-hpa.sh -n nemoclaw-gpu -w
+```
 
-# 6b GPU utilization (chart default).
+`INFLIGHT` is the concurrent chats per user. `MAX_TOKENS` is the maximum reply length. GPU utilization sets both flags on the client. Latency omits them. Hermes latency is `INFLIGHT=1` and `MAX_TOKENS=2048` in the code, and a leftover `MAX_TOKENS` from a GPU-utilization run does not apply. The HPA `maxReplicas` is the GPU ceiling. The client reads it and stops new chats there. Apply a file with at least `E2E_USERS` sandboxes first. Every sandbox pod must be Ready.
+
+Hermes GPU utilization:
+
+```bash
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
 INFLIGHT=2 MAX_TOKENS=1024 E2E_USERS=10 ./scripts/client-hermes.sh
+```
 
-# 6c GPU utilization. One chat in flight stayed at 5 GPUs, so this uses 3.
-INFLIGHT=3 E2E_USERS=10 ./scripts/client-deepagents.sh
+Hermes latency. Switch the metric on the DGX first, then run the client with the flags omitted:
 
-# LLM latency. Switch the HPA metric, then run the client at one chat in flight.
+```bash
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
 ./scripts/set-hpa-metric.sh latency_avg
 E2E_USERS=10 ./scripts/client-hermes.sh
-./scripts/set-hpa-metric.sh gpu_utilization
 ```
 
-OpenClaw latency uses `INFLIGHT=1 MAX_TOKENS=2048`. OpenClaw GPU utilization uses `INFLIGHT=4 MAX_TOKENS=2048`. Hermes latency uses `INFLIGHT=1 MAX_TOKENS=2048`. Hermes GPU utilization uses `INFLIGHT=2 MAX_TOKENS=1024`.
+OpenClaw GPU utilization is `INFLIGHT=4 MAX_TOKENS=2048` with [`client-openclaw.sh`](scripts/client-openclaw.sh). OpenClaw latency omits the flags (`INFLIGHT=1`, `MAX_TOKENS=2048`). Deep Agents GPU utilization is `INFLIGHT=3` with [`client-deepagents.sh`](scripts/client-deepagents.sh). One chat in flight stayed at 5 GPUs.
 
-Set `E2E_OUTPUT_DIR` to keep each run's logs apart. Results from a DGX with 7 free GPUs are in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md). The node has 8 GPUs. Another workload held one, so the live HPA maximum was 7. The client default remains `TARGET_PODS=8`.
+A laptop uses the same `INFLIGHT` and `MAX_TOKENS` flags. It does not run `get-hpa.sh`. The DGX watch above is the HPA print. This Fabric client still runs on the DGX, next to the apply state. Fabric does not serve the v0 Hermes HTTP port, so the laptop cannot send chats to `:8642`.
 
-## Laptop client for 6a
-
-`client-openclaw.sh` runs `kubectl exec` in each OpenClaw sandbox. The cluster API on the DGX listens on `127.0.0.1:6443`. Leave this tunnel open in one terminal. It prints nothing.
-
-```bash
-ssh -N -L 16443:127.0.0.1:6443 maggiez@10.184.164.109
-```
-
-`~/nemoclaw-v1-kube/config` is a copy of the DGX `~/.kube/config`. The `sed` command points that copy at the tunnel port. macOS `sed` needs the empty backup argument. `terraform.tfstate` is the OpenClaw apply state. Do not commit the kubeconfig or the state file.
-
-In a second terminal:
-
-```bash
-cd /Users/maggiez/Desktop/demoK8s/NemoClaw
-git fetch https://github.com/maggiezha/NemoClaw.git v1
-git checkout -B v1 FETCH_HEAD
-
-mkdir -p examples/kubernetes-gpu-autoscaling/.local
-if [[ -d examples/kubernetes-gpu-autoscaling/v1/.local ]]; then
-  mv examples/kubernetes-gpu-autoscaling/v1/.local/* examples/kubernetes-gpu-autoscaling/.local/
-fi
-
-sed -i '' 's#https://127.0.0.1:6443#https://127.0.0.1:16443#' ~/nemoclaw-v1-kube/config
-export KUBECONFIG="${HOME}/nemoclaw-v1-kube/config"
-kubectl get pods -n nemoclaw-v1-gpu-autoscaling-openclaw
-
-cd examples/kubernetes-gpu-autoscaling
-TARGET_PODS=8 E2E_USERS=10 ./scripts/client-openclaw.sh
-```
-
-`kubectl get pods` must list `user-0000` through `user-0009` as Running before the client starts. Leave `INFLIGHT` unset when the live HPA metric is `nemoclaw_llm_latency_avg_milliseconds`. The client then uses one chat in flight per user.
+Set `E2E_OUTPUT_DIR` to keep each run's logs apart. Results from a DGX with 7 free GPUs are in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md). The node has 8 GPUs. Another workload held one, so the live HPA maximum was 7. The chart `maxReplicas` stayed 8.
 
 ## HPA-only load
 

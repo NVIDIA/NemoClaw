@@ -13,9 +13,9 @@ Setup and load-test steps live in [`../README.md`](../README.md). Pairing files 
 | `validate-yaml.py` | Schema check used by `check.sh`. |
 | `render-sandboxes.sh` | Print a pairing file expanded to `E2E_USERS` sandboxes. Does not apply. |
 | `invoke.sh` | One operator prompt through `openshell sandbox exec` after `oidc`. |
-| `client-openclaw.sh` | OpenClaw load client. `kubectl exec` into `fabric-agent-ctl invoke`. |
-| `client-hermes.sh` | Hermes load client. Same invoke path. |
-| `client-deepagents.sh` | Deep Agents load client. Same invoke path, separate namespace and state directory. |
+| `client-openclaw.sh` | OpenClaw client. Flags: GPU utilization `INFLIGHT=4 MAX_TOKENS=2048`. Latency omits them. Does not print the HPA. |
+| `client-hermes.sh` | Hermes client. Flags: GPU utilization `INFLIGHT=2 MAX_TOKENS=1024`. Latency omits them (`INFLIGHT=1 MAX_TOKENS=2048` in the code). Does not print the HPA. |
+| `client-deepagents.sh` | Deep Agents client. GPU utilization `INFLIGHT=3`. Does not print the HPA. |
 | `e2e-fabric-load-test.py` | Per-user driver used by the three clients. |
 | `set-hpa-metric.sh` | Switch the chart HPA between `gpu_utilization` and `latency_avg`. |
 | `install-hpa.sh` | Monitoring, this chart, HPA, and Envoy when enabled. |
@@ -24,7 +24,7 @@ Setup and load-test steps live in [`../README.md`](../README.md). Pairing files 
 | `hpa-load-test-dgx-8xh100.sh` | HPA-only Job for 8× H100. Does not create sandboxes. |
 | `hpa-load-test-brev-4xl40s.sh` | Same HPA-only Job for 4× L40S. |
 | `hpa-reset.sh` | Restore an idle HPA without deleting the release. |
-| `hpa-watch.sh` / `get-hpa.sh` / `get-metrics-proxy-pods.sh` | Inspect the live HPA and metrics-proxy pods. |
+| `hpa-watch.sh` / `get-hpa.sh` / `get-metrics-proxy-pods.sh` | DGX print of the live HPA. `./scripts/get-hpa.sh -n nemoclaw-gpu -w`. Clients do not run this. |
 | `cluster-recover.sh` | Destructive recovery for the selected release. Read the script before use. |
 | `agent-common.sh` / `hpa-common.sh` | Shared settings. Do not run them directly. |
 | `e2e_timeline.py` / `e2e-hpa-timeline.py` | Timeline rows written beside a load run. |

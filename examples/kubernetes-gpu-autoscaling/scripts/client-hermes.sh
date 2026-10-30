@@ -12,14 +12,16 @@
 #   E2E_USERS=10 ./scripts/render-sandboxes.sh hermes-vllm > .local/hermes-vllm-10.yaml
 #   nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling .local/hermes-vllm-10.yaml
 #
-# GPU util (HPA metric gpu_utilization_percent, target 40%):
+# GPU util takes INFLIGHT and MAX_TOKENS on the client (Hermes 2 and 1024,
+# OpenClaw 4 and 2048, Deep Agents 3). Latency omits them. Hermes latency is
+# INFLIGHT=1 MAX_TOKENS=2048 in the code and ignores leftovers.
 #   INFLIGHT=2 MAX_TOKENS=1024 E2E_USERS=10 ./scripts/client-hermes.sh
-# LLM latency (HPA metric latency_avg, target 3000 ms). Switch the metric first:
-#   ./scripts/set-hpa-metric.sh latency_avg
 #   E2E_USERS=10 ./scripts/client-hermes.sh
+# The DGX prints the HPA with ./scripts/get-hpa.sh -n nemoclaw-gpu -w.
+# This client does not set maxReplicas and does not print the HPA.
 #
 # Env: NEMOCLAW_V1_STATE_DIR (default .local/gpu-autoscaling), V1_NAMESPACE,
-# E2E_OUTPUT_DIR, TARGET_PODS (default 8), DURATION_SEC.
+# E2E_OUTPUT_DIR, DURATION_SEC.
 
 set -euo pipefail
 
@@ -48,7 +50,6 @@ INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
 export INFERENCE_MODEL
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
-export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
 agent_common_export_demo_workload "${AGENT_KIND}"
@@ -75,8 +76,11 @@ export SANDBOX_PREFIX="${workspace}--user-"
 hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIME}" \
   || fail "the GPU chart is not serving ${INFERENCE_RUNTIME}"
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} NemoClaw v1 sandboxes (1:1 ${AGENT_KIND}, fabric-agent-ctl invoke)."
-echo "HPA metric: ${HPA_METRIC:-unknown}  inflight/user: ${INFLIGHT}  max_tokens: ${MAX_TOKENS}  target GPUs: ${TARGET_PODS}"
+hpa_max="$(kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || true)"
+[[ "${hpa_max}" =~ ^[1-9][0-9]*$ ]] || fail "HPA ${NAMESPACE}/${HPA_NAME} has no maxReplicas. Set the ceiling on the DGX with install-hpa.sh."
+
+echo "Client: ${E2E_USERS} end users → ${E2E_USERS} sandboxes (1:1 ${AGENT_KIND})."
+echo "inflight/user: ${INFLIGHT}  max_tokens: ${MAX_TOKENS}  HPA maxReplicas: ${hpa_max}"
 agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}" "${AGENT_KIND}"
 
 unhealthy=0
@@ -145,9 +149,7 @@ PY
 fi
 
 mkdir -p "${E2E_OUTPUT_DIR}"
-agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
 cd "${RECIPE_DIR}" || fail "cannot cd to ${RECIPE_DIR}"
-hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS}"
 exec python3 "${SCRIPT_DIR}/e2e-fabric-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
@@ -155,7 +157,7 @@ exec python3 "${SCRIPT_DIR}/e2e-fabric-load-test.py" \
   --duration "${DURATION_SEC}" \
   --inflight-per-user "${E2E_INFLIGHT_PER_USER}" \
   --inflight-start "${E2E_INFLIGHT_START_PER_USER}" \
-  --target-pods "${TARGET_PODS}" \
+  --target-pods "${hpa_max}" \
   --hold-sec "${MAX_REPLICAS_HOLD_SEC}" \
   --hpa-namespace "${NAMESPACE}" \
   --hpa-name "${HPA_NAME}" \
