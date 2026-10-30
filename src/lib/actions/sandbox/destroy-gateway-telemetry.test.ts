@@ -39,4 +39,18 @@ describe("destroySandbox scoped gateway telemetry", () => {
       "nemoclaw-19080",
     );
   }, 30_000);
+
+  it("uses the registered gateway before confirming a destroy", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "gateway-foreign");
+    const harness = createDestroyHarness({ promptResponses: ["n"] });
+
+    await expect(harness.destroySandbox("alpha", {})).resolves.toBeUndefined();
+
+    expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      "nemoclaw-19080",
+    );
+    expect(harness.executeSandboxDestroySpy).not.toHaveBeenCalled();
+  }, 30_000);
 });

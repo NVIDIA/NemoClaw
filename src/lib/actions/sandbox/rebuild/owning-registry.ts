@@ -495,9 +495,11 @@ export async function delegateRebuildToOwningRegistry(
   }
   let workerInput = input;
   if (!input.options.yes && !input.options.force) {
+    const targetGatewayName = resolveGatewayName(hit.gatewayPort ?? hit.registryGatewayPort);
     const confirmed = await rebuildOwningRegistryDependencies.confirmInteractiveRebuild(
       input.sandboxName,
       input.options.dcodeAutoApprovalMode,
+      targetGatewayName,
     );
     if (!confirmed) return true;
     workerInput = { ...input, options: { ...input.options, yes: true } };

@@ -102,6 +102,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "exec",
         "--name",
         sandboxName,
+        "-g",
+        "nemoclaw",
         "--tty",
         "--",
         "/bin/bash",

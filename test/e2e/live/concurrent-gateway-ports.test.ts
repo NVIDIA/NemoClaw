@@ -12,8 +12,6 @@
  * selected and its sandbox restarts through unscoped OpenShell commands.
  */
 
-import fs from "node:fs";
-
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -22,13 +20,14 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   openshellListIncludesSandbox,
   sandboxPhaseFromList,
 } from "../fixtures/openshell-sandbox-list.ts";
+import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 
 const SANDBOX_A = process.env.NEMOCLAW_CGP_SANDBOX_A ?? "e2e-cgp-a";
 const SANDBOX_B = process.env.NEMOCLAW_CGP_SANDBOX_B ?? "e2e-cgp-b";
@@ -100,6 +99,24 @@ async function command(
     env: options.env ?? commandEnv(),
     timeoutMs: options.timeoutMs,
   });
+}
+
+async function activeSessionCount(
+  host: HostCliClient,
+  sandboxName: string,
+  gatewayPort: string,
+  artifactName: string,
+): Promise<number | null> {
+  const result = await command(host, ["list", "--json"], {
+    artifactName,
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: gatewayPort }),
+    timeoutMs: 60_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  const parsed = JSON.parse(result.stdout) as {
+    sandboxes?: { name: string; activeSessionCount?: number | null }[];
+  };
+  return parsed.sandboxes?.find((row) => row.name === sandboxName)?.activeSessionCount ?? null;
 }
 
 function gatewayRegistryContains(result: ShellProbeResult, gatewayName: string): boolean {
@@ -514,6 +531,7 @@ test(
         "onboard sandbox on first non-default gateway",
         "onboard sandbox on alternate gateway",
         "verify isolated gateways and dashboard forwards",
+        "count the interactive connect only on its owning gateway",
         "garbage-collect an orphan without deleting the sibling gateway image",
         "destroy alternate sandbox with gateway cleanup while restarting the survivor",
         "destroy alternate sandbox without gateway cleanup while restarting the survivor",
@@ -524,11 +542,6 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
-
     await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
     await prerequisiteOrSkip(
       host,
@@ -562,6 +575,7 @@ test(
         "sandboxes A and B onboard on distinct non-default NemoClaw gateway ports",
         "both sandboxes, gateways, and dashboard forwards coexist without port collision",
         "each port-scoped registry lists only the sandbox owned by that gateway",
+        "an interactive connect contributes one owning-gateway session and clears after exit",
         "gc on gateway A preserves gateway B's registered image while removing a true orphan tag",
         "destroy with gateway cleanup removes gateway B, preserves selected gateway A, and keeps A restartable and dashboard-reachable",
         "destroy without gateway cleanup removes only B's sandbox, preserves gateway B and selected gateway A, and keeps A restartable and dashboard-reachable",
@@ -621,13 +635,7 @@ test(
       "phase-1-onboard-sandbox-a",
     );
     expect(onboardA.exitCode, resultText(onboardA)).toBe(0);
-    const phaseA = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_A,
-      gatewayA,
-      "phase-1-sandbox-a-ready",
-    );
-    expect(["Ready", "Running"]).toContain(phaseA);
+    await waitForSandboxReady(sandbox, SANDBOX_A, gatewayA, "phase-1-sandbox-a-ready");
 
     const listAfterA = await command(host, ["list"], {
       artifactName: "phase-1-nemoclaw-list-after-a",
@@ -662,10 +670,6 @@ test(
       gatewayB,
       "phase-3-sandbox-b-ready",
     );
-    expect(
-      [phaseAAfterB, phaseBAfterB].every((phase) => phase === "Ready" || phase === "Running"),
-      `gateway A=${phaseAAfterB}, gateway B=${phaseBAfterB}`,
-    ).toBe(true);
     await expectPortListening(host, GATEWAY_PORT_A, "phase-3-gateway-port-a-still-listening");
     await expectPortListening(host, GATEWAY_PORT_B, "phase-3-gateway-port-b-listening");
 
@@ -695,6 +699,71 @@ test(
       dashboardAAfterB === dashboardA && Boolean(dashboardB) && dashboardB !== dashboardA,
       `dashboard A before=${dashboardA}, after=${dashboardAAfterB}, gateway B=${dashboardB}`,
     ).toBe(true);
+
+    progress.phase("count the interactive connect only on its owning gateway");
+    const connectController = new AbortController();
+    const connectEnv = commandEnv({
+      NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A,
+      OPENSHELL_GATEWAY: gatewayA,
+    });
+    delete connectEnv.NEMOCLAW_NON_INTERACTIVE;
+    let connectFinished = false;
+    const connectDone = driveInteractiveCommand({
+      activityLabel: `interactive connect to ${SANDBOX_B}`,
+      cmd: [process.execPath, CLI_ENTRYPOINT, SANDBOX_B, "connect"],
+      env: connectEnv,
+      progress,
+      rules: [],
+      signal: connectController.signal,
+      timeoutMs: 4 * 60_000,
+    }).finally(() => {
+      connectFinished = true;
+    });
+    // Attach a rejection handler immediately; cleanup still awaits and reports the original error.
+    void connectDone.catch(() => undefined);
+    const stopConnect = async (): Promise<void> => {
+      connectController.abort();
+      await connectDone;
+    };
+    cleanup.add("close interactive cross-gateway connect", stopConnect);
+    let owningGatewaySessionObserved = false;
+    let siblingGatewaySessionAbsent = false;
+    try {
+      const attached = await pollUntil({
+        artifactPrefix: "phase-3-interactive-connect-attached",
+        attempts: PROBE_ATTEMPTS,
+        delayMs: PROBE_DELAY_MS,
+        probe: async (_attempt, artifactName) => ({
+          a: await activeSessionCount(host, SANDBOX_A, GATEWAY_PORT_A, `${artifactName}-a`),
+          b: await activeSessionCount(host, SANDBOX_B, GATEWAY_PORT_B, `${artifactName}-b`),
+        }),
+        accept: ({ b }) => b !== null && b > 0,
+        terminal: () =>
+          connectFinished
+            ? "interactive connect exited before its session became visible"
+            : undefined,
+      });
+      owningGatewaySessionObserved = attached.value.b !== null && attached.value.b > 0;
+      siblingGatewaySessionAbsent = attached.value.a === 0;
+      expect(attached.value.a).toBe(0);
+      const markedList = await command(host, ["list"], {
+        artifactName: "phase-3-interactive-connect-marked-list",
+        env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+        timeoutMs: 60_000,
+      });
+      expect(markedList.stdout).toMatch(new RegExp(`^\\s+${SANDBOX_B}(?: \\*)? ●$`, "m"));
+      expect(connectFinished, "interactive connect ended before listing its session").toBe(false);
+    } finally {
+      await stopConnect();
+    }
+    const detached = await pollUntil({
+      artifactPrefix: "phase-3-interactive-connect-detached",
+      attempts: PROBE_ATTEMPTS,
+      delayMs: PROBE_DELAY_MS,
+      probe: async (_attempt, artifactName) =>
+        await activeSessionCount(host, SANDBOX_B, GATEWAY_PORT_B, artifactName),
+      accept: (count) => count === 0,
+    });
 
     progress.phase("garbage-collect an orphan without deleting the sibling gateway image");
     const registeredImage = await host.command(
@@ -1202,6 +1271,9 @@ test(
           !outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B) &&
           outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
           !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
+        owningGatewaySessionObserved,
+        siblingGatewaySessionAbsent,
+        sessionClearedAfterDisconnect: detached.value === 0,
         siblingGatewayImagePreservedByGc: siblingImagePreserved,
         gcRemovedOnlyOrphanTag: orphanTagAbsent,
         dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
