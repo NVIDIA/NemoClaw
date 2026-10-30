@@ -175,7 +175,7 @@ export interface SetupNimFlowDeps {
   getRuntimeProvider(): RuntimeProviderBundle;
   step(current: number, total: number, label: string): void;
   isNonInteractive(): boolean;
-  getNonInteractiveProvider(): string | null;
+  getNonInteractiveProvider(agentName?: string | null): string | null;
   getVllmInstallResumeModel?(): string | null;
   getNonInteractiveModel(
     providerKey: string,
@@ -1107,6 +1107,7 @@ export function createSetupNim(
       probeVllm,
     } = prepareProviderDiscovery({
       deps,
+      agentName: agent?.name ?? null,
       sandboxName,
       recoverProvider,
       rebuildRegistryInferenceRoute,
