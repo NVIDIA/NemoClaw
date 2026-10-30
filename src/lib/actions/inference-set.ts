@@ -35,6 +35,8 @@ import {
   ensureHttpsPinRuntimeAdapter,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../inference/https-pin-runtime-adapter";
+import { findReachableOllamaHost } from "../inference/local";
+import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   inferenceSelectionRegistryFields,
   type ReasoningEffortRequest,
@@ -924,8 +926,28 @@ function resolveHermesContextWindowForSwitch(
 ): number | undefined {
   const contextWindow = deps.resolveContextWindowForModel(provider, model, gatewayPort);
   if (contextWindow != null) {
+    // Onboarding enforces MIN_HERMES_OLLAMA_CONTEXT_WINDOW for ollama-local via
+    // applyOllamaRuntimeContextWindow; this switch path must reject the same
+    // condition instead of silently writing a sub-floor context_length (#context-window-on-switch).
+    if (provider === "ollama-local" && contextWindow < MIN_HERMES_OLLAMA_CONTEXT_WINDOW) {
+      throw new Error(
+        `Ollama reports a ${contextWindow}-token context window for '${model}', below Hermes's ` +
+          `required ${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}-token floor. Select a model whose native ` +
+          `context is at least ${MIN_HERMES_OLLAMA_CONTEXT_WINDOW} tokens, or configure the host ` +
+          `Ollama daemon with OLLAMA_CONTEXT_LENGTH=${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}.`,
+      );
+    }
     deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
     return contextWindow;
+  }
+  if (provider === "ollama-local") {
+    // Onboarding requires a verified runtime context_length for Hermes; a probe
+    // that returns nothing is exactly the unverifiable state onboarding rejects.
+    throw new Error(
+      `Ollama did not report a usable context window for '${model}', so NemoClaw cannot verify ` +
+        `Hermes's required ${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}-token floor. Ensure the model is ` +
+        `loaded and Ollama is reachable, then retry.`,
+    );
   }
   deps.log(
     `  Warning: could not determine the context window for '${model}'; omitting ` +
@@ -1282,6 +1304,28 @@ async function runInferenceSetWithoutHostLock(
   // Reject conflicting persisted gateway identity before committing a route.
   // The later context-window lookup must use this same validated port.
   const gatewayPort = registryEntryGatewayPort(entry);
+  // Resolve (and enforce) Hermes's context-window floor before any registry
+  // mutation, so a rejected switch leaves the registry and Hermes config
+  // untouched instead of split across two different routes (#context-window-on-switch).
+  // getResolvedOllamaHost() (used deep inside the probe below) only returns a
+  // discovered host if something already populated it this process; nothing
+  // upstream of this switch path does that, so a fresh CLI invocation would
+  // otherwise probe localhost even when Ollama only answers on another
+  // candidate (e.g. host.docker.internal), wrongly rejecting a valid switch.
+  // A null result is not "nothing found" -- on mirrored WSL it can mean
+  // discovery deliberately rejected an unprotected Windows Ollama route. In
+  // that case getResolvedOllamaHost()'s localhost fallback could still reach
+  // that same rejected daemon, bypassing the route-protection check entirely.
+  if (agentName === "hermes" && provider === "ollama-local" && findReachableOllamaHost() === null) {
+    throw new Error(
+      "Ollama is not reachable (or its route could not be verified as safe), so Hermes's " +
+        "required context-window floor cannot be checked. Ensure Ollama is reachable and retry.",
+    );
+  }
+  const hermesContextWindow =
+    agentName === "hermes"
+      ? resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps)
+      : undefined;
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1962,7 +2006,7 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps);
+      const contextWindow = hermesContextWindow;
       patched = patchHermesInferenceConfig(
         config,
         provider,
