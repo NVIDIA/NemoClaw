@@ -171,7 +171,10 @@ import type {
   OpenShellInferenceRouteMutator,
   OpenShellInferenceRouteObserver,
 } from "../adapters/openshell/inference-route";
-import { createLocalInferenceRouteApplier } from "./local-inference-route";
+import {
+  createLocalInferenceRouteApplier,
+  localInferenceRouteTimeoutError,
+} from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 import {
   hostLocalInferenceRollbackStatus,
@@ -1168,6 +1171,15 @@ export function createSetupInference(
           }))
         )
           return deps.exitProcess(1);
+        // Native attachments do not change the shared route or carry its timeout.
+        const timeoutRangeError =
+          !nativeHostedSelection && !nativeCustomSelection && !selectingNativeLocal
+            ? localInferenceRouteTimeoutError(provider, usesBedrockRuntimeAdapter)
+            : null;
+        if (timeoutRangeError) {
+          deps.error(`  Error: ${timeoutRangeError}`);
+          return deps.exitProcess(1);
+        }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
         let endpointTrustedPrivateCapability = options.endpointTrustedPrivateCapability;
