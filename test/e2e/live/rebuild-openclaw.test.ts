@@ -6,6 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import {
+  REBUILD_OPENCLAW_INSTALL_TIMEOUT_MS,
+  REBUILD_OPENCLAW_NATIVE_READINESS_TIMEOUT_MS,
+  REBUILD_OPENCLAW_PRE_CLEANUP_TIMEOUT_MS,
+  REBUILD_OPENCLAW_REBUILD_TIMEOUT_MS,
+  REBUILD_OPENCLAW_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/rebuild-openclaw-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -51,7 +58,7 @@ function nativePluginInstallScript(): string {
 test(
   "rebuild-openclaw restores durable state and native readiness",
   {
-    timeout: testTimeout(45 * 60_000),
+    timeout: testTimeout(REBUILD_OPENCLAW_TEST_TIMEOUT_MS),
     meta: {
       e2ePhases: [
         "prepare the OpenClaw rebuild fixture",
@@ -61,6 +68,7 @@ test(
         "verify restored state and native readiness",
         "recover a killed Docker source",
         "diagnose unavailable Docker before uninstall cleanup",
+        "rebuild while the Docker source is stopped and OpenShell reports not_ready",
       ],
     },
   },
@@ -87,6 +95,7 @@ test(
         "unknown home, workspace, package, hook, cron, native configuration, and native plugin state survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
         "Docker Error-state recovery preserves workspace and native plugin state",
+        "a stopped, not_ready Docker source is replaced and its OpenClaw state is restored",
         "strict pre-uninstall backup reports unavailable Docker and preserves registration",
       ],
     });
@@ -99,7 +108,7 @@ test(
       await sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "rebuild-openclaw-preclean-openshell-delete",
         env,
-        timeoutMs: 120_000,
+        timeoutMs: REBUILD_OPENCLAW_PRE_CLEANUP_TIMEOUT_MS,
       });
     } catch {
       // The named gateway does not exist before first onboarding.
@@ -119,7 +128,7 @@ test(
       cwd: REPO_ROOT,
       env,
       redactionValues: redactions,
-      timeoutMs: execTimeout(20 * 60_000),
+      timeoutMs: execTimeout(REBUILD_OPENCLAW_INSTALL_TIMEOUT_MS),
     });
     assertExitZero(install, "OpenClaw rebuild install");
 
@@ -147,7 +156,7 @@ test(
         artifactName,
         env,
         redactionValues: redactions,
-        timeoutMs: 20 * 60_000,
+        timeoutMs: REBUILD_OPENCLAW_REBUILD_TIMEOUT_MS,
       });
       assertExitZero(rebuild, "rebuild OpenClaw sandbox");
     };
@@ -251,12 +260,29 @@ test(
         }
       },
     );
+    progress.phase("rebuild while the Docker source is stopped and OpenShell reports not_ready");
+    await proveStoppedDockerAgentRecovery(
+      sandbox,
+      runtimeProvider,
+      artifacts,
+      SANDBOX_NAME,
+      async () => {
+        await rebuildSource("rebuild-openclaw-not-ready-source");
+        await verifyRestoredState("rebuild-openclaw-not-ready-source");
+      },
+      "native-readiness",
+      "openclaw",
+      undefined,
+      "openshell-stop-not-ready",
+    );
+
     await artifacts.target.complete({
       id: "rebuild-openclaw",
       status: "passed",
       stateRestored: true,
       nativeConfigurationRestored: true,
       nativeReady: true,
+      stoppedSourceRecovery: true,
       staleBaseConstructed: false,
     });
   },
@@ -286,7 +312,7 @@ async function waitForNativeOpenClaw(
       artifactName: `${artifactPrefix}-native-ready`,
       env: buildAvailabilityProbeEnv(),
       redactionValues: redactions,
-      timeoutMs: 180_000,
+      timeoutMs: REBUILD_OPENCLAW_NATIVE_READINESS_TIMEOUT_MS,
     },
   );
   assertExitZero(ready, "native OpenClaw readiness after rebuild");

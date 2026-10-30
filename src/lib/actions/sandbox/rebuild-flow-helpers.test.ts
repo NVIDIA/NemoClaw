@@ -69,6 +69,67 @@ function makeBail(): (msg: string, code?: number) => never {
 describe("stopped rebuild capture selection", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("uses provider-verified stopped capture when gateway readiness is not-ready", async () => {
+    const capture = { sandboxName: "alpha", agentName: "openclaw" } as never;
+    const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState").mockResolvedValue(capture);
+    const entry = { name: "alpha", agent: "openclaw" };
+
+    await expect(
+      prepareRebuildStoppedAgentState(
+        entry,
+        {
+          observedPhase: "Stopped",
+          notReadyPhase: true,
+          staleRecovery: false,
+          staleRegistrySnapshot: null,
+        },
+        false,
+        () => entry,
+      ),
+    ).resolves.toBe(capture);
+    expect(prepare).toHaveBeenCalledWith("alpha", expect.any(Function));
+  });
+
+  it.each(["Deleting", "Provisioning"])(
+    "does not capture a non-ready source while OpenShell reports %s",
+    async (observedPhase) => {
+      const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
+      const entry = { name: "alpha", agent: "openclaw" };
+
+      await expect(
+        prepareRebuildStoppedAgentState(
+          entry,
+          {
+            observedPhase,
+            notReadyPhase: true,
+            staleRecovery: false,
+            staleRegistrySnapshot: null,
+          },
+          false,
+          () => entry,
+        ),
+      ).resolves.toBeNull();
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [{ notReadyPhase: true, staleRecovery: true, staleRegistrySnapshot: null }, false],
+    [{ notReadyPhase: true, staleRecovery: false, staleRegistrySnapshot: null }, true],
+  ])(
+    "does not capture a stopped source when recovery state is stale or retained",
+    async (state, hasRecoveryManifest) => {
+      const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
+      const entry = { name: "alpha", agent: "openclaw" };
+
+      await expect(
+        prepareRebuildStoppedAgentState(entry, state, hasRecoveryManifest, () => entry),
+      ).resolves.toBeNull();
+
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
   it("leaves stopped Hermes on the bounded start, capture, and restop fallback", async () => {
     const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
 
