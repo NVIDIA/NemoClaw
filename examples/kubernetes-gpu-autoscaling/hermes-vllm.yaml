@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
 # Hermes + vLLM. Deploy the GPU Helm chart with
-# INFERENCE_RUNTIME=vllm first. If that chart already serves NIM, use
-# hermes-nim.yaml instead of helm-upgrading. Replace metadata.uid and every
-# image digest before apply. Set NEMOCLAW_AGENT_IMAGE_METADATA from
+# INFERENCE_RUNTIME=vllm first. Replace metadata.uid and every image digest
+# before apply. Set NEMOCLAW_AGENT_IMAGE_METADATA from
 # `cargo images export-metadata`.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig

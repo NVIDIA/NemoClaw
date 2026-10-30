@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/render-sandboxes.sh PAIRING [E2E_USERS]
 
-PAIRING is one of: hermes-nim hermes-vllm deepagents-nim openclaw-ollama
+PAIRING is one of: hermes-vllm deepagents-nim openclaw-ollama
 E2E_USERS is an integer from 1 to 64. Default is the E2E_USERS env var.
 
 The command prints a NemoClawConfig. It does not apply it.
@@ -31,7 +31,7 @@ if [[ "${PAIRING}" == "-h" || "${PAIRING}" == "--help" ]]; then
 fi
 
 case "${PAIRING}" in
-  hermes-nim | hermes-vllm | deepagents-nim | openclaw-ollama) ;;
+  hermes-vllm | deepagents-nim | openclaw-ollama) ;;
   *)
     usage >&2
     exit 2

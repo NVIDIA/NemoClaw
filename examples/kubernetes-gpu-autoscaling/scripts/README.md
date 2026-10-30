@@ -9,7 +9,7 @@ Setup and load-test steps live in [`../README.md`](../README.md). Pairing files 
 
 | Script | Purpose |
 | --- | --- |
-| `check.sh` | Validate the four pairing files and read the cluster. Does not apply. |
+| `check.sh` | Validate the three pairing files and read the cluster. Does not apply. |
 | `validate-yaml.py` | Schema check used by `check.sh`. |
 | `render-sandboxes.sh` | Print a pairing file expanded to `E2E_USERS` sandboxes. Does not apply. |
 | `invoke.sh` | One operator prompt through `openshell sandbox exec` after `oidc`. |

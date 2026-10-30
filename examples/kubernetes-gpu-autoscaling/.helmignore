@@ -12,7 +12,6 @@ e2e-results/
 *.metadata.json
 openclaw-ollama.yaml
 hermes-vllm.yaml
-hermes-nim.yaml
 deepagents-nim.yaml
 RESULTS-6b.md
 RESULTS-6c.md

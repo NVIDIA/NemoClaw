@@ -225,6 +225,15 @@ fn deployment_questions_follow_the_selected_sdk_hardware_form() {
 
 #[test]
 fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
+    fn is_nemoclaw_config(path: &std::path::Path) -> bool {
+        let Ok(bytes) = std::fs::read(path) else {
+            return false;
+        };
+        String::from_utf8_lossy(&bytes).lines().any(|line| {
+            let line = line.trim();
+            line.starts_with("apiVersion:") && line.contains("nemoclaw.nvidia.com/")
+        })
+    }
     fn files(root: &std::path::Path, result: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(root).unwrap() {
             let path = entry.unwrap().path();
@@ -233,6 +242,7 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
             } else if path
                 .extension()
                 .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                && is_nemoclaw_config(&path)
             {
                 result.push(path);
             }

@@ -37,7 +37,7 @@ else
 fi
 
 YAML_FILES=()
-for name in hermes-nim hermes-vllm deepagents-nim openclaw-ollama; do
+for name in hermes-vllm deepagents-nim openclaw-ollama; do
   YAML_FILES+=("${EXAMPLE_DIR}/${name}.yaml")
 done
 
@@ -45,7 +45,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   bad "python3 is required for schema validation"
 else
   if python3 "${SCRIPT_DIR}/validate-yaml.py" --schema "${SCHEMA}" "${YAML_FILES[@]}"; then
-    ok "schema and in-cluster Service /v1 checks accepted all four pairing files"
+    ok "schema and in-cluster Service /v1 checks accepted all three pairing files"
   else
     bad "jsonschema rejected one or more pairing files"
   fi
@@ -93,7 +93,7 @@ else
   log "INFO  GPU runtime guess: ${runtime}"
   case "${runtime}" in
     nim)
-      ok "use hermes-nim.yaml or deepagents-nim.yaml (do not helm-upgrade to vLLM)"
+      ok "use deepagents-nim.yaml"
       ;;
     vllm)
       ok "use hermes-vllm.yaml"

@@ -14,7 +14,7 @@
 | Harness | OpenClaw, Hermes, or Deep Agents |
 | OpenShell | 0.1.4 |
 
-This example runs one Fabric sandbox per end user and scales GPU inference from 1 to N pods, one GPU each. The pairing files in this directory are OpenClaw + Ollama, Hermes + vLLM, Hermes when the chart already serves NIM, and Deep Agents + NIM. `nemoclaw apply` creates the sandboxes. The Helm chart in this directory serves inference. Sandboxes call:
+This example runs one Fabric sandbox per end user and scales GPU inference from 1 to N pods, one GPU each. The pairing files in this directory are OpenClaw + Ollama, Hermes + vLLM, and Deep Agents + NIM. `nemoclaw apply` creates the sandboxes. The Helm chart in this directory serves inference. Sandboxes call:
 
 ```text
 http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1
@@ -24,7 +24,7 @@ The chart generates a local inference API key. Each pairing file reads it from `
 
 Kubernetes HPA scales the inference pods on a Pods `AverageValue` metric. GPU utilization targets 40%. LLM latency targets 3000 ms. `./scripts/set-hpa-metric.sh` switches the metric without changing the runtime or the sandboxes.
 
-Build the CLI from this checkout. There is no release download yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)). NemoClaw does not place NIM ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)). For NIM, install this chart with `INFERENCE_RUNTIME=nim` and apply `hermes-nim.yaml` or `deepagents-nim.yaml`.
+Build the CLI from this checkout. There is no release download yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)). NemoClaw does not place NIM ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)). For NIM, install this chart with `INFERENCE_RUNTIME=nim` and apply `deepagents-nim.yaml`. Hermes uses vLLM.
 
 ## Deployment architecture
 
@@ -109,7 +109,7 @@ nemoclaw --help
 
 Help must list `plan`, `apply`, `export`, and `destroy`. Keep this bundle unchanged while a deployment uses it.
 
-Build the Fabric image for the pairing you will apply. Hermes is the image for `hermes-nim.yaml` and `hermes-vllm.yaml`. Deep Agents is the image for `deepagents-nim.yaml`. OpenClaw is the image for `openclaw-ollama.yaml`.
+Build the Fabric image for the pairing you will apply. Hermes is the image for `hermes-vllm.yaml`. Deep Agents is the image for `deepagents-nim.yaml`. OpenClaw is the image for `openclaw-ollama.yaml`.
 
 ```bash
 cd /home/maggiez/NemoClaw-v1
@@ -139,7 +139,7 @@ For NIM, create `secrets.env` from `secrets.env.example` and run `./scripts/appl
 
 ### 5. Check the pairing files
 
-`./scripts/check.sh` validates the four YAML files and reads the cluster. It does not apply, helm-upgrade, or delete sandboxes.
+`./scripts/check.sh` validates the three YAML files and reads the cluster. It does not apply, helm-upgrade, or delete sandboxes.
 
 ```bash
 cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
@@ -159,7 +159,6 @@ Replace `metadata.uid` before apply. A placeholder digest is valid YAML and is n
 | --- | --- | --- | --- |
 | 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | The GPU chart serves Ollama. |
 | 6b Hermes + vLLM | [`hermes-vllm.yaml`](hermes-vllm.yaml) | `nvidia.fabric.hermes` | The GPU chart serves vLLM. |
-| Hermes while the chart serves NIM | [`hermes-nim.yaml`](hermes-nim.yaml) | `nvidia.fabric.hermes` | The GPU chart already serves NIM. Do not helm-upgrade it to vLLM for this check. |
 | 6c Deep Agents + NIM | [`deepagents-nim.yaml`](deepagents-nim.yaml) | `nvidia.fabric.langchain.deepagents` | The GPU chart serves NIM. |
 
 Each file declares sandboxes `user-0000` and `user-0001`. This command prints a wider file and does not apply it:
@@ -168,7 +167,7 @@ Each file declares sandboxes `user-0000` and `user-0001`. This command prints a 
 E2E_USERS=5 ./scripts/render-sandboxes.sh hermes-vllm
 ```
 
-Hermes uses state directory `.local/gpu-autoscaling` and namespace `nemoclaw-v1-gpu-autoscaling`. OpenClaw uses `.local/gpu-autoscaling-openclaw` and `nemoclaw-v1-gpu-autoscaling-openclaw`. Deep Agents uses `.local/gpu-autoscaling-deepagents` and `nemoclaw-v1-gpu-autoscaling-dagent`. Apply refuses to take over a namespace that already exists. `hermes-nim.yaml` uses the same namespace as `hermes-vllm.yaml`. Apply only one of those two at a time.
+Hermes uses state directory `.local/gpu-autoscaling` and namespace `nemoclaw-v1-gpu-autoscaling`. OpenClaw uses `.local/gpu-autoscaling-openclaw` and `nemoclaw-v1-gpu-autoscaling-openclaw`. Deep Agents uses `.local/gpu-autoscaling-deepagents` and `nemoclaw-v1-gpu-autoscaling-dagent`. Apply refuses to take over a namespace that already exists. OpenClaw and Deep Agents use their own namespaces, so either can stay up beside the Hermes deployment.
 
 ```bash
 nemoclaw plan --non-interactive --state-dir .local/gpu-autoscaling hermes-vllm.yaml
