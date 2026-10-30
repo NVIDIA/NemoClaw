@@ -2621,6 +2621,10 @@ Register a messaging channel with the sandbox and rebuild so the image picks up 
 
 Google Chat uses an experimental token-paste flow for the service-account JSON on both agents. OpenClaw also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment. Hermes instead prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist. It pulls inbound events from Pub/Sub over REST and does not create a public webhook endpoint.
 
+Discord token verification must succeed before enrollment.
+Rejected, rate-limited, unreachable, or timed-out verification skips Discord without changing its provider, registry entry, or rebuild state.
+Correct the token or host access, then retry `$$nemoclaw <name> channels add discord`.
+
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel overwrites the stored credentials where applicable.
 Repeating a successful add with identical inputs is idempotent.
@@ -2774,6 +2778,22 @@ An unsupported path produces a warning, and the report uses the default gateway 
 If only the dashboard path has credentials, follow the Hermes recovery procedure in [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp#pair-the-sandbox).
 That procedure states the cleanup prerequisite and when to stop before adding the channel again.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+For Hermes Discord, check native authentication status with the sandbox name:
+
+```bash
+$$nemoclaw <name> channels status --channel discord
+```
+
+`credential_rejected` reports rejection from Hermes' native runtime state.
+`healthy` confirms an adapter connection, not message delivery.
+Missing, stale, or unreadable native evidence produces `unknown` with a warning.
+Registration and policy coverage alone do not establish authentication.
+Use the reported recovery command to replace rejected credentials, then verify delivery with a real message.
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison. Detailed non-wait JSON keeps the schema-version-1 `{schemaVersion,sandbox,channel,report}` envelope. When a probe-capable channel is paused, the command skips the live probe, returns `report.verdict` as `info` with paused registration and runtime-health signals, and exits 0. It classifies the state as `healthy`, `idle`, `token_rejected`, `unreachable`, `not_started`, `policy_gap`, `config_gap`, `unknown`, or `probe_failed`. A network or egress failure, or a non-authentication Bot API startup HTTP error, produces `unreachable`; a 401 or 404 response produces `token_rejected`. A missing, malformed, mismatched, identityless, or non-OpenShell runtime credential also produces `token_rejected`. It reads the gateway's own startup and poll log breadcrumbs rather than issuing its own Bot API request, so the resolved bot token never leaves the gateway. The verdict reflects the most recent evidence in the log window, so a bridge that recovered after a blocked start reports `healthy` while one blocked again reports `unreachable`. Telegram health is probed only for OpenClaw sandboxes; a Hermes Telegram sandbox uses the basic config report.
 

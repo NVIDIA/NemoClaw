@@ -86,6 +86,13 @@ describe("Hermes Discord rebuild evidence", () => {
 
   it("rebuilds from stored credentials and verifies Discord state before inference", async () => {
     const { command, exec } = await runPhase();
+    const enrollmentEnv = command.mock.calls[0]![2]!.env!;
+    const rebuildEnv = command.mock.calls[1]![2]!.env!;
+    const preload = new URL("../fixtures/discord-enrollment-preload.mts", import.meta.url).href;
+    expect(enrollmentEnv.NEMOCLAW_E2E_DISCORD_TOKEN).toBe(enrollmentEnv.DISCORD_BOT_TOKEN);
+    expect(enrollmentEnv.NODE_OPTIONS).toContain(`--import=${preload}`);
+    expect(rebuildEnv.NEMOCLAW_E2E_DISCORD_TOKEN).toBe(enrollmentEnv.DISCORD_BOT_TOKEN);
+    expect(rebuildEnv.NODE_OPTIONS).toContain(`--import=${preload}`);
     expect(command.mock.calls[0]![2]!.env!.NVIDIA_INFERENCE_API_KEY).toBe("synthetic-public-key");
     expect(command.mock.calls[1]![2]!.env!).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(command.mock.calls[1]![2]!.env!).not.toHaveProperty("DISCORD_BOT_TOKEN");

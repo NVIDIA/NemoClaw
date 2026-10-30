@@ -4911,18 +4911,19 @@ jobs:
       - name: Install reviewed OpenShell SDK archive without package credentials
         uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
-      - name: Build shared policy boundary
+      - name: Build candidate CLI and shared policy boundary
         shell: bash
         run: |
           set -euo pipefail
-          [[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
-            echo "::error::Shared policy boundary output exists before the candidate build" >&2
+          [[ ! -e dist && ! -L dist && ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
+            echo "::error::CLI or shared policy boundary output exists before the candidate build" >&2
             exit 1
           }
-          npm run build:policy-boundary
+          npm run build:cli
           for artifact in \
             nemoclaw/dist/shared/openshell-policy-boundary.cjs \
-            nemoclaw/dist/shared/sandbox-name.cjs; do
+            nemoclaw/dist/shared/sandbox-name.cjs \
+            dist/lib/actions/sandbox/channel-status.js; do
             [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {
               echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2
               exit 1
@@ -5142,6 +5143,10 @@ jobs:
               echo "::error::Protected managed-image contract changed platform" >&2
               exit 1
             }
+            if [[ "$agent" == "hermes" ]]; then
+              npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+                --image "$reference" --platform "$platform"
+            fi
             npx --no-install tsx scripts/checks/run-managed-image-direct-e2e.ts \
               --agent "$agent" \
               --image "$reference" \
@@ -5151,7 +5156,8 @@ jobs:
               --arg digest "$digest" \
               --arg platform "$platform" \
               --arg reference "$reference" \
-              '{agent: $agent, digest: $digest, platform: $platform, reference: $reference}' \
+              '{agent: $agent, digest: $digest, platform: $platform, reference: $reference} +
+                (if $agent == "hermes" then {hermesDiscordStatus: "passed"} else {} end)' \
               >> "$direct_runs"
           done < <(jq -c '.[]' "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT")
 
