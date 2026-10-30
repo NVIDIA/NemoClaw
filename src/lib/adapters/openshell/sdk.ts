@@ -10,8 +10,10 @@ import {
   managedGatewayStateRootOwnershipFailure,
   resolveDefaultGatewayStateDirForPort,
   resolveGatewayStateDirForPort,
+  UnsafeGatewayStateDirectoryError,
 } from "../../onboard/gateway/state-dir";
 import {
+  GatewayManagementDeclarationError,
   invalidGatewayManagementDeclarationError,
   loadGatewayManagementDeclaration,
 } from "../../onboard/gateway-management";
@@ -84,12 +86,14 @@ async function loadOpenShellSdk(): Promise<OpenShellSdkModule> {
   return (await importOpenShellSdk()) as OpenShellSdkModule;
 }
 
-/** Connect the SDK to one validated local gateway, independent of compute provider. */
-export async function connectManagedOpenShellSdk(
+/**
+ * Resolve and validate the local state directory the SDK would trust for one gateway.
+ * Configured or externally declared directories fail with typed, displayable errors.
+ */
+export function resolveManagedOpenShellSdkStateDir(
   target: OpenShellGatewayTarget,
-  deps: Pick<OpenShellSdkConnectionDeps, "env" | "homeDir" | "loadSdk" | "signal"> = {},
-): Promise<unknown> {
-  throwIfAborted(deps.signal);
+  deps: Pick<OpenShellSdkConnectionDeps, "env" | "homeDir"> = {},
+): string {
   const port = gatewayPort(target);
   const environment = deps.env ?? process.env;
   const configuredStateDir = environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
@@ -105,7 +109,9 @@ export async function connectManagedOpenShellSdk(
       : null;
   if (external) {
     if (!external.endpoint || !external.stateDir) {
-      throw new Error("The external gateway declaration is incomplete.");
+      throw new GatewayManagementDeclarationError(
+        "The external gateway declaration is incomplete.",
+      );
     }
     const endpoint = new URL(external.endpoint);
     const endpointPort = Number(endpoint.port || (endpoint.protocol === "https:" ? "443" : "80"));
@@ -114,7 +120,9 @@ export async function connectManagedOpenShellSdk(
       endpoint.hostname !== "127.0.0.1" ||
       endpointPort !== port
     ) {
-      throw new Error("The external gateway declaration does not match the selected gateway.");
+      throw new GatewayManagementDeclarationError(
+        "The external gateway declaration does not match the selected gateway.",
+      );
     }
   }
   const home = deps.homeDir ?? environment.HOME ?? os.homedir();
@@ -128,7 +136,7 @@ export async function connectManagedOpenShellSdk(
     configuredStateDir &&
     resolveGatewayStateDirForPort({ configured: configuredStateDir, home, port }) !== stateDir
   ) {
-    throw new Error(
+    throw new GatewayManagementDeclarationError(
       "The external gateway declaration conflicts with the state directory override.",
     );
   }
@@ -149,17 +157,38 @@ export async function connectManagedOpenShellSdk(
       );
   if (ownershipFailure) {
     const message = `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`;
-    if (configuredStateDir || external) throw new Error(message);
+    // Configured locations fail closed without the CLI fallback, but keep the reason visible.
+    if (configuredStateDir || external) throw new UnsafeGatewayStateDirectoryError(message);
     throw new OpenShellSdkPreflightUnavailableError(message);
   }
+  return stateDir;
+}
+
+/** Read the mTLS files the SDK needs from one validated gateway state directory. */
+export function readManagedOpenShellSdkTls(
+  stateDir: string,
+): Readonly<{ caCert: Buffer; clientCert: Buffer; clientKey: Buffer }> {
   const tlsDirectory = path.join(stateDir, "tls");
+  return {
+    caCert: readPem(path.join(tlsDirectory, "ca.crt")),
+    clientCert: readPem(path.join(tlsDirectory, "client", "tls.crt")),
+    clientKey: readPem(path.join(tlsDirectory, "client", "tls.key")),
+  };
+}
+
+/** Connect the SDK to one validated local gateway, independent of compute provider. */
+export async function connectManagedOpenShellSdk(
+  target: OpenShellGatewayTarget,
+  deps: Pick<OpenShellSdkConnectionDeps, "env" | "homeDir" | "loadSdk" | "signal"> = {},
+): Promise<unknown> {
+  throwIfAborted(deps.signal);
+  const port = gatewayPort(target);
+  const stateDir = resolveManagedOpenShellSdkStateDir(target, deps);
   const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
   throwIfAborted(deps.signal);
   const client = await sdk.OpenShellClient.connect({
     gateway: `https://127.0.0.1:${String(port)}`,
-    caCert: readPem(path.join(tlsDirectory, "ca.crt")),
-    clientCert: readPem(path.join(tlsDirectory, "client", "tls.crt")),
-    clientKey: readPem(path.join(tlsDirectory, "client", "tls.key")),
+    ...readManagedOpenShellSdkTls(stateDir),
   });
   throwIfAborted(deps.signal);
   return client;
