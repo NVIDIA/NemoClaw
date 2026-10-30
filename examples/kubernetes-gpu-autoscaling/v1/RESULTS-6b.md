@@ -23,10 +23,11 @@ Both runs stopped new chats at 7 replicas, waited for the HPA to return to 1, an
 Times come from the client's HPA poll CSV (`hpa_10users.csv`) and are approximate.
 Reply tokens are estimated from reply length (about 4 characters per token), not reported by vLLM.
 
-## What differs from v0
+## What this run used
 
-- A v1 sandbox runs Fabric, so [`v1-client-hermes.sh`](scripts/v1-client-hermes.sh) sends each prompt with `kubectl exec … fabric-agent-ctl invoke`, not `hermes -z` through the v0.0.85 gateway.
-- The `development` gateway profile gives the operator no token, so `openshell` cannot reach the v1 gateway. The client reads each Fabric runtime id from the nemoclaw state directory.
+- `nemoclaw apply` used the managed OpenShell gateway (`development` profile).
+- Inference already used the in-cluster GPU chart Service `http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1`.
+- `development` blocked the OpenShell CLI, so each prompt was `fabric-agent-ctl invoke` in the sandbox. Fabric did not choose that hop. A gateway prompt is [`v1-invoke.sh`](scripts/v1-invoke.sh) after `oidc`. The client read each Fabric runtime id from the nemoclaw state directory.
 - The Hermes runtime keeps conversation history across invokes, so each sandbox's context grows during a run.
 - The sandbox route sets `maxTokens: 2048`. The client's `MAX_TOKENS` only picks the prompt length.
 - [`v1-set-hpa-metric.sh`](scripts/v1-set-hpa-metric.sh) switches the chart between the two metrics without touching the runtime or the sandboxes.

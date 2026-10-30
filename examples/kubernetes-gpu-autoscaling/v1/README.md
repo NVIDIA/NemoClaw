@@ -12,8 +12,7 @@ v1 has no release download ([#12638](https://github.com/NVIDIA/NemoClaw/issues/1
 The v0 recipe is in the parent folder, [`kubernetes-gpu-autoscaling`](../README.md).
 Its Helm chart, Horizontal Pod Autoscaler, and Envoy load balancer stay installed.
 v1 does not install that chart.
-The OpenClaw file calls the v1 chart Service `nemoclaw-gpu-v1-metrics-proxy.nemoclaw-gpu-v1.svc.cluster.local:8081`.
-Hermes and Deep Agents files still name the v0 chart until those runtimes are installed in a v1 namespace.
+Each pairing file calls the GPU chart Service `nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081`.
 
 Leave these v0 resources in place:
 
@@ -125,7 +124,7 @@ Keep this bundle unchanged while a deployment uses it.
 Build one Fabric image for the pairing you will apply.
 Hermes is the image for `hermes-nim.yaml` and `hermes-vllm.yaml`.
 Deep Agents is the image for `deepagents-nim.yaml`.
-OpenClaw step 6a must not be applied: pinned Fabric does not start OpenClaw in OpenShell ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372)).
+OpenClaw is the image for `openclaw-ollama.yaml`.
 
 ```bash
 cd /home/maggiez/NemoClaw-v1
@@ -145,7 +144,7 @@ For Deep Agents, replace `hermes` with `deepagents` in the three commands above 
 
 | v0 README step | File here | Harness | Apply when |
 | --- | --- | --- | --- |
-| 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | Do not apply until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed. |
+| 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | The GPU chart serves Ollama. |
 | 6b Hermes + vLLM | [`hermes-vllm.yaml`](hermes-vllm.yaml) | `nvidia.fabric.hermes` | The GPU chart serves vLLM. |
 | 6b Hermes while the chart serves NIM | [`hermes-nim.yaml`](hermes-nim.yaml) | `nvidia.fabric.hermes` | The GPU chart already serves NIM. Do not helm-upgrade it to vLLM for this check. |
 | 6c Deep Agents + NIM | [`deepagents-nim.yaml`](deepagents-nim.yaml) | `nvidia.fabric.langchain.deepagents` | The GPU chart serves NIM. v1 has no managed NIM ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)). |
@@ -158,9 +157,42 @@ cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling/v1
 E2E_USERS=5 ./scripts/v1-render-sandboxes.sh hermes-nim
 ```
 
-Fabric starts the agent with `fabric-agent-ctl`.
-The v0 clients `client.sh`, `hermes -z`, and `dcode -n` talk to v0 images.
-Those images have no `fabric-agent-ctl`.
+## Prompt hop and inference hop
+
+Hermes, OpenClaw, and Deep Agents share the managed OpenShell gateway and one Fabric invoke.
+Only `harness.kind` and the image change.
+
+| Agent | `harness.kind` | Canonical example |
+| --- | --- | --- |
+| OpenClaw | `nvidia.fabric.openclaw` | [`examples/kubernetes/managed-development.yaml`](../../../examples/kubernetes/managed-development.yaml), [Agents](../../../docs/agents.md) |
+| Hermes | `nvidia.fabric.hermes` | [`examples/managed-hermes.yaml`](../../../examples/managed-hermes.yaml), [`examples/gtc-dc/hermes-dgx-spark.yaml`](../../../examples/gtc-dc/hermes-dgx-spark.yaml) |
+| Deep Agents | `nvidia.fabric.langchain.deepagents` | [`examples/spark/deepagents-team.yaml`](../../../examples/spark/deepagents-team.yaml) |
+
+**Apply.** `nemoclaw plan` / `apply` / `destroy` uses the managed OpenShell gateway to create each sandbox and start `fabric-agent-ctl serve`.
+These files set `authentication.profile: development`.
+Only NemoClaw can mint those tokens ([Deploy to Kubernetes](../../../docs/kubernetes.md)).
+
+**Operator prompt.** The command is the same for every harness ([Get started](../../../docs/get-started.md), [Agents](../../../docs/agents.md)):
+
+```bash
+openshell sandbox exec -n NAME -- fabric-agent-ctl invoke --agent NAME --runtime-id ID --input -
+```
+
+`./scripts/v1-invoke.sh` runs that command.
+`development` gives the OpenShell CLI no token, so this waits on `oidc` and an identity provider you supply ([Reach the Gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli)).
+Do not add an unauthenticated v1 gateway.
+
+The recorded 6b and 6c HPA clients invoked Fabric inside the sandbox because `development` blocked that CLI. Fabric did not choose that hop.
+
+**Inference.** Each file already sets `inferenceProviders` to the GPU chart metrics-proxy Service `/v1` (or the Envoy dataplane Service URL). That is the in-cluster pattern in [Use a Model Server in the Cluster](../../../docs/kubernetes.md#use-a-model-server-in-the-cluster):
+
+```text
+http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1
+```
+
+with `credential: {env: GPU_INFERENCE_API_KEY}`.
+OpenShell stores the key and attaches the provider.
+Leave this URL on cluster DNS `/v1`.
 
 ## Check, plan, and one prompt
 
@@ -187,25 +219,25 @@ A placeholder digest is valid YAML and is not a runnable image.
 nemoclaw plan --non-interactive --state-dir .local/gpu-autoscaling hermes-nim.yaml
 ```
 
-After a successful apply, send one prompt.
-`NEMOCLAW_V1_STATE_DIR` is the state directory from the plan command.
-The script reads `runtime_id` from that state and does not print the inference key.
+After a successful apply, a gateway prompt is `./scripts/v1-invoke.sh` for 6b and 6c.
+These files use `development`, so that command waits on `oidc`.
 
-```bash
-NEMOCLAW_V1_STATE_DIR=.local/gpu-autoscaling ./scripts/v1-invoke.sh
-```
+### Switch apply and invoke to oidc
 
-`v1-invoke.sh` goes through the OpenShell gateway.
-The `development` profile in these YAML files gives the operator no gateway token, so `openshell` cannot connect and this command fails.
-Use the `oidc` profile ([Reach the Gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli)), or use the load clients below, which go through `kubectl exec`.
+Supply an issuer URL, audience, and OpenShell CLI client ID, then switch YAML to `oidc`.
+Do not add an unauthenticated v1 gateway.
 
-v0 step 6 still uses the chart and the 0.0.85 gateway.
-Run those clients with `~/.local/bin/openshell` first on `PATH`.
+1. Set `gateway.kubernetes.authentication.profile` to `oidc`, fill `openshell.gateway.oidc`, and set `token.env` as [Authenticate Through an Existing OIDC Issuer](../../../docs/kubernetes.md#authenticate-through-an-existing-oidc-issuer) shows.
+2. Export a bearer token in that variable, then run `nemoclaw apply` with the same state directory, or destroy and apply if you are replacing a development gateway.
+3. Port-forward the gateway, copy client TLS, and run `openshell gateway add` as [Reach the Gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli) shows. Those steps have not been run on a cluster.
+4. Run `NEMOCLAW_V1_STATE_DIR=.local/gpu-autoscaling ./scripts/v1-invoke.sh` (6b) or the Deep Agents state directory (6c).
+
+Until that issuer exists, keep `development` for apply.
 
 ## Load tests for 6b and 6c
 
-These clients are the v1 counterparts of `client_hermes.sh` and `client_deepagents.sh`.
-They send each prompt with `kubectl exec ... fabric-agent-ctl invoke`, read each Fabric runtime id from the state directory, and stop new chats at `TARGET_PODS` GPUs (default 7).
+[`v1-client-hermes.sh`](scripts/v1-client-hermes.sh) and [`v1-client-deepagents.sh`](scripts/v1-client-deepagents.sh) send each prompt as `fabric-agent-ctl invoke`, read each Fabric runtime id from the state directory, and stop new chats at `TARGET_PODS` GPUs (default 8).
+The recorded runs used that in-sandbox invoke because `development` blocked the OpenShell CLI. A gateway prompt is `v1-invoke.sh` after `oidc`.
 Apply a YAML with enough sandboxes first, for example ten:
 
 ```bash

@@ -45,7 +45,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   bad "python3 is required for schema validation"
 else
   if python3 "${SCRIPT_DIR}/v1-validate-yaml.py" --schema "${SCHEMA}" "${YAML_FILES[@]}"; then
-    ok "jsonschema accepted all four pairing files"
+    ok "schema and in-cluster Service /v1 checks accepted all four pairing files"
   else
     bad "jsonschema rejected one or more pairing files"
   fi
@@ -99,7 +99,7 @@ else
       ok "use hermes-vllm.yaml"
       ;;
     ollama)
-      block "OpenClaw + Ollama YAML parses, but Fabric cannot start OpenClaw yet (#13372)"
+      ok "use openclaw-ollama.yaml"
       ;;
     *)
       note "could not classify GPU runtime from pod images"

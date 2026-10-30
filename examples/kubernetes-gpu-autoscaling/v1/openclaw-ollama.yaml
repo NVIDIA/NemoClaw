@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
-# Experimental v1 shape for step 6a (OpenClaw + Ollama).
-# Do not apply this until Fabric can start OpenClaw in an OpenShell sandbox
-# ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372)). Use
-# hermes-nim.yaml or deepagents-nim.yaml for a v1 step-6 attempt on NIM.
+# Experimental v1 step 6a (OpenClaw + Ollama). Deploy the GPU Helm chart with
+# INFERENCE_RUNTIME=ollama first. Point this provider at the operator-owned
+# GPU chart. Replace metadata.uid and every image digest before apply. Set
+# NEMOCLAW_AGENT_IMAGE_METADATA from `cargo images export-metadata`.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata: {name: gpu-autoscaling-openclaw-ollama, uid: c4b1ce21-b7a8-450e-9052-12bd88f5a00a}
@@ -16,17 +16,21 @@ spec:
     kubernetes:
       kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
       context: default
-      namespace: nemoclaw-v1-gpu-autoscaling
+      namespace: nemoclaw-v1-gpu-autoscaling-openclaw
+      # NemoClaw apply only. Operator openshell invoke needs oidc (docs/kubernetes.md).
       authentication: {profile: development}
   inferenceProviders:
     gpu-ollama:
       provider: openai
       api: openai-completions
-      endpoint: http://nemoclaw-gpu-v1-metrics-proxy.nemoclaw-gpu-v1.svc.cluster.local:8081/v1
+      # Cluster Service /v1; same pattern as examples/kubernetes/in-cluster-vllm.yaml.
+      endpoint: http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1
       credential: {env: GPU_INFERENCE_API_KEY}
   sandboxes:
     user-0000:
-      harness: {kind: nvidia.fabric.openclaw}
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution: {timeoutSeconds: 300}
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -39,7 +43,9 @@ spec:
             providerRef: gpu-ollama
             overrides: {model: 'llama3.2:3b', maxTokens: 2048}
     user-0001:
-      harness: {kind: nvidia.fabric.openclaw}
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution: {timeoutSeconds: 300}
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000

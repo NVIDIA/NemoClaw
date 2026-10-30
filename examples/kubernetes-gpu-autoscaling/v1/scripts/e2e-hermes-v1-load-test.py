@@ -7,15 +7,15 @@ GPU inference is the operator-owned GPU chart (vLLM or NIM) behind the HPA.
 
 Derived from scripts/e2e-hermes-load-test.py. Only the transport differs.
 v0 runs `openshell sandbox exec ... hermes -z` through the v0.0.85 gateway.
-A v1 sandbox runs Fabric, so each prompt goes through
+A v1 sandbox runs Fabric. Official operator invoke is v1-invoke.sh through the
+OpenShell gateway after oidc. This load client is a development-profile bypass:
 
     kubectl exec -i POD -c agent -- /opt/fabric/bin/fabric-agent-ctl invoke \
         --agent assistant --runtime-id RUNTIME_ID --input -
 
-The `development` gateway profile gives the operator no token, so this client
-does not use the OpenShell gateway. Runtime ids come from the nemoclaw state
-directory (NEMOCLAW_V1_STATE_DIR). Start it with ./scripts/v1-client-hermes.sh.
-The client does not set the HPA metric.
+Runtime ids come from the nemoclaw state directory (NEMOCLAW_V1_STATE_DIR).
+Start it with ./scripts/v1-client-hermes.sh. The client does not set the HPA
+metric. Inference stays on the GPU chart Service /v1, not inference.local.
 """
 
 from __future__ import annotations
@@ -62,6 +62,13 @@ else:
         "Explain Kubernetes HPA and GPU autoscaling in detail with examples.",
         "Write a long summary of transformer inference on NVIDIA GPUs.",
         "Describe how vLLM serves models and batches concurrent chat requests.",
+    ]
+# v0 OpenClaw client prefixes every prompt. llama3.2:3b otherwise emits
+# ask_user/msg tool JSON and the Fabric invoke hits timeoutSeconds with {}.
+if os.environ.get("V1_AGENT_KIND") == "openclaw":
+    PROMPTS = [
+        prompt if prompt.startswith("Do not use tools.") else f"Do not use tools. {prompt}"
+        for prompt in PROMPTS
     ]
 
 
@@ -205,8 +212,9 @@ def print_chat_table(
     print(f"{'total':<8} {'':<12} {total_ok:>16} {total_err:>6} {total_tok:>12}")
     print("")
     print(
-        "Path in use: user → kubectl exec → fabric-agent-ctl invoke (agent in a v1 sandbox) → "
-        "GPU chart (Envoy / metrics-proxy) → vLLM or NIM."
+        "Path in use: user → kubectl exec (development-profile bypass) → "
+        "fabric-agent-ctl invoke (agent in a v1 sandbox) → "
+        "GPU chart Service /v1 (Envoy / metrics-proxy) → vLLM or NIM."
     )
 
 
@@ -306,9 +314,14 @@ async def send_user_query(sandbox: str, prompt: str, timeout_sec: int) -> tuple[
         return False, f"unparseable fabric-agent-ctl output: {stdout[:200]}"
     result = reply.get("result") or {}
     output = result.get("output") or {}
-    if reply.get("status") != "succeeded" or result.get("status") != "succeeded":
-        err = reply.get("error") or {}
-        return False, f"fabric status={reply.get('status')} code={err.get('code')} stage={err.get('stage')}"
+    result_status = result.get("status")
+    if reply.get("status") != "succeeded" or result_status != "succeeded":
+        err = reply.get("error") or result.get("error") or {}
+        return False, (
+            f"fabric status={reply.get('status')} result_status={result_status} "
+            f"code={err.get('code')} stage={err.get('stage')} "
+            f"output_keys={sorted(output)}"
+        )
     text = _reply_text(output)
     if output.get("completed") is False or not text:
         return False, "empty or incomplete agent response"
@@ -345,7 +358,7 @@ async def simulate_user(
     log_handle = log_path.open("w")
 
     async def one_turn(turn_id: int) -> None:
-        nonlocal ok, err, tokens, last_log
+        nonlocal ok, err, tokens, last_log, runtime_gone
         if stop_event.is_set():
             return
         prompt = PROMPTS[(user_id + turn_id) % len(PROMPTS)]
@@ -359,6 +372,8 @@ async def simulate_user(
             err += 1
             log_handle.write(f"err turn={turn_id} {detail}\n")
             print(f"[user {user_id} sandbox {user_id}] turn {turn_id} error: {detail}", file=sys.stderr)
+            if "runtime_unavailable" in detail:
+                runtime_gone = True
         now = time.monotonic()
         if now - last_log >= 15:
             print(
@@ -376,10 +391,16 @@ async def simulate_user(
                 pass  # Pause elapsed; stop_event was not set.
 
     pending: set[asyncio.Task[None]] = set()
+    runtime_gone = False
     try:
-        while time.monotonic() < end and not stop_event.is_set():
+        while time.monotonic() < end and not stop_event.is_set() and not runtime_gone:
             cap = inflight if time.monotonic() >= escalate_at else inflight_start
-            while len(pending) < cap and time.monotonic() < end and not stop_event.is_set():
+            while (
+                len(pending) < cap
+                and time.monotonic() < end
+                and not stop_event.is_set()
+                and not runtime_gone
+            ):
                 pending.add(asyncio.create_task(one_turn(turn)))
                 turn += 1
             if not pending:
@@ -552,7 +573,7 @@ async def run_test(args: argparse.Namespace) -> int:
     tokens = sum(int(r.get("tokens") or 0) for r in normalized)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "path": "user -> kubectl exec -> fabric-agent-ctl invoke -> Hermes in v1 sandbox -> GPU chart (Envoy/metrics-proxy) -> vLLM HPA",
+        "path": "user -> kubectl exec (development-profile bypass) -> fabric-agent-ctl invoke -> Hermes in v1 sandbox -> GPU chart Service /v1 -> vLLM HPA",
         "users": args.users,
         "target_pods": args.target_pods,
         "hpa_max_replicas": max_replicas,
@@ -602,7 +623,7 @@ def main() -> int:
         default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "1")),
         help="Bootstrap concurrent chats per user before ramping",
     )
-    parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "7")))
+    parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
     parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))
     parser.add_argument("--hpa-namespace", default=os.environ.get("NAMESPACE", "nemoclaw-gpu"))
     parser.add_argument("--hpa-name", default=os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy"))

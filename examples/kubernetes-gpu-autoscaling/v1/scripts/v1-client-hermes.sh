@@ -5,10 +5,9 @@
 # End-user client for step 6b on NemoClaw v1 (Hermes + vLLM). One simulated user
 # per v1 sandbox (1:1). It is the v1 counterpart of ../../scripts/client_hermes.sh.
 #
-# v0 sends `hermes -z` through the v0.0.85 gateway. A v1 sandbox runs Fabric, so
-# each prompt goes through `kubectl exec ... fabric-agent-ctl invoke`. The
-# `development` gateway profile gives the operator no token, so this client does
-# not use the OpenShell gateway.
+# HPA load client. Each prompt is fabric-agent-ctl invoke inside the sandbox via
+# kubectl exec. That is a development-profile bypass: it skips gateway auth on
+# the prompt hop. Official operator invoke is scripts/v1-invoke.sh after oidc.
 #
 # Apply a deployment with at least E2E_USERS sandboxes first:
 #   E2E_USERS=10 ./scripts/v1-render-sandboxes.sh hermes-vllm > .local/hermes-vllm-10.yaml
@@ -21,7 +20,7 @@
 #   E2E_USERS=10 ./scripts/v1-client-hermes.sh
 #
 # Env: NEMOCLAW_V1_STATE_DIR (default .local/gpu-autoscaling), V1_NAMESPACE,
-# E2E_OUTPUT_DIR, TARGET_PODS (default 7), DURATION_SEC.
+# E2E_OUTPUT_DIR, TARGET_PODS (default 8), DURATION_SEC.
 
 set -euo pipefail
 
@@ -52,7 +51,7 @@ INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
 export INFERENCE_MODEL
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
-export TARGET_PODS="${TARGET_PODS:-7}"
+export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-180}"
 agent_common_export_demo_workload "${AGENT_KIND}"
@@ -96,6 +95,58 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   fi
 done
 ((unhealthy == 0)) || fail "client will not send chats until every sandbox pod is Ready"
+
+# v0 client.sh pins tools.profile=minimal before load. Fabric OpenClaw
+# writes /sandbox/tmp/nemo-fabric-openclaw-*/openclaw.json with no tools
+# block, so llama3.2:3b hangs on ask_user until the 290s Fabric deadline.
+if [[ "${AGENT_KIND}" == "openclaw" ]]; then
+  echo "Pin OpenClaw tools.profile=minimal on ${E2E_USERS} sandboxes."
+  for ((i = 0; i < E2E_USERS; i += 1)); do
+    name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
+    if ! kubectl exec -i -n "${V1_NAMESPACE}" "${name}" -c agent -- python3 - <<'PY'
+import glob
+import json
+import pathlib
+import sys
+
+paths = glob.glob("/sandbox/tmp/nemo-fabric-openclaw-*/openclaw.json")
+if not paths:
+    print("missing Fabric OpenClaw config", file=sys.stderr)
+    raise SystemExit(1)
+path = pathlib.Path(paths[0])
+cfg = json.loads(path.read_text())
+tools = cfg.setdefault("tools", {})
+if not isinstance(tools, dict):
+    tools = {}
+    cfg["tools"] = tools
+tools["profile"] = "minimal"
+deny = tools.get("deny")
+if not isinstance(deny, list):
+    deny = []
+for tool_name in (
+    "message",
+    "cron",
+    "gateway",
+    "nodes",
+    "sessions_send",
+    "exec",
+    "process",
+    "bash",
+    "write",
+    "read",
+    "edit",
+):
+    if tool_name not in deny:
+        deny.append(tool_name)
+tools["deny"] = deny
+path.write_text(json.dumps(cfg, indent=2) + "\n")
+print(f"pinned {path}")
+PY
+    then
+      fail "could not pin OpenClaw tools on ${name}"
+    fi
+  done
+fi
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0

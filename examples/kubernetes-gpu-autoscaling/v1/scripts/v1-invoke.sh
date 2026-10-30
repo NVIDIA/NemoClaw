@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Send one Fabric invoke after a successful v1 apply. Does not print secrets.
-# Requires the deployment state directory and an OpenShell CLI registered to
-# the v1 gateway (OpenShell 0.1.4). v0 sandboxes (hermes / dcode binaries) cannot
-# run this command.
+# Official operator prompt after a successful v1 apply: openshell sandbox exec
+# into fabric-agent-ctl invoke. Does not print secrets. Requires OpenShell 0.1.4
+# registered to the v1 gateway with the oidc profile. development YAML cannot
+# mint an operator token. Do not treat kubectl exec as this path. v0 sandboxes
+# (hermes / dcode binaries) cannot run this command.
 
 set -euo pipefail
 
@@ -17,6 +18,9 @@ export PROMPT="${PROMPT:-Reply with exactly READY.}"
 usage() {
   cat <<'EOF'
 Usage: NEMOCLAW_V1_STATE_DIR=/path/to/.local/gpu-autoscaling ./scripts/v1-invoke.sh
+
+Official operator prompt through the OpenShell gateway (openshell sandbox exec).
+Needs the oidc profile. development YAML has no operator token.
 
 Optional env:
   SANDBOX   sandbox name (default user-0000)

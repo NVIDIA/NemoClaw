@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# End-user client for step 6c on NemoClaw v1 (Deep Agents + NIM). Same transport
-# as v1-client-hermes.sh (kubectl exec + fabric-agent-ctl invoke). Defaults point
+# End-user client for step 6c on NemoClaw v1 (Deep Agents + NIM). Same
+# development-profile kubectl-exec bypass as v1-client-hermes.sh. Defaults point
 # at the Deep Agents deployment, which uses its own namespace and state directory
 # so the 6b Hermes deployment stays up.
 #

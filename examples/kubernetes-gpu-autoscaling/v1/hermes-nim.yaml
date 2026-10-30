@@ -21,11 +21,13 @@ spec:
       kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
       context: default
       namespace: nemoclaw-v1-gpu-autoscaling
+      # NemoClaw apply only. Operator openshell invoke needs oidc (docs/kubernetes.md).
       authentication: {profile: development}
   inferenceProviders:
     gpu-nim:
       provider: openai
       api: openai-completions
+      # Cluster Service /v1; same pattern as examples/kubernetes/in-cluster-vllm.yaml.
       endpoint: http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1
       credential: {env: GPU_INFERENCE_API_KEY}
   sandboxes:

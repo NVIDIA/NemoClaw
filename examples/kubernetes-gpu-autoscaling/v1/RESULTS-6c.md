@@ -25,6 +25,7 @@ Reply tokens are estimated from reply length (about 4 characters per token).
 
 ## Notes
 
+- Same hops as [`RESULTS-6b.md`](RESULTS-6b.md): apply through the managed gateway, inference on the GPU chart metrics-proxy Service `/v1`, in-sandbox `fabric-agent-ctl invoke` because `development` blocked the OpenShell CLI.
 - Deep Agents returns its answer in `result.output.response`, like Hermes, and also reports token usage. The client estimates tokens from reply length for both agents.
 - The Deep Agents image builds from the v1 checkout with `cargo images build --platform linux/amd64 deepagents`, and the node pulls it from a local registry at `127.0.0.1:5000`.
 - NIM's pod used the existing Secrets `nim-ngc-key` and `ngc-registry`, so no NGC key was written to this folder.
