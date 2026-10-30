@@ -162,7 +162,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=1 hcl_integration::
 ```
 
-A scenario is a document in `hcl/cases`, shared with the live E2E suites that `nemoclaw-hcl-e2e` runs from `hcl/tests`, and an integration test file with the same name:
+A scenario is a document in `hcl/cases`, shared with the live E2E scenarios that `hcl_live::case` runs from `hcl/tests`, and an integration test file with the same name:
 
 | File | Contents |
 |---|---|
