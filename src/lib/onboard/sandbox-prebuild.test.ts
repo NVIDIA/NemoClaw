@@ -1278,6 +1278,38 @@ describe("sandbox BuildKit prebuild", () => {
     expect(inspectImageId).not.toHaveBeenCalled();
   });
 
+  it("reports every blocking npm audit ID after BuildKit echoes the long RUN command (#13846)", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    // BuildKit repeats the multi-KiB mcporter RUN instruction after the audit line.
+    const echoedRun = `process "/bin/bash -o pipefail -c ${"x".repeat(7_000)}" did not complete\n`;
+    const head = "mcporter-runtime: unaccepted npm audit findings at or above high: GHSA-27r3-";
+    const rest = `jxmh-p828, CVE-2026-12345, NPM-1112030 secret-token GHSA-dddd-eeee-ffff\n${echoedRun}`;
+    const stderr = new EventEmitter();
+    mocks.dockerSpawn.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { stderr });
+      process.nextTick(() => {
+        stderr.emit("data", Buffer.from(head));
+        stderr.emit("data", Buffer.from(rest + echoedRun));
+        child.emit("close", 1);
+      });
+      return child;
+    });
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        log: () => {},
+      }),
+    ).rejects.toThrow(
+      /^Local BuildKit build failed \(exit 1\); The mcporter-runtime npm audit blocked GHSA-27r3-jxmh-p828, CVE-2026-12345, NPM-1112030; update the affected dependencies before retrying\.$/,
+    );
+  });
+
   it("stops a stalled local build before inspecting or handing off an image", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const child = new EventEmitter();

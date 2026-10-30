@@ -63,6 +63,20 @@ export function classifyImageBuildFailure(output: string): string {
   return "Check the Dockerfile instructions and selected engine before retrying.";
 }
 
+// Same ID forms as the audit's ADVISORY_ID in scripts/lib/reviewed-npm-audit.mts.
+const NPM_AUDIT_ID = String.raw`(?:GHSA(?:-[0-9a-z]{4}){3}|CVE-\d{4}-\d+|NPM-\d+)`;
+const NPM_AUDIT_BLOCK = new RegExp(
+  `([a-z0-9][a-z0-9-]{0,63}): unaccepted npm audit findings at or above (?:info|low|moderate|high|critical): (${NPM_AUDIT_ID}(?:, ${NPM_AUDIT_ID})*)`,
+);
+
+/** Name only the blocked graph and validated advisory IDs; the rest of the line is untrusted. */
+function npmAuditBlockGuidance(line: string): string | null {
+  const match = NPM_AUDIT_BLOCK.exec(line);
+  return match
+    ? `The ${match[1]} npm audit blocked ${match[2]}; update the affected dependencies before retrying.`
+    : null;
+}
+
 function throwImageBuildCommandError(error: unknown, builderName: string): never {
   if (error instanceof ImageCommandDeadlineError) {
     throw new Error(
@@ -156,8 +170,16 @@ function createHostImageCommand(
           ? spawn(command, [...args], spawnOptions)
           : dockerSpawn(args, spawnOptions);
       let diagnosticTail = "";
+      // BuildKit echoes the failing RUN instruction after its output, which can
+      // push an npm audit block out of the tail; scan each line as it arrives.
+      let pendingLine = "";
+      let auditGuidance: string | null = null;
       child.stderr?.on("data", (chunk: Buffer) => {
-        diagnosticTail = (diagnosticTail + chunk.toString("utf8")).slice(-8_192);
+        const text = chunk.toString("utf8");
+        diagnosticTail = (diagnosticTail + text).slice(-8_192);
+        const lines = (pendingLine + text).split("\n");
+        pendingLine = (lines.pop() ?? "").slice(-4_096);
+        for (const line of lines) auditGuidance = npmAuditBlockGuidance(line) ?? auditGuidance;
       });
       let expired = false;
       const deadline = setTimeout(() => {
@@ -177,7 +199,14 @@ function createHostImageCommand(
         clearTimeout(deadline);
         if (!expired) {
           if (status !== 0)
-            reject(new ImageBuildFailureError(status, classifyImageBuildFailure(diagnosticTail)));
+            reject(
+              new ImageBuildFailureError(
+                status,
+                auditGuidance ??
+                  npmAuditBlockGuidance(pendingLine) ??
+                  classifyImageBuildFailure(diagnosticTail),
+              ),
+            );
           else resolve(status);
         }
       });
