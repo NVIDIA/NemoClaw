@@ -7,7 +7,7 @@ pub(crate) mod constraints;
 pub use nemoclaw_openshell::credential_metadata;
 mod engine_endpoint;
 mod execution;
-pub use constraints::GATEWAY_ENGINE;
+pub use constraints::{GATEWAY_ENGINE, GPU_DEVICE};
 pub use engine_endpoint::validate_engine_endpoint;
 mod integrations;
 pub use integrations::*;

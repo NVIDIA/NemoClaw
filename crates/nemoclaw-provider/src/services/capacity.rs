@@ -63,16 +63,34 @@ pub fn validate_capacity_contracts(
 ) -> Result<(), Error> {
     parse(engine, contracts).map(|_| ())
 }
+/// Accept one GPU named as `container.gpu` names it: a UUID or an index.
+pub fn validate_capacity_gpu(gpu: &str) -> Result<(), Error> {
+    if regex::Regex::new(nemoclaw_sdk::config::GPU_DEVICE)
+        .expect("the GPU pattern compiles")
+        .is_match(gpu)
+    {
+        Ok(())
+    } else {
+        Err(Error::Conflict(
+            "capacity gpu must name one GPU by its UUID or index",
+        ))
+    }
+}
 /// Read total capacity without treating an existing process's allocations as new demand.
+/// With `gpu`, a GPU UUID or index, only that GPU is observed.
 pub async fn observe_service_capacity(
     connections: &Connections,
     endpoint: &str,
     contracts: &[String],
+    gpu: Option<&str>,
 ) -> Result<ServiceCapacity, Error> {
     let services = parse(Some(endpoint), contracts)?;
+    if let Some(gpu) = gpu {
+        validate_capacity_gpu(gpu)?;
+    }
     let engine = crate::managed::service_engine(connections, endpoint)?;
     let work = async {
-        let host = engine.host_observer.observe(&engine).await?;
+        let host = engine.host_observer.observe(&engine, gpu).await?;
         let info = engine.info().await?;
         let capacity = host.for_engine(info.id.as_deref().unwrap_or(""))?;
         Ok(account(&services, &capacity)?.total)
@@ -161,4 +179,4 @@ enum CapacityService {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

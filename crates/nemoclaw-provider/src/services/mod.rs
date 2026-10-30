@@ -4,7 +4,9 @@ pub mod authentication;
 mod registry;
 pub use registry::BackendRegistry;
 pub(crate) mod capacity;
-pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_contracts};
+pub use capacity::{
+    ServiceCapacity, observe_service_capacity, validate_capacity_contracts, validate_capacity_gpu,
+};
 mod readiness;
 mod status;
 pub use readiness::{Readiness, wait_service_ready};

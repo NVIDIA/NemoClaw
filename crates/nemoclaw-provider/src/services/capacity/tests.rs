@@ -15,7 +15,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-fn specs() -> Vec<String> {
+pub(crate) fn specs() -> Vec<String> {
     let document =
         Document::parse(include_bytes!("../../../../../examples/spark/two-models.yaml").as_slice())
             .unwrap();
@@ -40,7 +40,7 @@ fn specs_for(document: &Document) -> Vec<String> {
         })
         .collect()
 }
-fn capacity() -> Capacity {
+pub(crate) fn capacity() -> Capacity {
     Capacity {
         architecture: "arm64".into(),
         gpu: "NVIDIA GB10".into(),
@@ -143,7 +143,7 @@ struct Host {
 }
 #[async_trait::async_trait]
 impl HostObserver for Host {
-    async fn observe(&self, _: &Engine) -> Result<HostObservation, Error> {
+    async fn observe(&self, _: &Engine, _: Option<&str>) -> Result<HostObservation, Error> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         if self.mode == "unavailable" {
             return Err(ObservationError::Transport.into());
@@ -186,7 +186,7 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             }))])
         .unwrap();
         let observed =
-            observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs).await;
+            observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs, None).await;
         if mode == "normal" {
             assert!(observed.unwrap().compatible());
         } else {
@@ -194,7 +194,7 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
         }
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert!(
-            observe_service_capacity(&connections, "ssh://other", &specs)
+            observe_service_capacity(&connections, "ssh://other", &specs, None)
                 .await
                 .is_err()
         );
@@ -202,11 +202,19 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
             observe_service_capacity(
                 &connections,
                 "ssh://operator@gpu-box",
-                &[specs[0].clone(), specs[0].clone()]
+                &[specs[0].clone(), specs[0].clone()],
+                None,
             )
             .await
             .is_err()
         );
+        for gpu in ["all", "0,1"] {
+            assert!(
+                observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs, Some(gpu))
+                    .await
+                    .is_err()
+            );
+        }
         assert_eq!(
             reads.load(Ordering::SeqCst),
             1,
@@ -249,9 +257,10 @@ async fn capacity_observation_counts_combined_budgets_and_largest_reserve_once()
                 },
             }))])
         .unwrap();
-        let observed = observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs)
-            .await
-            .unwrap();
+        let observed =
+            observe_service_capacity(&connections, "ssh://operator@gpu-box", &specs, None)
+                .await
+                .unwrap();
         assert_eq!(observed.required_bytes, required);
         assert_eq!(observed.observed_bytes, total);
         assert_eq!(observed.compatible(), total == required);

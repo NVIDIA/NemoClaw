@@ -20,6 +20,7 @@ data vllm_capacity (version 0)
   compatible: bool, computed
   contracts: list(string), required
   engine: string, required
+  gpu: string, optional
   observed_bytes: number, computed
   required_bytes: number, computed
 

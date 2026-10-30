@@ -116,21 +116,26 @@ pub fn apply_observations(
 
 #[cfg(target_os = "linux")]
 pub async fn populate(capacity: &mut super::Capacity) -> Result<(), Error> {
+    populate_with(capacity, query).await
+}
+
+/// Observe this host's GPU through `query`, which runs one `nvidia-smi` query
+/// and returns its CSV output.
+#[cfg(target_os = "linux")]
+pub async fn populate_with<F, Fut>(
+    capacity: &mut super::Capacity,
+    mut query: F,
+) -> Result<(), Error>
+where
+    F: FnMut(&'static str) -> Fut,
+    Fut: std::future::Future<Output = Result<String, Error>>,
+{
     capacity.architecture = match std::env::consts::ARCH {
         "aarch64" => "arm64",
         "x86_64" => "amd64",
         other => other,
     }
     .into();
-    populate_with(capacity, query).await
-}
-
-#[cfg(target_os = "linux")]
-async fn populate_with<F, Fut>(capacity: &mut super::Capacity, mut query: F) -> Result<(), Error>
-where
-    F: FnMut(&'static str) -> Fut,
-    Fut: std::future::Future<Output = Result<String, Error>>,
-{
     let gpu = query("--query-gpu=name,driver_version").await?;
     let processes = query("--query-compute-apps=pid").await?;
     let compute = query("--query-gpu=compute_cap").await?;
