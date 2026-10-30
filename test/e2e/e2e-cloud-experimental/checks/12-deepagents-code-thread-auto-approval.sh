@@ -24,6 +24,10 @@ SHELL_ROUND_ONE="/sandbox/.nemoclaw-e2e-autorun-shell-1"
 WRITE_ROUND="/sandbox/.nemoclaw-e2e-autorun-write"
 SHELL_ROUND_THREE="/sandbox/.nemoclaw-e2e-autorun-shell-3"
 AUTORUN_DEBUG_DIR="/sandbox/.nemoclaw-e2e-autorun-debug"
+DCODE_TUI_SESSION_GUARD="${REPO}/test/e2e/e2e-cloud-experimental/dcode-tui-session-guard.sh"
+TUI_SESSION_ID="${NEMOCLAW_TUI_SESSION_ID:-}"
+DCODE_CONFIG="/sandbox/.deepagents/config.toml"
+STARTUP_CONFIG_BACKUP="/sandbox/.nemoclaw-e2e-startup-config.bak"
 EXPORT_BASELINE_RECOVERY_ARMED=0
 
 fail() {
@@ -189,6 +193,7 @@ run_autorun_tui() {
     NEMOCLAW_AUTORUN_FIRST_PROMPT="$first_prompt" \
     NEMOCLAW_AUTORUN_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_AUTORUN_TUI_TIMEOUT="$TUI_TIMEOUT" \
+    NEMOCLAW_TUI_SESSION_ID="$TUI_SESSION_ID" \
     expect <<'EXPECT'
 set timeout $env(NEMOCLAW_AUTORUN_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_AUTORUN_SANDBOX_NAME)
@@ -225,7 +230,7 @@ proc abort_tui {markers marker code} {
 
 # Exercise direct tool approvals; interpreter-mediated calls bypass these gates.
 set remote_script {cd /sandbox && DEEPAGENTS_CODE_DEBUG=1 DEEPAGENTS_CODE_DEBUG_DIRECTORY=/sandbox/.nemoclaw-e2e-autorun-debug /usr/local/bin/dcode --no-interpreter -m "$1"; status=$?; printf "\nNEMOCLAW_AUTORUN_TUI_EXIT:%s\n" "$status"}
-set cmd [list openshell sandbox exec --name $sandbox --tty -- env HOME=/sandbox TERM=xterm-256color bash -lc $remote_script nemoclaw-e2e $first_prompt]
+set cmd [list openshell sandbox exec --name $sandbox --tty -- env "NEMOCLAW_TUI_SESSION_ID=$env(NEMOCLAW_TUI_SESSION_ID)" HOME=/sandbox TERM=xterm-256color bash -lc $remote_script nemoclaw-e2e $first_prompt]
 spawn {*}$cmd
 
 expect {
@@ -320,14 +325,127 @@ cleanup_probe_files() {
   sandbox_exec \
     "rm -f ${SHELL_ROUND_ONE@Q} ${WRITE_ROUND@Q} ${SHELL_ROUND_THREE@Q}; rm -rf -- ${AUTORUN_DEBUG_DIR@Q}" \
     >/dev/null 2>&1 || true
+  restore_native_startup_config
+}
+
+# Set only [startup].mode and prove every other TOML value is unchanged.
+set_native_startup_mode() {
+  local mode="$1" output script
+  script="$(
+    cat <<'PY'
+import re
+import sys
+import tomllib
+
+path, mode = sys.argv[1:]
+with open(path, "rb") as handle:
+    before = tomllib.load(handle)
+with open(path, encoding="utf-8") as handle:
+    lines = handle.read().splitlines()
+out, table, header_index = [], None, None
+for line in lines:
+    header = re.match(r"\s*\[([^\[\]]+)\]\s*(?:#.*)?$", line)
+    if header:
+        table = header.group(1).strip()
+        if table == "startup" and header_index is None:
+            header_index = len(out)
+    elif table == "startup" and re.match(r"\s*mode\s*=", line):
+        continue
+    out.append(line)
+entry = f'mode = "{mode}"'
+if header_index is None:
+    out += ["", "[startup]", entry]
+else:
+    out.insert(header_index + 1, entry)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(out) + "\n")
+with open(path, "rb") as handle:
+    after = tomllib.load(handle)
+assert after["startup"]["mode"] == mode
+before.setdefault("startup", {}).pop("mode", None)
+after["startup"].pop("mode")
+assert {key: value for key, value in after.items() if value != {}} == {
+    key: value for key, value in before.items() if value != {}
+}
+print("NEMOCLAW_STARTUP_CONFIG_OK")
+PY
+  )"
+  output="$(sandbox_exec "set -euo pipefail; test -e ${STARTUP_CONFIG_BACKUP@Q} || cp -p ${DCODE_CONFIG@Q} ${STARTUP_CONFIG_BACKUP@Q}; python3 -c ${script@Q} ${DCODE_CONFIG@Q} ${mode@Q}")" \
+    || fail "could not set the native DCode startup mode to ${mode}: ${output}"
+  [[ "$output" == *NEMOCLAW_STARTUP_CONFIG_OK* ]] \
+    || fail "native DCode startup mode ${mode} was not confirmed: ${output}"
+}
+
+restore_native_startup_config() {
+  sandbox_exec "set -euo pipefail; if test -e ${STARTUP_CONFIG_BACKUP@Q}; then mv -f ${STARTUP_CONFIG_BACKUP@Q} ${DCODE_CONFIG@Q}; fi; test ! -e ${STARTUP_CONFIG_BACKUP@Q}" \
+    >/dev/null 2>&1
+}
+
+# Print the approval-mode badge the managed TUI shows at startup. Answer
+# terminal color queries so the TUI can render without a local terminal.
+read_tui_startup_mode() {
+  NEMOCLAW_STARTUP_SANDBOX_NAME="$SANDBOX_NAME" NEMOCLAW_TUI_SESSION_ID="$TUI_SESSION_ID" expect <<'EXPECT'
+set timeout 120
+log_user 0
+match_max -d 200000
+set remote_script {cd /sandbox && /usr/local/bin/dcode --no-interpreter; status=$?; printf "\nNEMOCLAW_STARTUP_TUI_EXIT:%s\n" "$status"}
+spawn openshell sandbox exec --name $env(NEMOCLAW_STARTUP_SANDBOX_NAME) --tty -- env "NEMOCLAW_TUI_SESSION_ID=$env(NEMOCLAW_TUI_SESSION_ID)" HOME=/sandbox TERM=xterm-256color bash -lc $remote_script
+expect {
+  -re {\x1b\]1([01]);\?(\x07|\x1b\\)} {
+    send -- "\x1b\]1$expect_out(1,string);rgb:0000/0000/0000\x1b\\"
+    exp_continue
+  }
+  -re {\x1b\[[0-9;]*m(manual|auto|yolo)\x1b\[} { puts "NEMOCLAW_STARTUP_MODE:$expect_out(1,string)" }
+  timeout { puts "NEMOCLAW_STARTUP_MODE:timeout" }
+  eof { puts "NEMOCLAW_STARTUP_MODE:eof"; exit 0 }
+}
+send -- "/quit\r"
+set timeout 30
+expect {
+  -re {NEMOCLAW_STARTUP_TUI_EXIT:([0-9]+)} { puts "NEMOCLAW_STARTUP_TUI_EXIT:$expect_out(1,string)" }
+  timeout { puts "NEMOCLAW_STARTUP_TUI_EXIT:timeout"; catch {send -- "\003"}; after 200; catch {send -- "\003"} }
+  eof { puts "NEMOCLAW_STARTUP_TUI_EXIT:eof" }
+}
+EXPECT
+}
+
+dcode_process_count() {
+  "$DCODE_TUI_SESSION_GUARD" "$@" 2>&1 | sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' | tail -n 1
+}
+
+# A disabled capability must force Manual even when the native startup mode
+# requests Auto or YOLO (#13838).
+assert_disabled_native_startup_modes() {
+  local mode output observed exit_status baseline remaining
+  for mode in auto yolo; do
+    baseline="$(dcode_process_count baseline "$SANDBOX_NAME")"
+    [[ "$baseline" =~ ^[0-9]+$ ]] || fail "could not record the DCode process baseline before native startup mode ${mode}"
+    set_native_startup_mode "$mode"
+    output="$(read_tui_startup_mode)"
+    observed="$(sed -n 's/^NEMOCLAW_STARTUP_MODE://p' <<<"$output" | head -n 1)"
+    exit_status="$(sed -n 's/^NEMOCLAW_STARTUP_TUI_EXIT://p' <<<"$output" | tail -n 1)"
+    restore_native_startup_config \
+      || fail "could not restore the DCode startup configuration after native startup mode ${mode}"
+    [ "$exit_status" = "0" ] \
+      || fail "DCode TUI did not exit cleanly after native startup mode ${mode}: exit ${exit_status:-unknown}"
+    remaining="$(dcode_process_count wait "$SANDBOX_NAME" "$baseline" 30)"
+    [ -n "$remaining" ] && [ "$remaining" -le "$baseline" ] \
+      || fail "DCode processes did not return to baseline ${baseline} after native startup mode ${mode}"
+    [ "$observed" = "manual" ] \
+      || fail "disabled capability started DCode in '${observed:-unknown}' for native startup mode ${mode}"
+  done
 }
 
 restore_export_baseline_on_exit() {
   local original_status=$?
   local recovery_output recovery_status
   trap - EXIT
-  cleanup_probe_files
   recovery_status=0
+  if ! cleanup_probe_files; then
+    printf '%s: FAIL: could not restore the DCode startup configuration from %s\n' \
+      "$PREFIX" "$STARTUP_CONFIG_BACKUP" >&2
+    recovery_status=1
+  fi
   if [ "$EXPORT_BASELINE_RECOVERY_ARMED" -eq 1 ]; then
     info "Restoring the disabled export baseline after an interrupted thread-opt-in check" >&2
     if ! recovery_output="$(rebuild_named_sandbox disabled --no-observability)"; then
@@ -359,17 +477,23 @@ main() {
   fi
 
   command -v expect >/dev/null 2>&1 || fail "expect is required for the DCode autorun TUI check"
+  [ -f "$DCODE_TUI_SESSION_GUARD" ] || fail "DCode TUI session guard is missing"
+  [[ "$TUI_SESSION_ID" =~ ^[0-9a-f-]{36}$ ]] \
+    || fail "NEMOCLAW_TUI_SESSION_ID must be supplied by the guarded cloud-experimental runner"
   command -v node >/dev/null 2>&1 || fail "node is required to inspect status JSON"
   is_positive_integer "$TUI_TIMEOUT" \
     || fail "DEEPAGENTS_AUTORUN_TIMEOUT must be a positive integer"
 
   trap restore_export_baseline_on_exit EXIT
-  cleanup_probe_files
+  cleanup_probe_files || fail "could not restore the DCode startup configuration from a previous run"
 
   assert_capability_projection disabled
   assert_status_mode disabled
   assert_default_denial_ignores_ambient_override
   pass "fresh sandbox denies auto-approval by trusted default and ignores ambient overrides"
+
+  assert_disabled_native_startup_modes
+  pass "disabled capability starts the TUI in Manual for native Auto and YOLO startup modes"
 
   local rebuild_output
   info "Enabling thread-opt-in through the named sandbox rebuild interface"
@@ -411,7 +535,7 @@ main() {
   EXPORT_BASELINE_RECOVERY_ARMED=0
   pass "named sandbox rebuild restores the disabled export baseline"
 
-  printf '%s: 6 passed, 0 failed\n' "$PREFIX"
+  printf '%s: 7 passed, 0 failed\n' "$PREFIX"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
