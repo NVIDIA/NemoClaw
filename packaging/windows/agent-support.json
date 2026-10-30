@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "platform": "windows-arm64",
+  "agents": [
+    {
+      "id": "openclaw",
+      "displayName": "OpenClaw",
+      "version": "2026.9.2",
+      "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+      "lockSha256": "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199",
+      "interface": "OpenClaw Control UI",
+      "status": "candidate",
+      "selectable": true,
+      "limitation": "Candidate Control UI uses a host-side credential broker and requires two consecutive exact-head native MXC qualifications before it is called proven."
+    },
+    {
+      "id": "hermes",
+      "displayName": "Hermes Agent",
+      "version": "0.21.1",
+      "source": "https://github.com/NousResearch/hermes-agent/tree/2237be355906fbe6065ce1815711eee52b2d646e",
+      "interface": "Hermes dashboard and native terminal UI",
+      "status": "candidate",
+      "selectable": true,
+      "limitation": "Canonical Nous runtime with native ARM64 ConPTY and host-owned native ARM64 Microsoft Edge CDP. Installed inference, tools, cleanup, and physical N1X validation remain release gates."
+    }
+  ]
+}

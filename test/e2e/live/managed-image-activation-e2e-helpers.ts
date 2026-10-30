@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { resolveSandboxHealthProbeUrl } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
+import { readStableRegularFile } from "../../../src/lib/onboard/managed-startup/image-runtime.ts";
 import {
   type ManagedImagePlatform,
   type ManagedImageContractCatalog,
@@ -551,32 +552,36 @@ async function proveHermesRestartSecretBoundary(
   );
   assertExitZero(poison, "prepare Hermes secret-boundary restart refusal");
 
-  const restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
-    artifactName: "hermes-native-restart-secret-boundary-refusal",
-    env,
-    redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
-    timeoutMs: 60_000,
-  });
-
-  const restore = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(
-      `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
-    ),
-    {
-      artifactName: "hermes-restore-env-after-native-restart-refusal",
+  let restart: Awaited<ReturnType<HostCliClient["nemoclaw"]>>;
+  try {
+    restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
+      artifactName: "hermes-native-restart-secret-boundary-refusal",
       env,
       redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
-      timeoutMs: 30_000,
-    },
-  );
-  assertExitZero(restore, "restore Hermes environment after restart refusal");
+      forbiddenOutputValues: [HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 60_000,
+    });
+  } finally {
+    const restore = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript(
+        `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
+      ),
+      {
+        artifactName: "hermes-restore-env-after-native-restart-refusal",
+        env,
+        redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+        timeoutMs: 30_000,
+      },
+    );
+    assertExitZero(restore, "restore Hermes environment after restart refusal");
+  }
 
   const output = resultText(restart);
   expect(
     restart.exitCode !== 0 &&
       output.includes("secret-boundary") &&
-      !output.includes(HERMES_BOUNDARY_SENTINEL),
+      restart.forbiddenOutputDetected === false,
     output,
   ).toBe(true);
   await runManagedActivationAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
@@ -667,38 +672,54 @@ export async function waitForManagedActivationSandboxAbsence(
   });
 }
 
-async function verifyExactCleanup(
-  host: HostCliClient,
-  sandbox: SandboxClient,
+type ExactCleanupOptions = {
+  attempts?: number;
+  intervalMs?: number;
+  timeoutMs?: number;
+};
+
+export async function verifyExactCleanup(
+  host: Pick<HostCliClient, "command">,
+  sandbox: Pick<SandboxClient, "list">,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
+  options: ExactCleanupOptions = {},
 ): Promise<void> {
+  const attempts = options.attempts ?? 60;
+  const intervalMs = options.intervalMs ?? 1_000;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const deadline = performance.now() + timeoutMs;
+  const remainingMs = () => Math.max(0, Math.ceil(deadline - performance.now()));
+  const probeTimeoutMs = () => Math.max(1, Math.min(30_000, remainingMs()));
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
-    deadlineMs: 60_000,
-    delayMs: 1_000,
+    attempts,
+    deadlineMs: timeoutMs,
+    now: () => performance.now(),
+    delayMs: (attempt) => (attempt >= attempts ? 0 : Math.min(intervalMs, remainingMs())),
     probe: async (_attempt, artifactName) => {
       const openshellList = await sandbox.list({
         artifactName: `${artifactName}-openshell-list`,
         env,
-        timeoutMs: 30_000,
+        timeoutMs: probeTimeoutMs(),
       });
+      expect(
+        openshellList.exitCode,
+        `list OpenShell sandboxes after managed activation destroy: ${resultText(openshellList)}`,
+      ).toBe(0);
       const containers = await host.command(
         containerEngine,
         ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
         {
           artifactName: `${artifactName}-${containerEngine}-inventory`,
           env,
-          timeoutMs: 30_000,
+          timeoutMs: probeTimeoutMs(),
         },
       );
       return { containers, openshellList };
     },
-    terminal: ({ containers, openshellList }) => {
-      if (openshellList.exitCode !== 0) {
-        return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
-      }
+    terminal: ({ containers }) => {
       if (containers.exitCode !== 0) {
         return `inspect ${containerEngine} inventory after managed activation destroy failed: ${resultText(containers)}`;
       }
@@ -858,11 +879,9 @@ export async function collectOnboardFailureRuntimeDiagnostics(
             },
           );
           if (copy.exitCode !== 0) return;
-          const stat = fs.lstatSync(copiedLog);
-          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
           await artifacts.writeText(
             `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
-            fs.readFileSync(copiedLog, "utf8"),
+            readStableRegularFile(copiedLog, 2 * 1024 * 1024).toString("utf8"),
           );
         } finally {
           fs.rmSync(copyRoot, { recursive: true, force: true });
@@ -1182,12 +1201,6 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     guard.dispose,
   );
   cleanup.trackGateway(host, GATEWAY, { env: guard.env, timeoutMs: 60_000 });
-  const runtimeInfo = await host.command(containerEngine, ["info"], {
-    artifactName: `managed-activation-${containerEngine}-info`,
-    env: guard.env,
-    timeoutMs: 30_000,
-  });
-  expect(runtimeInfo.exitCode, resultText(runtimeInfo)).toBe(0);
   const inference = await startFakeOpenAiCompatibleServer({
     apiKey: API_KEY,
     chatContent: "PONG",

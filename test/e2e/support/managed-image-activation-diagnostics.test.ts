@@ -37,6 +37,7 @@ import {
   preclean,
   qualifyAgent,
   summarizeOnboardFailureStartupSignals,
+  verifyExactCleanup,
   waitForManagedActivationSandboxDeletion,
   waitForManagedActivationSandboxAbsence,
 } from "../live/managed-image-activation-e2e-helpers.ts";
@@ -98,6 +99,20 @@ function prepareManagedAdminState(root: string, requestId: string): NodeJS.Proce
     FAKE_DEVICES_STATE: devicesPath,
     NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
     OPENCLAW_STATE_DIR: stateRoot,
+  };
+}
+
+type CleanupListOptions = Parameters<Parameters<typeof verifyExactCleanup>[1]["list"]>[0];
+
+function commandResult(stdout: string, exitCode = 0, stderr = "") {
+  return {
+    command: ["fixture"],
+    exitCode,
+    signal: null,
+    timedOut: false,
+    stdout,
+    stderr,
+    artifacts: { stdout: "", stderr: "", result: "" },
   };
 }
 
@@ -842,48 +857,51 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
   });
 
-  it("redacts a copied failed-startup log before artifact publication", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
-    const secret = "supplied-startup-diagnostic-secret";
-    const containerId = "a".repeat(64);
-    const artifacts = new ArtifactSink(directory);
-    const command = vi.fn(async (executable: string, args: readonly string[]) => {
-      switch (`${executable}:${String(args[0])}`) {
-        case "docker:ps":
-          return {
-            exitCode: 0,
-            stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
-            stderr: "",
-          };
-        case "docker:cp":
-          fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
-          break;
+  it.each(["docker", "podman"])(
+    "redacts a copied %s failed-startup log before artifact publication",
+    async (engine) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
+      const secret = "supplied-startup-diagnostic-secret";
+      const containerId = "a".repeat(64);
+      const artifacts = new ArtifactSink(directory);
+      const command = vi.fn(async (executable: string, args: readonly string[]) => {
+        switch (`${executable}:${String(args[0])}`) {
+          case `${engine}:ps`:
+            return {
+              exitCode: 0,
+              stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
+              stderr: "",
+            };
+          case `${engine}:cp`:
+            fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+            break;
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      try {
+        await collectOnboardFailureRuntimeDiagnostics(
+          artifacts,
+          { command } as never,
+          "openclaw",
+          "managed-openclaw",
+          { NEMOCLAW_GATEWAY_RUNTIME: engine },
+          [secret],
+        );
+
+        const published = fs.readFileSync(
+          artifacts.pathFor(
+            "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
+          ),
+          "utf8",
+        );
+        expect(published).toContain("[REDACTED]");
+        expect(published).not.toContain(secret);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
       }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-
-    try {
-      await collectOnboardFailureRuntimeDiagnostics(
-        artifacts,
-        { command } as never,
-        "openclaw",
-        "managed-openclaw",
-        {},
-        [secret],
-      );
-
-      const published = fs.readFileSync(
-        artifacts.pathFor(
-          "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
-        ),
-        "utf8",
-      );
-      expect(published).toContain("[REDACTED]");
-      expect(published).not.toContain(secret);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 
   const diagnosticEvents = [
     "tail:-c",
@@ -1184,6 +1202,180 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       }),
     ).rejects.toThrow("startup failed");
     expect(calls).toEqual([]);
+  });
+
+  it("waits for a transient Deleting sandbox while verifying Docker cleanup", async () => {
+    const sandbox = {
+      list: vi
+        .fn()
+        .mockResolvedValueOnce(commandResult("NAME PHASE\nmi-act-hermes Deleting\n"))
+        .mockResolvedValueOnce(commandResult("No sandboxes found.\n")),
+    };
+    const host = {
+      command: vi.fn(async () => commandResult("")),
+    };
+
+    await verifyExactCleanup(
+      host,
+      sandbox,
+      "mi-act-hermes",
+      { OPENSHELL_GATEWAY: "nemoclaw" },
+      {
+        attempts: 2,
+        intervalMs: 0,
+      },
+    );
+
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(sandbox.list).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        artifactName: "post-destroy-absence-mi-act-hermes-attempt-02-openshell-list",
+      }),
+    );
+    expect(host.command).toHaveBeenCalledTimes(2);
+    expect(host.command).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      ["ps", "-aq", "--filter", "label=openshell.ai/sandbox-name=mi-act-hermes"],
+      expect.objectContaining({
+        artifactName: "post-destroy-absence-mi-act-hermes-attempt-02-docker-inventory",
+      }),
+    );
+  });
+
+  it("bounds cleanup convergence and preserves both last inventories", async () => {
+    const deleting = commandResult("NAME PHASE\nmi-act-hermes Deleting\n");
+    const sandbox = { list: vi.fn(async () => deleting) };
+    const host = { command: vi.fn(async () => commandResult("remaining-container")) };
+
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 2, intervalMs: 0 }),
+    ).rejects.toMatchObject({
+      reason: "exhausted",
+      lastAttempt: {
+        attempt: 2,
+        value: { openshellList: deleting, containers: commandResult("remaining-container") },
+      },
+    });
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(host.command).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps probes to the remaining cleanup deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const deleting = commandResult("NAME PHASE\nmi-act-hermes Deleting\n");
+      const sandbox = { list: vi.fn(async (_options: CleanupListOptions) => deleting) };
+      const host = {
+        command: vi.fn(
+          async (..._args: Parameters<Parameters<typeof verifyExactCleanup>[0]["command"]>) =>
+            commandResult(""),
+        ),
+      };
+      const verification = verifyExactCleanup(
+        host,
+        sandbox,
+        "mi-act-hermes",
+        {},
+        {
+          attempts: 10,
+          intervalMs: 1_000,
+          timeoutMs: 1_500,
+        },
+      );
+      const rejected = expect(verification).rejects.toMatchObject({
+        reason: "exhausted",
+        lastAttempt: { attempt: 2, value: { openshellList: deleting } },
+      });
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      await rejected;
+
+      expect(sandbox.list).toHaveBeenCalledTimes(2);
+      expect(sandbox.list.mock.calls[0]?.[0]?.timeoutMs).toBeLessThanOrEqual(1_500);
+      expect(sandbox.list.mock.calls[1]?.[0]?.timeoutMs).toBeLessThanOrEqual(500);
+      expect(host.command).toHaveBeenCalledTimes(2);
+      expect(host.command.mock.calls[0]?.[2]?.timeoutMs).toBeLessThanOrEqual(1_500);
+      expect(host.command.mock.calls[1]?.[2]?.timeoutMs).toBeLessThanOrEqual(500);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails immediately when the OpenShell inventory probe errors", async () => {
+    const sandbox = {
+      list: vi.fn(async () => commandResult("", 1, "gateway unavailable")),
+    };
+    const host = { command: vi.fn() };
+
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 3, intervalMs: 0 }),
+    ).rejects.toThrow(/list OpenShell sandboxes.*gateway unavailable/u);
+    expect(sandbox.list).toHaveBeenCalledTimes(1);
+    expect(host.command).not.toHaveBeenCalled();
+  });
+
+  it("waits for Docker removal after OpenShell reports absence", async () => {
+    const sandbox = { list: vi.fn(async () => commandResult("No sandboxes found.\n")) };
+    const host = {
+      command: vi
+        .fn()
+        .mockResolvedValueOnce(commandResult("remaining-container"))
+        .mockResolvedValueOnce(commandResult("")),
+    };
+    await verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 2, intervalMs: 0 });
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(host.command).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails immediately when the Docker inventory probe errors", async () => {
+    const sandbox = { list: vi.fn(async () => commandResult("No sandboxes found.\n")) };
+    const host = { command: vi.fn(async () => commandResult("", 1, "Docker unavailable")) };
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", {}, { attempts: 3, intervalMs: 0 }),
+    ).rejects.toThrow(/inspect docker inventory.*Docker unavailable/u);
+    expect(sandbox.list).toHaveBeenCalledTimes(1);
+    expect(host.command).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifies the selected Podman inventory without falling back to Docker", async () => {
+    const env = { OPENSHELL_GATEWAY: "nemoclaw", NEMOCLAW_GATEWAY_RUNTIME: "podman" };
+    const sandbox = { list: vi.fn(async () => commandResult("No sandboxes found.\n")) };
+    const host = {
+      command: vi
+        .fn()
+        .mockResolvedValueOnce(commandResult("remaining-podman-container"))
+        .mockResolvedValueOnce(commandResult("")),
+    };
+    await verifyExactCleanup(host, sandbox, "mi-act-hermes", env, {
+      attempts: 2,
+      intervalMs: 0,
+    });
+    expect(sandbox.list).toHaveBeenCalledTimes(2);
+    expect(host.command).toHaveBeenCalledTimes(2);
+    expect(sandbox.list.mock.calls).toEqual([
+      [expect.objectContaining({ env })],
+      [expect.objectContaining({ env })],
+    ]);
+    const inventoryCommand = [
+      "podman",
+      ["ps", "-aq", "--filter", "label=openshell.ai/sandbox-name=mi-act-hermes"],
+      expect.objectContaining({
+        env,
+        artifactName: expect.stringMatching(/-podman-inventory$/u),
+      }),
+    ];
+    expect(host.command.mock.calls).toEqual([inventoryCommand, inventoryCommand]);
+
+    host.command.mockReset().mockResolvedValue(commandResult("", 1, "Podman unavailable"));
+    sandbox.list.mockClear();
+    await expect(
+      verifyExactCleanup(host, sandbox, "mi-act-hermes", env, { attempts: 3, intervalMs: 0 }),
+    ).rejects.toThrow(/inspect podman inventory.*Podman unavailable/u);
+    expect(sandbox.list).toHaveBeenCalledTimes(1);
+    expect(host.command).toHaveBeenCalledTimes(1);
+    expect(host.command.mock.calls[0]?.[0]).toBe("podman");
   });
 
   it("waits for a deleting managed activation sandbox to become absent", async () => {

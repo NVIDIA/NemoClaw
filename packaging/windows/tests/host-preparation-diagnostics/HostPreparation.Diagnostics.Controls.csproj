@@ -1,0 +1,16 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <MxcProbeSha256 Condition="'$(MxcProbeSha256)' == ''">ac740433e36745b0cdec2a27ba52e636fe807babb92cb53a527c7464a788a747</MxcProbeSha256>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="NemoClaw.MxcProbeSha256" Value="$(MxcProbeSha256)" />
+    <Compile Include="../../bootstrapper/NativeHostPreparationDiagnostics.cs" Link="NativeHostPreparationDiagnostics.cs" />
+    <Compile Include="../../bootstrapper/NativeHostPreparation.cs" Link="NativeHostPreparation.cs" />
+  </ItemGroup>
+</Project>
