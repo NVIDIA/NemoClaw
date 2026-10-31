@@ -434,7 +434,11 @@ describe("sandbox oclif command adapters", () => {
     expect(DestroyCliCommand.id).toBe("sandbox:destroy");
     expect(usage(DestroyCliCommand)).toContain("[--yes|-y|--force]");
     expect(RecoverCliCommand.id).toBe("sandbox:recover");
-    expect(RecoverCliCommand.summary).toMatch(/Repair a stopped sandbox gateway/);
+    expect(RecoverCliCommand.summary).toBe(
+      "Verify sandbox gateway health and repair host forwards",
+    );
+    expect(RecoverCliCommand.description).not.toContain("repair stopped gateways");
+    expect(RecoverCliCommand.description).toContain("restart a stopped native gateway");
     expect(RecoverCliCommand.description).toContain("A healthy gateway is not restarted");
     expect(RecoverCliCommand.description).toContain("gateway restart");
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);

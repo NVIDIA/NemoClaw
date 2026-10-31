@@ -9,9 +9,9 @@ import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 export default class RecoverCliCommand extends NemoClawCommand {
   static id = "sandbox:recover";
   static strict = true;
-  static summary = "Repair a stopped sandbox gateway and host forwards";
+  static summary = "Verify sandbox gateway health and repair host forwards";
   static description =
-    "Probe sandbox gateway health and repair stopped gateways or host forwards without opening an SSH session. For Hermes, also validate and release a NemoClaw cron restore gate left by an interrupted rebuild. A healthy gateway is not restarted; use `gateway restart` when you need a forced runtime reload.";
+    "Probe sandbox gateway health and repair host forwards without opening an SSH session. For Hermes, also validate and release a NemoClaw cron restore gate left by an interrupted rebuild. A healthy gateway is not restarted. Use `gateway restart` to restart a stopped native gateway or force a runtime reload.";
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox recover alpha"];
   static args = {

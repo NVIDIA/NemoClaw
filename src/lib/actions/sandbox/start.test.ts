@@ -490,6 +490,39 @@ describe("startSandbox native lifecycle", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["openclaw", true, "nemoclaw"],
+    ["openclaw", false, "nemoclaw"],
+    ["hermes", true, "nemohermes"],
+  ] as const)(
+    "suggests a native restart after %s startup times out with stop intent %s",
+    async (agent, stopped, cli) => {
+      vi.stubEnv("NEMOCLAW_INVOKED_AS", cli);
+      try {
+        const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+        const h = harness({
+          probeGatewayProcess: async () => false,
+          probeInferenceInvocation,
+          environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "0.001" },
+        });
+        h.getSandbox.mockReturnValue(
+          sandbox({ agent, stopped, provider: "ollama-local", model: "nemotron" }),
+        );
+
+        await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+
+        expect(h.log).toHaveBeenCalledWith(
+          `  Restart the native gateway from the host: ${cli} 'my-sandbox' gateway restart`,
+        );
+        expect(h.updateSandbox).not.toHaveBeenCalled();
+        expect(h.verifyGateway).not.toHaveBeenCalled();
+        expect(probeInferenceInvocation).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("uses a bounded shared override for a large finite startup setting", async () => {
     const h = harness({ environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "1e300" } });
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });

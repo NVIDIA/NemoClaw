@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
+import { shellQuote } from "../../core/shell-quote";
 import { cliName } from "../../onboard/branding";
 import {
   classifyRegisteredPortableAgentLifecycle,
@@ -355,6 +356,9 @@ async function startSandboxWithinLifecycleFence(
   if (readiness.gatewayProcess === false) {
     log(
       "  The sandbox started but its native agent gateway did not become responsive before the startup settlement window expired.",
+    );
+    log(
+      `  Restart the native gateway from the host: ${cliName()} ${shellQuote(sandboxName)} gateway restart`,
     );
     return { exitCode: 1 };
   }
