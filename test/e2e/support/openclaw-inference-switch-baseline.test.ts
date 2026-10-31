@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { assertManagedGatewayStateDirectoryParentTrusted } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 const captured = vi.hoisted(() => ({ test: vi.fn() }));
@@ -187,6 +188,7 @@ it.each(
         },
         host: {
           nemoclaw,
+          cleanupGatewayRegistration: vi.fn(async () => undefined),
           command: vi.fn(async () => result),
         },
         progress,
@@ -209,6 +211,9 @@ it.each(
     );
     const options = nemoclaw.mock.calls[0]![1];
     const environment = options.env;
+    expect(() =>
+      assertManagedGatewayStateDirectoryParentTrusted(`${environment.HOME}/gateway-state`),
+    ).not.toThrow();
     expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
     expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe(
       nativeCustom ? "baseline.trycloudflare.com" : "host.openshell.internal",

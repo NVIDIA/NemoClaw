@@ -265,7 +265,7 @@ async function resetOpenClawInferenceSwitchState(
     }),
   );
   await bestEffortStateReset(() =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+    host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: `${artifactPrefix}-openshell-gateway-destroy-openclaw-inference-switch`,
       env: commandEnv(home),
       timeoutMs: 120_000,
@@ -881,7 +881,11 @@ test(
       (value): value is string => typeof value === "string",
     );
 
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
+    // Gateway destruction requires trusted ancestors; a private directory under
+    // world-writable /tmp cannot supply that ownership authority.
+    const home = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.homedir()), ".nemoclaw-openclaw-switch-home-"),
+    );
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.trackDisposable(
       `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
