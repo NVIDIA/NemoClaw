@@ -856,17 +856,89 @@ async fn namespace_diagnostics(client: &kube::Client, namespace: &str) -> String
     out
 }
 
-/// Print the namespace's diagnostics if `applied` failed, while its pods still
-/// exist; the caller asserts the result.
+/// Print the namespace's diagnostics and Fabric's saved messages if `applied`
+/// failed, while its pods still exist; the caller asserts the result.
 async fn diagnosed<T, E>(
     applied: Result<T, E>,
     client: &kube::Client,
     namespace: &str,
+    state: &Path,
 ) -> Result<T, E> {
     if applied.is_err() {
         eprintln!("{}", namespace_diagnostics(client, namespace).await);
+        eprint!("{}", fabric_messages(state));
     }
     applied
+}
+
+/// Fabric's own messages about failed runtime operations, which the Fabric
+/// provider keeps in the deployment state directory `state` as
+/// `diagnostics/fabric-SANDBOX.json` instead of in its errors. A message can
+/// repeat what the harness printed, so it is redacted and bounded as backend
+/// rejections are.
+fn fabric_messages(state: &Path) -> String {
+    let Ok(entries) = fs::read_dir(state.join("diagnostics")) else {
+        return String::new();
+    };
+    let mut saved: Vec<(String, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let sandbox = name.strip_prefix("fabric-")?.strip_suffix(".json")?;
+            Some((sandbox.to_owned(), entry.path()))
+        })
+        .collect();
+    saved.sort();
+    let mut out = String::new();
+    for (sandbox, path) in saved {
+        let saved: Value = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        let field =
+            |key: &str| ObservationError::sanitized_detail(saved[key].as_str().unwrap_or("?"));
+        out += &format!(
+            "Fabric's message for sandbox {sandbox} at {} ({}, effects {}): {}\n",
+            field("stage"),
+            field("code"),
+            field("effects"),
+            field("message"),
+        );
+    }
+    out
+}
+
+#[test]
+fn fabric_messages_name_each_failed_sandbox_and_redact_credentials() {
+    let state = tempfile::tempdir().unwrap();
+    let diagnostics = state.path().join("diagnostics");
+    fs::create_dir(&diagnostics).unwrap();
+    fs::write(
+        diagnostics.join("fabric-reviewer.json"),
+        json!({
+            "stage": "start",
+            "code": "start_failed",
+            "effects": "unknown",
+            "message": "Fabric could not establish an active runtime; Authorization: Bearer PRIVATE_SENTINEL",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // OpenTofu's own output, which the runner keeps beside it, is not Fabric's.
+    fs::write(diagnostics.join("001-apply.stderr"), "OPENTOFU_OUTPUT").unwrap();
+
+    let printed = fabric_messages(state.path());
+
+    assert!(
+        printed.contains(
+            "Fabric's message for sandbox reviewer at start (start_failed, effects unknown): \
+             Fabric could not establish an active runtime;"
+        ),
+        "{printed}"
+    );
+    assert!(!printed.contains("PRIVATE_SENTINEL"), "{printed}");
+    assert!(!printed.contains("OPENTOFU_OUTPUT"), "{printed}");
+    assert!(fabric_messages(&state.path().join("absent")).is_empty());
 }
 
 /// What OpenTofu state records about one sandbox and its agent.
@@ -1165,7 +1237,7 @@ async fn deploy_image_and_export(
         }
         () = &mut hook => apply.await,
     };
-    let applied = diagnosed(applied, &cluster, &namespace).await;
+    let applied = diagnosed(applied, &cluster, &namespace, state.path()).await;
     // A failed first apply leaves the deployment, as before, but not the stub,
     // whose state does not explain the failure.
     if applied.is_err() {
@@ -1197,6 +1269,7 @@ async fn deploy_image_and_export(
         deployment.apply(&document, &cancel).await,
         &cluster,
         &namespace,
+        state.path(),
     )
     .await;
     let unchanged_state = fs::read(&state_file).unwrap();
@@ -1215,6 +1288,7 @@ async fn deploy_image_and_export(
                 deployment.apply(exported, &cancel).await,
                 &cluster,
                 &namespace,
+                state.path(),
             )
             .await,
         ),
