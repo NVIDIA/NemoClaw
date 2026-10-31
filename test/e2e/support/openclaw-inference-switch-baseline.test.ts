@@ -179,7 +179,7 @@ it.each(
     });
     await expect(
       run({
-        artifacts: { target: { declare: vi.fn() } },
+        artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
         cleanup: {
           trackDisposable: (_name: string, dispose: () => unknown) => disposables.push(dispose),
           trackGateway: vi.fn(),
@@ -248,7 +248,7 @@ it.each([
     const getKey = vi.fn(required);
     await expect(
       run({
-        artifacts: { target: { declare: vi.fn() } },
+        artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
         cleanup: { trackDisposable: vi.fn() },
         progress,
         runtimeProvider: { requireAvailable: vi.fn() },
