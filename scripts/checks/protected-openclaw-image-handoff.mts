@@ -300,6 +300,29 @@ function validateOciArchive(
       throw new Error("OpenClaw OCI layer is missing or differs from the Docker manifest");
     }
   }
+  // Stream binary layers without buffering image-sized content in the controller.
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      `
+import hashlib, json, sys, tarfile
+with tarfile.open(sys.argv[1], "r:") as archive:
+    for layer in json.load(sys.stdin):
+        member = archive.getmember("blobs/sha256/" + layer["digest"][7:])
+        if not member.isreg() or member.size != layer["size"]:
+            raise ValueError("OpenClaw OCI layer size does not match its descriptor")
+        digest = hashlib.sha256()
+        with archive.extractfile(member) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if "sha256:" + digest.hexdigest() != layer["digest"]:
+            raise ValueError("OpenClaw OCI layer digest does not match its descriptor")
+`,
+      archive,
+    ],
+    { input: JSON.stringify(manifest.layers.map(descriptor)), maxBuffer: METADATA_LIMIT },
+  );
 }
 
 function validateArchiveManifest(

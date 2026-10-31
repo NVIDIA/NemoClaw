@@ -104,6 +104,39 @@ function repack() {
   changeReceipt({ archiveSha256: hash(bytes), archiveSize: bytes.length });
 }
 
+function addBinaryOciLayer(bytes: Buffer): string {
+  const archive = path.join(root, "archive");
+  const config = JSON.parse(
+    fs.readFileSync(path.join(archive, `${configDigest.slice(7)}.json`), "utf8"),
+  );
+  config.rootfs.diff_ids = [`sha256:${hash(bytes)}`];
+  const configBytes = JSON.stringify(config);
+  configDigest = `sha256:${hash(configBytes)}`;
+  fs.writeFileSync(path.join(archive, `${configDigest.slice(7)}.json`), configBytes);
+  const source = JSON.parse(manifest);
+  source.config = { ...source.config, digest: configDigest, size: Buffer.byteLength(configBytes) };
+  source.layers = [
+    {
+      digest: `sha256:${hash(bytes)}`,
+      size: bytes.length,
+      mediaType: "application/vnd.oci.image.layer.v1.tar",
+    },
+  ];
+  manifest = JSON.stringify(source);
+  reference = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${hash(manifest)}`;
+  fs.writeFileSync(path.join(root, "manifest.json"), manifest);
+  addOciLayout();
+  const layer = `blobs/sha256/${hash(bytes)}`;
+  fs.writeFileSync(path.join(archive, layer), bytes);
+  fs.writeFileSync(
+    path.join(archive, "manifest.json"),
+    JSON.stringify([
+      { Config: `blobs/sha256/${configDigest.slice(7)}`, RepoTags: [tag], Layers: [layer] },
+    ]),
+  );
+  return path.join(archive, layer);
+}
+
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-image-handoff-"));
   directory = path.join(root, "handoff");
@@ -384,6 +417,28 @@ it("rejects a self-consistent OCI manifest selecting another config before loadi
   expect(() => restoreOpenClawImage(directory, identity)).toThrow();
   expect(calls()).toEqual([]);
 });
+
+it("streams binary OCI layers larger than the metadata buffer during export and restore", () => {
+  addBinaryOciLayer(Buffer.alloc(9 * 1024 * 1024, 0x80));
+  exported();
+  expect(restoreOpenClawImage(directory, identity)).toBe(`sha256:${hash(manifest)}`);
+  expect(calls().some((args) => args[1] === "load")).toBe(true);
+});
+
+it.each([
+  ["digest", Buffer.from([0xff, 0x00, 0x80])],
+  ["size", Buffer.from([0x00])],
+])(
+  "rejects changed OCI layer %s before Docker mutation with a recomputed receipt",
+  (_kind, changed) => {
+    const layer = addBinaryOciLayer(Buffer.from([0x00, 0xff, 0x80]));
+    exported();
+    fs.writeFileSync(layer, changed);
+    repack();
+    expect(() => restoreOpenClawImage(directory, identity)).toThrow(/OCI layer/);
+    expect(calls()).toEqual([]);
+  },
+);
 
 type OciIndex = {
   manifests: { mediaType: string; annotations: Record<string, string>; urls?: string[] }[];
