@@ -301,10 +301,11 @@ fn invalid_fabric_setting_is_labeled_without_printing_its_value() {
         "{tree}"
     );
     assert!(tree.contains("invalid supplied value"), "{tree}");
-    // Schema and catalog digests can contain the digits by chance.
+    // Schema and catalog digests and the Fabric revision can contain the
+    // digits by chance.
     assert!(
         tree.lines()
-            .filter(|line| !line.contains("sha256:"))
+            .filter(|line| !line.contains("sha256:") && !line.contains("Fabric revision:"))
             .all(|line| !line.contains("42")),
         "{tree}"
     );

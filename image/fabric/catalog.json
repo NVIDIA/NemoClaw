@@ -1527,8 +1527,8 @@
               "type": "number"
             },
             "startup_timeout_seconds": {
-              "default": 30,
-              "description": "Maximum time to wait for the OpenClaw Gateway to become ready, within NeMo Fabric's 90-second start limit.",
+              "default": 60,
+              "description": "One deadline for all of start, from checking the OpenClaw command to the Gateway becoming ready, within NeMo Fabric's 90-second start limit.",
               "exclusiveMinimum": 0,
               "maximum": 75,
               "type": "number"
@@ -2201,8 +2201,8 @@
       ]
     }
   ],
-  "fabric_revision": "6cad35045ea534e096c48f634f739d804baef5ee",
+  "fabric_revision": "21ca8d3eb8b90667d74268d43cc9b424433c2e45",
   "schema_version": 2,
-  "source_sha256": "b10ab138607cc84f7bcc3e2630efdbeaccaabf4eadd9ebffeedeb4dab84de92a",
+  "source_sha256": "cb6c909f2e1512af84a8ebf55f4dc35935feae23da9266ed6ece8715f3e39c5b",
   "targets": []
 }
