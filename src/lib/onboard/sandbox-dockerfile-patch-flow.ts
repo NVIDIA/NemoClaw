@@ -8,6 +8,7 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
+import { readDockerfilePatchSnapshot } from "./dockerfile-tool-disclosure-contract";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
@@ -139,7 +140,14 @@ export async function prepareSandboxDockerfilePatch({
   warn = console.warn,
   deps = {},
 }: PrepareSandboxDockerfilePatchInput): Promise<SandboxDockerfilePatchResult> {
-  const shouldResolveBaseImage = !(agent && !fromDockerfile);
+  // Decide against the same immutable source that the patcher will commit.
+  // A literal custom FROM cannot consume the default sandbox-base resolution.
+  const sourceSnapshot = fromDockerfile ? readDockerfilePatchSnapshot(stagedDockerfile) : null;
+  const shouldResolveBaseImage = sourceSnapshot
+    ? (require("./dockerfile-patch") as typeof import("./dockerfile-patch")).hasSandboxBaseImageArg(
+        sourceSnapshot.content,
+      )
+    : !agent;
   const getDockerDriverGateway =
     deps.isLinuxDockerDriverGatewayEnabled ?? linuxDockerDriverGatewayEnabled;
   const dockerDriverGateway = getDockerDriverGateway();
@@ -215,6 +223,7 @@ export async function prepareSandboxDockerfilePatch({
     (() => {
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);
       return {
+        ...(sourceSnapshot ? { sourceSnapshot } : {}),
         agentName: managedAgentName,
         nativeProvider,
         buildIdPolicy,

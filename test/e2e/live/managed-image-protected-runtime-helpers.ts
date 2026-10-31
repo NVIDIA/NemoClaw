@@ -550,6 +550,27 @@ async function inspectProtectedProviderContainer(
   return authority;
 }
 
+/** Capture the existing provider-native diagnostics even after its readiness budget expires. */
+export async function captureProtectedNimFailureLogs(
+  host: Pick<HostCliClient, "command">,
+  authority: ProtectedProviderContainerAuthority | null,
+  redactionValues: readonly string[],
+): Promise<void> {
+  if (!authority || authority.kind !== "nim" || !/^[a-f0-9]{64}$/u.test(authority.containerId))
+    return;
+  try {
+    await host.command("docker", ["logs", "--tail", "200", authority.containerId], {
+      artifactName: "cleanup-nim-failure-logs",
+      captureLimitBytes: PROTECTED_READINESS_CAPTURE_LIMIT_BYTES,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [...redactionValues],
+      timeoutMs: 5_000,
+    });
+  } catch {
+    // Diagnostics must not prevent the original strict cleanup or change its result.
+  }
+}
+
 async function removeProtectedProviderContainer(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
@@ -977,6 +998,11 @@ export async function qualifyProtectedManagedImageRuntime(
     await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
   });
   cleanup.trackDisposable("remove protected NIM container", async () => {
+    await captureProtectedNimFailureLogs(
+      fixtures.host,
+      nimState.removed ? null : nimState.authority,
+      [ngcApiKey],
+    );
     await removeProtectedProviderContainer(fixtures.host, nimState, "cleanup-nim-container");
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
