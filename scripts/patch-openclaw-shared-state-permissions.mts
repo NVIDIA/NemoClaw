@@ -10,7 +10,8 @@
  * shared and per-agent SQLite state part of gateway startup and hardens those
  * paths to owner-only modes. Generic credential and identity stores remain owner-only.
  * Preserve those private modes. OpenClaw owns its native state migrations;
- * this patch validates but does not modify the update-check migration.
+ * this patch validates but does not modify the update-check migration or the
+ * 10.5 retired-runtime guard that replaces it.
  *
  * Remove this patch once upstream no longer needs these managed-runtime
  * permission and legacy-cache compatibility changes.
@@ -171,7 +172,17 @@ const PATCHED_PERMISSION_HELPER_20260901 = [
   "}",
 ].join("\n");
 
+const UPSTREAM_PERMISSION_HELPER_20261005 = UPSTREAM_PERMISSION_HELPER_20260901.replace(
+  "function ensureOpenClawStatePermissions(pathname, env)",
+  "function ensureOpenClawStatePermissions(pathname, env, options = {})",
+).replace("\tmkdirSync(dir, {", "\tif (options.createDirectory) mkdirSync(dir, {");
+const PATCHED_PERMISSION_HELPER_20261005 = PATCHED_PERMISSION_HELPER_20260901.replace(
+  "function ensureOpenClawStatePermissions(pathname, env)",
+  "function ensureOpenClawStatePermissions(pathname, env, options = {})",
+).replace("\tmkdirSync(dir, {", "\tif (options.createDirectory) mkdirSync(dir, {");
+
 const STATE_PERMISSION_HELPER_SHAPES = [
+  { patched: PATCHED_PERMISSION_HELPER_20261005, upstream: UPSTREAM_PERMISSION_HELPER_20261005 },
   { patched: PATCHED_PERMISSION_HELPER, upstream: UPSTREAM_PERMISSION_HELPER },
   {
     patched: PATCHED_PERMISSION_HELPER_20260901,
@@ -295,7 +306,26 @@ const PATCHED_AGENT_PERMISSION_HELPER_20260901 = [
   "}",
 ].join("\n");
 
+// OpenClaw 2026.9.5 now skips redundant chmod calls natively. Preserve its
+// Windows handling and ENOENT behavior while retaining our explicit mode contract.
+const UPSTREAM_AGENT_PERMISSION_HELPER_20260905 = UPSTREAM_AGENT_PERMISSION_HELPER_20260901.replace(
+  "chmodSync(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+  "ensureMode(dir, OPENCLAW_AGENT_DB_DIR_MODE)",
+).replace(
+  "chmodSync(candidate, OPENCLAW_AGENT_DB_FILE_MODE)",
+  "ensureMode(candidate, OPENCLAW_AGENT_DB_FILE_MODE)",
+);
+const PATCHED_AGENT_PERMISSION_HELPER_20260905 =
+  PATCHED_AGENT_PERMISSION_HELPER_20260901.replaceAll(
+    "!nemoclawGroupSharedState ||",
+    'process.platform === "win32" ||',
+  );
+
 const AGENT_PERMISSION_HELPER_SHAPES = [
+  {
+    patched: PATCHED_AGENT_PERMISSION_HELPER_20260905,
+    upstream: UPSTREAM_AGENT_PERMISSION_HELPER_20260905,
+  },
   {
     patched: PATCHED_AGENT_PERMISSION_HELPER,
     upstream: UPSTREAM_AGENT_PERMISSION_HELPER,
@@ -331,6 +361,21 @@ const UPSTREAM_MIGRATION_START = [
 const UPSTREAM_MIGRATION_START_20260901 = [
   "function migrateLegacyUpdateCheckState(params) {",
   "\treturn migrateLegacyJsonState({",
+].join("\n");
+
+const UPSTREAM_RETIRED_RUNTIME_20261005 = [
+  "function assertNoRetiredRuntimeStateFiles(stateDir, env = process.env, homedir = os.homedir) {",
+  '\tconst defaultStateDir = path.join(resolveRequiredHomeDir(env, homedir), ".openclaw");',
+  '\tassertNoRetiredStateFiles("Runtime JSON sidecars", [',
+  '\t\tpath.join(stateDir, "acp", "event-ledger.json"),',
+  '\t\tpath.join(stateDir, "acp", "event-ledger.json.doctor-import"),',
+  '\t\tpath.join(stateDir, "settings", "voicewake.json"),',
+  '\t\tpath.join(stateDir, "settings", "voicewake-routing.json"),',
+  '\t\tpath.join(stateDir, "bindings", "current-conversations.json"),',
+  '\t\t...path.resolve(stateDir) === path.resolve(defaultStateDir) ? [path.join(defaultStateDir, "plugin-binding-approvals.json")] : []',
+  "\t]);",
+  "\tassertNoRetiredRestartSentinelFiles(stateDir);",
+  "}",
 ].join("\n");
 
 const NATIVE_MIGRATION_STARTS = [
@@ -499,7 +544,22 @@ export function patchOpenClawAgentDbText(source: string, file: string): PatchTex
   return { patched: true, status: "patched", text };
 }
 
-export function patchOpenClawStateMigrationText(source: string, file: string): PatchTextResult {
+export function patchOpenClawStateMigrationText(
+  source: string,
+  file: string,
+  version?: string,
+): PatchTextResult {
+  if (version === "2026.10.5") {
+    // Upstream retired this JSON migration. Its disposable update-check cache
+    // does not block startup; other retired state still requires native recovery.
+    requireExactlyOnce(
+      source,
+      UPSTREAM_RETIRED_RUNTIME_20261005,
+      "reviewed retired-runtime guard",
+      file,
+    );
+    return { patched: false, status: "unchanged", text: source };
+  }
   const matches = NATIVE_MIGRATION_STARTS.filter((start) => source.includes(start));
   if (matches.length !== 1) {
     throw new Error(
@@ -556,7 +616,11 @@ function isStateDbCandidate(source: string): boolean {
 
 export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistResult {
   const resolvedDist = path.resolve(distDir);
-  const stateCandidates = listCandidates(resolvedDist, /^openclaw-state-db-.+\.js$/).filter(
+  const manifest = path.join(resolvedDist, "..", "package.json");
+  const version = fs.existsSync(manifest)
+    ? (JSON.parse(fs.readFileSync(manifest, "utf8")) as { version?: string }).version
+    : undefined;
+  const stateCandidates = listCandidates(resolvedDist, /^openclaw-state-db-.+\.m?js$/).filter(
     (file) => isStateDbCandidate(fs.readFileSync(file, "utf8")),
   );
   if (stateCandidates.length !== 1) {
@@ -564,7 +628,7 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw shared-state database target in ${resolvedDist}, found ${stateCandidates.length}`,
     );
   }
-  const agentCandidates = listCandidates(resolvedDist, /^openclaw-agent-db-.+\.js$/).filter(
+  const agentCandidates = listCandidates(resolvedDist, /^openclaw-agent-db-.+\.m?js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
       return (
@@ -579,10 +643,14 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw per-agent database target in ${resolvedDist}, found ${agentCandidates.length}`,
     );
   }
-  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations[.-].+\.js$/).filter(
+  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations[.-].+\.m?js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
-      return source.includes("function migrateLegacyUpdateCheckState(params) {");
+      return source.includes(
+        version === "2026.10.5"
+          ? "function assertNoRetiredRuntimeStateFiles(stateDir, env = process.env, homedir = os.homedir) {"
+          : "function migrateLegacyUpdateCheckState(params) {",
+      );
     },
   );
   if (migrationCandidates.length !== 1) {
@@ -590,16 +658,21 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw state-migration target in ${resolvedDist}, found ${migrationCandidates.length}`,
     );
   }
-  const modelsCandidates = listCandidates(resolvedDist, /^models-config-.+\.js$/).filter((file) => {
-    const source = fs.readFileSync(file, "utf8");
-    return (
-      source.includes(MODELS_MARKER) ||
-      (source.includes("async function ensureModelsFileModeForModelsJson(pathname) {") &&
-        source.includes(
-          "async function writeModelsFileAtomicForModelsJson(targetPath, contents) {",
-        ))
-    );
-  });
+  const modelsCandidates = listCandidates(resolvedDist, /^models-config-.+\.m?js$/).filter(
+    (file) => {
+      const source = fs.readFileSync(file, "utf8");
+      return (
+        source.includes(MODELS_MARKER) ||
+        (source.includes("async function ensureModelsFileModeForModelsJson(pathname) {") &&
+          (source.includes(
+            "async function writeModelsFileAtomicForModelsJson(targetPath, contents) {",
+          ) ||
+            source.includes(
+              'await privateFileStore(path.dirname(targetPath)).writeText("models.json", plan.contents);',
+            )))
+      );
+    },
+  );
   if (modelsCandidates.length !== 1) {
     throw new Error(
       `Expected exactly one OpenClaw models-config target in ${resolvedDist}, found ${modelsCandidates.length}`,
@@ -615,6 +688,7 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
   const migrationResult = patchOpenClawStateMigrationText(
     fs.readFileSync(migrationFile, "utf8"),
     migrationFile,
+    version,
   );
   const modelsResult = patchOpenClawModelsConfigText(
     fs.readFileSync(modelsFile, "utf8"),

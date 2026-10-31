@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
 import { entry, servingProfile } from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
+import { OpenClawPairingQualificationError } from "./launch-readiness/openclaw-pairing-qualification";
 import type {
   LaunchReadinessFence,
   LaunchReadinessIdentity,
@@ -1289,6 +1290,27 @@ describe("launch readiness validation", () => {
     ).resolves.toEqual({ kind: "validation-failed", category: "config" });
     expect(publishLease).not.toHaveBeenCalled();
   });
+
+  it.each(["state-read", "state-changed", "timeout"] as const)(
+    "retains the pairing observation reason %s without publishing a lease",
+    async (failureReason) => {
+      const currentDeps = deps();
+      const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+      const publication = publicationFromDecision(SANDBOX, first);
+      currentDeps.observeOpenClawPairingQualification = () => {
+        throw new OpenClawPairingQualificationError(failureReason);
+      };
+      expect(await publishLaunchReadiness(publication, currentDeps)).toEqual({
+        kind: "evidence-failed",
+        diagnostic: {
+          stage: "publication-validation",
+          reason: "pairing-observation-failed",
+          pairingFailureReason: failureReason,
+        },
+      });
+      expect(publishedIdentity).toBeNull();
+    },
+  );
 
   it("distinguishes authoritative final validation failure from evidence failure", async () => {
     const first = await inspectLaunchReadiness(SANDBOX, deps());

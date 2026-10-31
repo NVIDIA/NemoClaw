@@ -142,13 +142,14 @@ describe("remote dashboard bind production lifecycle", () => {
 
   it.each([
     [
+      "explicit-proxy endpoint authority",
+      "    && chmod 0444 /usr/local/share/nemoclaw/openclaw-proxy-url",
+    ],
+    [
       "metadata validation",
       "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
     ],
-    [
-      "Tavily installation",
-      "TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive",
-    ],
+    ["optional plugin installation", ". /scripts/lib/install-openclaw-optional-plugins.sh"],
   ])("rejects config rewrites appended to checked-in %s (#6024)", (_label, instructionTail) => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));

@@ -128,6 +128,22 @@ afterEach(() => {
 });
 
 describe("generate-openclaw-config :: agents manifest", () => {
+  it("records the primary agent for OpenClaw's explicit roster", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        makeExtra({ id: "research" }),
+        makeExtra({
+          id: "writing",
+          workspace: "/sandbox/.openclaw/workspace-writing",
+          agentDir: "/sandbox/.openclaw/agents/writing",
+        }),
+      ]),
+    });
+    const resolved = config.agents.defaults.systemAgent.agentId;
+    expect(resolved).toBe("main");
+    expect(config.agents.entries[resolved].workspace).toBe("/sandbox/.openclaw/workspace");
+  });
+
   it.each(["array", "object"])(
     "preserves the default and shared inference for the read-only %s manifest (#11434)",
     (shape) => {
@@ -136,7 +152,7 @@ describe("generate-openclaw-config :: agents manifest", () => {
         NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(shape === "array" ? agents : { agents }),
       });
       expect(config.agents.entries).toEqual({
-        main: { default: true },
+        main: { workspace: "/sandbox/.openclaw/workspace" },
         researcher: {
           workspace: "/sandbox/.openclaw/workspace-researcher",
           agentDir: "/sandbox/.openclaw/agents/researcher",
@@ -347,7 +363,7 @@ describe("generate-openclaw-config :: agents manifest", () => {
       }),
     });
     expect(config.agents.entries.main).toEqual({
-      default: true,
+      workspace: "/sandbox/.openclaw/workspace",
       tools: mainTools,
       subagents: mainSubagents,
     });

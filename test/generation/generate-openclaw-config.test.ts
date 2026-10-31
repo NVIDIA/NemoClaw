@@ -782,9 +782,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     return Buffer.from(JSON.stringify(extras)).toString("base64");
   }
 
-  it("always writes agents.entries with a default 'main' entry", () => {
+  it("writes a main entry without a retired default marker", () => {
     const config = runConfigScript();
-    expect(config.agents.entries).toEqual({ main: { default: true } });
+    expect(config.agents.entries).toEqual({ main: {} });
     expect(config.agents.list).toBeUndefined();
   });
 
@@ -801,7 +801,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras),
     });
     expect(Object.keys(config.agents.entries)).toEqual(["main", "research", "writing"]);
-    expect(config.agents.entries.main).toEqual({ default: true });
+    expect(config.agents.entries.main).toEqual({ workspace: "/sandbox/.openclaw/workspace" });
     expect(config.agents.entries.research).toMatchObject({
       workspace: "/sandbox/.openclaw/workspace-research",
     });
@@ -810,14 +810,18 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
-  it("keeps 'main' as the default even when extras are present", () => {
+  it("preserves main's ambient responsibilities when extras are present", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
     const entries = config.agents.entries as Record<string, { default?: boolean }>;
     const defaultEntries = Object.entries(entries).filter(([, entry]) => entry.default === true);
-    expect(defaultEntries).toHaveLength(1);
-    expect(defaultEntries[0][0]).toBe("main");
+    expect(defaultEntries).toHaveLength(0);
+    expect(config.agents.ownership).toBe("explicit");
+    expect(config.agents.defaults.systemAgent).toEqual({ agentId: "main" });
+    expect(config.agents.defaults.sessionStore).toEqual({ agentId: "main" });
+    expect(config.agents.defaults.heartbeat).toEqual({ agentId: "main" });
+    expect(config.talk).toEqual({ agentId: "main" });
     expect(Object.keys(config.agents.entries)[0]).toBe("main");
   });
 
@@ -1043,22 +1047,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
       subagents: subagentsInput,
       description: "Researches things",
     });
-  });
-
-  it("matches OpenClaw's canonical keyed default-agent roster", () => {
-    const config = runConfigScript({
-      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-        makeExtra({ id: "research" }),
-        makeExtra({
-          id: "writing",
-          workspace: "/sandbox/.openclaw/workspace-writing",
-          agentDir: "/sandbox/.openclaw/agents/writing",
-        }),
-      ]),
-    });
-    const entries = Object.entries(config.agents.entries) as Array<[string, { default?: boolean }]>;
-    const resolved = entries.find(([, entry]) => entry.default === true)?.[0] ?? entries[0]?.[0];
-    expect(resolved).toBe("main");
   });
 
   // ─── agents-manifest extensions ───────────────────────────────────────────

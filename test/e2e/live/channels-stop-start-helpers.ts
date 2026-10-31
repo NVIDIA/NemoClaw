@@ -15,6 +15,7 @@ import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { hermesRevisionScopedCredentialLinePattern } from "../fixtures/hermes-channel-credential-state.ts";
 import {
   type OpenClawChannelConfigState,
@@ -92,8 +93,10 @@ type InstalledGooglechatCredentialFixture = (() => void) & {
 
 export const GOOGLECHAT_E2E_ACCESS_TOKEN = "e2e-fake-googlechat-access-token";
 
-async function waitForNativeChannelGateway(
+export async function waitForNativeChannelGateway(
+  host: HostCliClient,
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  env: NodeJS.ProcessEnv,
   redactions: string[],
 ): Promise<void> {
   const port = AGENT === "hermes" ? 8642 : 18789;
@@ -117,6 +120,13 @@ async function waitForNativeChannelGateway(
       timeoutMs: 180_000,
     },
   );
+  await captureSandboxFailureDiagnostics(host, ready, {
+    sandboxName: SANDBOX_NAME,
+    artifactPrefix: `channels-native-readiness-${AGENT}`,
+    redactionValues: redactions,
+    captureGatewayLog: true,
+    env,
+  });
   expectExitZero(ready, `${AGENT} native gateway readiness`);
 }
 
@@ -982,7 +992,7 @@ export async function runChannelsStopStartTarget({
       redactions,
       "sandbox-list-after-openshell-start-hermes",
     );
-    await waitForNativeChannelGateway(sandbox, redactions);
+    await waitForNativeChannelGateway(host, sandbox, env, redactions);
     const after = await readConfig("after-start");
     expect(after.exitCode === 0 && after.stdout.trim() === inertConfig, resultText(after)).toBe(
       true,
@@ -1088,7 +1098,7 @@ export async function runChannelsStopStartTarget({
     redactions,
     `sandbox-list-after-openshell-start-${AGENT}`,
   );
-  await waitForNativeChannelGateway(sandbox, redactions);
+  await waitForNativeChannelGateway(host, sandbox, env, redactions);
   expectChannelInputs(env);
   await expectAgentConfig(sandbox, "active", "after-openshell-start", redactions);
   await expectGooglechatProviderEgress(

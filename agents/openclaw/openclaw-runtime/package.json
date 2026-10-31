@@ -5,19 +5,23 @@
   "description": "Locked production dependency graph for the OpenClaw runtime",
   "license": "Apache-2.0",
   "dependencies": {
-    "openclaw": "2026.9.2"
+    "openclaw": "2026.10.5"
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.0",
+    "fast-uri": "3.1.8",
+    "hono": "4.13.11",
+    "npm": {
+      ".": "12.2.1",
+      "undici": "6.29.1"
+    },
+    "tar": "7.5.22",
+    "undici": "8.12.3",
     "body-parser": "2.4.0",
-    "fast-uri": "3.1.7",
-    "hono": "4.12.34",
-    "tar": "7.5.21",
-    "undici": "8.12.2",
     "zod": "4.6.6"
   },
   "engines": {
-    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0"
 }

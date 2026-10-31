@@ -27,6 +27,14 @@ const MACHINE_AUTHORITY_TABLES_TO_CLEAR = [
 
 const MACHINE_LOCAL_ROW_UPDATES = [
   {
+    table: "state_leases",
+    // A replacement has a different host/process identity. The retired
+    // gateway's lease is not authority to exclude that replacement, and its
+    // foreign-host owner cannot be proven dead by OpenClaw's native reclaimer.
+    // This runs only on the archive copy; retain every other lease unchanged.
+    statement: "DELETE FROM state_leases WHERE scope = 'gateway-owner' AND lease_key = 'global'",
+  },
+  {
     table: "diagnostic_events",
     // These fingerprints belong to the source config and its local key.
     // Discard the cache when sanitizing replacement configuration.

@@ -12,7 +12,7 @@ export const MARKER = "/* nemoclaw MCP tools/list timeout override */";
 export const TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
 export const TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 export const TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
-export const SUPPORTED_OPENCLAW_VERSION = "2026.9.2";
+export const SUPPORTED_OPENCLAW_VERSION = "2026.9.5";
 const LEGACY_FIXTURE_OPENCLAW_VERSIONS = new Set(["2026.3.11", "2026.4.24"]);
 
 /** Client identity that only the compiled bundle-mcp session runtime carries. */
@@ -35,9 +35,18 @@ const TIMEOUT_RESOLVER_REPLACEMENT = [
   "}",
 ].join("\n");
 
-const UNPATCHED_TARGET_PATTERNS = [TIMEOUT_RESOLVER_PATTERN];
-const REQUIRED_PATTERNS = [DEFAULT_TIMEOUT_PATTERN, ...UNPATCHED_TARGET_PATTERNS];
-const PATCHED_REQUIRED_PATTERNS = [MARKER, DEFAULT_TIMEOUT_PATTERN, TIMEOUT_RESOLVER_REPLACEMENT];
+const CURRENT_DEFAULT_TIMEOUT_PATTERN = "const BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS = 1e4;";
+const CURRENT_TIMEOUT_RESOLVER_PATTERN = [
+  "function getCatalogListTimeoutMs(rawServer, requestTimeoutMs) {",
+  "\tconst record = asOptionalObjectRecord(rawServer);",
+  '\tconst configured = ["requestTimeoutMs", "timeout"].some((key) => asPositiveFiniteNumber(record?.[key]) !== void 0);',
+  "\treturn bundleMcpCatalogListTimeoutMs ?? (configured ? requestTimeoutMs : BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS);",
+  "}",
+].join("\n");
+const CURRENT_TIMEOUT_RESOLVER_REPLACEMENT = CURRENT_TIMEOUT_RESOLVER_PATTERN.replace(
+  "return bundleMcpCatalogListTimeoutMs ?? (configured",
+  "return bundleMcpCatalogListTimeoutMs ?? NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_OVERRIDE_MS ?? (configured",
+);
 
 /**
  * Parses one bounded OpenClaw-only runtime override. The default path stays
@@ -130,8 +139,14 @@ function listJsFiles(dir: string): string[] {
 
 /** Fail closed when the reviewed catalog-timeout boundary changes. */
 export function patchMcpToolsListTimeoutText(source: string, filePath: string): PatchTextResult {
+  const current = source.includes(CURRENT_DEFAULT_TIMEOUT_PATTERN);
+  const resolver = current ? CURRENT_TIMEOUT_RESOLVER_PATTERN : TIMEOUT_RESOLVER_PATTERN;
+  const replacement = current ? CURRENT_TIMEOUT_RESOLVER_REPLACEMENT : TIMEOUT_RESOLVER_REPLACEMENT;
+  const defaultTimeout = current ? CURRENT_DEFAULT_TIMEOUT_PATTERN : DEFAULT_TIMEOUT_PATTERN;
+  const required = [defaultTimeout, resolver];
+  const patchedRequired = [MARKER, defaultTimeout, replacement, INJECTED_TOOLS_LIST_TIMEOUT_HELPER];
   if (source.includes(MARKER)) {
-    for (const pattern of PATCHED_REQUIRED_PATTERNS) {
+    for (const pattern of patchedRequired) {
       const count = countOccurrences(source, pattern);
       if (count !== 1) {
         throw new Error(
@@ -139,7 +154,7 @@ export function patchMcpToolsListTimeoutText(source: string, filePath: string): 
         );
       }
     }
-    for (const pattern of UNPATCHED_TARGET_PATTERNS) {
+    for (const pattern of [resolver]) {
       if (source.includes(pattern)) {
         throw new Error(
           `${filePath}: MCP tools/list timeout marker is present but an unpatched target remains`,
@@ -149,7 +164,7 @@ export function patchMcpToolsListTimeoutText(source: string, filePath: string): 
     return { patched: false, status: "already-patched", text: source };
   }
 
-  for (const pattern of REQUIRED_PATTERNS) {
+  for (const pattern of required) {
     const count = countOccurrences(source, pattern);
     if (count !== 1) {
       throw new Error(
@@ -166,9 +181,9 @@ export function patchMcpToolsListTimeoutText(source: string, filePath: string): 
   let text = `${source.slice(0, importMatch[0].length)}${INJECTED_TOOLS_LIST_TIMEOUT_HELPER}${source.slice(
     importMatch[0].length,
   )}`;
-  text = text.replace(TIMEOUT_RESOLVER_PATTERN, TIMEOUT_RESOLVER_REPLACEMENT);
+  text = text.replace(resolver, replacement);
 
-  for (const pattern of PATCHED_REQUIRED_PATTERNS) {
+  for (const pattern of patchedRequired) {
     const count = countOccurrences(text, pattern);
     if (count !== 1) {
       throw new Error(
@@ -194,7 +209,7 @@ function resolveBundleMcpRuntimeFile(distDir: string): string {
 export function patchOpenClawMcpToolsListTimeout(distDir: string): PatchRunResult {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
-  if (version !== SUPPORTED_OPENCLAW_VERSION && version !== "2026.9.1") {
+  if (![SUPPORTED_OPENCLAW_VERSION, "2026.9.1", "2026.10.5"].includes(version)) {
     if (LEGACY_FIXTURE_OPENCLAW_VERSIONS.has(version)) {
       return { status: "skipped-unsupported-version", version };
     }

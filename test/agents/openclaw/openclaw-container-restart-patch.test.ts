@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,13 +11,18 @@ import vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  patchContainerRestart,
+  patchContainerRestart as patchRestartForVersion,
+  patchGatewayProxyShutdown as patchSignalsForVersion,
   patchHostSafeRestart,
   patchOpenClawContainerRestart,
 } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 
-const nativeRestart = fs.readFileSync(
+const legacyRestart = fs.readFileSync(
   path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
+  "utf8",
+);
+const currentRestart = fs.readFileSync(
+  path.join(import.meta.dirname, "fixtures/gateway-container-restart-10.5.js.txt"),
   "utf8",
 );
 const nativeSafeRestart = `async function runSafeGatewayRestart(opts, target) {
@@ -28,7 +34,8 @@ const nativeSafeRestart = `async function runSafeGatewayRestart(opts, target) {
 \t});
 \treturn result;
 }`;
-function restartHarness(
+function restartHarnessForVersion(
+  version: string,
   options: {
     sandbox?: boolean;
     container?: boolean;
@@ -62,13 +69,17 @@ function restartHarness(
     isContainerEnvironment: () => options.container !== false,
   });
   const restart = vm.runInContext(
-    `${patchContainerRestart(nativeRestart)}; restartGatewayProcessWithFreshPid`,
+    `${patchRestartForVersion(version === "2026.10.5" ? currentRestart : legacyRestart, version)}; restartGatewayProcessWithFreshPid`,
     context,
   );
   return { restart, execve, processStub };
 }
 
-describe("OpenClaw sandbox restart patch", () => {
+describe.each(["2026.9.5", "2026.10.5"])("OpenClaw %s sandbox restart patch", (version) => {
+  const nativeRestart = version === "2026.10.5" ? currentRestart : legacyRestart;
+  const patchContainerRestart = (source: string) => patchRestartForVersion(source, version);
+  const restartHarness = (options?: Parameters<typeof restartHarnessForVersion>[1]) =>
+    restartHarnessForVersion(version, options);
   it.each([
     [{ OPENSHELL_SANDBOX: "1", NEMOCLAW_OPENCLAW_HOST_RESTART: "1" }, true],
     [{ OPENSHELL_SANDBOX: "1" }, false],
@@ -119,6 +130,12 @@ describe("OpenClaw sandbox restart patch", () => {
       "Expected one",
     );
   });
+  it("rejects a distribution labeled with the other restart layout", () => {
+    expect(() =>
+      patchContainerRestart(version === "2026.10.5" ? legacyRestart : currentRestart),
+    ).toThrow("Expected one");
+  });
+
   it.each([true, false])(
     "replaces the OpenShell process when generic container detection is %s",
     (container) => {
@@ -149,6 +166,23 @@ describe("OpenClaw sandbox restart patch", () => {
     expect(execve).not.toHaveBeenCalled();
   });
 
+  it.skipIf(version !== "2026.10.5")("honors the caller's resolved restart decision", () => {
+    const { restart, execve } = restartHarness();
+    expect(restart({ decision: { mode: "disabled", reason: "no-respawn" } })).toEqual({
+      mode: "disabled",
+    });
+    expect(restart({ decision: { mode: "supervised", supervisor: "systemd" } })).toEqual({
+      mode: "supervised",
+    });
+    expect(
+      restart({ decision: { mode: "disabled", reason: "future-policy", detail: "preserve" } }),
+    ).toEqual({ mode: "disabled", detail: "preserve" });
+    expect(execve).not.toHaveBeenCalled();
+    expect(() => restart({ decision: { mode: "disabled", reason: "unmanaged" } })).toThrow(
+      "replaced",
+    );
+  });
+
   it("propagates replacement failure instead of reusing stale plugin state", () => {
     const { restart } = restartHarness({
       execve: () => {
@@ -177,7 +211,12 @@ describe("OpenClaw sandbox restart patch", () => {
     ).toThrow("Incomplete");
     expect(() =>
       patchContainerRestart(
-        nativeRestart.replace("isContainerEnvironment()", "differentBoundary()"),
+        version === "2026.10.5"
+          ? nativeRestart.replace(
+              "opts.decision ?? resolveGatewayRestartDecision()",
+              "resolveGatewayRestartDecision()",
+            )
+          : nativeRestart.replace("isContainerEnvironment()", "differentBoundary()"),
       ),
     ).toThrow("Unrecognized");
     expect(() => patchContainerRestart(nativeRestart + nativeRestart)).toThrow("Expected one");
@@ -202,16 +241,18 @@ describe("OpenClaw sandbox restart patch", () => {
       const dist = path.join(root, "dist");
       fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
       const target = path.join(dist, "cli/gateway-lifecycle.runtime.js");
-      fs.writeFileSync(target, nativeRestart);
+      fs.writeFileSync(target, legacyRestart);
       fs.writeFileSync(path.join(dist, "lifecycle-fixture.js"), nativeSafeRestart);
       fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "unknown" }));
       expect(() => patchOpenClawContainerRestart(dist)).toThrow("Unsupported");
-      expect(fs.readFileSync(target, "utf8")).toBe(nativeRestart);
+      expect(fs.readFileSync(target, "utf8")).toBe(legacyRestart);
       fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.1" }));
       expect(() => patchOpenClawContainerRestart(dist, true)).toThrow("missing");
       patchOpenClawContainerRestart(dist);
       expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
-      expect(fs.readFileSync(target, "utf8")).toBe(patchContainerRestart(nativeRestart));
+      expect(fs.readFileSync(target, "utf8")).toBe(
+        patchRestartForVersion(legacyRestart, "2026.9.1"),
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -271,3 +312,179 @@ if (process.env.RESTARTED !== "1") {
     },
   );
 });
+
+// Exact signal installer from the pinned OpenClaw 2026.9.5 CLI runtime.
+const legacySignals = fs.readFileSync(
+  path.join(import.meta.dirname, "fixtures/gateway-proxy-signal-handlers.js.txt"),
+  "utf8",
+);
+
+const currentSignals = fs.readFileSync(
+  path.join(import.meta.dirname, "fixtures/gateway-proxy-signal-handlers-10.5.js.txt"),
+  "utf8",
+);
+
+function signalHarnessForVersion(version: string, gateway: boolean, proxy = true) {
+  const events = new EventEmitter();
+  const exit = vi.fn((code: number) => events.emit("exit", code));
+  const processView = Object.assign(events, { exit });
+  const stopProxy = vi.fn(async () => {});
+  const killProxy = vi.fn();
+  const barriers: (() => Promise<void>)[] = [];
+  let draining: Promise<void> | undefined;
+  const context = vm.createContext({
+    process$1: processView,
+    isGatewayRunInvocation: gateway,
+    proxyHandle: proxy ? {} : null,
+    proxySignalHandlers: [],
+    onSigterm: null,
+    onSigint: null,
+    onExit: null,
+    unregisterProxySignalExitBarrier: null,
+    registerSignalExitBarrier: (barrier: () => Promise<void>) => {
+      barriers.push(barrier);
+      return () => {};
+    },
+    stopStartedProxy: stopProxy,
+    killStartedProxy: killProxy,
+    waitForSignalExitBarriers: () => {
+      draining = Promise.all(barriers.map((barrier) => barrier())).then(() => {});
+      return draining;
+    },
+  });
+  const install = vm.runInContext(
+    `${patchSignalsForVersion(version === "2026.10.5" ? currentSignals : legacySignals, version)}; installProxySignalHandlers`,
+    context,
+  ) as () => void;
+  return {
+    events,
+    exit,
+    stopProxy,
+    killProxy,
+    barriers,
+    install,
+    drain: () => draining,
+    uninstall: () => vm.runInContext("uninstallProxySignalHandlers()", context),
+  };
+}
+
+describe.each(["2026.9.5", "2026.10.5"])(
+  "OpenClaw %s gateway proxy shutdown ownership",
+  (version) => {
+    const nativeSignals = version === "2026.10.5" ? currentSignals : legacySignals;
+    const patchGatewayProxyShutdown = (source: string) => patchSignalsForVersion(source, version);
+    const signalHarness = (gateway: boolean, proxy = true) =>
+      signalHarnessForVersion(version, gateway, proxy);
+    it.each(["SIGTERM", "SIGINT"])(
+      "lets the gateway release its lease before proxy cleanup on %s",
+      async (signal) => {
+        const runtime = signalHarness(true);
+        let finishServerClose!: () => void;
+        const serverClosed = new Promise<void>((resolve) => {
+          finishServerClose = resolve;
+        });
+        let leaseReleased = false;
+        const stopped = serverClosed.then(() => {
+          leaseReleased = true;
+          runtime.exit(0);
+        });
+        runtime.events.on(signal, () => {});
+        runtime.killProxy.mockImplementation(() => expect(leaseReleased).toBe(true));
+        runtime.install();
+        runtime.install();
+
+        runtime.events.emit(signal);
+        await Promise.resolve();
+        expect(runtime.exit).not.toHaveBeenCalled();
+        expect(runtime.stopProxy).not.toHaveBeenCalled();
+        expect(runtime.killProxy).not.toHaveBeenCalled();
+        expect(runtime.events.listenerCount(signal)).toBe(1);
+        expect(runtime.barriers).toHaveLength(1);
+        finishServerClose();
+        await stopped;
+        expect(runtime.exit).toHaveBeenCalledExactlyOnceWith(0);
+        expect(runtime.killProxy).toHaveBeenCalledTimes(1);
+        expect(runtime.events.listenerCount("exit")).toBe(0);
+      },
+    );
+
+    it.each([
+      ["SIGTERM", 143],
+      ["SIGINT", 130],
+    ] as const)("retains ordinary CLI cleanup and exit status for %s", async (signal, code) => {
+      const runtime = signalHarness(false);
+      runtime.install();
+      runtime.install();
+      runtime.events.emit(signal);
+      await runtime.drain();
+      expect(runtime.stopProxy).toHaveBeenCalledTimes(1);
+      expect(runtime.exit).toHaveBeenCalledExactlyOnceWith(code);
+      expect(runtime.killProxy).toHaveBeenCalledTimes(1);
+      expect(runtime.barriers).toHaveLength(1);
+    });
+
+    it.skipIf(version !== "2026.10.5")(
+      "removes gateway exit cleanup when replacing the proxy",
+      () => {
+        const runtime = signalHarness(true);
+        runtime.install();
+        expect(runtime.events.listenerCount("exit")).toBe(1);
+        runtime.uninstall();
+        expect(runtime.events.eventNames()).toEqual([]);
+        runtime.install();
+        runtime.events.emit("exit", 0);
+        expect(runtime.killProxy).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("does not register shutdown work when there is no proxy", () => {
+      const runtime = signalHarness(true, false);
+      runtime.install();
+      expect(runtime.barriers).toHaveLength(0);
+      expect(runtime.events.eventNames()).toEqual([]);
+    });
+
+    it("rejects native drift and incomplete or duplicated patches", () => {
+      const patched = patchGatewayProxyShutdown(nativeSignals);
+      expect(patchGatewayProxyShutdown(patched)).toBe(patched);
+      expect(() => patchGatewayProxyShutdown(nativeSignals + nativeSignals)).toThrow(
+        "Expected one",
+      );
+      expect(() =>
+        patchGatewayProxyShutdown(nativeSignals.replace("stopStartedProxy);", "otherCleanup);")),
+      ).toThrow("Unrecognized");
+      expect(() =>
+        patchGatewayProxyShutdown(patched.replace("if (isGatewayRunInvocation)", "if (false)")),
+      ).toThrow("Incomplete");
+    });
+
+    it("patches and audits the installed package without partial writes on drift", () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-proxy-shutdown-"));
+      try {
+        const dist = path.join(root, "dist");
+        fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
+        fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
+        const restart = version === "2026.10.5" ? currentRestart : legacyRestart;
+        const restartPath = path.join(dist, "cli/gateway-lifecycle.runtime.js");
+        fs.writeFileSync(restartPath, restart);
+        fs.writeFileSync(
+          path.join(dist, "lifecycle-fixture.mjs"),
+          'async function runSafeGatewayRestart(opts) {\n\tconst result = await callGatewayCli({\n\t\tmethod: "gateway.restart.request",\n\t\tparams,\n\t});\n}',
+        );
+        const signalsPath = path.join(dist, "cli/run-main.js");
+        fs.writeFileSync(signalsPath, "native drift");
+        expect(() => patchOpenClawContainerRestart(dist)).toThrow("Expected one");
+        expect(fs.readFileSync(restartPath, "utf8")).toBe(restart);
+        fs.writeFileSync(signalsPath, nativeSignals);
+        expect(() => patchOpenClawContainerRestart(dist, true)).toThrow("missing");
+        patchOpenClawContainerRestart(dist);
+        expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
+        expect(fs.readFileSync(signalsPath, "utf8")).toBe(patchGatewayProxyShutdown(nativeSignals));
+        fs.writeFileSync(signalsPath, nativeSignals);
+        expect(() => patchOpenClawContainerRestart(dist, true)).toThrow("missing");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  },
+);

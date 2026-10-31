@@ -9,6 +9,17 @@ import {
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 
+// The interactive-command unit cases stop before registry verification.
+vi.mock("../../../src/lib/inference/native-provider/recorded-selection.ts", () => ({
+  recordedNativeProviderAttachment: vi.fn(),
+}));
+
+vi.mock("../../../tools/e2e/credential-free-tests.mts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../tools/e2e/credential-free-tests.mts")>()),
+  // This catalog-only selector never selects shared credential-free tests.
+  discoverCredentialFreeTests: () => [],
+}));
+
 // #6042: onboard-policy-preset-sequencing.test.ts drives the real
 // interactive onboard wizard through a PTY; forcing non-interactive mode
 // (as cloud-onboard and double-onboard both do) would defeat the whole

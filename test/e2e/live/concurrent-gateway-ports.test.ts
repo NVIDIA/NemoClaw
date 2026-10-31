@@ -26,6 +26,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { buildOpenClawGatewayWaitScript } from "../fixtures/gateway-runtime-start.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -290,6 +291,7 @@ async function probeSurvivorDashboard(
   dashboardPort: string,
   artifactPrefix: string,
   dashboardProbes = 1,
+  recoveryDeadline?: number,
 ): Promise<SurvivorDashboardProbe> {
   const gatewayPortProbe = await host.command(
     "bash",
@@ -297,16 +299,22 @@ async function probeSurvivorDashboard(
     {
       artifactName: `${artifactPrefix}-gateway-port`,
       env: commandEnv(),
-      timeoutMs: 30_000,
+      timeoutMs:
+        recoveryDeadline === undefined
+          ? 30_000
+          : Math.max(1, Math.min(30_000, recoveryDeadline - Date.now())),
     },
   );
   const scopedList = await sandbox.openshell(["sandbox", "list", "-g", gatewayName], {
     artifactName: `${artifactPrefix}-registry`,
     env: commandEnv(),
-    timeoutMs: 30_000,
+    timeoutMs:
+      recoveryDeadline === undefined
+        ? 30_000
+        : Math.max(1, Math.min(30_000, recoveryDeadline - Date.now())),
   });
   const dashboard: ShellProbeResult[] = [];
-  const dashboardDeadline = Date.now() + 60_000;
+  const dashboardDeadline = recoveryDeadline ?? Date.now() + 60_000;
   for (
     let probe = 1;
     probe <= dashboardProbes &&
@@ -380,16 +388,37 @@ async function recoverSurvivor(
   sandboxName: string,
   gatewayName: string,
   artifactPrefix: string,
-): Promise<ShellProbeResult> {
-  const deadline = performance.now() + 120_000;
-  const remaining = () => Math.floor(deadline - performance.now());
+): Promise<{ result: ShellProbeResult; deadline: number }> {
+  const deadline = Date.now() + 60_000;
+  const remaining = () => Math.floor(deadline - Date.now());
+  const env = commandEnv({
+    NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A,
+    OPENSHELL_GATEWAY: gatewayName,
+  });
+  const nativeReady = await host.command(
+    process.execPath,
+    [
+      "-e",
+      buildOpenClawGatewayWaitScript(),
+      sandboxName,
+      gatewayName,
+      String(Math.max(1, remaining())),
+    ],
+    {
+      artifactName: `${artifactPrefix}-native-ready`,
+      env,
+      timeoutMs: Math.max(1, remaining()),
+    },
+  );
+  expect(nativeReady.exitCode, resultText(nativeReady)).toBe(0);
+
   // OpenShell Ready precedes OpenClaw's HTTP listener. Probe inside the sandbox,
   // since the host forward may require the single recovery call below.
   await pollUntil({
     artifactPrefix: `${artifactPrefix}-agent-ready`,
     attempts: PROBE_ATTEMPTS,
-    deadlineMs: 120_000,
-    now: () => performance.now(),
+    deadlineMs: 60_000,
+    now: () => Date.now(),
     delayMs: () => Math.max(0, Math.min(PROBE_DELAY_MS, remaining())),
     probe: async (_attempt, artifactName) => {
       return await sandbox.exec(
@@ -416,11 +445,12 @@ async function recoverSurvivor(
         : undefined,
   });
   // Raw OpenShell start does not restore a forward that exited while stopped.
-  return await command(host, [sandboxName, "recover"], {
+  const result = await command(host, [sandboxName, "recover"], {
     artifactName: `${artifactPrefix}-recover`,
     env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
     timeoutMs: Math.max(1, remaining()),
   });
+  return { result, deadline };
 }
 
 async function restartAndRecoverSurvivor(
@@ -436,6 +466,7 @@ async function restartAndRecoverSurvivor(
   readonly start: ShellProbeResult;
   readonly phase: string;
   readonly recover: ShellProbeResult | null;
+  readonly recoveryDeadline: number;
 }> {
   const listener = async (stage: string) => {
     try {
@@ -502,7 +533,11 @@ async function restartAndRecoverSurvivor(
   const recover = restarted
     ? await recoverSurvivor(host, sandbox, sandboxName, gatewayName, artifactPrefix)
     : null;
-  return { ...restart, recover };
+  return {
+    ...restart,
+    recover: recover?.result ?? null,
+    recoveryDeadline: recover?.deadline ?? Date.now(),
+  };
 }
 
 async function prerequisiteOrSkip(
@@ -990,6 +1025,7 @@ test(
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-cleanup-destroy",
       PROBE_ATTEMPTS,
+      survivorRestartAfterCleanupDestroy.recoveryDeadline,
     );
     const sandboxARestartedWithCleanup =
       survivorRestartAfterCleanupDestroy.stop.exitCode === 0 &&
@@ -1132,6 +1168,7 @@ test(
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-retained-destroy",
       PROBE_ATTEMPTS,
+      survivorRestartAfterRetainedDestroy.recoveryDeadline,
     );
     const sandboxARestartedWithoutCleanup =
       survivorRestartAfterRetainedDestroy.stop.exitCode === 0 &&

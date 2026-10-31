@@ -199,15 +199,6 @@ realDockerTest(
     const requiredAvailableBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
 
     progress.phase("exercise the managed vLLM storage gate");
-    // Ubuntu 26.04 hosted runners mount /tmp as a RAM-backed tmpfs smaller than the
-    // model-cache requirement. Keep the fake home on the runner disk so the
-    // production storage gate passes and the intended cache-directory error is reached.
-    const fakeBinDir = fs.mkdtempSync(
-      path.join(process.env.RUNNER_TEMP || os.tmpdir(), "nemoclaw-vllm-storage-"),
-    );
-    const blockedHome = path.join(fakeBinDir, "blocked-home");
-    const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
-    const statfsLogPath = path.join(fakeBinDir, "statfs-samples.jsonl");
     const dockerPathResult = spawnSync("sh", ["-c", "command -v docker"], {
       encoding: "utf8",
       env,
@@ -235,10 +226,17 @@ realDockerTest(
       cachedImageResult.status,
       "the managed vLLM image must be absent so production cannot skip its storage guard",
     ).not.toBe(0);
+    // Hosted Linux /tmp can be a small tmpfs. Keep the real model-capacity
+    // probe on the runner's disk while retaining the production storage gate.
+    const fakeBinDir = fs.mkdtempSync(
+      path.join(process.env.RUNNER_TEMP || os.tmpdir(), "nemoclaw-vllm-storage-"),
+    );
+    const blockedHome = path.join(fakeBinDir, "blocked-home");
+    const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
+    const statfsLogPath = path.join(fakeBinDir, "statfs-samples.jsonl");
     let installDockerCommands: string[] = [];
     let productionStatfsSamples: StatfsSample[] = [];
     let measuredPath = "";
-    let measuredAvailableBytes = 0n;
     try {
       fs.mkdirSync(blockedHome);
       fs.writeFileSync(path.join(blockedHome, ".cache"), "not a directory\n");
@@ -317,7 +315,8 @@ realDockerTest(
         .find((sample) => path.resolve(sample.path) === path.resolve(dockerRootDir));
       assert(dockerRootSample, `production did not sample Docker root ${dockerRootDir}`);
       measuredPath = dockerRootSample.path;
-      measuredAvailableBytes = BigInt(dockerRootSample.bavail) * BigInt(dockerRootSample.bsize);
+      const measuredAvailableBytes =
+        BigInt(dockerRootSample.bavail) * BigInt(dockerRootSample.bsize);
       expect(measuredAvailableBytes).toBeGreaterThan(0n);
       expect(measuredAvailableBytes).toBeGreaterThanOrEqual(requiredAvailableBytes);
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import fs from "node:fs";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
@@ -962,6 +963,14 @@ test(
         timeoutMs: 60_000,
       },
     );
+    await captureOpenClawOnboardFailure(inferenceSet, sandbox, {
+      sandboxName,
+      artifactPrefix: "tc-inf-11-inference-set-https-pin-endpoint",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      runtime: runtimeProvider,
+      host,
+    });
     expect(
       inferenceSet.exitCode,
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,

@@ -7,6 +7,7 @@ import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import {
   registerChannelsStopStartCleanup,
   registerChannelsStopStartProviderCleanup,
+  waitForNativeChannelGateway,
 } from "../live/channels-stop-start-helpers.ts";
 
 type CleanupAction = { name: string; run: () => Promise<void> | void };
@@ -142,5 +143,90 @@ describe("channels stop/start provider cleanup", () => {
       }),
     ).toThrow(/only accepts openclaw sandbox names with prefix e2e-oc-ch-/);
     expect(fixtures.trackDisposable).not.toHaveBeenCalled();
+  });
+});
+
+describe("channels stop/start readiness failure evidence", () => {
+  const env = {
+    HOME: "/tmp/channels-diagnostics-home",
+    OPENSHELL_GATEWAY: "channels-test-gateway",
+    NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/channels-diagnostics-state",
+  };
+  const redactions = ["test-channel-secret"];
+
+  it("does not collect failure evidence for a ready gateway", async () => {
+    const fixtures = cleanupFixtures();
+    const execShell = vi.fn(async () => ({
+      exitCode: 0,
+      timedOut: false,
+      stdout: "native-ready",
+      stderr: "",
+    }));
+    await expect(
+      waitForNativeChannelGateway(
+        fixtures.host,
+        { execShell } as unknown as E2ETargetFixtures["sandbox"],
+        env,
+        redactions,
+      ),
+    ).resolves.toBeUndefined();
+    expect(fixtures.hostMock.command).not.toHaveBeenCalled();
+    expect(execShell).toHaveBeenCalledOnce();
+    expect(execShell.mock.calls[0]).toEqual([
+      expect.stringMatching(/^e2e-(oc|hm)-ch-/),
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 180_000, redactionValues: redactions }),
+    ]);
+  });
+
+  it.each([
+    { exitCode: 1, timedOut: false },
+    { exitCode: null, timedOut: true },
+  ])("preserves readiness failure $exitCode/$timedOut after diagnostic errors", async (failure) => {
+    const command = vi.fn(async () => {
+      throw new Error("diagnostic unavailable");
+    });
+    const host = {
+      command,
+      openshellCommandPath: "openshell",
+    } as unknown as E2ETargetFixtures["host"];
+    const sandbox = {
+      execShell: vi.fn(async () => ({ ...failure, stdout: "", stderr: "readiness failed" })),
+    } as unknown as E2ETargetFixtures["sandbox"];
+
+    await expect(waitForNativeChannelGateway(host, sandbox, env, redactions)).rejects.toThrow(
+      /native gateway readiness/,
+    );
+    expect(command).toHaveBeenCalledWith(
+      "openshell",
+      [
+        "logs",
+        expect.stringMatching(/^e2e-(oc|hm)-ch-/),
+        "-n",
+        "200",
+        "--source",
+        "all",
+        "--since",
+        "2m",
+      ],
+      expect.objectContaining({
+        artifactName: expect.stringMatching(/^channels-native-readiness-.*-supervisor-logs$/),
+        env: expect.objectContaining(env),
+        redactionValues: redactions,
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(command).toHaveBeenCalledWith(
+      "cat",
+      [expect.any(String)],
+      expect.objectContaining({
+        artifactName: expect.stringMatching(/^channels-native-readiness-.*-gateway-log$/),
+        env: expect.objectContaining(env),
+        redactionValues: redactions,
+        captureLimitBytes: 32_768,
+        timeoutMs: 5_000,
+      }),
+    );
   });
 });

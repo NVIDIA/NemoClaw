@@ -72,6 +72,48 @@ const PATCHED_READ = `let inherited = handle.inheritedStdin;
 const ORIGINAL_FILE = "await readAgentMessageFile(messageFile);";
 const PATCHED_FILE = "await readAgentMessageFile(messageFile, false, opts.timeout);";
 
+const CURRENT_OPEN = `async function readAgentMessageFile(messageFile) {
+\tlet handle;
+\tlet buffer;
+\ttry {
+\t\thandle = await fs.open(messageFile, "r");`;
+const openFunctionOffset = PATCHED_OPEN.indexOf("async function readAgentMessageFile(");
+const CURRENT_PATCHED_OPEN = `${PATCHED_OPEN.slice(0, openFunctionOffset)}async function readAgentMessageFile(messageFile, inheritedStdin = false, timeout) {
+\tlet handle;
+\tlet buffer;
+\ttry {
+${PATCHED_OPEN.slice(PATCHED_OPEN.indexOf("\ttry {", openFunctionOffset))
+  .replace(
+    "if (!handle) throw new Error(formatMessageFileReadFailure(messageFile, err), { cause: err });",
+    "if (!handle) throw err;",
+  )
+  .split("\n")
+  .map((line) => `\t${line}`)
+  .join("\n")}`;
+const CURRENT_MESSAGE =
+  '\tconst message = messageFile ? await readAgentMessageFile(messageFile) : opts.message ?? "";';
+const CURRENT_PATCHED_MESSAGE =
+  '\tconst message = messageFile ? await readAgentMessageFile(messageFile, false, opts.timeout) : opts.message ?? (process.stdin.isTTY === true ? "" : await readAgentMessageFile("stdin", true, opts.timeout));';
+const LAYOUTS = [
+  {
+    hash: "6ac2ff76ee85a5a9fd957a920a812325d77979a6ee02255c148a9dc96ca92e32",
+    replacements: [
+      [ORIGINAL_OPEN, PATCHED_OPEN],
+      [ORIGINAL_MESSAGE, PATCHED_MESSAGE],
+      [ORIGINAL_READ, PATCHED_READ],
+      [ORIGINAL_FILE, PATCHED_FILE],
+    ],
+  },
+  {
+    hash: "bd18d5770e1f535b387933c739ee9465a5ce69592abf5b488243e7660be22a59",
+    replacements: [
+      [CURRENT_OPEN, CURRENT_PATCHED_OPEN],
+      [CURRENT_MESSAGE, CURRENT_PATCHED_MESSAGE],
+      [ORIGINAL_READ, PATCHED_READ],
+    ],
+  },
+] as const;
+
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -81,18 +123,19 @@ export function patchAgentMessageInput(source: string): string {
     /function missingAgentMessageError\(\) \{[\s\S]*?async function resolveAgentMessageOpts\(opts\) \{[\s\S]*?\n\}/u,
   )?.[0];
   if (!region) throw new Error("Missing native OpenClaw agent message parser");
-  const restored = region
-    .replace(PATCHED_OPEN, ORIGINAL_OPEN)
-    .replace(PATCHED_MESSAGE, ORIGINAL_MESSAGE)
-    .replace(PATCHED_READ, ORIGINAL_READ)
-    .replace(PATCHED_FILE, ORIGINAL_FILE);
-  if (digest(restored) !== "6ac2ff76ee85a5a9fd957a920a812325d77979a6ee02255c148a9dc96ca92e32")
-    throw new Error("Unrecognized native OpenClaw agent message parser");
-  const patched = restored
-    .replace(ORIGINAL_OPEN, PATCHED_OPEN)
-    .replace(ORIGINAL_MESSAGE, PATCHED_MESSAGE)
-    .replace(ORIGINAL_READ, PATCHED_READ)
-    .replace(ORIGINAL_FILE, PATCHED_FILE);
+  const layout = LAYOUTS.map(({ hash, replacements }) => {
+    const restored = replacements.reduce(
+      (text, [original, patched]) => text.replace(patched, original),
+      region,
+    );
+    return { hash, replacements, restored };
+  }).find(({ hash, restored }) => digest(restored) === hash);
+  if (!layout) throw new Error("Unrecognized native OpenClaw agent message parser");
+  const { restored, replacements } = layout;
+  const patched = replacements.reduce(
+    (text, [original, replacement]) => text.replace(original, replacement),
+    restored,
+  );
   if (source.includes(MARKER)) {
     if (
       region !== patched ||
@@ -110,10 +153,11 @@ export function patchAgentMessageInput(source: string): string {
 export function patchOpenClawAgentMessageInput(distDir: string, audit = false): void {
   const { version } = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   if (["2026.3.11", "2026.4.24"].includes(version)) return;
-  if (version !== "2026.9.2") throw new Error(`Unsupported OpenClaw version: ${version}`);
+  if (!["2026.9.2", "2026.9.5", "2026.10.5"].includes(version))
+    throw new Error(`Unsupported OpenClaw version: ${version}`);
   const targets = fs
     .readdirSync(distDir)
-    .filter((name) => /^agent-via-gateway-[\w-]+\.js$/u.test(name));
+    .filter((name) => /^agent-via-gateway-[\w-]+\.(?:js|mjs)$/u.test(name));
   if (targets.length !== 1) throw new Error("Expected one native OpenClaw agent message module");
   const target = path.join(distDir, targets[0]!);
   const source = fs.readFileSync(target, "utf8");

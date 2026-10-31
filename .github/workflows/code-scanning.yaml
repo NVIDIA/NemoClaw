@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript, python]
+        language: [python]
 
     steps:
       - name: Checkout
@@ -44,6 +44,57 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+
+  # The complete security-and-quality suite is partitioned by one predicate and
+  # its complement. Both jobs still extract the complete source tree; neither
+  # query coverage nor the existing 15-minute job deadline is reduced.
+  codeql-javascript:
+    name: CodeQL JS partition (${{ matrix.partition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: a-m
+            config: >-
+              {"query-filters":[{"include":{"id":"/^js\\/[a-m]/"}}]}
+          - partition: other
+            config: >-
+              {"query-filters":[{"exclude":{"id":"/^js\\/[a-m]/"}}]}
+    env:
+      QUERY_SUITE: security-and-quality
+      QUERY_LANGUAGE: javascript-typescript
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          languages: ${{ env.QUERY_LANGUAGE }}
+          queries: ${{ env.QUERY_SUITE }}
+          config: ${{ matrix.config }}
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          # A partition cannot overwrite or clear another partition's SARIF.
+          category: /language:javascript-typescript/partition:${{ matrix.partition }}
+
+  codeql-javascript-complete:
+    # Keep the existing check name. A partial suite can never satisfy it.
+    name: CodeQL (javascript-typescript)
+    needs: [codeql-javascript]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require every query partition to succeed
+        env:
+          PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
+        run: test "$PARTITION_RESULT" = success
 
   shellcheck:
     name: ShellCheck SARIF

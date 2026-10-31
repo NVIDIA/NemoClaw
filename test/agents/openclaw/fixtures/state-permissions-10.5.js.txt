@@ -1,0 +1,27 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+const OPENCLAW_STATE_DIR_MODE = 448;
+const OPENCLAW_STATE_FILE_MODE = 384;
+function bestEffortChmodSync(target, mode) {
+	const result = applyPrivateModeSync(target, mode);
+	if (result.applied || chmodWarnedTargets.check(target)) return;
+	stateDbLog$2.warn(`skipped permission hardening for ${target}: ${String(result.error)}`);
+}
+function ensureOpenClawStatePermissions(pathname, env, options = {}) {
+	const dir = path.dirname(pathname);
+	const defaultDir = resolveOpenClawStateSqliteDir(env);
+	const isDefaultStateDatabase = path.resolve(pathname) === path.resolve(resolveOpenClawStateSqlitePath(env));
+	if (isDefaultStateDatabase && dir !== defaultDir) throw new Error(`OpenClaw state database path resolved outside its state dir: ${pathname}`);
+	const dirExisted = existsSync(dir);
+	if (options.createDirectory) mkdirSync(dir, {
+		recursive: true,
+		mode: OPENCLAW_STATE_DIR_MODE
+	});
+	if (isDefaultStateDatabase || !dirExisted) bestEffortChmodSync(dir, OPENCLAW_STATE_DIR_MODE);
+	for (const candidate of resolveSqliteDatabaseFilePaths(pathname)) if (existsSync(candidate)) try {
+		bestEffortChmodSync(candidate, OPENCLAW_STATE_FILE_MODE);
+	} catch (error) {
+		if (candidate === pathname || !hasErrnoCode(error, "ENOENT")) throw error;
+	}
+}

@@ -1,0 +1,3 @@
+// Published OpenClaw 2026.10.5 worker excerpts; surrounding bindings supplied by tests.
+const authDeps={async verifyDeviceToken(e){return await qr({...e,requiredSharedGatewaySessionGeneration:d?.()})}};
+function inlineApproval(u,_,n,j,T,S,f,y,x,M){let F,I=M!==null||j.request.silent===!0||y===`node`&&n===`role-upgrade`&&T.localApproval===`silent`;return I;}

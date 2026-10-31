@@ -99,6 +99,27 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "8754faf5ce97000259b81e36ec447e9fd13051260a8be1f5018e5db11d6414b9",
   // Reviewed Tavily preinstall with archive verification before native installation.
   "51dcdf8ba66279d7c1bee2b14d45fcd0ebf7ce1a8284241c9302b479ca2602a0",
+  // Reviewed separate disposable WeChat and official-channel caches for both
+  // selected and union installs. The messaging applier preserves the dashboard binding.
+  "b8f2bac1bdf5f0d2f9cfdc1d4b0d4c74f7e7d7923cdd810c78cec39a6c0f9261",
+  // The same Tavily-aware installation with reviewed 2026.9.5 pins.
+  "b1d8e91af9b2f10986a27a6bd4c3fc4dda19e22a4a8c44460a0685331a59a1fe",
+  // Exact 2026.10.5 offline registry install with disposable cache cleanup
+  // and native official-plugin provenance checks; dashboard config is retained.
+  "c359205331650476a9bf06a8f09e588ab5923b545938f13453d15ca6ec443e23",
+  // Read-only payload metadata checks, including the migration and plugin helpers.
+  "f53c4efbf400bfb560ce6ba72cb963a7fae234c25cff6f4034c68cbf0f83c29f",
+  // Extracted offline optional-plugin installation, 10.5 neutral channel
+  // validation, and read-only helper metadata checks preserve dashboard config.
+  "39f628e29aedd08d3999e0fd9cc2afec626e9052fa1284997dc75bcc6ab6006d",
+  "54ec28d6b81281ad524d119edcb689683186b500ca19c366e3fff686a834ae83",
+  "85c2394c101b9ca593293e053ff466c14a4b84eb11e6c9e7257660e7377a15d4",
+  // The same read-only checks with the committed executable helper modes.
+  "acf3fcc15d20f086b453fb75fdb6ca787aa944a6e4fae171574afd7fe1e9b558",
+  // Read-only metadata checks including both reviewed dependency remediation helpers.
+  "023af5e7ce435663cd10bb8f3e4cd465b82b094fcb00c6b8c5e481cbbe323514",
+  // The same read-only checks with the shared native gateway ownership helper.
+  "0b1c2f17c7a79b253d86f443e3229be8ae17669317eca08382344fa1c2a91aca",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
@@ -134,6 +155,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // NEMOCLAW_DARWIN_VM_COMPAT chmod for the OpenClaw and NemoClaw state trees;
   // it changes modes only and preserves the generated dashboard binding.
   "295282a4f06106c93df72b4e035f980a2fc0e8a7dcbf6d270e102d7c75be27fb",
+  // Root-owned explicit-proxy endpoint authority; this exact instruction writes
+  // only openclaw-proxy-url and preserves the generated dashboard config.
+  "db9871787f8503167e34995ffe2e2c903d22fbde7007d8e529d1618c2bd61561",
 ]);
 
 function instructionSha256(text: string): string {

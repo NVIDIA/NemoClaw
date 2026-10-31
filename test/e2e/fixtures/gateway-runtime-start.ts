@@ -50,3 +50,23 @@ export function buildGatewayRuntimeStartScript(): string {
     "  });",
   ].join("\n");
 }
+
+/** Observe native startup after an external OpenShell start without restarting the sandbox. */
+export function buildOpenClawGatewayWaitScript(): string {
+  return [
+    '"use strict";',
+    'const { waitForStartedNativeGatewayProcess } = require("./dist/lib/actions/sandbox/process-recovery");',
+    "const [sandboxName, gatewayName, budget] = process.argv.slice(1);",
+    "const budgetMs = Number(budget);",
+    'if (!sandboxName || !gatewayName || !Number.isFinite(budgetMs) || budgetMs <= 0) throw new Error("Native startup requires an explicit target and remaining time budget.");',
+    "Promise.resolve()",
+    '  .then(() => waitForStartedNativeGatewayProcess(sandboxName, "openclaw", gatewayName, {',
+    "    environment: {}, defaultTimeoutSeconds: budgetMs / 1000, log: console.log,",
+    "  }))",
+    '  .then((ready) => { if (ready !== true) throw new Error("OpenClaw did not become ready within the remaining dashboard deadline."); })',
+    "  .catch((error) => {",
+    "    console.error(error instanceof Error ? error.message : String(error));",
+    "    process.exitCode = 1;",
+    "  });",
+  ].join("\n");
+}

@@ -44,6 +44,39 @@ function httpResult(status: number, body = "", result = "") {
 }
 
 describe("Hermes MCP HTTP failure diagnostics", () => {
+  it("retains installer failure evidence when the Slack sandbox container cannot be found", async () => {
+    const host = {
+      command: vi.fn().mockRejectedValue(new Error("container unavailable")),
+      openshellCommandPath: "/reviewed/openshell",
+    };
+    const inventory = vi.fn().mockRejectedValue(new Error("runtime unavailable"));
+    const runtime = {
+      command: inventory,
+    } as unknown as Parameters<typeof captureLifecycleInstallFailureDiagnostics>[1];
+    const install = { exitCode: 1, timedOut: false };
+    await expect(
+      captureLifecycleInstallFailureDiagnostics(host, runtime, install, {
+        sandboxName: "e2e-oc-slack-pair",
+        gatewayName: "nemoclaw",
+        artifactPrefix: "slack-pairing-install-failure",
+        env: { OPENSHELL_GATEWAY: "nemoclaw" },
+        redactionValues: ["synthetic-inference-key", "xoxb-synthetic", "xapp-synthetic"],
+      }),
+    ).resolves.toBeUndefined();
+    expect(inventory).toHaveBeenCalledWith(
+      expect.arrayContaining(["label=openshell.ai/sandbox-name=e2e-oc-slack-pair"]),
+      expect.objectContaining({
+        redactionValues: ["synthetic-inference-key", "xoxb-synthetic", "xapp-synthetic"],
+      }),
+    );
+    expect(host.command).toHaveBeenCalledWith(
+      "/reviewed/openshell",
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({ artifactName: "slack-pairing-install-failure-sandbox-list" }),
+    );
+    expect(install).toEqual({ exitCode: 1, timedOut: false });
+  });
+
   it("captures lifecycle install inventory only after failure and preserves redactions", async () => {
     const host = {
       command: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),

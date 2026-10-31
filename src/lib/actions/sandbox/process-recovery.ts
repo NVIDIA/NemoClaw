@@ -220,9 +220,13 @@ const OPENCLAW_POST_UPGRADE_DOCTOR_READY = "/tmp/nemoclaw-post-upgrade-doctor-re
 const OPENCLAW_POST_UPGRADE_DOCTOR_READY_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-ready-v1";
 const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 12 * 60_000;
 const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
-// OpenClaw's native startup-migration lease has a five-minute TTL. Only Doctor
-// readiness needs the longer window; later release and health probes do not.
-const OPENCLAW_DOCTOR_READY_TIMEOUT_MS = 6 * 60_000;
+// Two intermediate runtimes can each need two 180-second Doctor passes and
+// six 60-second inspections (eligibility, config, and session safety per pass).
+// Retain the target's six-minute lease/readiness
+// window, a final 60-second retired-state inspection, and two minutes for process
+// startup. Release/health bounds stay separate.
+const OPENCLAW_DOCTOR_READY_TIMEOUT_MS = 33 * 60_000;
+const OPENCLAW_BACKUP_QUIESCE_READY_TIMEOUT_MS = 6 * 60_000;
 
 export type OpenClawPostRestoreDoctorResult =
   | { ok: true; window: OpenClawPostRestoreDoctorWindow }
@@ -269,6 +273,24 @@ const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   now: Date.now,
   sleep: sleepSeconds,
 };
+
+function openClawMaintenanceProgress(
+  sandboxName: string,
+  operation: string,
+  startedMs: number,
+  deadlineMs: number,
+): (currentMs: number) => void {
+  let nextReportMs = startedMs;
+  return (currentMs) => {
+    if (currentMs < nextReportMs) return;
+    nextReportMs = currentMs + 30_000;
+    console.error(
+      `  OpenClaw ${operation} for sandbox ${JSON.stringify(sandboxName)}: ` +
+        `${Math.max(0, Math.floor((currentMs - startedMs) / 1_000))}s elapsed, ` +
+        `${Math.max(0, Math.ceil((deadlineMs - currentMs) / 1_000))}s remaining; waiting for the exact maintenance receipt.`,
+    );
+  };
+}
 
 async function executeOpenClawDoctorGateCommand(
   deps: OpenClawPostRestoreDoctorDeps,
@@ -805,11 +827,23 @@ export async function beginOpenClawPostRestoreDoctor(
     lifecycleOptions,
   );
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
+  const reconciliationStartedMs = deps.now();
+  const reconciliationDeadlineMs =
+    reconciliationStartedMs +
+    (maintenanceKind === "backup"
+      ? OPENCLAW_BACKUP_QUIESCE_READY_TIMEOUT_MS
+      : OPENCLAW_DOCTOR_READY_TIMEOUT_MS);
+  const reportProgress = openClawMaintenanceProgress(
+    sandboxName,
+    maintenanceKind === "backup" ? "backup quiesce" : "Doctor",
+    reconciliationStartedMs,
+    reconciliationDeadlineMs,
+  );
   const ready = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      reportProgress(reconciliationDeadlineMs - remainingMs);
       try {
         const result = await executeOpenClawDoctorGateCommand(
           deps,
@@ -954,11 +988,20 @@ async function promoteOpenClawBackupQuiesceToDoctor(
     };
   }
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
-  const ready = await waitUntilAsync(
+  const reconciliationStartedMs = deps.now();
+  const reconciliationDeadlineMs = reconciliationStartedMs + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
+  const reportProgress = openClawMaintenanceProgress(
+    sandboxName,
+    "restored-state Doctor",
+    reconciliationStartedMs,
+    reconciliationDeadlineMs,
+  );
+  let stopped = false;
+  const settled = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      reportProgress(reconciliationDeadlineMs - remainingMs);
       const result = await executeOpenClawDoctorGateCommand(
         deps,
         sandboxName,
@@ -966,7 +1009,19 @@ async function promoteOpenClawBackupQuiesceToDoctor(
         Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
         runtimeSelection,
       );
-      return result?.status === 0;
+      if (result?.status === 0) return true;
+      // Promotion starts from an already verified, running backup gate. A
+      // terminal sandbox after that transition cannot produce a fresh Doctor
+      // receipt. Report failure now; never release or restart refused state.
+      const lookupRemainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(lookupRemainingMs) || lookupRemainingMs <= 0) return false;
+      stopped = await isOpenClawDoctorSandboxStopped(
+        sandboxName,
+        runtimeSelection,
+        deps,
+        lookupRemainingMs,
+      );
+      return stopped;
     },
     {
       deadlineMs: reconciliationDeadlineMs,
@@ -977,11 +1032,13 @@ async function promoteOpenClawBackupQuiesceToDoctor(
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
     },
   );
-  if (ready) return { ok: true };
+  if (settled && !stopped) return { ok: true };
   return {
     ok: false,
     stage: "doctor",
-    detail: "restored state did not complete post-upgrade doctor with the gateway held down",
+    detail: stopped
+      ? "the restored sandbox stopped before post-upgrade doctor completed; the gateway remains held down"
+      : "restored state did not complete post-upgrade doctor with the gateway held down",
   };
 }
 
@@ -1125,21 +1182,33 @@ export function finishOpenClawBackupQuiesce(
   return releaseAndVerifyOpenClawMaintenanceWindow(window, deps);
 }
 
+/** Migrate restored state before native config writers, keeping the gateway held down. */
+export async function prepareOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  if (window.kind === "backup") {
+    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
+    if (!promoted.ok) return promoted;
+    return {
+      ok: true,
+      window: {
+        sandboxName: window.sandboxName,
+        ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
+      },
+    };
+  }
+  return { ok: true, window };
+}
+
 /** Run doctor against restored state, release its gate, then prove final gateway health. */
 export async function finishOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
-  let verifiedWindow = window;
-  if (window.kind === "backup") {
-    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
-    if (!promoted.ok) return promoted;
-    verifiedWindow = {
-      sandboxName: window.sandboxName,
-      ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
-    };
-  }
-  return await releaseAndVerifyOpenClawMaintenanceWindow(verifiedWindow, deps);
+  const prepared = await prepareOpenClawPostRestoreDoctor(window, deps);
+  if (!prepared.ok) return prepared;
+  return await releaseAndVerifyOpenClawMaintenanceWindow(prepared.window, deps);
 }
 
 const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
@@ -1172,6 +1241,12 @@ export function finishUnregisteredOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
   return finishOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
+}
+
+export function prepareUnregisteredOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return prepareOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
 }
 
 export function abortUnregisteredOpenClawPostRestoreDoctor(
@@ -1616,6 +1691,7 @@ export async function waitForStartedNativeGatewayProcess(
   gatewayName: string,
   options: {
     environment?: NodeJS.ProcessEnv;
+    defaultTimeoutSeconds?: number;
     probe?: typeof isSandboxGatewayRunningForStatus;
     delay?: (delayMs: number) => Promise<void>;
     now?: () => number;
@@ -1636,7 +1712,11 @@ export async function waitForStartedNativeGatewayProcess(
   const now = options.now ?? (() => performance.now());
   const deadline =
     now() +
-    resolveGatewayRecoveryWaitSeconds(undefined, options.environment ?? process.env) * 1_000;
+    resolveGatewayRecoveryWaitSeconds(
+      options.defaultTimeoutSeconds ?? 330,
+      options.environment ?? process.env,
+    ) *
+      1_000;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;
@@ -1644,7 +1724,8 @@ export async function waitForStartedNativeGatewayProcess(
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
-    if (running !== false) return running;
+    // A timed-out health probe is unavailable evidence, not completed startup.
+    if (running === true) return true;
     const delayMs = Math.min(NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now());
     log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
     await delay(delayMs);
@@ -1801,7 +1882,9 @@ export async function restartSandboxGateway(
           waitForRecoveredSandboxGateway(name, {
             ...options,
             runtimeSelection,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
+            timeoutSeconds:
+              options?.timeoutSeconds ??
+              gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
           }),
         ensureSandboxPortForward: (name) => ensureSandboxPortForward(name, { runtimeSelection }),
         ensureHermesDashboardPortForwardIfEnabled: (name) =>

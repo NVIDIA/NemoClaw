@@ -160,6 +160,22 @@ export function finalizeRunnerComparison(
   );
 }
 
+/** Initialize only the live upgrade ledger that this fixture must own. */
+export function initializeLiveUpgradeRunnerComparison(): () => void {
+  if (
+    process.env.NEMOCLAW_RUN_LIVE_E2E !== "1" ||
+    process.env.E2E_TARGET_ID !== "openshell-gateway-upgrade" ||
+    !process.env.E2E_ARTIFACT_DIR
+  ) {
+    return () => {};
+  }
+  const paths = comparisonPaths();
+  // The workflow owns any existing ledger and its finalization.
+  if (fs.existsSync(paths.ledger)) return () => {};
+  initializeRunnerComparison();
+  return () => finalizeRunnerComparison();
+}
+
 function main(): number {
   const [mode, kind, phase] = process.argv.slice(2);
   if (mode === "initialize") {

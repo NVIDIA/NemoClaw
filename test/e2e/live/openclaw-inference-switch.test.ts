@@ -839,7 +839,14 @@ test(
       ? await startMockOpenClawBaselineProvider(progress)
       : undefined;
     cleanup.trackDisposable("close baseline inference provider", async () => {
-      await baselineProvider?.close();
+      try {
+        await artifacts.writeJson(
+          "baseline-inference-requests.json",
+          baselineProvider?.requests() ?? [],
+        );
+      } finally {
+        await baselineProvider?.close();
+      }
     });
     const cloudflaredBin = SWITCH_NATIVE_CUSTOM
       ? await resolveVerifiedCloudflaredBinary(cleanup, host)

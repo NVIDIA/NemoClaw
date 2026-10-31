@@ -10,6 +10,9 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
+  tarHeader,
+  paddedTarPayload,
+  paxRecord,
   writeExecutable,
   writeFakeOpenshell,
   writeFakeSsh,
@@ -58,40 +61,6 @@ function restoreEnv(name: string, value: string | undefined): void {
     : Reflect.set(process.env, name, value);
 }
 
-function tarHeader(
-  entryPath: string,
-  content: Buffer,
-  options: { type?: string; linkTarget?: string } = {},
-): Buffer {
-  const header = Buffer.alloc(512, 0);
-  const type = options.type ?? "0";
-  header.write(entryPath, 0, Math.min(entryPath.length, 100), "utf8");
-  header.write("0000644\0", 100, 8, "utf8");
-  header.write("0001000\0", 108, 8, "utf8");
-  header.write("0001000\0", 116, 8, "utf8");
-  const size = ["0", "S", "x", "g"].includes(type) ? content.length : 0;
-  header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "utf8");
-  header.write(
-    `${Math.floor(Date.now() / 1000)
-      .toString(8)
-      .padStart(11, "0")}\0`,
-    136,
-    12,
-    "utf8",
-  );
-  header.write(type, 156, 1, "utf8");
-  if (options.linkTarget) {
-    header.write(options.linkTarget, 157, Math.min(options.linkTarget.length, 100), "utf8");
-  }
-  header.write("ustar\0", 257, 6, "utf8");
-  header.write("00", 263, 2, "utf8");
-  header.fill(0x20, 148, 156);
-  let checksum = 0;
-  for (const byte of header) checksum += byte;
-  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "utf8");
-  return header;
-}
-
 function writeCraftedCaptureTar(
   binDir: string,
   systemTar: string,
@@ -129,21 +98,6 @@ function buildManyMembersTar(count: number): Buffer {
     ...Array.from({ length: count }, (_, index) => tarHeader(`w/${index}.txt`, Buffer.alloc(0))),
     Buffer.alloc(1024, 0),
   ]);
-}
-
-function paddedTarPayload(content: Buffer): Buffer {
-  const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
-  content.copy(padded);
-  return padded;
-}
-
-function paxRecord(key: string, value: string): Buffer {
-  const body = ` ${key}=${value}\n`;
-  let length = Buffer.byteLength(body) + 1;
-  while (Buffer.byteLength(`${length}${body}`) !== length) {
-    length = Buffer.byteLength(`${length}${body}`);
-  }
-  return Buffer.from(`${length}${body}`, "utf8");
 }
 
 function buildSparseTar(kind: "old-gnu" | "pax" | "global-pax"): Buffer {
@@ -298,6 +252,17 @@ describe("complete native home persistence", () => {
         "managed-warmup",
       );
       writeNative(".openclaw/state/openclaw.sqlite-wal", "transient-wal");
+      const privateDoctorCapture = ".openclaw.update-captures/doctor-test/payload/0";
+      const privateLegacyCapture = ".openclaw-data.update-captures/update-test/payload/0";
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, privateDoctorCapture)), { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, privateLegacyCapture)), { recursive: true });
+      const privateCredential = `ghp_${"abcdef0123456789"}`;
+      writeNative(privateDoctorCapture, privateCredential);
+      writeNative(privateLegacyCapture, privateCredential);
+      fs.mkdirSync(path.join(nativeRoot, "workspace", ".openclaw.update-captures"), {
+        recursive: true,
+      });
+      writeNative("workspace/.openclaw.update-captures/notes.txt", "user-owned notes");
       const hermesManagedConfig = "model:\n  api_key: sk-OPENSHELL-PROXY-REWRITE\n";
       writeNative(".hermes/config.yaml", hermesManagedConfig);
       writeNative(".hermes/gateway.pid", "legacy-pid");
@@ -414,6 +379,15 @@ describe("complete native home persistence", () => {
       expect(archivedPaths).not.toContain(".openclaw/.nemoclaw-post-upgrade-doctor");
       expect(archivedPaths).not.toContain("nemoclaw-onboard-warmup-1.trajectory.jsonl");
       expect(archivedPaths).not.toContain(".openclaw/state/openclaw.sqlite-wal");
+      expect(archivedPaths).not.toContain(privateDoctorCapture);
+      expect(archivedPaths).not.toContain(privateLegacyCapture);
+      expect(archivedPaths).toContain("workspace/.openclaw.update-captures/notes.txt");
+      expect(fs.readFileSync(path.join(nativeRoot, privateDoctorCapture), "utf8")).toBe(
+        privateCredential,
+      );
+      expect(fs.readFileSync(path.join(nativeRoot, privateLegacyCapture), "utf8")).toBe(
+        privateCredential,
+      );
       expect(archivedPaths).not.toContain(".hermes/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.pid");
       expect(archivedPaths).not.toContain(".hermes/runtime/gateway.lock");
@@ -1037,6 +1011,11 @@ describe("complete native home persistence", () => {
       JSON.stringify({ apiKey: `ghp_${"2468ace013579bdf"}` }),
     ],
     ["an arbitrary dependency file", "node_modules/example/token.txt", `ghp_${"fedcba9876543210"}`],
+    [
+      "a similarly named user-owned capture",
+      "workspace/.openclaw.update-captures/payload/0",
+      `ghp_${"fedcba9876543210"}`,
+    ],
     ["dependency source code", "node_modules/example/token.js", `ghp_${"fedcba9876543210"}`],
     [
       "a concrete token in bundled NemoClaw runtime code",

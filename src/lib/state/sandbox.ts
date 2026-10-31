@@ -104,6 +104,10 @@ const NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES = 16 * 1024 * 1024;
 // These paths are NemoClaw control-plane state, not native agent state. The
 // target image regenerates config.json and its root-owned blueprint cache. The
 // OpenClaw doctor marker and warm-up sessions are transient lifecycle state.
+// Native doctor/update captures are private rollback snapshots, explicitly
+// excluded by OpenClaw from backups and support exports. They may contain
+// pre-sanitization credentials; preserve the active state through its normal
+// sanitization path instead of exporting these generation-local snapshots.
 // Hermes' PID and lock files identify processes in one sandbox generation;
 // restoring them over the replacement gateway makes a healthy process appear
 // stale to authenticated lifecycle commands.
@@ -111,6 +115,8 @@ const NATIVE_STATE_CAPTURE_TAR_EXCLUDES = [
   "--exclude='./.nemoclaw/config.json'",
   "--exclude='./.nemoclaw/blueprints'",
   "--exclude='./.openclaw/.nemoclaw-post-upgrade-doctor'",
+  "--exclude='./.openclaw.update-captures'",
+  "--exclude='./.openclaw-data.update-captures'",
   "--exclude='./.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*'",
   "--exclude='./.openclaw/state/openclaw.sqlite'",
   "--exclude='./.openclaw/state/openclaw.sqlite-journal'",
@@ -2728,6 +2734,7 @@ function capturePreparedNativeState(
           '  rm -f -- "$stage/.nemoclaw/config.json"',
           '  rm -rf -- "$stage/.nemoclaw/blueprints"',
           '  rm -f -- "$stage/.openclaw/.nemoclaw-post-upgrade-doctor"',
+          '  rm -rf -- "$stage/.openclaw.update-captures" "$stage/.openclaw-data.update-captures"',
           '  rm -rf -- "$stage"/.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*',
           '  rm -f -- "$stage/.openclaw/state/openclaw.sqlite"*',
           '  rm -f -- "$stage/.openclaw-data/state/openclaw.sqlite"*',
@@ -2912,7 +2919,9 @@ function backupNativeSandboxState(
           'ancestors=" $self "',
           "cursor=$PPID",
           'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
-          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+          // A foreign or vanished final PID is normal; do not let its failed UID
+          // comparison become the function status under set -e.
+          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; return 0; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; rm -rf -- "$db_stage"; }',
           "trap resume EXIT HUP INT TERM",

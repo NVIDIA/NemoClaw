@@ -2,12 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { ok as assertOk } from "node:assert";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+
+// This suite owns the maintenance protocol. Resolve its health endpoint from
+// the fixture, without consulting the developer's real sandbox registry.
+vi.mock("./forward-recovery", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./forward-recovery")>()),
+  resolveSandboxHealthProbeUrl: () => "http://127.0.0.1:18789/health",
+}));
 
 import {
   abortOpenClawPostRestoreDoctor,
@@ -20,6 +28,7 @@ import {
   buildOpenClawPostUpgradeDoctorReleaseCommand,
   finishOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
+  prepareOpenClawPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
   retireOpenClawPostRestoreDoctorForDelete,
 } from "./process-recovery";
@@ -316,7 +325,10 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       status: 0,
       output: "",
     }));
-    const sleep = vi.fn(async () => undefined);
+    let currentMs = 0;
+    const sleep = vi.fn(async (seconds: number) => {
+      currentMs += seconds * 1_000;
+    });
     const runtimeSelection = {
       gatewayName: "recorded-gateway",
       workspace: "default" as const,
@@ -326,7 +338,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     const deps = {
       captureOpenshell: capture as never,
       executeSandboxExecCommand: execute,
-      now: () => 0,
+      now: () => currentMs,
       sleep,
     };
     const begun = await beginOpenClawPostRestoreDoctor("alpha", runtimeSelection, deps);
@@ -427,6 +439,179 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.calls[5]?.[1]).toContain("curl");
     expect(execute.mock.calls[6]?.[1]).not.toContain("curl");
   });
+
+  it("migrates restored state without releasing the gateway before offline writers", async () => {
+    const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = {
+      captureOpenshell: vi.fn() as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+    const runtimeSelection = { gatewayName: "selected-gateway", workspace: "default" } as const;
+    const result = await prepareOpenClawPostRestoreDoctor(
+      { sandboxName: "alpha", kind: "backup", runtimeSelection },
+      deps,
+    );
+
+    expect(result).toEqual({ ok: true, window: { sandboxName: "alpha", runtimeSelection } });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      buildOpenClawBackupQuiescePromotionCommand(),
+      30_000,
+      { runtimeSelection },
+    );
+    expect(deps.captureOpenshell).not.toHaveBeenCalled();
+    assertOk(result.ok, "expected migration window");
+    execute.mockClear();
+    expect(await prepareOpenClawPostRestoreDoctor(result.window, deps)).toEqual(result);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { phase: "Stopped", readiness: "not_ready" as const },
+    { phase: "Failed", readiness: "terminal" as const },
+  ])("fails promotion promptly when the restored sandbox is $phase", async (sandbox) => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValue({ status: 23, stdout: "", stderr: "" });
+    const lookupSandbox = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: { state: "present" as const, sandbox: { name: "alpha", ...sandbox } },
+      },
+      displayOutput: "",
+    }));
+    const captureOpenshell = vi.fn() as never;
+    const sleep = vi.fn(async () => undefined);
+    const runtimeSelection = { gatewayName: "recorded-gateway", workspace: "default" } as const;
+
+    await expect(
+      finishOpenClawPostRestoreDoctor(
+        { sandboxName: "alpha", kind: "backup", runtimeSelection },
+        {
+          captureOpenshell,
+          executeSandboxExecCommand: execute,
+          lookupSandbox,
+          now: () => 0,
+          sleep,
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      stage: "doctor",
+      detail:
+        "the restored sandbox stopped before post-upgrade doctor completed; the gateway remains held down",
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(lookupSandbox).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "recorded-gateway" },
+      timeoutMs: 15_000,
+    });
+    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      observation: "running",
+      lookup: async () => ({
+        result: {
+          ok: true as const,
+          value: {
+            state: "present" as const,
+            sandbox: { name: "alpha", phase: "Running", readiness: "ready" as const },
+          },
+        },
+        displayOutput: "",
+      }),
+    },
+    {
+      observation: "unavailable",
+      lookup: async () => ({
+        result: { ok: true as const, value: { state: "missing" as const } },
+        displayOutput: "",
+      }),
+    },
+    {
+      observation: "transport-error",
+      lookup: async () => {
+        throw new Error("observation unavailable");
+      },
+    },
+  ])(
+    "still requires a fresh Doctor receipt after a $observation observation",
+    async ({ lookup }) => {
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: 23, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+      const lookupSandbox = vi.fn(lookup);
+      let now = 0;
+      const sleep = vi.fn(async (seconds: number) => {
+        now += seconds * 1_000;
+      });
+      const result = await prepareOpenClawPostRestoreDoctor(
+        { sandboxName: "alpha", kind: "backup" },
+        {
+          captureOpenshell: vi.fn() as never,
+          executeSandboxExecCommand: execute,
+          lookupSandbox,
+          now: () => now,
+          sleep,
+        },
+      );
+      expect(result).toEqual({ ok: true, window: { sandboxName: "alpha" } });
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(lookupSandbox).toHaveBeenCalledOnce();
+      expect(sleep).toHaveBeenCalledExactlyOnceWith(3);
+    },
+  );
+
+  it.each([
+    { remaining: 0, expectedLookups: [] },
+    { remaining: 1_000, expectedLookups: [[expect.objectContaining({ timeoutMs: 1_000 })]] },
+  ])(
+    "keeps terminal observation inside the remaining $remaining ms budget",
+    async ({ remaining, expectedLookups }) => {
+      let now = 0;
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+        .mockImplementationOnce(async () => {
+          now = 33 * 60_000 - remaining;
+          return { status: 23, stdout: "", stderr: "" };
+        });
+      const lookupSandbox = vi.fn(async () => ({
+        result: {
+          ok: true as const,
+          value: {
+            state: "present" as const,
+            sandbox: { name: "alpha", phase: "Stopped", readiness: "terminal" as const },
+          },
+        },
+        displayOutput: "",
+      }));
+      const result = await prepareOpenClawPostRestoreDoctor(
+        { sandboxName: "alpha", kind: "backup" },
+        {
+          captureOpenshell: vi.fn() as never,
+          executeSandboxExecCommand: execute,
+          lookupSandbox,
+          now: () => now,
+          sleep: vi.fn(async () => undefined),
+        },
+      );
+      expect(result).toMatchObject({ ok: false, stage: "doctor" });
+      expect(lookupSandbox.mock.calls).toEqual(expectedLookups);
+      expect(execute).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("refuses to bypass doctor through the backup-only release path", async () => {
     const execute = vi.fn();
@@ -658,6 +843,8 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
   });
 
   it("fails closed when startup never proves the doctor maintenance window", async () => {
+    const progress = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
     let currentMs = 0;
     const execute = vi
       .fn()
@@ -682,7 +869,43 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       stage: "doctor",
       detail: "startup did not prove doctor completion with the gateway held down",
     });
-    expect(currentMs).toBe(6 * 60_000);
+    expect(currentMs).toBe(33 * 60_000);
+    const messages = progress.mock.calls.map(([message]) => String(message));
+    expect(stdout).not.toHaveBeenCalled();
+    stdout.mockRestore();
+    progress.mockRestore();
+    expect(messages).toHaveLength(66);
+    expect(messages[0]).toBe(
+      '  OpenClaw Doctor for sandbox "alpha": 0s elapsed, 1980s remaining; waiting for the exact maintenance receipt.',
+    );
+    expect(messages.at(-1)).toBe(
+      '  OpenClaw Doctor for sandbox "alpha": 1950s elapsed, 30s remaining; waiting for the exact maintenance receipt.',
+    );
+  });
+
+  it("allows bounded intermediate migrations to finish before releasing the doctor gate", async () => {
+    let currentMs = 0;
+    const capture = vi.fn(() => ({ status: 0, output: "" }));
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockImplementation(async () => ({
+        status: currentMs >= 31 * 60_000 ? 0 : 20,
+        stdout: "",
+        stderr: "",
+      }));
+    await expect(
+      beginOpenClawPostRestoreDoctor("alpha", undefined, {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: execute,
+        now: () => currentMs,
+        sleep: vi.fn(async (seconds: number) => {
+          currentMs += seconds * 1_000;
+        }),
+      }),
+    ).resolves.toEqual({ ok: true, window: { sandboxName: "alpha" } });
+    expect(currentMs).toBe(31 * 60_000);
+    expect(capture.mock.calls).toHaveLength(2);
   });
 
   it("does not replay startup after an unready replacement and stops the aborted sandbox", async () => {
@@ -691,7 +914,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockImplementation(async () => ({
-        status: currentMs >= 6 * 60_000 ? 0 : 20,
+        status: currentMs >= 33 * 60_000 ? 0 : 20,
         stdout: "",
         stderr: "",
       }));
@@ -762,7 +985,10 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
-    const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(359_000);
+    const now = vi
+      .fn()
+      .mockReturnValueOnce(0)
+      .mockReturnValue(33 * 60_000 - 1_000);
 
     await expect(
       beginOpenClawPostRestoreDoctor("alpha", undefined, {

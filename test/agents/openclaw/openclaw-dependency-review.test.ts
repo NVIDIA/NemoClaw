@@ -7,12 +7,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  parseAuditConfig,
+  selectReviewedLockedGraphIdentity,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
-const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz";
+const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz";
 const MESSAGING_BUILD_APPLIER = path.join(
   REPO_ROOT,
   "src",
@@ -38,6 +42,12 @@ const SHARED_STATE_PERMISSIONS_PATCH = path.join(
   "patch-openclaw-shared-state-permissions.mts",
 );
 const MCP_RELIABILITY_PATCH = path.join(REPO_ROOT, "scripts", "patch-openclaw-mcp-reliability.mts");
+const MCP_RELIABILITY_PAYLOAD = path.join(
+  REPO_ROOT,
+  "scripts",
+  "lib",
+  "openclaw-mcp-retry-payloads.mts",
+);
 const MCP_TOOLS_LIST_TIMEOUT_PATCH = path.join(
   REPO_ROOT,
   "scripts",
@@ -127,12 +137,40 @@ function runBaseImageBuildArgGuard(
   }
 }
 
-describe("OpenClaw 2026.9.2 dependency review contract", () => {
+describe("OpenClaw 2026.10.5 dependency review contract", () => {
+  it("audits only production-selected OpenClaw runtime and plugin archives", () => {
+    const audit = parseAuditConfig(
+      readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+    );
+    const graph = audit.lockedGraphs.find(({ id }) => id === "openclaw-runtime");
+    expect(graph).toBeDefined();
+    const selected = selectReviewedLockedGraphIdentity(
+      path.join(REPO_ROOT, graph!.directory, "package-lock.json"),
+      graph!,
+    );
+    const selectedVersion = selected.packageSpec.slice(selected.packageSpec.lastIndexOf("@") + 1);
+    const openClawArchives = audit.archivePackages.filter(
+      ({ packageSpec }) =>
+        packageSpec.startsWith("openclaw@") || packageSpec.startsWith("@openclaw/"),
+    );
+    expect(openClawArchives.length).toBeGreaterThan(0);
+    expect(openClawArchives.map(({ packageSpec }) => packageSpec)).toContain(
+      `@openclaw/googlechat@${selectedVersion}`,
+    );
+    expect(
+      openClawArchives.map(({ packageSpec }) =>
+        packageSpec.slice(packageSpec.lastIndexOf("@") + 1),
+      ),
+    ).toEqual(openClawArchives.map(() => selectedVersion));
+  });
+
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
       [
-        "-lc",
+        "--noprofile",
+        "--norc",
+        "-c",
         `
 set -euo pipefail
 
@@ -140,7 +178,7 @@ messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
 reviewed_archive_helper=scripts/lib/reviewed-npm-archive.mts
 remediation_helper=scripts/lib/openclaw-npm-remediation.mts
 
-boundary_marker_count="$(grep -hF -e 'Reviewed-archive invariants (#5896):' -e 'Install checksum-pinned ACP archives offline' -e 'Install optional plugins from verified offline archives' Dockerfile Dockerfile.base | wc -l | tr -d ' ')"
+boundary_marker_count="$(grep -hF -e 'Reviewed-archive invariants (#5896):' -e 'Install checksum-pinned ACP archives offline' Dockerfile Dockerfile.base scripts/lib/install-openclaw-optional-plugins.sh | wc -l | tr -d ' ')"
 test "$boundary_marker_count" -eq 4
 
 check_contains() {
@@ -179,8 +217,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
     Dockerfile) end_marker='# Patch OpenClaw media fetch' ;;
     Dockerfile.base) end_marker='# Baseline health check.' ;;
   esac
-  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.9.2/,/$end_marker/p" "$dockerfile")"
-  check_contains "$openclaw_block" "ARG OPENCLAW_2026_9_2_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
+  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.10.5/,/$end_marker/p" "$dockerfile")"
+  check_contains "$openclaw_block" "ARG OPENCLAW_2026_10_5_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
@@ -221,14 +259,17 @@ check_contains "$wechat_cache_block" '--registry-origin https://registry.npmjs.o
 check_contains "$wechat_cache_block" 'NPM_CONFIG_OFFLINE=true' "WeChat cache offline verification"
 check_contains "$wechat_cache_block" 'RUN --network=none' "WeChat cache offline materialization"
 
-optional_plugin_block="$(sed -n '/# Install optional plugins from verified offline archives; npm-pack preserves/,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
+optional_plugin_docker_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
+check_contains "$optional_plugin_docker_block" '. /scripts/lib/install-openclaw-optional-plugins.sh' "optional plugin installer invocation"
+optional_plugin_block="$(cat scripts/lib/install-openclaw-optional-plugins.sh)"
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_not_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
 check_contains "$optional_plugin_block" 'plugin_archive="$NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR/$archive_name"' "optional plugin reviewed archive"
-check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_archive}"' "optional plugin reviewed npm-pack install confirmation"
-check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$(dirname "$plugin_archive")"; fi' "optional plugin fallback source cleanup"
+check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "$@" "$plugin_spec"' "optional plugin reviewed exact registry install"
+check_contains "$optional_plugin_block" 'rm -rf "$(dirname "$packed_plugin_archive")"' "optional plugin source cleanup"
+check_contains "$optional_plugin_block" 'packed_plugin_archive=' "optional plugin cleanup reset"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
@@ -294,7 +335,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
 	grep -Fq 'node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
 	mcp_reliability_patch=${JSON.stringify(MCP_RELIABILITY_PATCH)}
-	grep -Fq 'nemoclaw mcp transient startup recovery (#7958)' "$mcp_reliability_patch"
+	mcp_reliability_payload=${JSON.stringify(MCP_RELIABILITY_PAYLOAD)}
+	grep -Fq 'INJECTED_START_RETRY_HELPER' "$mcp_reliability_patch"
+	grep -Fq 'nemoclaw mcp transient startup recovery (#7958)' "$mcp_reliability_payload"
 	grep -Fq 'nemoClawIsTransientMcpStartFailure' "$mcp_reliability_patch"
 	grep -Fq 'nemoClawCatalogHasStartDiagnostics' "$mcp_reliability_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts' Dockerfile

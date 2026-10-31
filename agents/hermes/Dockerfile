@@ -98,6 +98,7 @@ COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-lo
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/lib/verify-openclaw-official-plugin.mts /scripts/lib/verify-openclaw-official-plugin.mts
 
 FROM scratch AS hermes-runtime-payload
 
@@ -418,6 +419,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts /src/lib/inference-credential.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-audit.mts \
+        /scripts/lib/verify-openclaw-official-plugin.mts \
         /scripts/lib/reviewed-npm-identity.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
         /scripts/patch-bundled-npm-tar.mts /scripts/upgrade-bundled-npm.mts \

@@ -61,6 +61,7 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
+      - "test/helpers/openclaw-real-legacy-migration-proof.ts"
       - "test/package-contract/channels/hermes-discord-runtime.test.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/fixtures/hermes-switchyard-package.ts"
@@ -640,6 +641,25 @@ jobs:
         if: matrix.agent == 'langchain-deepagents-code'
         shell: bash
         run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
+
+      - name: Prepare OpenClaw image export memory
+        if: matrix.agent == 'openclaw'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Layer export exhausts the hosted runner's 16 GiB RAM and 3 GiB
+          # swap. Keep this additional swap until the disposable runner is
+          # retired; turning it off while Docker retains pages can cause OOM.
+          available_kib="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 {print $4}')"
+          if [[ ! "$available_kib" =~ ^[0-9]+$ ]] || [ "$available_kib" -lt 67108864 ]; then
+            echo "ERROR: OpenClaw export needs 32 GiB swap plus 32 GiB free disk." >&2
+            exit 1
+          fi
+          swap_file="$(mktemp "$RUNNER_TEMP/nemoclaw-openclaw-export.XXXXXX")"
+          sudo fallocate -l 32G "$swap_file"
+          sudo chmod 0600 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
 
       - name: Resolve digest-pinned native PR base
         id: base
@@ -2583,15 +2603,15 @@ jobs:
             fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
           );
           const packages = {
-            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.9.2"],
-            brave: ["@openclaw/brave-plugin", "2026.9.2"],
-            tavily: ["@openclaw/tavily-plugin", "2026.9.2"],
-            discord: ["@openclaw/discord", "2026.9.2"],
-            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.9"],
-            slack: ["@openclaw/slack", "2026.9.2"],
-            whatsapp: ["@openclaw/whatsapp", "2026.9.2"],
-            msteams: ["@openclaw/msteams", "2026.9.2"],
-            googlechat: ["@openclaw/googlechat", "2026.9.2"],
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.10.5"],
+            brave: ["@openclaw/brave-plugin", "2026.10.5"],
+            tavily: ["@openclaw/tavily-plugin", "2026.10.5"],
+            discord: ["@openclaw/discord", "2026.10.5"],
+            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.10"],
+            slack: ["@openclaw/slack", "2026.10.5"],
+            whatsapp: ["@openclaw/whatsapp", "2026.10.5"],
+            msteams: ["@openclaw/msteams", "2026.10.5"],
+            googlechat: ["@openclaw/googlechat", "2026.10.5"],
           };
           const projectsRoot = "/sandbox/.openclaw/npm/projects";
           const projectRoots = fs

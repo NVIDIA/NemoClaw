@@ -42,6 +42,24 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw-gateway-owner\.mts$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup/provider-root-apply.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw_pairing_state\.py$/,
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/auto-pair-approval-sqlite.test.ts",
+      "src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.test.ts",
+      "src/lib/onboard/managed-startup/provider-root-apply.test.ts",
+      "test/agents/openclaw/runtime/nemoclaw-start-auto-pair-sqlite.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+      "test/runtime/sandbox/sandbox-build-context.test.ts",
+      "test/runtime/sandbox/sandbox-provisioning-helper-permissions.test.ts",
+      "test/security/admin-approval-helper.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,
     testsToRun: runTests("test/e2e/support/discord-enrollment-child.test.ts"),
   },
@@ -202,6 +220,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
           ]
         : [
             "test/generation/providerless-agent-config.test.ts",
+            "test/networking/dashboard-remote-bind-lifecycle.test.ts",
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
             "test/mcp/mcp-tool-discovery-image-contract.test.ts",

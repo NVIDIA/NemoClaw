@@ -126,6 +126,7 @@ export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
 export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
   { channelId: "a2a", pluginId: "a2a" },
   { channelId: "reef", pluginId: "reef" },
+  { channelId: "x", pluginId: "x" },
 ] as const;
 const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
@@ -992,7 +993,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
-    nemoclaw: { enabled: true },
+    // OpenClaw 2026.9.5 requires explicit permission for the existing context hook.
+    nemoclaw: { enabled: true, hooks: { allowConversationAccess: true } },
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,
@@ -1034,6 +1036,13 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (Object.keys(extraAgentsPayload.defaults.subagents).length > 0) {
     agentDefaults.subagents = extraAgentsPayload.defaults.subagents;
   }
+  // OpenClaw 10.5 retires roster default markers. Preserve the primary agent's
+  // ambient responsibilities when the roster contains secondary agents.
+  if (extraAgents.length > 0) {
+    agentDefaults.systemAgent = { agentId: "main" };
+    agentDefaults.sessionStore = { agentId: "main" };
+    agentDefaults.heartbeat ??= { agentId: "main" };
+  }
 
   // OpenClaw 2026.9.1 retired the configurable reserveTokens and
   // reserveTokensFloor fields. Its agent runtime now clamps the effective
@@ -1061,9 +1070,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const config: JsonObject = {
     agents: {
+      ...(extraAgents.length > 0 ? { ownership: "explicit" } : {}),
       defaults: agentDefaults,
       entries: buildAgentEntries(extraAgents, extraAgentsPayload.main),
     },
+    ...(extraAgents.length > 0 ? { talk: { agentId: "main" } } : {}),
     ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,
     tools: openclawTools,

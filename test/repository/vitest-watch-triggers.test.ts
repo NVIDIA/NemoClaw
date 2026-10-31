@@ -213,6 +213,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
       "test/generation/providerless-agent-config.test.ts",
+      "test/networking/dashboard-remote-bind-lifecycle.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
       "test/mcp/mcp-tool-discovery-image-contract.test.ts",

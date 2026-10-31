@@ -35,6 +35,10 @@ vi.mock("../fixtures/managed-image-receipt.ts", () => ({
   selectedE2eManagedImageReference: () => "example.invalid/openclaw@sha256:" + "a".repeat(64),
 }));
 
+// The live registration is mocked above. Collect its fixture module once so
+// cold source transformation is setup work; each case still resets module state.
+import "../live/openclaw-inference-switch.test.ts";
+
 const disposables: Array<() => unknown> = [];
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 afterEach(async () => {
@@ -175,7 +179,7 @@ it.each(
     });
     await expect(
       run({
-        artifacts: { target: { declare: vi.fn() } },
+        artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
         cleanup: {
           trackDisposable: (_name: string, dispose: () => unknown) => disposables.push(dispose),
           trackGateway: vi.fn(),
@@ -244,7 +248,7 @@ it.each([
     const getKey = vi.fn(required);
     await expect(
       run({
-        artifacts: { target: { declare: vi.fn() } },
+        artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
         cleanup: { trackDisposable: vi.fn() },
         progress,
         runtimeProvider: { requireAvailable: vi.fn() },

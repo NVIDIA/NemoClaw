@@ -107,7 +107,8 @@ function teamsOpenClawChannelRender(): ManagedStartupJsonObject {
     target: "openclaw.json",
     path: "channels.msteams",
     value: {
-      webhook: { port: 3978, path: "/api/messages" },
+      webhook: { path: "/api/messages" },
+      legacyWebhook: { port: 3978 },
     },
   };
 }

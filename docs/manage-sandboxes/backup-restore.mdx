@@ -29,6 +29,20 @@ Most lifecycle operations do not need a backup or restore step. When `$$nemoclaw
 3. Clear the replacement's fresh native home/workspace and restore the complete archive.
 4. Validate the replacement before retiring the temporary handoff.
 
+<AgentOnly variant="openclaw">
+
+NemoClaw checks restored OpenClaw state before running the pinned `2026.9.5` and `2026.9.7` migration runtimes.
+It runs each runtime only when the database schemas and recorded writer version are compatible with that runtime.
+It skips an intermediate runtime when the restored state is too new for it.
+If legacy JSON sessions coexist with populated SQLite sessions, restoration stops and keeps the gateway stopped.
+Before checking eligibility for the `2026.9.7` migration runtime, NemoClaw inspects retired Telegram state.
+Incompatible retained Telegram state stops restoration and keeps the gateway stopped, even when that runtime would be skipped.
+The original backup remains available for recovery.
+Restore a consistent backup or reconcile the incompatible state before retrying.
+Keep the original host backup until you verify the restored sandbox.
+
+</AgentOnly>
+
 OpenClaw's `gateway.auth` value and Hermes's `.hermes/.env` `API_SERVER_KEY` are machine-local. NemoClaw leaves both live source files unchanged, omits those values only from the private archive copy, and lets the replacement establish fresh local authority. Existing OpenClaw device and scope approvals do not transfer; approve the replacement's fresh pairing or scope-upgrade request when prompted. NemoClaw also removes credential fields from OpenClaw credential, device, identity, pairing, and pending-state JSON; replaces the archived OpenClaw device identity with a fresh non-secret identity; and removes credential fields from Hermes configuration and configuration backups. An invalid or uninspectable recognized authority file stops the transfer instead of being copied unchanged.
 
 For OpenClaw NVIDIA Endpoints, NemoClaw preserves `${NVIDIA_INFERENCE_API_KEY}` only in the generated `inference` provider entry for `https://integrate.api.nvidia.com/v1`. This reference is not a raw credential. A different provider, endpoint, or value stops the transfer.
@@ -43,6 +57,22 @@ If cleanup fails, the error identifies the retained incomplete backup for inspec
 For an eligible stopped OpenClaw or Deep Agents Code container, NemoClaw captures the provider-owned stopped state without executing in the source sandbox. The operation fails before replacement if that stopped-state authority changes during capture. Stopped Hermes rebuilds instead use the bounded OpenShell start, capture, and return-to-`Stopped` lifecycle described below.
 
 For Hermes, the restored complete home may contain the retired `profiles/dashboard-home` layout from an older release. After restore, NemoClaw runs a one-time migration that moves safe legacy files, including a legacy WhatsApp session, into the shared native Hermes home and removes the retired directory. User-created named profiles remain unchanged. A collision, unsafe link, or other unsafe legacy path fails closed and leaves both copies available for trusted recovery instead of choosing one.
+
+<AgentOnly variant="openclaw">
+
+## Recover Interrupted Telegram Archival
+
+If migration reports `Incomplete Telegram archival`, keep the gateway stopped and preserve the original host backup.
+Inspect the retained `.nemoclaw-telegram-empty-*` directory without a `.migrated` suffix inside the restored OpenClaw state's `telegram/` directory.
+The default state location is `/sandbox/.openclaw`.
+The retained directory can contain a source file whose move or verification did not finish, including a file that changed during archival.
+Preserve it for recovery rather than deleting it or adding the `.migrated` suffix to bypass the refusal.
+
+Restore a consistent backup before retrying the failed rebuild or installer upgrade.
+If you cannot establish which copy contains the required state, retain both the directory and original backup and request recovery assistance from a maintainer.
+After recovery, verify the sandbox status and required Telegram state before discarding the backup.
+
+</AgentOnly>
 
 ## Backup Before Upgrade
 

@@ -959,12 +959,24 @@ async function approveBootstrapDevicePairing(requestId, bootstrapProfile, option
 `);
 }
 
-export function writeFixtureDist(dist: string): void {
+export function writeFixtureDist(
+  dist: string,
+  devicesVersion: "legacy" | "2026.9.5" = "legacy",
+): void {
   fs.writeFileSync(path.join(dist, "call-fixture.js"), gatewayCallFixture());
   fs.writeFileSync(path.join(dist, "device-identity-fixture.js"), deviceIdentityFixture());
   fs.writeFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), cliFixture());
   fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthFixture());
-  fs.writeFileSync(path.join(dist, "devices-fixture.js"), handlerFixture());
+  const currentDevices = devicesVersion === "2026.9.5";
+  fs.writeFileSync(
+    path.join(dist, currentDevices ? "devices-fixture.mjs" : "devices-fixture.js"),
+    currentDevices
+      ? handlerFixture().replace(
+          "const { requestId } = params;",
+          "const requestId = params.requestId.trim();",
+        )
+      : handlerFixture(),
+  );
   fs.writeFileSync(path.join(dist, "device-pairing-fixture.js"), stateFixture());
 }
 
