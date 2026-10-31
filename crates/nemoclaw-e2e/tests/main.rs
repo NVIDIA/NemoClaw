@@ -7,9 +7,6 @@
 mod agent_compatibility;
 #[path = "cache_provider.rs"]
 mod cache_provider;
-#[cfg(unix)]
-#[path = "deepagents_code_terminal.rs"]
-mod deepagents_code_terminal;
 #[path = "deployment.rs"]
 mod deployment;
 #[cfg(unix)]
@@ -69,6 +66,8 @@ mod multi_agent;
 mod multiple_providers;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
+#[path = "pseudo_terminal.rs"]
+mod pseudo_terminal;
 mod registry_fixture;
 #[path = "remote_service.rs"]
 mod remote_service;

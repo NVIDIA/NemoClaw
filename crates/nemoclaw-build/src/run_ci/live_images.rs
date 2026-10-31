@@ -40,22 +40,19 @@ pub(super) fn names() -> [&'static str; 6] {
     [
         agent().0,
         HERMES,
-        terminal_agent().0,
+        DEEPAGENTS_CODE,
         DUMMY,
         "proxy-a",
         "proxy-b",
     ]
 }
 
-/// The agent image whose terminal interface the Docker live suite opens, and
-/// its Fabric harness.
-pub(super) fn terminal_agent() -> (&'static str, &'static str) {
-    nemoclaw_build::ci::LIVE_TERMINAL_AGENT
-}
+/// The Deep Agents Code agent image, whose terminal the interface test opens.
+pub(super) const DEEPAGENTS_CODE: &str = nemoclaw_build::ci::LIVE_DEEPAGENTS_CODE;
 
-/// Build the terminal agent image as `PREFIX:TARGET`.
-pub(super) fn build_terminal_agent(platform: &str, prefix: &str) -> Result<()> {
-    build_image(platform, prefix, terminal_agent().0)
+/// Build the platform's Deep Agents Code image as `PREFIX:deepagents-code`.
+pub(super) fn build_deepagents_code(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, DEEPAGENTS_CODE)
 }
 
 /// The Hermes agent image, which the Docker live suite's interface test runs.
@@ -150,7 +147,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
     }
     build_agent(platform, SHARED)?;
     build_hermes(platform, SHARED)?;
-    build_terminal_agent(platform, SHARED)?;
+    build_deepagents_code(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
     build_proxies(platform, SHARED)?;
     let tags = names().map(|name| format!("{SHARED}:{name}"));
@@ -407,7 +404,7 @@ mod tests {
         let target = agent().0;
         assert_eq!(
             unused(&[target]),
-            [HERMES, terminal_agent().0, DUMMY, "proxy-a", "proxy-b"]
+            [HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a", "proxy-b"]
         );
         assert!(unused(&names()).is_empty());
     }

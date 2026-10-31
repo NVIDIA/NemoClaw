@@ -360,7 +360,7 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, agent interface, Deep Agents Code terminal, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Docker Provider Lifecycle
@@ -425,23 +425,27 @@ To remove the retained storage after a manual run, follow [Remove Retained Resou
 
 ## Agent Interfaces
 
-nemoclaw-e2e's `interfaces_live::openclaw_and_hermes_interfaces_work_through_forwards` test deploys OpenClaw's dashboard and Hermes's API server and dashboard through a managed Docker gateway and reaches them as [Reach an Agent Interface](../interfaces.md#reach-an-agent-interface) describes.
-It starts a model stand-in in the test process, which answers every chat completion with a value unique to the run and records whether each request carried the run's model key.
+nemoclaw-e2e's `interfaces_live::openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports` test deploys OpenClaw's dashboard, Hermes's API server and dashboard, and Deep Agents Code's terminal through one managed Docker gateway and reaches them as [Reach an Agent Interface](../interfaces.md#reach-an-agent-interface) describes.
+It starts a model stand-in in the test process, which records whether each request carried the run's model key.
+It answers a chat completion whose last message is `Reply with token TOKEN` with `REPLY-` and the token in capitals, and every other one with a value unique to the run.
 It checks:
 
 - Planning rejects `harness.settings.interfaces.terminal` for OpenClaw before creating anything.
-- Apply reports each interface's port, token path and sign-in.
+- Apply reports each interface's port, token path and sign-in, and the terminal's launcher for the current runtime.
 - Through `openshell forward service`, OpenClaw's Control UI loads and its configuration endpoint accepts the token that the reported `openshell sandbox exec` command reads, and refuses a missing or wrong one.
 - Hermes's API server accepts its token, refuses a missing or wrong one, and answers a chat completion through the stand-in.
 - Hermes's dashboard page loads, its API accepts the session token the page carries and refuses a request without it, and one browser chat message gets the stand-in's reply.
+- An invocation of Deep Agents Code through Fabric's bridge gets the stand-in's reply to its token.
+- Running the reported launcher with `openshell sandbox exec -n coder --tty` in a pseudo-terminal from util-linux's `script` opens `dcode`'s terminal UI; after Escape skips its first-run questions, one prompt gets the stand-in's reply, which the stand-in received for the configured model.
 - Every chat completion the stand-in received carried the configured key.
 - After the test kills Hermes's dashboard process in the sandbox, plan reports no change and the API server still answers.
 - No token appears in NemoClaw's output, its state directory, or the YAML, and destroy succeeds.
 
 It runs no model and needs no credentials; the stand-in's reply doesn't establish inference.
-Both sandboxes take their image's default policy; the test checks that the Hermes sandbox can open a pseudo-terminal, which browser chat needs, and the OpenClaw sandbox can't.
+OpenShell's access control is the terminal's only authentication.
+Every sandbox takes its image's default policy; the test checks that the Hermes sandbox can open a pseudo-terminal, which browser chat needs, and the OpenClaw sandbox can't.
 
-Supply a verified bundle, the pinned OpenShell CLI, and an owned document like the one `cargo ci live-docker` writes: a fresh UID, free gateway port and subnet, the OpenClaw and Hermes images by digest, and an `openai` provider named `model` whose endpoint is the subnet's first address with a free port and whose credential is `NEMOCLAW_TEST_INTERFACES_MODEL_KEY`.
+Supply a verified bundle, the pinned OpenShell CLI, and an owned document like the one `cargo ci live-docker` writes: a fresh UID, free gateway port and subnet, the OpenClaw, Hermes and Deep Agents Code images by digest in sandboxes `claw`, `hermes` and `coder`, and an `openai` provider named `model` whose endpoint is the subnet's first address with a free port and whose credential is `NEMOCLAW_TEST_INTERFACES_MODEL_KEY`.
 The test sets that variable itself:
 
 ```sh
@@ -449,37 +453,11 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_INTERFACES_DOCUMENT=/absolute/path/to/interfaces.yaml \
 NEMOCLAW_TEST_OPENSHELL=/absolute/path/to/openshell \
 cargo test -p nemoclaw-e2e --test integration \
-  interfaces_live::openclaw_and_hermes_interfaces_work_through_forwards -- --ignored --exact
+  interfaces_live::openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports -- --ignored --exact
 ```
 
 The stand-in listens on every host address at that port while the test runs.
 A failed run keeps the state directory and prints its path; remove the deployment with the bundle's `nemoclaw destroy --state-dir PATH` and the same variable set to any value.
-
-## Deep Agents Code Terminal
-
-nemoclaw-e2e's `deepagents_code_terminal::the_deep_agents_code_terminal_answers_a_prompt_with_the_generated_configuration` test deploys the Deep Agents Code image through a managed Docker gateway with `harness.settings.interfaces.terminal` enabled.
-It starts an OpenAI-compatible stand-in on the default Docker bridge's gateway address, which needs no credential and answers `Reply with token TOKEN` with `REPLY-` and the token in capitals, and points the document's inference provider at it.
-It checks:
-
-- Apply's JSON result reports the terminal with the current runtime's launcher.
-- An invocation through Fabric's bridge gets the stand-in's reply.
-- Running the reported launcher with `openshell sandbox exec -n SANDBOX --tty` in a pseudo-terminal from util-linux's `script` opens `dcode`'s terminal UI; after Escape skips its first-run questions, one prompt gets the stand-in's reply, which the stand-in received for the configured model.
-- Destroy succeeds.
-
-OpenShell's access control is the only authentication.
-It runs no model and needs no credentials.
-
-Supply a verified bundle, the pinned OpenShell CLI, and an owned document like the dummy's, with the local Deep Agents Code image by digest, `harness.kind: nvidia.fabric.langchain.deepagents-code`, and `harness.settings` of `{"approval_mode": "auto", "interfaces": {"terminal": {}}}`; the test replaces the provider's endpoint:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_TERMINAL_DOCUMENT=/absolute/path/to/terminal.yaml \
-NEMOCLAW_TEST_OPENSHELL=/absolute/path/to/openshell \
-cargo test -p nemoclaw-e2e --test integration \
-  deepagents_code_terminal:: -- --ignored
-```
-
-Its state directory and retained storage follow the [dummy agent's](#dummy-agent-lifecycle).
 
 ## Docker Gateway Recovery
 

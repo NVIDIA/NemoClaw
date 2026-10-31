@@ -85,7 +85,6 @@ default-filter = '''
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/) | test(/^docker_registry::/)
     | test(/^managed_gateway::/) | test(/^dummy_agent::/) | test(/^interfaces_live::/)
-    | test(/^deepagents_code_terminal::/)
 ))
 | (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))

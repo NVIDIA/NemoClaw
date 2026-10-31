@@ -117,14 +117,15 @@ pub struct InterfacesInputs<'a> {
     pub subnet: &'a str,
     pub openclaw: &'a str,
     pub hermes: &'a str,
+    pub deepagents_code: &'a str,
     /// Where the test serves its model stand-in, on the host.
     pub model_port: u16,
 }
 
-/// A managed Docker gateway with OpenClaw's dashboard and Hermes's API server
-/// and dashboard enabled. The model endpoint is the test's stand-in on the
-/// gateway network's host address, with a key the test supplies. Both
-/// sandboxes take their image's default policy.
+/// A managed Docker gateway with OpenClaw's dashboard, Hermes's API server and
+/// dashboard, and Deep Agents Code's terminal enabled. The model endpoint is
+/// the test's stand-in on the gateway network's host address, with a key the
+/// test supplies. Every sandbox takes its image's default policy.
 pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
     let InterfacesInputs {
         name,
@@ -133,6 +134,7 @@ pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
         subnet,
         openclaw,
         hermes,
+        deepagents_code,
         model_port,
     } = inputs;
     let host = subnet
@@ -169,6 +171,22 @@ spec:
       harness:
         kind: nvidia.fabric.openclaw
         settings: {{\"interfaces\": {{\"dashboard\": {{\"port\": 18789}}}}}}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
+    coder:
+      image:
+        ref: {deepagents_code}
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents-code
+        settings: {{\"approval_mode\": \"auto\", \"interfaces\": {{\"terminal\": {{}}}}}}
       agent:
         name: main
         inference:

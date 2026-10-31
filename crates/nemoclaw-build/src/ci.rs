@@ -360,17 +360,16 @@ pub const LIVE_AGENT: (&str, &str) = ("openclaw", "nvidia.fabric.openclaw");
 /// OpenClaw's.
 pub const LIVE_HERMES: &str = "hermes";
 
-/// The agent image whose terminal interface the Docker live suite opens, and
-/// its Fabric harness: Deep Agents Code.
-pub const LIVE_TERMINAL_AGENT: (&str, &str) =
-    ("deepagents-code", "nvidia.fabric.langchain.deepagents-code");
+/// The Deep Agents Code agent image, whose terminal the Docker live suite's
+/// interface test opens.
+pub const LIVE_DEEPAGENTS_CODE: &str = "deepagents-code";
 
 /// The pushed images the live suites can pull instead of building: the agent,
 /// Hermes, Deep Agents Code, the reference image, and the proxy.
 pub const LIVE_PULLED: [&str; 5] = [
     LIVE_AGENT.0,
     LIVE_HERMES,
-    LIVE_TERMINAL_AGENT.0,
+    LIVE_DEEPAGENTS_CODE,
     "dummy",
     "ollama-proxy",
 ];
