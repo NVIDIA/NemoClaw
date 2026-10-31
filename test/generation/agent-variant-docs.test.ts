@@ -168,25 +168,31 @@ describe("agent variant docs", () => {
     expect(startReference.includes("#recover-the-agent-runtime)")).toBe(nativeGateway);
   });
 
-  it("limits the reference's supervised recovery exception to Hermes", () => {
-    const sourcePath = "reference/commands.mdx";
-    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
-    const render = (variant: (typeof agentVariants)[number]) =>
-      renderAgentVariantPage(pageSource, variant, { sourcePath });
-    const supervisedRecovery =
-      "`recover` requests a supervised gateway relaunch before verification.";
+  it.each(["reference/commands.mdx", "manage-sandboxes/gateway-lifecycle-control.mdx"])(
+    "limits the supervised recovery exception to Hermes in %s",
+    (sourcePath) => {
+      const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+      const render = (variant: (typeof agentVariants)[number]) =>
+        renderAgentVariantPage(pageSource, variant, { sourcePath });
+      const supervisedRecovery =
+        "`recover` requests a supervised gateway relaunch before verification.";
 
-    expect(render("hermes")).toContain(supervisedRecovery);
-    expect(render("hermes")).toContain("after a clean exit or exit status `79`");
-    expect(render("hermes")).toContain(
-      "Otherwise, `recover` reports a stopped gateway without relaunching it.",
-    );
-    expect(render("openclaw")).toContain(
-      "If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.",
-    );
-    expect(render("openclaw")).not.toContain(supervisedRecovery);
-    expect(render("deepagents")).not.toContain(supervisedRecovery);
-  });
+      expect(render("hermes")).toContain(supervisedRecovery);
+      expect(render("hermes")).toContain("after a clean exit or exit status `79`");
+      expect(render("hermes")).toContain("authenticated gated recovery");
+      expect(render("hermes")).not.toContain(
+        "If a built-in gateway is stopped, `recover` reports that state instead of relaunching the process.",
+      );
+      expect(render("hermes")).toContain(
+        "Otherwise, `recover` reports a stopped gateway without relaunching it.",
+      );
+      expect(render("openclaw")).toContain(
+        "If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.",
+      );
+      expect(render("openclaw")).not.toContain(supervisedRecovery);
+      expect(render("deepagents")).not.toContain(supervisedRecovery);
+    },
+  );
 
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");

@@ -438,7 +438,19 @@ describe("sandbox oclif command adapters", () => {
       "Verify sandbox gateway health and repair host forwards",
     );
     expect(RecoverCliCommand.description).not.toContain("repair stopped gateways");
-    expect(RecoverCliCommand.description).toContain("restart a stopped native gateway");
+    expect(RecoverCliCommand.description).toContain(
+      "the Hermes supervisor can wait for authenticated gated recovery",
+    );
+    expect(RecoverCliCommand.description).toContain("After a clean exit or exit status 79");
+    expect(RecoverCliCommand.description).toContain(
+      "In that state, `recover` requests a supervised gateway relaunch before verification",
+    );
+    expect(RecoverCliCommand.description).toContain(
+      "For other stopped gateways or a forced runtime reload, use `gateway restart`",
+    );
+    expect(RecoverCliCommand.description).toContain(
+      "validate and release a NemoClaw cron restore gate",
+    );
     expect(RecoverCliCommand.description).toContain("A healthy gateway is not restarted");
     expect(RecoverCliCommand.description).toContain("gateway restart");
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);

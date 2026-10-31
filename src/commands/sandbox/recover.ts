@@ -11,7 +11,7 @@ export default class RecoverCliCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Verify sandbox gateway health and repair host forwards";
   static description =
-    "Probe sandbox gateway health and repair host forwards without opening an SSH session. For Hermes, also validate and release a NemoClaw cron restore gate left by an interrupted rebuild. A healthy gateway is not restarted. Use `gateway restart` to restart a stopped native gateway or force a runtime reload.";
+    "Probe sandbox gateway health and repair host forwards without opening an SSH session. For Hermes, also validate and release a NemoClaw cron restore gate left by an interrupted rebuild. A healthy gateway is not restarted. After a clean exit or exit status 79, the Hermes supervisor can wait for authenticated gated recovery. In that state, `recover` requests a supervised gateway relaunch before verification. For other stopped gateways or a forced runtime reload, use `gateway restart`.";
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox recover alpha"];
   static args = {
