@@ -736,13 +736,14 @@ describe("onboard Model Router setup", () => {
     );
   });
 
-  it("redacts a credential-shaped health error from the startup error (#8962)", async () => {
+  it("retains a redacted upstream health error after a later transport timeout", async () => {
     const pid = 12_345;
     const secret = "nvapi-HEALTHSECRETHEALTHSECRETHEALTHSECRETHEALTH";
     const credentialBody = JSON.stringify({
       healthy_endpoints: [],
       unhealthy_endpoints: [{ error: `AuthenticationError: api_key ${secret} invalid` }],
     });
+    let observations = 0;
 
     await assert.rejects(
       startModelRouter(
@@ -762,7 +763,16 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
           isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(false, credentialBody),
+          getRouterHealthSnapshot: async () => {
+            observations += 1;
+            return observations === 1
+              ? healthSnapshot(true, credentialBody)
+              : {
+                  ...healthSnapshot(false, null),
+                  outcome: "timeout",
+                  statusCode: null,
+                };
+          },
           sleep: async () => undefined,
           isProcessAlive: () => true,
           terminateProcess: () => undefined,
@@ -770,6 +780,7 @@ describe("onboard Model Router setup", () => {
         },
       ),
       (error: Error) => {
+        assert.match(error.message, /last health check: timeout, no HTTP status/);
         assert.match(
           error.message,
           /last health error: AuthenticationError: api_key <REDACTED> invalid/,
@@ -779,6 +790,7 @@ describe("onboard Model Router setup", () => {
         return true;
       },
     );
+    assert.equal(observations > 1, true);
   });
 
   it("rejects a completed 2xx snapshot with zero healthy endpoints (#8962)", async () => {

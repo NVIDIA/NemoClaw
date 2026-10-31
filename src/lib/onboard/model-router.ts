@@ -439,6 +439,7 @@ export async function startModelRouter(
   const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
   let healthAttempts = 0;
   let lastSnapshot: RouterHealthSnapshot | null = null;
+  let lastHealthError: string | null = null;
   while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
     const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
     await deps.sleep(delayMs);
@@ -462,6 +463,9 @@ export async function startModelRouter(
     }
     healthAttempts += 1;
     lastSnapshot = observation.snapshot;
+    // A later transport failure must not erase an earlier upstream diagnosis.
+    // Retain only the bounded, redacted error, never the health response body.
+    lastHealthError = firstUnhealthyEndpointError(lastSnapshot.body) ?? lastHealthError;
     const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
@@ -476,7 +480,6 @@ export async function startModelRouter(
   } catch {
     // already dead
   }
-  const lastHealthError = firstUnhealthyEndpointError(lastSnapshot?.body ?? null);
   const lastHealthObservation = formatHealthObservation(lastSnapshot);
   const logTail = routerLog === null ? "" : deps.readRouterLogTail(logPath, routerLog.startOffset);
   throw new Error(
