@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
+import { remediateOpenClawRuntimeDependencies } from "./lib/remediate-openclaw-runtime-dependencies.mts";
 import { canonicalAuditReceipt, createAuditReceipt } from "./lib/npm-audit-receipt.mts";
 import { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
 import {
@@ -295,9 +296,17 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   return {
     name: "nemoclaw-reviewed-production-graph",
     overrides: {
-      "@modelcontextprotocol/sdk": "1.31.0",
+      "@modelcontextprotocol/sdk": "1.32.0",
+      "@azure/msal-node": "7.1.0",
+      "body-parser": "2.4.0",
+      // npm bundles its private HTTP client; the installed recipe below
+      // replaces that copy before this graph is audited.
+      npm: { ".": "12.2.1", undici: "6.29.1" },
       "proxy-addr": "2.0.8",
       tar: archiveTarVersion,
+      zod: "4.6.6",
+      "undici@>=8.0.0 <8.12.3": "8.12.3",
+      "undici@>=7.18.0 <7.30.1": "7.30.1",
     },
     private: true,
     version: "1.0.0",
@@ -354,6 +363,7 @@ function materializeArchiveGraph(
     ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archives],
     graphDirectory,
   );
+  remediateOpenClawRuntimeDependencies(graphDirectory, { updateLock: true });
   return graphDirectory;
 }
 
@@ -452,6 +462,7 @@ function materializeLockedGraph(
   const installArgs = ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
   run("npm", installArgs, destination);
+  remediateOpenClawRuntimeDependencies(destination);
   verifyMaterializedLockedGraph({
     destination,
     expectedLockSha256,

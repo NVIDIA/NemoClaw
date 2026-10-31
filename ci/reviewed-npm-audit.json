@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "nodeVersion": "24.18.1",
+  "nodeVersion": "24.22.1",
   "npmVersion": "12.0.2",
   "npmIntegrity": "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
   "npmArchiveSha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
@@ -149,6 +149,66 @@
       "packageSpec": "@openclaw/googlechat@2026.9.5",
       "integrity": "sha512-8yX3i7u6044gyq+W4tMbJH5CRXLBsJSbdDMzysAxJYDgPimYB5DS+fTNU924tt8zhzkruqRjUzz7FjTtMTn0jA==",
       "tarballUrl": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.5.tgz"
+    },
+    {
+      "label": "Tencent WeChat plugin 2.4.10",
+      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.10",
+      "integrity": "sha512-qCN7rFtBK5BO/i5YGEJLdpC/8WQrm0dtPlQ0xNxku4RSyzGaRsiBoLVheU5hgpoOIBvfc5pUwKTktMbROLcIVg==",
+      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz"
+    },
+    {
+      "label": "OpenClaw Tavily plugin 2026.10.5",
+      "packageSpec": "@openclaw/tavily-plugin@2026.10.5",
+      "integrity": "sha512-PHGSdOzcNf41WdbDKT3X2UzTKWOdrSa9vEmMOjpNTzOTS8H/YGJzy1lw44w4zvEk3cR32dRFF+AQXxMzrzo8ww==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.10.5.tgz"
+    },
+    {
+      "label": "@openclaw/brave-plugin 2026.10.5",
+      "packageSpec": "@openclaw/brave-plugin@2026.10.5",
+      "integrity": "sha512-Dys0g/nhJXTpqmxwujnE9UoSN1EVszHWqbI5C3aNNk0zMqFUcD/YMT7TACe65aiVANHGuiMpLDm6rtJO5qq8FA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.10.5.tgz"
+    },
+    {
+      "label": "@openclaw/diagnostics-otel 2026.10.5",
+      "packageSpec": "@openclaw/diagnostics-otel@2026.10.5",
+      "integrity": "sha512-lgkU4dkclfKhVnBcHwcvIzf/BdBsVyDfmAKRgDdrqWg+7GUp7ikETL+WhLZGxWArYecv3FX0+A0KdEnQyHV1RQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.10.5.tgz"
+    },
+    {
+      "label": "@openclaw/discord 2026.10.5",
+      "packageSpec": "@openclaw/discord@2026.10.5",
+      "integrity": "sha512-Gy2FmMF7cnCyhodvYQHVtOPoPm7daZ1djSS7ymLHsJ5nWIO9GFsW8Y/mlnZAMSGWlgmWedERkVbVDMlli9vgOw==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.10.5.tgz"
+    },
+    {
+      "label": "@openclaw/msteams 2026.10.5",
+      "packageSpec": "@openclaw/msteams@2026.10.5",
+      "integrity": "sha512-Up5NG2C0vVJBNIX92Lv7SB8qoCQ9SX86LMLh2MTow71AglyVy20OjNc/rGpOco2YTwWl7HcjhSz9MJbqWcvvDQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.10.5.tgz"
+    },
+    {
+      "label": "@openclaw/slack 2026.10.5",
+      "packageSpec": "@openclaw/slack@2026.10.5",
+      "integrity": "sha512-AzWaSLfUQZWPwDdrLXzXeQ/AraXPEnkTTWKTKq4MFO39futFAxy+FulsYSStDYEd1B0YjtWGvXswBjdrmwRlBw==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.10.5.tgz"
+    },
+    {
+      "label": "@openclaw/whatsapp 2026.10.5",
+      "packageSpec": "@openclaw/whatsapp@2026.10.5",
+      "integrity": "sha512-3Dbv0p60yuz6tzuZNUMHzIYjhGL816BfOPBfz2YIpszQ7kx2j1uZfgpa0xTaxH4Spbg0AFakIp0kIcWOU1ODEQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.10.5.tgz"
+    },
+    {
+      "label": "openclaw 2026.10.5",
+      "packageSpec": "openclaw@2026.10.5",
+      "integrity": "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz"
+    },
+    {
+      "label": "OpenClaw Google Chat plugin 2026.10.5",
+      "packageSpec": "@openclaw/googlechat@2026.10.5",
+      "integrity": "sha512-FWJm5S7oaAdbq8k4BL1EopvF8D/wVpILRKY4seJ7MzxURLMIjF6a6mIBgx34VIFH40KEO5lszDgc/iRwPEjHcg==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.10.5.tgz"
     }
   ],
   "lockedGraphs": [
@@ -159,13 +219,13 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633",
+      "lockSha256": "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199",
       "replacement": {
-        "label": "OpenClaw 2026.9.5 locked runtime graph",
-        "packageSpec": "openclaw@2026.9.5",
-        "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
-        "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
-        "lockSha256": "b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7"
+        "label": "OpenClaw 2026.10.5 locked runtime graph",
+        "packageSpec": "openclaw@2026.10.5",
+        "integrity": "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==",
+        "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz",
+        "lockSha256": "02f1096028c223c17757b026c92e389a7904178995d588b3e3a4a5d8deb8d15f"
       }
     },
     {
@@ -175,7 +235,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "3c81d752d50113a2781b2aa1e8f1faade088f6fe3ed0bdde6ad0fb67a364f958"
+      "lockSha256": "04e9a7801758c8ac40709572f2d8e73725839ea62caef7e07c6f0fe419ed13af"
     },
     {
       "id": "wechat-runtime",
@@ -184,27 +244,52 @@
       "integrity": "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.9.tgz",
       "directory": "agents/openclaw/wechat-runtime",
-      "lockSha256": "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
+      "lockSha256": "74856e20d229528ee7e2d107e6238e2204beea36c0deb733a7102082bcd4e5ea",
       "severityThreshold": "low",
       "installMode": "legacy-peer-deps",
       "inputValidation": "wechat-runtime",
-      "signatureAudit": "retry-download-failures"
+      "signatureAudit": "retry-download-failures",
+      "replacement": {
+        "label": "Tencent WeChat plugin 2.4.10 locked runtime graph",
+        "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.10",
+        "integrity": "sha512-qCN7rFtBK5BO/i5YGEJLdpC/8WQrm0dtPlQ0xNxku4RSyzGaRsiBoLVheU5hgpoOIBvfc5pUwKTktMbROLcIVg==",
+        "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz",
+        "lockSha256": "128880428a7929f4dccec034418ff4290513ad728f8af12fbf1d3536cb468803"
+      }
     },
     {
       "id": "mcp-tool-discovery-runtime",
       "label": "MCP tool discovery runtime locked production graph",
-      "packageSpec": "@modelcontextprotocol/sdk@1.31.0",
-      "integrity": "sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==",
-      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
+      "packageSpec": "@modelcontextprotocol/sdk@1.32.0",
+      "integrity": "sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==",
+      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "ccb3c75ff554bb9a8c8b94e7f98205dde1456e58df6797fc8757c635e2c58413"
+      "lockSha256": "a055cc6630c19809d3b359dc464ca5684fe86e0155fde2be3cd89e3f436ae679"
+    },
+    {
+      "id": "openclaw-migration-2026.9.5-runtime",
+      "label": "OpenClaw 2026.9.5 legacy migration runtime",
+      "packageSpec": "openclaw@2026.9.5",
+      "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
+      "directory": "agents/openclaw/openclaw-migration-2026.9.5-runtime",
+      "lockSha256": "25a0e1b2128555dcac25c859e09069c34c99b9a0ab8a8ea950620bca24bf376b"
+    },
+    {
+      "id": "openclaw-migration-2026.9.7-runtime",
+      "label": "OpenClaw 2026.9.7 legacy migration runtime",
+      "packageSpec": "openclaw@2026.9.7",
+      "integrity": "sha512-/8N2LnfTFQPvnZizi8qKSFfnLQaPvSG3Cb4xo1YV7b4JhYiUc43ZNRpXJ01bWghLK0Ezk3HVeo/DGHcIRQwRWA==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.7.tgz",
+      "directory": "agents/openclaw/openclaw-migration-2026.9.7-runtime",
+      "lockSha256": "b284dfe7296b48bf3dbae4593d8e9932182557df31123168e1922230e86cd073"
     }
   ],
   "sourceRegistryPackageReplacement": {
-    "artifactName": "nvidia-openshell-sdk-0.1.3.tgz",
-    "label": "OpenShell TypeScript SDK 0.1.3",
-    "packageSpec": "@nvidia/openshell-sdk@0.1.3",
-    "integrity": "sha512-JXWcEDIl/h8Pp6c2NrFMp0XLloDsLaDZvSVJzXvKUyGEulE64d/utiE1KtNh45JtiZXbVmB2PMJAWEmgZKW5kA==",
-    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.3/32e1b675af5ad8b8a8fe078a1a11d515a9f45571"
+    "artifactName": "nvidia-openshell-sdk-0.1.5.tgz",
+    "label": "OpenShell TypeScript SDK 0.1.5",
+    "packageSpec": "@nvidia/openshell-sdk@0.1.5",
+    "integrity": "sha512-pqeumlEkIoFko9kL8EmemULuEPGf7dbFz1DXac9mB5H5e0+vGs24T1S+jT/UOtjhYEdmBSR3WjMojBBAyh6lSQ==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.1.5/141f111b92761575225e0ae977e1cf86d2c6515e"
   }
 }

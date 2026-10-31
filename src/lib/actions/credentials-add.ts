@@ -33,6 +33,7 @@ import {
 } from "../inference/native-nvidia";
 import {
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
+  isTavilyProviderProfileId,
   TAVILY_PROVIDER_PROFILE_AGENTS,
   TAVILY_PROVIDER_PROFILE_ID,
   webSearchProviderProfileId,
@@ -592,7 +593,9 @@ export async function runCredentialsAddAction(
           ...compatibilityWarnings,
           `  Registered provider '${provider}' with the OpenShell gateway.`,
           `  Verify with '${CLI_NAME} credentials list'.`,
-          `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,
+          isTavilyProviderProfileId(providerType)
+            ? `  Attach '${provider}' to each sandbox that should use it (\`openshell sandbox provider attach -g ${target.gatewayName} <sandbox> ${effectiveProvider}\`).`
+            : `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,
         ]);
       }
 

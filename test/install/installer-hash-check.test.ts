@@ -40,6 +40,7 @@ import {
   alterRequiredReleaseValue,
   brevMutationFixtures,
   copyTrustedInstallerVerifier,
+  prepareTrustedFormulaMismatchFixture,
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
@@ -54,10 +55,6 @@ const INSTALLER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const BREV_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
-  "utf8",
-);
 const OBSOLETE_NPM_REPLACEMENT_DIGEST =
   "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 // Retain the reviewed 0.0.116 cleanup fixture across the 0.1.2 migration.
@@ -65,6 +62,7 @@ const NPM_CLEANUP_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "test/fixtures/openshell-brev-npm-cleanup.sh"),
   "utf8",
 );
+const BREV_TEMPLATE = NPM_CLEANUP_TEMPLATE;
 // Exact #12376 npm replacement, derived from the canonical bootstrap template.
 const DCODE_NPM_REPLACEMENT_TEMPLATE = NPM_CLEANUP_TEMPLATE.replace(
   '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
@@ -769,6 +767,7 @@ function runFixture(
     mutateParser === undefined,
   );
   fs.writeFileSync(trustedParserPath, trustSyntheticSupervisorRuntimeTemplate(mutatedParserSource));
+  prepareTrustedFormulaMismatchFixture(trustedRoot, mode);
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -832,6 +831,8 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
+  const registry = path.join(root, "ci/openshell-upgrade-trust.json");
+  fs.writeFileSync(registry, fs.readFileSync(registry, "utf8").replaceAll(digest, trustedDigest));
   const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
   fs.writeFileSync(brev, source);
   return spawnSync(

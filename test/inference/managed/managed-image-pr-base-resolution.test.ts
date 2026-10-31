@@ -253,7 +253,28 @@ it.each([undefined, "", "linux/s390x", "windows/amd64"])(
   },
 );
 
+it("rejects an unsupported PR base resolution mode before reading a base", () => {
+  const result = spawnSync(resolver, [], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PLATFORM: "linux/amd64",
+      RESOLUTION_MODE: "trust-candidate-provenance",
+    },
+  });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("resolution mode is invalid");
+});
+
 const publishedBaseCases = [
+  {
+    candidateContents: "export const version = 2;\n",
+    candidatePath: "scripts/security/inventory.mts",
+    expectedLocal: true,
+    failPublishedPull: false,
+    rejectCopyParsing: false,
+    title: "builds locally when a mounted security input changed",
+  },
   {
     candidateContents: "unrelated candidate change\n",
     candidatePath: "README.md",
@@ -329,14 +350,12 @@ const publishedBaseCases = [
   },
 ] as const;
 
-it.each(
-  // One synthetic COPY contract exercises every agent routed through this resolver.
-  publishedBaseCases.flatMap((testCase) =>
-    ["openclaw", "hermes", "langchain-deepagents-code"].flatMap((agent) =>
-      ["amd64", "arm64"].map((architecture) => ({ ...testCase, agent, architecture })),
-    ),
-  ),
-)("$agent ($architecture): $title", (testCase) => {
+type BaseCase = (typeof publishedBaseCases)[number] & { agent: string; architecture: string };
+
+function assertBaseResolution(
+  testCase: BaseCase,
+  resolutionMode: "build-local" | "reference-or-candidate",
+): void {
   const { candidateContents, candidatePath, expectedLocal, failPublishedPull, rejectCopyParsing } =
     testCase;
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-pr-base-"));
@@ -366,6 +385,7 @@ it.each(
   const copyParser = "scripts/lib/dockerfile-copy-sources.mts";
   const fixtureResolver = path.join(temporaryRoot, "scripts/checks/resolve-managed-pr-base.sh");
   const securityPatch = "scripts/security/patches/libssh2-1.11.1-cve-2026.patch";
+  const mountedInventory = "scripts/security/inventory.mts";
   const unsupportedCopy = rejectCopyParsing ? 'COPY ["README.md", "/tmp/README.md"]\n' : "";
   fs.mkdirSync(agentRoot, { recursive: true });
   fs.mkdirSync(path.dirname(fixtureResolver), { recursive: true });
@@ -373,7 +393,7 @@ it.each(
   fs.mkdirSync(path.join(temporaryRoot, path.dirname(securityPatch)), { recursive: true });
   fs.writeFileSync(
     path.join(agentRoot, "Dockerfile.base"),
-    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\n${unsupportedCopy}`,
+    `FROM scratch\nCOPY --chmod=0444 ${securityPatch} /tmp/libssh2.patch\nCOPY agents/langchain-deepagents-code/requirements.lock /tmp/requirements.lock\nCOPY agents/langchain-deepagents-code/validate-runtime-contract.py /tmp/validate-runtime-contract.py\nCOPY ${adversarialInput} /tmp/security-contract\nRUN --mount=type=bind,source=${mountedInventory},target=/inventory.mts node /inventory.mts\n${unsupportedCopy}`,
   );
   fs.writeFileSync(path.join(agentRoot, "requirements.lock"), "deepagents==0.7.5\n");
   fs.writeFileSync(path.join(agentRoot, "validate-runtime-contract.py"), "print('ok')\n");
@@ -382,6 +402,7 @@ it.each(
   fs.chmodSync(fixtureResolver, 0o755);
   fs.copyFileSync(path.join(repoRoot, copyParser), path.join(temporaryRoot, copyParser));
   fs.writeFileSync(path.join(temporaryRoot, securityPatch), "security patch v1\n");
+  fs.writeFileSync(path.join(temporaryRoot, mountedInventory), "export const version = 1;\n");
   fs.writeFileSync(path.join(temporaryRoot, ".dockerignore"), ".git\n");
   runGit(
     "add",
@@ -391,6 +412,7 @@ it.each(
     `:(literal)${adversarialInput}`,
     copyParser,
     securityPatch,
+    mountedInventory,
   );
   runGit("commit", "--quiet", "-m", "test: add base");
   const publishedSourceSha = runGit("rev-parse", "HEAD");
@@ -474,6 +496,7 @@ exit 90
     PARSER_SIDE_EFFECT: parserSideEffect,
     PLATFORM: `linux/${testCase.architecture}`,
     PUBLISHED_SOURCE_SHA: publishedSourceSha,
+    RESOLUTION_MODE: resolutionMode,
     RUNNER_TEMP: temporaryRoot,
   };
 
@@ -485,10 +508,19 @@ exit 90
     });
     expect(result.status, result.stderr).toBe(0);
     const resolverOutput = fs.readFileSync(output, "utf8");
-    expect(resolverOutput).toContain(`local=${String(expectedLocal)}\n`);
+    expect(resolverOutput).toContain(
+      expectedLocal
+        ? `local=${resolutionMode === "build-local" ? "true" : "deferred"}\n`
+        : "local=false\n",
+    );
+    expect(resolverOutput).toContain(
+      expectedLocal && resolutionMode === "reference-or-candidate"
+        ? "ref=candidate\n"
+        : `ref=${expectedLocal ? environment.LOCAL_BASE_REFERENCE : `${baseRepository}@${digest}`}\n`,
+    );
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands.includes(`buildx build --platform ${environment.PLATFORM}`)).toBe(
-      expectedLocal,
+      expectedLocal && resolutionMode === "build-local",
     );
     expect(dockerCommands).not.toContain("validate-dcode-runtime-contract.py");
     expect(fs.existsSync(parserSideEffect)).toBe(false);
@@ -505,4 +537,23 @@ exit 90
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+it.each(
+  // One synthetic COPY contract exercises every agent routed through this resolver.
+  publishedBaseCases.flatMap((testCase) =>
+    ["openclaw", "hermes", "langchain-deepagents-code"].flatMap((agent) =>
+      ["amd64", "arm64"].map((architecture) => ({ ...testCase, agent, architecture })),
+    ),
+  ),
+)("$agent ($architecture): $title", (testCase) => {
+  assertBaseResolution(testCase, "build-local");
+});
+
+it.each(
+  publishedBaseCases.flatMap((testCase) =>
+    (["amd64", "arm64"] as const).map((architecture) => ({ ...testCase, architecture })),
+  ),
+)("protected OpenClaw ($architecture): $title", (testCase) => {
+  assertBaseResolution({ ...testCase, agent: "openclaw" }, "reference-or-candidate");
 });

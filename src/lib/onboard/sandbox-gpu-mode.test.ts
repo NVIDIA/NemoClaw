@@ -138,8 +138,10 @@ describe("sandbox GPU mode helpers", () => {
 
     const resumedDisabled = getResumeSandboxGpuOverrides(
       { sandboxGpuMode: "0", sandboxGpuDevice: null },
-      false,
+      true,
+      { mode: "1", device: "nvidia.com/gpu=0" },
     );
+    expect(resumedDisabled).toEqual({ flag: "disable", device: null });
     expect(resolveSandboxGpuConfig(gpu(), { ...resumedDisabled, env: {} }).sandboxGpuEnabled).toBe(
       false,
     );

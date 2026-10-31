@@ -8,6 +8,7 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import { resolveHermesLocalSwitchRuntime } from "../inference-set/local-runtime";
 import {
   normalizeNativeLocalProviderAttachment,
+  nativeLocalIdentity,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
   type NativeLocalProvider,
@@ -32,7 +33,11 @@ export async function prepareNativeLocalSwitch(input: {
   readAuthority?: Parameters<typeof prepareNativeLocalSelection>[0]["readAuthority"];
   writeAuthority?: Parameters<typeof prepareNativeLocalSelection>[0]["writeAuthority"];
 }) {
-  if (input.previous?.provider === input.provider && !input.binding) {
+  if (
+    input.previous?.provider === input.provider &&
+    !input.binding &&
+    input.previous.profileId === nativeLocalIdentity(input.previous).profileId
+  ) {
     return {
       ...(await ensureNativeLocalProviderAttached({
         adapter: input.adapter,

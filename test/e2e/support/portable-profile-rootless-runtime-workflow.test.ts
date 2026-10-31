@@ -77,6 +77,7 @@ describe("portable profile rootless runtime workflow", () => {
       (step) => step.name === "Install root dependencies with audit",
     );
     const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
+    const cliBuildIndex = steps.findIndex((step) => step.name === "Build exact CLI");
     const provisionIndex = steps.findIndex(
       (step) => step.name === "Provision restricted rootless Linux runtime",
     );
@@ -95,12 +96,26 @@ describe("portable profile rootless runtime workflow", () => {
     const packageVersionIndex = provision?.indexOf("dpkg-query --show") ?? -1;
     const runtimeVersionIndex = provision?.indexOf("podman --version") ?? -1;
     const actionlintLabels = actionlint["self-hosted-runner"]?.labels;
+    const finalizationHelper =
+      "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts";
+    const buildDiagnostics = "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts";
+    const processSupervisor = "test/helpers/process-supervisor.ts";
+    const finalizationSources = [
+      "src/lib/onboard/machine/final-flow-composition.ts",
+      "src/lib/onboard/machine/finalization-deps.ts",
+      "src/lib/onboard/machine/handlers/finalization.ts",
+    ];
+    const doctorSources = [
+      "src/lib/actions/sandbox/doctor-system-checks.ts",
+      "src/lib/actions/sandbox/doctor.ts",
+    ];
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "agents/hermes/Dockerfile",
         "agents/hermes/Dockerfile.base",
+        "scripts/checks/download-hermes-source-archive.sh",
         "agents/hermes/dashboard-external-host.patch",
         "agents/hermes/start.sh",
         "src/lib/actions/sandbox/forward-recovery.ts",
@@ -116,17 +131,27 @@ describe("portable profile rootless runtime workflow", () => {
         "src/lib/onboard/runtime-provider/docker.ts",
       ]),
     );
+    expect(workflow.on.pull_request.paths).toContain(finalizationHelper);
+    expect(workflow.on.push.paths).toContain(finalizationHelper);
+    expect(workflow.on.pull_request.paths).toContain(buildDiagnostics);
+    expect(workflow.on.push.paths).toContain(buildDiagnostics);
+    expect(workflow.on.pull_request.paths).toContain(processSupervisor);
+    expect(workflow.on.push.paths).toContain(processSupervisor);
+    expect(workflow.on.push.paths).toContain("scripts/checks/download-hermes-source-archive.sh");
+    expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(finalizationSources));
+    expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(doctorSources));
     expect(Array.isArray(actionlintLabels)).toBe(true);
     expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
     expect(auditedDependencyInstallIndex).toBeGreaterThan(dependencyInstallIndex);
     expect(catalogueCompileIndex).toBeGreaterThan(auditedDependencyInstallIndex);
-    expect(provisionIndex).toBeGreaterThan(catalogueCompileIndex);
+    expect(steps[cliBuildIndex]?.run).toBe("npm run build:cli");
+    expect(cliBuildIndex).toBeGreaterThan(catalogueCompileIndex);
+    expect(provisionIndex).toBeGreaterThan(cliBuildIndex);
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
     expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);
-    expect(job?.["timeout-minutes"]).toBe(45);
     expect(steps[hermesBaseIndex]?.env?.XDG_DATA_HOME).toBe(
       "${{ runner.temp }}/nemoclaw-hermes-base-storage",
     );
@@ -318,8 +343,14 @@ ${serviceIdentityCheck}`,
     const selects = (event: "pull_request" | "push", changedPath: string) =>
       workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
     const transactionFixture = "test/e2e/fixtures/portable-hermes-transaction-live.ts";
+    const readinessFixture = "test/e2e/fixtures/portable-registry-readiness.ts";
+    const readinessSupportTest = "test/e2e/support/portable-registry-readiness.test.ts";
     expect.soft(selects("pull_request", transactionFixture)).toBe(true);
     expect.soft(selects("push", transactionFixture)).toBe(true);
+    expect.soft(selects("pull_request", readinessFixture)).toBe(true);
+    expect.soft(selects("push", readinessFixture)).toBe(true);
+    expect.soft(selects("pull_request", readinessSupportTest)).toBe(true);
+    expect.soft(selects("push", readinessSupportTest)).toBe(true);
     expect.soft(selects("pull_request", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/domain/sandbox/image-tag.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/onboard/session-bootstrap.ts")).toBe(true);

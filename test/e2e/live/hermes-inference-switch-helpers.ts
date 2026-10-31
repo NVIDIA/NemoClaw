@@ -15,8 +15,9 @@ import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { withDiscordEnrollmentFixture } from "../fixtures/discord-enrollment-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { resultText } from "../fixtures/clients/index.ts";
+import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/index.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
@@ -53,10 +54,12 @@ import {
   type RetryEvidence,
   type RetryFailureClass,
 } from "../../../tools/e2e/retry-evidence.mts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import {
+  acceptedSwitchResponseModels,
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
 } from "./public-nvidia-switch-provider.ts";
@@ -406,8 +409,9 @@ export async function runHermesPongWithRetry(
       if (result.exitCode === 0) {
         try {
           passed =
-            inferenceResponseModel(result.stdout) === options.expectedModel &&
-            /PONG/iu.test(chatContent(result.stdout));
+            acceptedSwitchResponseModels(options.expectedModel).includes(
+              inferenceResponseModel(result.stdout),
+            ) && /PONG/iu.test(chatContent(result.stdout));
         } catch {}
       }
       return { passed, result };
@@ -421,6 +425,12 @@ export async function runHermesPongWithRetry(
       return { outcome: "failed", failureClass: hermesProbeFailureClass(value.result) };
     },
   });
+  if (execution.outcome === "failed") {
+    const diagnostic = execution.value && resultText(execution.value.result).trim();
+    throw new Error(
+      `Hermes PONG probe did not return a successful response from the selected model.${diagnostic ? `\n${diagnostic}` : ""}`,
+    );
+  }
   if (execution.value) return execution.value.result;
   throw new Error("Hermes live probe completed without an attempt result.");
 }
@@ -727,6 +737,7 @@ export async function runHermesInferenceSetWithRetry(
   compatibleMetadataArgs: string[],
   options: {
     attempts?: number;
+    artifactNamePrefix?: string;
     artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
@@ -753,7 +764,7 @@ export async function runHermesInferenceSetWithRetry(
       : undefined,
     run: (attempt) =>
       host.command("node", args, {
-        artifactName: `hermes-inference-set-${attempt}`,
+        artifactName: `${options.artifactNamePrefix ?? "hermes-inference-set"}-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
           ...(options.publicNvidiaApiKey
@@ -897,4 +908,111 @@ export function sandboxInferenceCommand(payload: string): string {
 
 export function hermesApiCommand(payload: string): string {
   return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
+}
+
+/** Prove that a native NVIDIA rebuild retains Discord settings and agent inference. */
+export async function runHermesNvidiaDiscordRebuild({
+  host,
+  sandbox,
+  progress,
+  publicApiKey,
+  redactionValues,
+}: {
+  host: Pick<HostCliClient, "command">;
+  sandbox: Pick<SandboxClient, "exec">;
+  progress: Pick<TestProgress, "phase">;
+  publicApiKey: string | null;
+  redactionValues: string[];
+}): Promise<void> {
+  switch (publicApiKey) {
+    case null:
+      break;
+    default: {
+      progress.phase("verify NVIDIA inference after Discord state rebuild");
+      const enrollmentEnv = withDiscordEnrollmentFixture(
+        env(undefined, {
+          NVIDIA_INFERENCE_API_KEY: publicApiKey,
+          DISCORD_BOT_TOKEN: "test-fake-discord-token-hermes-e2e",
+          DISCORD_SERVER_ID: "1491590992753590594",
+          DISCORD_USER_ID: "1005536447329222676",
+          DISCORD_REQUIRE_MENTION: "1",
+        }),
+      );
+      const enrolled = await host.command(
+        "node",
+        [CLI, SANDBOX_NAME, "channels", "add", "discord"],
+        {
+          artifactName: "hermes-nvidia-enroll-discord",
+          env: enrollmentEnv,
+          redactionValues,
+          timeoutMs: 180_000,
+        },
+      );
+      expectExitZero(enrolled, "enroll Discord before native NVIDIA rebuild");
+      const rebuilt = await host.command("node", [CLI, SANDBOX_NAME, "rebuild", "--yes"], {
+        artifactName: "hermes-nvidia-discord-rebuild",
+        env: withDiscordEnrollmentFixture(env(), enrollmentEnv.DISCORD_BOT_TOKEN),
+        redactionValues,
+        timeoutMs: 15 * 60_000,
+      });
+      expectExitZero(rebuilt, "rebuild Hermes with enrolled Discord");
+      const discordState = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "/opt/hermes/.venv/bin/python3",
+          "-c",
+          `import json, os, shlex
+from pathlib import Path
+import yaml
+home = Path(os.environ.get("HERMES_HOME", "/sandbox/.hermes"))
+config = yaml.safe_load((home / "config.yaml").read_text())
+values = dict(item.split("=", 1) for item in shlex.split((home / ".env").read_text(), comments=True))
+print(json.dumps({
+    "enabled": config.get("platforms", {}).get("discord", {}).get("enabled"),
+    "requireMention": config.get("discord", {}).get("require_mention"),
+    "guildIds": values.get("NEMOCLAW_DISCORD_GUILD_IDS"),
+    "allowedUsers": values.get("DISCORD_ALLOWED_USERS"),
+}))`,
+        ],
+        {
+          artifactName: "hermes-nvidia-discord-post-rebuild-state",
+          env: env(),
+          redactionValues,
+          timeoutMs: 30_000,
+        },
+      );
+      expectExitZero(discordState, "read Discord settings after rebuild");
+      expect(JSON.parse(discordState.stdout)).toEqual({
+        enabled: true,
+        requireMention: true,
+        guildIds: "1491590992753590594",
+        allowedUsers: "1005536447329222676",
+      });
+      const status = await host.command("node", [CLI, SANDBOX_NAME, "status", "--json"], {
+        artifactName: "hermes-nvidia-discord-post-rebuild-status",
+        env: env(),
+        redactionValues,
+        timeoutMs: 6 * 60_000,
+      });
+      expectExitZero(status, "check Hermes NVIDIA status after rebuild");
+      expect(JSON.parse(status.stdout), resultText(status)).toMatchObject({
+        provider: "nvidia-prod",
+        inferenceHealth: { ok: true, probed: true },
+      });
+      const inference = await sandbox.exec(
+        SANDBOX_NAME,
+        ["hermes", "-z", "Reply with exactly PROBE_OK"],
+        {
+          artifactName: "hermes-nvidia-discord-post-rebuild-inference",
+          env: env(),
+          redactionValues,
+          timeoutMs: 180_000,
+        },
+      );
+      expect(
+        inference.exitCode === 0 && /\bPROBE_OK\b/u.test(resultText(inference)),
+        resultText(inference),
+      ).toBe(true);
+    }
+  }
 }

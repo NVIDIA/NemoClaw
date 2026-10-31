@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import type { OpenShellForwardObservation } from "../adapters/openshell/forward";
 import type { OpenShellForwardPortObserver } from "./dashboard-port";
@@ -291,6 +294,34 @@ describe("prepared provider reconfiguration handoff", () => {
       authoritativeResumeConfig: false,
       forceInferenceSetup: false,
     });
+  });
+
+  it("carries the validated retained policy into the locked rebuild provider phase", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "rebuild-policy-admission-"));
+    const policyPath = path.join(directory, "policy.yaml");
+    const document =
+      "version: 1\nnetwork_policies:\n  retained:\n    name: retained\n    endpoints:\n      - host: api.example.com\n        port: 443\n    binaries:\n      - path: /usr/bin/node\n";
+    try {
+      fs.writeFileSync(policyPath, document);
+      expect(
+        rebuildProviderFlowOptions(
+          { ...authorizedOptions, rebuildPolicySourcePath: policyPath },
+          providerTarget,
+        ),
+      ).toMatchObject({ rebuildSandboxPolicyDocument: document });
+      fs.writeFileSync(policyPath, "version: 1\nnetwork_policies: []\n");
+      expect(() =>
+        rebuildProviderFlowOptions(
+          { ...authorizedOptions, rebuildPolicySourcePath: policyPath },
+          providerTarget,
+        ),
+      ).toThrow(/Sandbox policy is malformed/);
+      expect(
+        rebuildProviderFlowOptions({ rebuildPolicySourcePath: policyPath }, providerTarget),
+      ).not.toHaveProperty("rebuildSandboxPolicyDocument");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

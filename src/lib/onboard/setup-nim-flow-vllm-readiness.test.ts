@@ -4,8 +4,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { VllmProfile } from "../inference/vllm";
 import type { SystemReadinessReport } from "../readiness/types";
+import * as hostReadiness from "../readiness/host";
 import { resolveHostLocalVllmSelection } from "../inference/serving/host-local-vllm-selection";
-import { makeDeps, makeHostState } from "./__test-helpers__/setup-nim-flow";
+import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
 import { createWslHostReadinessReport as wslReport } from "../../../test/helpers/wsl-host-readiness-report";
 import {
   bindSetupNimForRun,
@@ -33,6 +34,11 @@ async function runSelection(
     options: Parameters<SetupNimFlowDeps["installVllm"]>[1],
   ) => ReturnType<typeof resolveHostLocalVllmSelection> | undefined = () => undefined,
 ) {
+  const collectHostReadiness = vi
+    .spyOn(hostReadiness, "createHostReadinessReport")
+    .mockImplementation(() => {
+      throw new Error("Unexpected host probe in the readiness-forwarding fixture");
+    });
   const stopped = new Error("stop after selection");
   let result: ReturnType<typeof resolveHostLocalVllmSelection> | undefined;
   const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
@@ -43,6 +49,14 @@ async function runSelection(
   const setupNim = createSetupNim(
     makeDeps({
       getNonInteractiveProvider: () => "install-vllm",
+      discoverManagedLlamaCppSelections: () => ({
+        choices: [],
+        resolution: { kind: "rejected", reason: "This fixture selects vLLM" },
+      }),
+      localModelProfileIntegration: {
+        resolvePlan: () => null,
+        onboard: async () => unexpected("local model profile onboarding"),
+      },
       detectInferenceProviderHostState: () =>
         makeHostState({
           vllmProfile: profile,
@@ -70,6 +84,7 @@ async function runSelection(
       report,
     ),
   ).rejects.toBe(stopped);
+  expect(collectHostReadiness).not.toHaveBeenCalled();
   return { installVllm, error, result };
 }
 

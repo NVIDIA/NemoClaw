@@ -17,7 +17,10 @@ import {
 import { testTimeout } from "../../helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "../../messaging-plan-test-helper";
 
-import { createSlackRemediationFixture } from "../../support/slack-remediation-fixture";
+import {
+  createSlackRemediationFixture,
+  writeSlackBundledParserFixture,
+} from "../../support/slack-remediation-fixture";
 
 import { officialPluginInspectionShell } from "./official-plugin-inspection-fixture";
 
@@ -225,7 +228,7 @@ function verifyOriginalSlackDependencyBytes(
 
 describe("messaging-build-applier.mts: plugin archive integrity", () => {
   it.each(["reviewed archive", "npm"])(
-    "replaces Slack's bundled proxy-addr using %s after inspection",
+    "replaces Slack's reviewed bundled dependencies using %s after inspection",
     async (source) => {
       const fixture = await createSlackRemediationFixture();
       try {
@@ -255,6 +258,18 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js")))
             .digest("hex"),
         ).toBe("aa7efd29bbd61cbcc1bdafde9e674db28ead077864f33bfad3cdd19bb5a3778c");
+        expect(
+          JSON.parse(fs.readFileSync(path.join(fixture.zodDirectory, "package.json"), "utf8"))
+            .version,
+        ).toBe("4.6.6");
+        expect(
+          JSON.parse(
+            fs.readFileSync(
+              path.join(fixture.proxyAddrDirectory, "../body-parser/package.json"),
+              "utf8",
+            ),
+          ).version,
+        ).toBe("2.4.0");
         expect(fs.readFileSync(fixture.trace, "utf8")).toBe("installed\ninspected-unpatched\n");
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
       } finally {
@@ -345,8 +360,11 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         });
         expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
         expect(fs.readdirSync(path.dirname(fixture.proxyAddrDirectory)).sort()).toEqual([
+          "body-parser",
           "express",
+          "iconv-lite",
           "proxy-addr",
+          "qs",
         ]);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -401,6 +419,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           fixture,
           failRestore ? preservedPackage : fixture.proxyAddrDirectory,
         );
+        expect(
+          JSON.parse(fs.readFileSync(path.join(packageParent, "body-parser/package.json"), "utf8"))
+            .version,
+        ).toBe("2.3.0");
         expect(result.stderr).toContain(
           failRestore
             ? "OpenClaw dependency 'proxy-addr' could not be replaced."
@@ -417,7 +439,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(result.stderr).not.toContain(fixture.root);
         expect(result.stderr).not.toContain("rename-failure-canary");
         expect(fs.readdirSync(packageParent).sort()).toEqual(
-          failRestore ? ["express", recoveryDirectories[0]!].sort() : ["express", "proxy-addr"],
+          failRestore
+            ? ["body-parser", "express", "iconv-lite", "qs", recoveryDirectories[0]!].sort()
+            : ["body-parser", "express", "iconv-lite", "proxy-addr", "qs"],
         );
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -490,6 +514,55 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             .readdirSync(packageParent)
             .filter((entry) => entry.startsWith(".proxy-addr-replacement-")),
         ).toEqual([]);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(45_000),
+  );
+
+  it(
+    "completes Slack remediation after a later qs replacement fails",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const dependencyParent = path.dirname(fixture.proxyAddrDirectory);
+      const qsDirectory = path.join(dependencyParent, "qs");
+      const renameHook = renameFailureHook(fixture.root, qsDirectory, false);
+      const env = { ...fixture.env, NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined };
+      const run = (withFailure: boolean) =>
+        spawnSync(
+          process.execPath,
+          [
+            ...(withFailure ? ["--import", renameHook] : []),
+            SCRIPT_PATH,
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
+          { cwd: REPO_ROOT, env, encoding: "utf8", timeout: 15_000 },
+        );
+      const version = (name: string) =>
+        JSON.parse(fs.readFileSync(path.join(dependencyParent, name, "package.json"), "utf8"))
+          .version as string;
+
+      try {
+        const first = run(true);
+        expect(first.error).toBeUndefined();
+        expect(first.status, first.stderr).toBe(2);
+        expect(version("proxy-addr")).toBe("2.0.8");
+        expect(version("body-parser")).toBe("2.4.0");
+        expect(version("qs")).toBe("6.15.3");
+
+        const retry = run(false);
+        expect(retry.error).toBeUndefined();
+        expect(retry.status, retry.stderr).toBe(0);
+        expect(version("proxy-addr")).toBe("2.0.8");
+        expect(version("body-parser")).toBe("2.4.0");
+        expect(version("qs")).toBe("6.16.1");
+        expect(
+          fs.readdirSync(dependencyParent).some((name) => name.includes("-replacement-")),
+        ).toBe(false);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
@@ -710,7 +783,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     try {
       [
         ...dockerfile.matchAll(
-          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
+          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:bundled-npm-package|openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
         ),
       ].forEach((copy) => {
         const source = copy[1] ?? "";
@@ -849,9 +922,70 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       JSON.stringify({
         name: "@openclaw/slack",
         version: "2026.9.2",
-        dependencies: { "@slack/bolt": "5.0.0" },
-        bundledDependencies: ["@slack/bolt"],
+        dependencies: { "@slack/bolt": "5.0.0", zod: "4.4.3", undici: "7.29.1" },
+        bundledDependencies: ["@slack/bolt", "zod", "undici"],
       }),
+    );
+    const undiciDirectory = path.join(packageDirectory, "node_modules", "undici");
+    fs.mkdirSync(undiciDirectory);
+    fs.writeFileSync(
+      path.join(undiciDirectory, "package.json"),
+      JSON.stringify({ name: "undici", version: "7.29.1" }),
+    );
+    const zodDirectory = path.join(packageDirectory, "node_modules", "zod");
+    fs.mkdirSync(zodDirectory);
+    fs.writeFileSync(
+      path.join(zodDirectory, "package.json"),
+      JSON.stringify({ name: "zod", version: "4.4.3" }),
+    );
+    const archives = path.join(tmp, "archives");
+    fs.mkdirSync(archives);
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/proxy-addr-2.0.8/proxy-addr-2.0.8.tgz"),
+      path.join(archives, "proxy-addr-2.0.8.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/zod-4.6.6/zod-4.6.6.tgz"),
+      path.join(archives, "zod-4.6.6.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/undici-7.30.1/undici-7.30.1.tgz"),
+      path.join(archives, "undici-7.30.1.tgz"),
+    );
+    const bodyDirectory = path.join(
+      packageDirectory,
+      "node_modules/@slack/bolt/node_modules/body-parser",
+    );
+    fs.mkdirSync(bodyDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(bodyDirectory, "package.json"),
+      JSON.stringify({
+        name: "body-parser",
+        version: "2.3.0",
+        dependencies: { qs: "^6.15.2", "content-type": "^2.0.0", "iconv-lite": "^0.7.2" },
+      }),
+    );
+    fs.copyFileSync(
+      path.resolve(
+        import.meta.dirname,
+        "../../fixtures/npm/body-parser-2.4.0/body-parser-2.4.0.tgz",
+      ),
+      path.join(archives, "body-parser-2.4.0.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/qs-6.16.1/qs-6.16.1.tgz"),
+      path.join(archives, "qs-6.16.1.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(import.meta.dirname, "../../fixtures/npm/iconv-lite-0.7.3/iconv-lite-0.7.3.tgz"),
+      path.join(archives, "iconv-lite-0.7.3.tgz"),
+    );
+    fs.copyFileSync(
+      path.resolve(
+        import.meta.dirname,
+        "../../fixtures/npm/content-type-2.1.0/content-type-2.1.0.tgz",
+      ),
+      path.join(archives, "content-type-2.1.0.tgz"),
     );
     const boltDirectory = path.join(packageDirectory, "node_modules/@slack/bolt");
     const expressDirectory = path.join(boltDirectory, "node_modules/express");
@@ -871,7 +1005,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       JSON.stringify({
         name: "express",
         version: "5.2.1",
-        dependencies: { "proxy-addr": "^2.0.7" },
+        dependencies: { "body-parser": "^2.2.1", "proxy-addr": "^2.0.7" },
         license: "MIT",
         engines: { node: ">= 18" },
       }),
@@ -887,6 +1021,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       }),
     );
     fs.writeFileSync(path.join(dependencyDirectory, "index.js"), "vulnerable-canary");
+    writeSlackBundledParserFixture(packageDirectory);
     const tracePath = path.join(tmp, "openclaw.trace");
     const inspection = JSON.stringify({
       plugin: { id: "slack", trustedOfficialInstall: true },
@@ -931,10 +1066,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
           HOME: tmp,
           ...overrides,
-          NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: path.resolve(
-            import.meta.dirname,
-            "../../fixtures/npm/proxy-addr-2.0.8",
-          ),
+          NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: archives,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_SLACK_2026_9_2_INTEGRITY,
           OPENCLAW_VERSION: "2026.9.2",
@@ -948,6 +1080,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       expect(
         JSON.parse(fs.readFileSync(path.join(dependencyDirectory, "package.json"), "utf8")).version,
       ).toBe("2.0.8");
+      expect(
+        JSON.parse(fs.readFileSync(path.join(zodDirectory, "package.json"), "utf8")).version,
+      ).toBe("4.6.6");
       expect(fs.readFileSync(path.join(dependencyDirectory, "index.js"), "utf8")).not.toContain(
         "vulnerable-canary",
       );
@@ -1244,6 +1379,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_9_1_INTEGRITY,
             OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_9_1_INTEGRITY,
             OPENCLAW_PACK_FILENAME_OVERRIDE: "../slack-2026.9.1.tgz",
+            TMPDIR: tmp,
             OPENCLAW_VERSION: "2026.9.1",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
           },

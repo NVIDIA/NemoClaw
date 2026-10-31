@@ -161,6 +161,9 @@ mismatched digests.
 
 Follow `nemoclaw-contributor-create-pr` for publication.
 
+Every PR must have the skill's opening authoring-session report in a collapsed comment, including unavailable fields.
+Publish it when opening a new PR. For an existing PR, add it on the next update; see the skill's migration guidance.
+
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
 - Check `.github/pr-limits.json` for the contributor's open PR limit.

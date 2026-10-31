@@ -8,13 +8,13 @@ export const E2E_ACTION_PROVENANCE = {
   },
   prepareWorkspace: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c",
-    contentSha256: "4458b3491e5e01097db99a212c4a7bf5ae0cc62cdeda7fef8e3862ed572d2c2b",
+      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351",
+    contentSha256: "9356afd1acf2038ade28c693a52194445d002115ea676f08f413f1a1530a92e6",
   },
   nativePodmanRuntime: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
-    contentSha256: "71b047434bb457bd0e7f7d1b8dec9c5c803f2e74de3cdc92381652dbd77d82c8",
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@e85857e2a7bfb2af01241ecbce5947ee774c1280",
+    contentSha256: "ffedc78b82ac624702758ea76b0cc33045f546c9a4206742aaa9ebf1c4dbb7c0",
   },
   restoreNativePodmanRuntime: {
     reference:
@@ -28,12 +28,12 @@ export const E2E_ACTION_PROVENANCE = {
   },
   restoreCliArtifact: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a",
+      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554",
     contentSha256: "4a6a6b21993e579855916dfb897995a3f35dc4461d04666094af7eddb8676077",
   },
   reviewedSdkInstall: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115",
+      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589",
     contentSha256: "09f77858c4025bdef9c3ffb184a53041c9be8cc87f7853c403f22ea70391228b",
   },
   uploadArtifacts: {
@@ -55,9 +55,9 @@ export const E2E_ACTION_PROVENANCE = {
   },
   hostDependencies: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d",
+      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@e85857e2a7bfb2af01241ecbce5947ee774c1280",
     actionSha256: "6eabd4f7f0d1eb0d3e1788323a0222173dc574f1f722c0ae302cacb268327154",
-    scriptSha256: "13211c558ff3c7816fe3b3936a0d62f87c28ebd721b295f4571431d59cfcc04a",
+    scriptSha256: "2df9f3342ad5c31a2d5221d2c7ee1d835bb43b798697171f21f4e5125cd7161a",
   },
 } as const;
 

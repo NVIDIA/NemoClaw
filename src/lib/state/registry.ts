@@ -763,8 +763,8 @@ export function reserveSandboxInferenceRoute(
             nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
           ) &&
           isDeepStrictEqual(
-            normalizeInferenceSelection(existing),
-            normalizeInferenceSelection(route),
+            normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(existing)),
+            normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(route)),
           ));
       if (!sameReservation) {
         if (existing.pendingCreateIdentity) {

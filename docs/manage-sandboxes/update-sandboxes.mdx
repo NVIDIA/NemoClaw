@@ -63,6 +63,12 @@ Then rerun the installer.
 If you manually retired the gateway, restore the previously installed OpenShell version and its gateway before you transfer the sandbox state.
 </Warning>
 
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check

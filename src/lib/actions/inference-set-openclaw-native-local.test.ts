@@ -9,6 +9,7 @@ import {
 } from "../../../test/helpers/inference-set-openclaw-native-local";
 import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
 import { runInferenceSet } from "./inference-set";
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 
 vi.mock("../adapters/openshell/provider-policy", () => ({
   requireNativeProviderPolicy: vi.fn(async () => {}),
@@ -83,6 +84,37 @@ describe("OpenClaw native local live selection", () => {
       ),
     ).rejects.toThrow(/Failed to update NemoClaw registry.*restoring.*reattach rejected/s);
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+  });
+
+  it("reselects the same Ollama endpoint with the dual-stack profile (#13544)", async () => {
+    const previous = { ...attachment, ...nativeLocalIdentity(attachment, 1) };
+    const { deps, next, isAttached } = switchingFixture(previous, "ollama-local");
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "old-model", sandboxName: "alpha" }, deps),
+    ).resolves.toMatchObject({ provider: "ollama-local" });
+    expect(isAttached()).toBe(true);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeLocalProviderAttachment: next }),
+    );
+    expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(previous);
+  });
+
+  it("restores the IPv4 attachment when dual-stack selection cannot save the registry (#13544)", async () => {
+    const previous = { ...attachment, ...nativeLocalIdentity(attachment, 1) };
+    const { deps, isAttached } = switchingFixture(previous, "ollama-local");
+    deps.calls.updateSandbox.mockReturnValue(false);
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "old-model", sandboxName: "alpha" }, deps),
+    ).rejects.toThrow(/Failed to update NemoClaw registry/);
+    expect(isAttached()).toBe(false);
+    expect(
+      await deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "alpha",
+      }),
+    ).toMatchObject({ ok: true, value: { names: [previous.providerName] } });
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalledWith(previous);
   });
 
   it("switches from Ollama to another local provider without changing the shared route", async () => {
@@ -273,5 +305,29 @@ describe("OpenClaw native local live selection", () => {
       deps,
     );
     expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
+  });
+
+  it("rejects a conflicting gateway identity before retiring pending local authority", async () => {
+    const pendingBinding = { ...attachment, gatewayName: "nemoclaw-18080" };
+    const pending = { ...pendingBinding, ...nativeLocalIdentity(pendingBinding) };
+    const deps = fixture(pending);
+    const entry = deps.getSandbox("alpha")!;
+    entry.gatewayName = "nemoclaw-18081";
+    entry.gatewayPort = 18080;
+    entry.nativeLocalProviderAttachment = undefined;
+    deps.listNativeLocalProviderAuthorities = () => [pending];
+    const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+    const deletion = vi.spyOn(deps.providerAdapter, "deleteProvider");
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow(/conflicting gateway identity/);
+    expect(detach).not.toHaveBeenCalled();
+    expect(deletion).not.toHaveBeenCalled();
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 });

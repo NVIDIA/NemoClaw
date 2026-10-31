@@ -13,6 +13,7 @@ import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
+import { HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import { cleanupTempDir } from "../../onboard/temp-files";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -156,6 +157,8 @@ export async function rebuildSandbox(
           MESSAGING_SETUP_APPLIER_ENV_KEY,
           DOCKER_GPU_PATCH_NETWORK_ENV,
           "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+          // Port selection publishes here; keep it from pinning the next rebuild (#13628).
+          HERMES_API_PORT_ENV,
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
         ];
@@ -846,14 +849,23 @@ async function rebuildSandboxUnlocked(
           const hostCredential = resumeConfig.credentialEnv
             ? hydrateCredentialEnv(resumeConfig.credentialEnv)
             : null;
-          if (
-            hostCredential &&
-            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
-          ) {
+          let indeterminate = false;
+          const valid =
+            !hostCredential ||
+            (await validateRebuildHostInferenceCredential(
+              resumeConfig,
+              hostCredential,
+              undefined,
+              () => {
+                indeterminate = true;
+              },
+            ));
+          if (!valid) {
             return {
               ok: false,
-              message:
-                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+              message: indeterminate
+                ? "NVIDIA upstream inference was temporarily unavailable before sandbox deletion. The sandbox is untouched; retry rebuild when inference recovers."
+                : "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
             };
           }
           const nativeAttachment =

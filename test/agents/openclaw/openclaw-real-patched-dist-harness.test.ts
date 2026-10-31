@@ -9,6 +9,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { interruptMetadataWrite } from "../../support/metadata-write-faults";
+import { reviewedArchiveGraphManifest } from "../../../scripts/audit-reviewed-npm-graph.mts";
+import { remediateOpenClawRuntimeDependencies } from "../../../scripts/lib/remediate-openclaw-runtime-dependencies.mts";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 import {
@@ -21,6 +24,8 @@ import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
+
+import { patchOpenClawAgentMessageInput } from "../../../scripts/lib/patch-openclaw-agent-message-input.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
@@ -218,13 +223,26 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function dockerfilePatchCommand(dist: string): string {
+function dockerfileRuntimePatchCommand(dist: string): string {
   return dockerRunCommandBetween(
+    "# Native OpenClaw restart must reload",
+    "# Keep OpenClaw 2026.9.1 scope-upgrade",
+  )
+    .replaceAll("/usr/local/lib/node_modules/openclaw/dist", shellQuote(dist))
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-",
+      path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"),
+    );
+}
+
+function dockerfilePatchCommand(dist: string): string {
+  const legacy = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
     "# Native OpenClaw restart must reload",
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+  return `${legacy}\n${dockerfileRuntimePatchCommand(dist)}`;
 }
 
 function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
@@ -388,11 +406,51 @@ it("bounds reload-proof diagnostics while retaining the final gateway error", as
 });
 
 describe("OpenClaw real patched-dist materialization guard", () => {
+  it("applies the Dockerfile runtime patch selection before auditing the distribution", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-patch-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "2026.9.2" }));
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/agent-message-input.js.txt"),
+      path.join(dist, "agent-via-gateway-fixture.js"),
+    );
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
+      path.join(dist, "cli/gateway-lifecycle.runtime.js"),
+    );
+    fs.writeFileSync(
+      path.join(dist, "lifecycle-fixture.js"),
+      `async function runSafeGatewayRestart(opts, target) {
+\tconst result = await callGatewayCli({
+\t\tmethod: "gateway.restart.request",
+\t\tparams,
+\t});
+\treturn result;
+}`,
+    );
+    try {
+      expect(() => patchOpenClawAgentMessageInput(dist, true)).toThrow("patch is missing");
+      const result = spawnSync("bash", ["-c", dockerfileRuntimePatchCommand(dist)], {
+        encoding: "utf8",
+        timeout: PATCH_COMMAND_TIMEOUT_MS,
+      });
+      requireSpawnSuccess(result, "apply Dockerfile runtime patches to parser fixtures");
+      expect(() => patchOpenClawAgentMessageInput(dist, true)).not.toThrow();
+      expect(() => patchOpenClawContainerRestart(dist, true)).not.toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("maps container-only patch helpers to their repository fixtures", () => {
     const command = dockerfilePatchCommand("/tmp/reviewed-openclaw-dist");
 
     expect(command).not.toContain("/usr/local/lib/nemoclaw/extract-semver");
     expect(command).toContain(shellQuote(OPENCLAW_VERSION_EXTRACTOR));
+    expect(command).toContain("for patch in container-restart agent-message-input");
+    expect(command).not.toContain("/usr/local/lib/nemoclaw/patch-openclaw-");
+    expect(command).toContain(path.join(REPO_ROOT, "scripts", "lib", "patch-openclaw-"));
   });
 
   // source-shape-contract: security -- The real artifact harness must reject every Node runtime except the exact version reviewed for CI and production images
@@ -498,6 +556,194 @@ describe("OpenClaw real patched-dist materialization guard", () => {
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
   () => {
+    // source-shape-contract: compatibility -- Exact installed plugin manifest bytes must survive interrupted remediation before retrying the real messaging consumers.
+    it.each(["discord", "googlechat", "slack"])(
+      "runs npm and messaging consumers after retrying an interrupted %s manifest write",
+      (plugin) => {
+        const nodeRuntime = resolveRealOpenClawNodeRuntime();
+        const policy = JSON.parse(
+          fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+        ) as {
+          archiveTarVersion: string;
+          archivePackages: Array<{ packageSpec: string; tarballUrl: string; integrity: string }>;
+        };
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw105-consumers-"));
+        try {
+          const archives = [
+            "openclaw@2026.10.5",
+            "@openclaw/discord@2026.10.5",
+            "@openclaw/googlechat@2026.10.5",
+            "@openclaw/slack@2026.10.5",
+          ].map((spec) => {
+            const reviewed = policy.archivePackages.filter((entry) => entry.packageSpec === spec);
+            requireRuntimeEqual(
+              String(reviewed.length),
+              "1",
+              `unique reviewed archive for ${spec}`,
+            );
+            return materializeReviewedTarball(reviewed[0].tarballUrl, tmp, reviewed[0].integrity);
+          });
+          const runtime = path.join(tmp, "runtime");
+          fs.mkdirSync(runtime);
+          fs.writeFileSync(
+            path.join(runtime, "package.json"),
+            JSON.stringify(reviewedArchiveGraphManifest(policy.archiveTarVersion)),
+          );
+          const install = spawnSync(
+            "npm",
+            [
+              "install",
+              "--prefix",
+              runtime,
+              "--allow-file=all",
+              "--ignore-scripts",
+              "--omit=dev",
+              "--no-audit",
+              "--no-fund",
+              ...archives,
+            ],
+            { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(install, "install reviewed 2026.10.5 consumer graph without scripts");
+          const manifest = path.join(runtime, "node_modules", "@openclaw", plugin, "package.json");
+          const original = fs.readFileSync(manifest);
+          const failure = interruptMetadataWrite(
+            `"name": "@openclaw/${plugin}"`,
+            (contents) => contents.indexOf('"zod": "4.6.6"') + '"zod": "4.6.6"'.length,
+          );
+          try {
+            expect(() =>
+              remediateOpenClawRuntimeDependencies(runtime, { updateLock: true }),
+            ).toThrow("injected partial metadata write failure");
+            const observed = fs.openSync(manifest, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+            try {
+              expect(fs.readFileSync(observed)).toEqual(original);
+            } finally {
+              fs.closeSync(observed);
+            }
+          } finally {
+            failure.mockRestore();
+          }
+          remediateOpenClawRuntimeDependencies(runtime, { updateLock: true });
+          const npmResult = spawnSync(
+            nodeRuntime.executable,
+            [path.join(runtime, "node_modules/npm/bin/npm-cli.js"), "--version"],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(npmResult, "run remediated npm");
+          expect(npmResult.stdout.trim()).toBe("12.2.1");
+          const npxResult = spawnSync(
+            nodeRuntime.executable,
+            [path.join(runtime, "node_modules/npm/bin/npx-cli.js"), "--version"],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(npxResult, "run remediated npx");
+          expect(npxResult.stdout.trim()).toBe("12.2.1");
+          const consumer = spawnSync(
+            nodeRuntime.executable,
+            [
+              "--input-type=module",
+              "-e",
+              String.raw`
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+const sdkRoot = path.join(process.argv[1], "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk");
+const require = createRequire(path.join(sdkRoot, "package.json"));
+assert.equal(require("zod/package.json").version, "4.6.6");
+for (const sdk of [await import(pathToFileURL(path.join(sdkRoot, "output/index.mjs")).href), require(path.join(sdkRoot, "output/index.cjs"))]) {
+  assert.ok(Object.keys(sdk.Commands).length > 0);
+  assert.deepEqual(sdk.Responses.OpenExternalLinkResponse.parse({}), { opened: null });
+  assert.deepEqual(sdk.Responses.OpenExternalLinkResponse.parse({ opened: true }), { opened: true });
+}
+`,
+              runtime,
+            ],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            consumer,
+            "parse Discord SDK responses through remediated Zod in both module formats",
+          );
+          const messagingConsumer = spawnSync(
+            nodeRuntime.executable,
+            [
+              "--input-type=module",
+              "-e",
+              String.raw`
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { createServer } from "node:http";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+const pluginRoot = path.join(process.argv[1], "node_modules/@openclaw");
+const googleRoot = path.join(pluginRoot, "googlechat");
+const googleRequire = createRequire(path.join(googleRoot, "package.json"));
+assert.equal(googleRequire.resolve("zod/package.json"), path.join(googleRoot, "node_modules/zod/package.json"));
+assert.equal(googleRequire("zod/package.json").version, "4.6.6");
+const { googlechatPlugin } = await import(pathToFileURL(path.join(googleRoot, "dist/channel-plugin-api.js")).href);
+const syntheticAccount = { client_email: "fixture@example.invalid", project_id: "fixture-project" };
+const account = googlechatPlugin.config.resolveAccount({ channels: { googlechat: { serviceAccount: JSON.stringify(syntheticAccount) } } }, "default");
+assert.deepEqual(account.credentials, syntheticAccount);
+assert.equal(account.credentialSource, "inline");
+const invalid = googlechatPlugin.config.resolveAccount({ channels: { googlechat: { serviceAccount: "[]" } } }, "default");
+assert.equal(invalid.credentials, undefined);
+assert.equal(invalid.credentialSource, "none");
+const slackRoot = path.join(pluginRoot, "slack");
+const slackRequire = createRequire(path.join(slackRoot, "package.json"));
+assert.equal(slackRequire("zod/package.json").version, "4.6.6");
+assert.equal(slackRequire("undici/package.json").version, "8.12.3");
+const boltRoot = path.join(slackRoot, "node_modules/@slack/bolt");
+const boltRequire = createRequire(path.join(boltRoot, "package.json"));
+const expressRequire = createRequire(boltRequire.resolve("express"));
+const bodyManifest = expressRequire.resolve("body-parser/package.json");
+assert.equal(bodyManifest, path.join(boltRoot, "node_modules/body-parser/package.json"));
+assert.equal(expressRequire("body-parser/package.json").version, "2.4.0");
+const bodyRequire = createRequire(bodyManifest);
+assert.equal(bodyRequire("qs/package.json").version, "6.16.1");
+const contentTypeRoot = path.join(path.dirname(bodyManifest), "node_modules/content-type");
+assert.equal(bodyRequire.resolve("content-type"), path.join(contentTypeRoot, "dist/index.js"));
+assert.equal(bodyRequire(path.join(contentTypeRoot, "package.json")).version, "2.1.0");
+const { ExpressReceiver } = slackRequire("@slack/bolt");
+const receiver = new ExpressReceiver({ signingSecret: "synthetic-local-test-secret" });
+const express = boltRequire("express");
+receiver.app.post("/parser-proof", express.urlencoded({ extended: true }), (req, res) => res.json(req.body));
+receiver.app.post("/json-proof", express.json(), (req, res) => res.json(req.body));
+receiver.app.use((error, _req, res, _next) => res.status(error.status).json({ type: error.type }));
+const server = createServer(receiver.app);
+try {
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const form = await fetch(origin + "/parser-proof", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "event[type]=message&event[text]=hello+world" });
+  assert.equal(form.status, 200);
+  assert.deepEqual(await form.json(), { event: { type: "message", text: "hello world" } });
+  const json = await fetch(origin + "/json-proof", { method: "POST", headers: { "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ text: "hello" }) });
+  assert.equal(json.status, 200);
+  assert.deepEqual(await json.json(), { text: "hello" });
+  const invalidJson = await fetch(origin + "/json-proof", { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+  assert.equal(invalidJson.status, 400);
+  assert.deepEqual(await invalidJson.json(), { type: "entity.parse.failed" });
+} finally {
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+}
+`,
+              runtime,
+            ],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            messagingConsumer,
+            "resolve Google Chat accounts and parse Slack Bolt requests through remediated dependencies",
+          );
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+      600000,
+    );
+
     it("materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches", async () => {
       const nodeRuntime = resolveRealOpenClawNodeRuntime();
       console.info(
@@ -704,7 +950,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           process.env.PATH = previousPath;
         }
 
-        patchOpenClawContainerRestart(dist);
+        patchOpenClawAgentMessageInput(dist, true);
+
         patchOpenClawContainerRestart(dist, true);
 
         const issue4434Patch = spawnSync(

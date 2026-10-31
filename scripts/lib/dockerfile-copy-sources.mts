@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Parses direct Dockerfile COPY sources and rejects unhandled forms. */
+/** Parses direct Dockerfile COPY and bind sources and rejects unhandled forms. */
 
 import fs from "node:fs";
 import path from "node:path";
@@ -172,12 +172,59 @@ function sourceExistsInContext(contextRoot: string, source: string): boolean {
   return fs.existsSync(path.join(contextRoot, ...source.split("/")));
 }
 
+/** Include readonly build inputs that affect the image without adding a layer. */
+export function directDockerfileContextSources(
+  dockerfilePath: string,
+  dockerfileLabel = path.basename(dockerfilePath),
+): DirectDockerfileCopySource[] {
+  const sources = directDockerfileCopySources(dockerfilePath, dockerfileLabel);
+  const text = fs.readFileSync(dockerfilePath, "utf8");
+  for (const instruction of logicalDockerfileInstructions(text, dockerfileLabel)) {
+    if (!/^RUN\s/iu.test(instruction.text)) continue;
+    for (const token of instruction.text.split(/\s+/u).slice(1)) {
+      if (!token.startsWith("--")) break;
+      if (token === "--mount") {
+        throw new Error(
+          `Unsupported ${dockerfileLabel} RUN mount at line ${instruction.lineNumber}`,
+        );
+      }
+      if (!token.startsWith("--mount=")) continue;
+      const options = token.slice("--mount=".length).split(",");
+      const values = new Map(
+        options.map((option) => {
+          const separator = option.indexOf("=");
+          return separator < 0
+            ? [option, ""]
+            : [option.slice(0, separator), option.slice(separator + 1)];
+        }),
+      );
+      if (
+        values.size !== options.length ||
+        /["']/u.test(token) ||
+        (values.has("source") && values.has("src"))
+      ) {
+        throw new Error(
+          `Unsupported direct ${dockerfileLabel} bind mount at line ${instruction.lineNumber}: ${token}`,
+        );
+      }
+      if ((values.get("type") ?? "bind") !== "bind" || values.has("from")) continue;
+      const source = values.get("source") ?? values.get("src");
+      if (!source) {
+        throw new Error(`Missing ${dockerfileLabel} bind source at line ${instruction.lineNumber}`);
+      }
+      validateDirectCopySource(source, instruction, dockerfileLabel);
+      sources.push({ lineNumber: instruction.lineNumber, source });
+    }
+  }
+  return sources;
+}
+
 export function missingDockerfileCopySources(
   dockerfilePath: string,
   contextRoot: string,
   dockerfileLabel = path.basename(dockerfilePath),
 ): MissingDockerfileCopySource[] {
-  return directDockerfileCopySources(dockerfilePath, dockerfileLabel)
+  return directDockerfileContextSources(dockerfilePath, dockerfileLabel)
     .filter(({ source }) => !sourceExistsInContext(contextRoot, source))
     .map((source) => ({ ...source, dockerfileLabel }));
 }
@@ -186,7 +233,7 @@ export function formatMissingDockerfileCopySources(
   missingSources: readonly MissingDockerfileCopySource[],
 ): string {
   return [
-    "The optimized build context does not contain every direct Dockerfile COPY source.",
+    "The optimized build context does not contain every direct Dockerfile COPY or bind source.",
     "Review each missing source before you add it to stageOptimizedSandboxBuildContext.",
     "",
     ...missingSources.map(

@@ -27,6 +27,7 @@ import type { OnboardOptions } from "./types";
 import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
 import { verifyRecordedNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import { readValidatedRebuildPolicySource } from "./sandbox-create/rebuild-policy-handoff";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
 
@@ -220,6 +221,7 @@ export function rebuildProviderFlowOptions(
   forceInferenceSetup: boolean;
   providerRecoveryReceipt: ProviderRecoveryReceipt | null;
   providerRecoveryReceiptLedger: ReturnType<typeof createProviderRecoveryReceiptLedger>;
+  rebuildSandboxPolicyDocument?: string;
 } {
   const authoritativeResumeConfig = opts.authoritativeResumeConfig === true;
   const providerRecoveryReceiptLedger = createProviderRecoveryReceiptLedger();
@@ -269,6 +271,13 @@ export function rebuildProviderFlowOptions(
     forceInferenceSetup: validateRebuildHandoff(opts, target),
     providerRecoveryReceipt,
     providerRecoveryReceiptLedger,
+    ...(authoritativeResumeConfig && opts.rebuildPolicySourcePath
+      ? {
+          rebuildSandboxPolicyDocument: readValidatedRebuildPolicySource(
+            opts.rebuildPolicySourcePath,
+          ).document,
+        }
+      : {}),
   };
 }
 

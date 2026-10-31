@@ -63,6 +63,7 @@ afterEach(() => vi.restoreAllMocks());
 
 function reviewedStationSelection(
   options: {
+    automatic?: boolean;
     unmanaged?: boolean;
     missingReceipt?: boolean;
     changedField?: "catalogDigest" | "presetId" | "presetDigest" | "recipeId" | "recipeDigest";
@@ -89,7 +90,7 @@ function reviewedStationSelection(
       },
     ],
   });
-  const selection = state(variant.servedModelId);
+  const selection = state(options.automatic ? null : variant.servedModelId);
   const handler = createSetupNimVllmHandler(
     deps({
       getManagedVllmProviderBinding: () =>
@@ -116,12 +117,18 @@ function reviewedStationSelection(
 }
 
 describe("setupNim vLLM route containment", () => {
-  it("binds a reviewed Station snapshot through its verified recipe identity", async () => {
-    const { handler, selection, bind, model, variant } = reviewedStationSelection();
-    await expect(handler(selection, { managedInstall: true })).resolves.toBe("selected");
-    expect(selection.vllmModelIdentity).toBe(model.id);
-    expect(bind()).toMatchObject({ servedModel: variant.servedModelId, checkpointModel: model.id });
-  });
+  it.each([false, true])(
+    "binds a reviewed Station snapshot through its verified recipe identity (automatic=%s)",
+    async (automatic) => {
+      const { handler, selection, bind, model, variant } = reviewedStationSelection({ automatic });
+      await expect(handler(selection, { managedInstall: !automatic })).resolves.toBe("selected");
+      expect(selection.vllmModelIdentity).toBe(model.id);
+      expect(bind()).toMatchObject({
+        servedModel: variant.servedModelId,
+        checkpointModel: model.id,
+      });
+    },
+  );
 
   it.each([
     ["unmanaged endpoint", { unmanaged: true }],
@@ -132,9 +139,16 @@ describe("setupNim vLLM route containment", () => {
     ["different recipe", { changedField: "recipeId" }],
     ["different recipe digest", { changedField: "recipeDigest" }],
     ["different checkpoint", { root: "other/checkpoint" }],
+    ["automatic unmanaged endpoint", { automatic: true, unmanaged: true }],
+    ["automatic missing receipt", { automatic: true, missingReceipt: true }],
+    ["automatic different recipe", { automatic: true, changedField: "recipeDigest" }],
+    ["automatic different checkpoint", { automatic: true, root: "other/checkpoint" }],
   ] as const)("refuses Station snapshot binding for a %s", async (_name, options) => {
-    const { handler, selection, bind } = reviewedStationSelection(options);
-    await expect(handler(selection, { managedInstall: true })).resolves.toBe("selected");
+    const selectionOptions = { automatic: false, ...options };
+    const { handler, selection, bind } = reviewedStationSelection(selectionOptions);
+    await expect(handler(selection, { managedInstall: !selectionOptions.automatic })).resolves.toBe(
+      "selected",
+    );
     expect(bind).toThrow("Cannot record an invalid DGX Station Express provider selection");
   });
 

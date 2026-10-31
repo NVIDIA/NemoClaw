@@ -1108,22 +1108,22 @@ esac
   });
 
   it.each([
-    ["a complete runtime", undefined, "0.7.15", "0.1.71", "0.7.15", 0, ""],
+    ["a complete runtime", undefined, "0.7.29", "0.1.87", "0.7.29", 0, ""],
     [
       "a missing deepagents module",
       "deepagents",
-      "0.7.15",
-      "0.1.71",
-      "0.7.15",
+      "0.7.29",
+      "0.1.87",
+      "0.7.29",
       1,
       "No module named 'deepagents'",
     ],
     [
       "a missing deepagents_code module",
       "deepagents_code",
-      "0.7.15",
-      "0.1.71",
-      "0.7.15",
+      "0.7.29",
+      "0.1.87",
+      "0.7.29",
       1,
       "No module named 'deepagents_code'",
     ],
@@ -1131,16 +1131,16 @@ esac
       "the wrong installed version",
       undefined,
       "0.7.4",
-      "0.1.71",
-      "0.7.15",
+      "0.1.87",
+      "0.7.29",
       1,
       "runtime versions do not match",
     ],
     [
       "a lock mismatch",
       undefined,
-      "0.7.15",
-      "0.1.71",
+      "0.7.29",
+      "0.1.87",
       "0.7.4",
       1,
       "runtime contract does not match deepagents lock",
@@ -1174,7 +1174,7 @@ esac
       );
       fs.writeFileSync(
         lockPath,
-        [`deepagents==${lockedDeepagentsVersion} \\`, "deepagents-code==0.1.71 \\", ""].join("\n"),
+        [`deepagents==${lockedDeepagentsVersion} \\`, "deepagents-code==0.1.87 \\", ""].join("\n"),
         "utf8",
       );
       try {

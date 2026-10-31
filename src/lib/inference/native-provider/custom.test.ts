@@ -93,6 +93,7 @@ function harness() {
     api: binding.api,
     credentialEnv: binding.credentialEnv,
     credentialValue: "synthetic-host-secret",
+    sandboxPolicyDocument: null,
     lookup,
     adapter: adapter as unknown as OpenShellProviderAdapter,
     readAuthority: (_gateway: string, name: string) =>
@@ -306,6 +307,32 @@ describe("custom native endpoint ownership", () => {
     expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "only the registry records ownership",
+      false,
+      /only the NemoClaw registry record for sandbox 'alpha'.*'nemoclaw alpha destroy'/su,
+    ],
+    ["the gateway records ownership", true, /complete uninstall without --keep-openshell/u],
+  ])("explains a missing provider when %s", async (_case, gatewayOwned, message) => {
+    const h = harness();
+    const recorded = await prepareCustomNativeProvider(h.input);
+    h.adapter.getProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "absent" },
+    });
+    await expect(
+      prepareCustomNativeProvider({
+        ...h.input,
+        recordedAttachment: recorded,
+        recordedSandboxName: "alpha",
+        readAuthority: (gateway, name) =>
+          gatewayOwned ? h.input.readAuthority(gateway, name) : undefined,
+      }),
+    ).rejects.toThrow(message);
+    expect(h.adapter.createProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retire a credential when authority persistence fails", async () => {
     const h = harness();
     const onCredentialPersisted = vi.fn();
@@ -368,6 +395,28 @@ describe("custom native endpoint ownership", () => {
     expect(
       usesCustomNativeOnboarding(binding.provider, "http://127.0.0.1:8080/v1", "alpha", null),
     ).toBe(false);
+    // OpenShell rejects Personal's hostless web rule beside a port-443 provider endpoint.
+    expect(
+      usesCustomNativeOnboarding(
+        binding.provider,
+        binding.endpointUrl,
+        "alpha",
+        null,
+        " Personal ",
+      ),
+    ).toBe(false);
+    expect(
+      usesCustomNativeOnboarding(
+        binding.provider,
+        binding.endpointUrl,
+        "alpha",
+        { pendingRouteReservation: true },
+        "personal",
+      ),
+    ).toBe(false);
+    expect(
+      usesCustomNativeOnboarding(binding.provider, binding.endpointUrl, "alpha", null, "balanced"),
+    ).toBe(true);
     const h = harness();
     const receipt = await prepareCustomNativeProvider(h.input);
     expect(

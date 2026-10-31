@@ -7,6 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  approvalPackageSources,
+  nonInteractivePackageSource,
+} from "../../helpers/langchain-deepagents-code-patch-fixture";
+
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
@@ -26,7 +31,7 @@ const DISCLOSURE_MARKER = "NemoClaw-managed progressive tool disclosure.";
 const OBSERVABILITY_MARKER = "NemoClaw-managed backend-neutral observability.";
 
 const PACKAGE_SOURCES: Record<string, string> = {
-  "__init__.py": `"""Deep Agents Code 0.1.71 test package."""`,
+  "__init__.py": `"""Deep Agents Code 0.1.87 test package."""`,
   "__main__.py": `from deepagents_code import cli_main
 
 if __name__ == "__main__":
@@ -259,12 +264,7 @@ class ModelSelectorScreen:
 
 def should_run_onboarding(state_dir=None): return True
 `,
-  "tui/widgets/approval.py": `from __future__ import annotations
-
-class ApprovalMenu:
-    def _build_options(self): return []
-    def _handle_selection(self, option, *, reject_message=None): pass
-`,
+  ...approvalPackageSources,
   "tui/widgets/status.py": `from __future__ import annotations
 
 class StatusBar:
@@ -319,23 +319,7 @@ class HooksManager:
     @classmethod
     def inert(cls): return cls()
 `,
-  "client/non_interactive.py": `from __future__ import annotations
-
-def _resolve_shell_allow_list(): return ["bash"]
-
-async def run_non_interactive(*args, **kwargs):
-    try:
-        return kwargs
-    except Exception as e:
-        logger.exception("Unexpected error during non-interactive execution")
-        console.print(
-            f"\\n[red]Unexpected error ({type(e).__name__}): "
-            f"{escape_markup(str(e))}[/red]"
-        )
-        return 1
-
-async def _run_startup_command(command, console, *, quiet): return command
-`,
+  "client/non_interactive.py": nonInteractivePackageSource,
 };
 
 interface PatchFixture {
@@ -357,7 +341,7 @@ function writeFixtureFile(root: string, relativePath: string, content: string): 
   return target;
 }
 
-function makePatchFixture(version = "0.1.71"): PatchFixture {
+function makePatchFixture(version = "0.1.87"): PatchFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-disclosure-"));
   const packageDir = path.join(root, "deepagents_code");
   const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
@@ -402,7 +386,9 @@ function snapshot(paths: string[]): Record<string, string> {
 function runWiring(fixture: PatchFixture): Record<string, unknown> {
   const script = `import importlib
 import importlib.util
+import io
 import json
+import logging
 import os
 import sys
 import types
@@ -524,14 +510,25 @@ empty_mcp = counts(
         mcp_server_info=[Info(("metadata_only",))],
     )
 )
-active = counts(
-    agent.create_cli_agent(
-        None,
-        "assistant",
-        mcp_tools=[NamedTool("mcp_echo")],
-        mcp_server_info=[Info(())],
+activation_output = io.StringIO()
+activation_handler = logging.StreamHandler(activation_output)
+activation_logger = logging.getLogger("deepagents_code.agent")
+previous_level = activation_logger.level
+activation_logger.setLevel(logging.INFO)
+activation_logger.addHandler(activation_handler)
+try:
+    active = counts(
+        agent.create_cli_agent(
+            None,
+            "assistant",
+            mcp_tools=[NamedTool("mcp_echo")],
+            mcp_server_info=[Info(())],
+        )
     )
-)
+finally:
+    activation_logger.removeHandler(activation_handler)
+    activation_logger.setLevel(previous_level)
+activation_logs = activation_output.getvalue().splitlines()
 parent_only = harness.BaseTool("parent_only", "Parent graph tool")
 subagent_only = harness.BaseTool("subagent_only", "Subagent graph tool")
 subagent_result = agent.create_cli_agent(
@@ -671,6 +668,7 @@ print(json.dumps({
     "no_mcp": no_mcp,
     "empty_mcp": empty_mcp,
     "active": active,
+    "activation_logs": activation_logs,
     "subagent_catalogs": subagent_catalogs,
     "progressive_collisions": progressive_collisions,
     "direct_collisions": direct_collisions,
@@ -770,9 +768,11 @@ describe("Deep Agents progressive tool disclosure", () => {
   });
 });
 
-describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
+describe("Deep Agents 0.1.87 progressive-disclosure build patch", () => {
   it("patches the complete package and isolated main/subagent wiring idempotently", () => {
     const fixture = makePatchFixture();
+    const rendererPath = path.join(fixture.packageDir, "tui/widgets/tool_renderers.py");
+    const rendererSource = fs.readFileSync(rendererPath, "utf8");
     const first = runPatcher(fixture);
     expect(first.status, first.stderr).toBe(0);
 
@@ -786,6 +786,7 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
     const second = runPatcher(fixture);
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
+    expect(firstBytes[rendererPath]).toBe(rendererSource);
 
     expect(
       fixture.sourcePaths
@@ -793,7 +794,8 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") &&
             !sourcePath.endsWith("/onboarding.py") &&
-            !sourcePath.endsWith("/hooks/legacy.py"),
+            !sourcePath.endsWith("/hooks/legacy.py") &&
+            !sourcePath.endsWith("/tool_renderers.py"),
         )
         .every(
           (file) =>
@@ -832,6 +834,9 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
       reached_original: [],
       invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
     });
+    expect(wiring.activation_logs).toEqual([
+      "NemoClaw progressive tool disclosure middleware installed",
+    ]);
     expect(wiring.observability_noncanonical).toEqual({
       instances: 0,
       distinct: 0,
@@ -879,7 +884,7 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
     const result = runPatcher(fixture);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Expected deepagents-code==0.1.71");
+    expect(result.stderr).toContain("Expected deepagents-code==0.1.87");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
   });

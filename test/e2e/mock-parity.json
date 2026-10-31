@@ -33,7 +33,15 @@
     },
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts",
+        "test/e2e/fixtures/portable-registry-readiness.ts",
+        "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts"
+      ],
       "fast": [
+        "src/lib/actions/sandbox/doctor-flow.test.ts",
+        "src/lib/onboard/machine/finalization-deps.test.ts",
+        "src/lib/onboard/machine/handlers/finalization.test.ts",
         "src/lib/onboard/experimental/hermes-portable-container.test.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
@@ -41,7 +49,9 @@
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
         "src/lib/onboard/sandbox-prebuild.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
-        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
+        "test/e2e/support/portable-registry-readiness.test.ts",
+        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+        "test/e2e/support/portable-sandbox-build-diagnostics.test.ts"
       ]
     },
     {
@@ -83,7 +93,10 @@
     },
     {
       "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
-      "liveSources": ["test/e2e/live/managed-image-protected-runtime-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/managed-image-protected-runtime-helpers.ts",
+        "test/e2e/live/managed-image-protected-runtime-budget.ts"
+      ],
       "fast": [
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
@@ -91,7 +104,8 @@
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
         "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts"
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-budget.test.ts"
       ]
     },
     {
@@ -110,6 +124,7 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/hosted-inference.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/security/admin-approval-helper.test.ts"
       ]
@@ -298,6 +313,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/install/installer-hash-check.test.ts",
@@ -376,7 +392,8 @@
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": [
         "test/e2e/live/dashboard-connect-handoff.ts",
-        "test/e2e/live/json-envelope.ts"
+        "test/e2e/live/json-envelope.ts",
+        "test/e2e/live/dashboard-remote-bind-env.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
@@ -385,7 +402,10 @@
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
-        "test/e2e/support/runtime-provider-fixture.test.ts"
+        "test/e2e/support/runtime-provider-fixture.test.ts",
+        "src/lib/onboard/agent-dashboard-forward.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
+        "test/e2e/support/dashboard-remote-bind-env.test.ts"
       ]
     },
     {
@@ -467,6 +487,7 @@
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
       "fast": [
+        "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
@@ -561,6 +582,8 @@
         "test/onboarding/onboard-policy-suggestions.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
+        "test/e2e/support/common-egress-agent-retry.test.ts",
+        "test/e2e/support/openclaw-agent-assertion.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -573,8 +596,18 @@
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
         "src/lib/actions/maintenance.test.ts",
+        "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+        "src/lib/actions/sandbox/destroy-gateway-scoping.test.ts",
+        "test/cli/destroy-detach-order.test.ts",
+        "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openshell-sandbox-list.test.ts",
+        "test/e2e/support/forward-restart-observation.test.ts"
+      ],
+      "liveSources": [
+        "test/e2e/fixtures/openshell-sandbox-list.ts",
+        "test/e2e/fixtures/forward-restart-observation.ts"
       ]
     },
     {
@@ -589,6 +622,7 @@
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
         "test/cli/sandbox-status-text.test.ts",
+        "src/lib/actions/uninstall/run-plan-agent-state-volume.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
         "src/lib/onboard/gateway-reuse.test.ts",
         "src/lib/onboard/machine/core-flow-phases.test.ts",
@@ -602,9 +636,11 @@
     },
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
+      "liveSources": ["test/e2e/fixtures/native-local-chat.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -612,7 +648,8 @@
       "live": "test/e2e/live/gpu-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/gpu-e2e-helpers.ts",
-        "test/e2e/live/hermes-cli-adapter-live.ts"
+        "test/e2e/live/hermes-cli-adapter-live.ts",
+        "test/e2e/fixtures/native-local-chat.ts"
       ],
       "fast": [
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
@@ -654,7 +691,9 @@
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/hermes-config-export-live.test.ts"
+        "test/e2e/support/hermes-config-export-live.test.ts",
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts",
+        "test/e2e/support/discord-enrollment-child.test.ts"
       ]
     },
     {
@@ -689,6 +728,8 @@
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "src/lib/onboard/hermes/initial-inference-route.test.ts",
+        "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
         "test/e2e/support/hermes-native-local-evidence.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
@@ -697,7 +738,8 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/host-container-discovery.test.ts"
+        "test/e2e/support/host-container-discovery.test.ts",
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
       ]
     },
     {
@@ -811,6 +853,7 @@
         "test/e2e/fixtures/installed-telegram-runtime-proof.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -850,6 +893,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
@@ -864,12 +908,14 @@
       "liveSources": [
         "test/e2e/fixtures/inference-routing-openclaw-native.ts",
         "test/e2e/live/openclaw-inference-switch-helpers.ts",
+        "test/e2e/live/openclaw-anthropic-provider.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/live/public-nvidia-switch-provider.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
-        "test/e2e/fixtures/managed-image-receipt.ts"
+        "test/e2e/fixtures/managed-image-receipt.ts",
+        "test/e2e/fixtures/native-local-ipv6-evidence.ts"
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
@@ -890,7 +936,8 @@
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/security/admin-approval-helper.test.ts",
-        "test/e2e/support/hosted-inference.test.ts"
+        "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/native-local-ipv6-evidence.test.ts"
       ]
     },
     {
@@ -908,6 +955,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
@@ -1064,6 +1112,7 @@
       "live": "test/e2e/live/telegram-injection.test.ts",
       "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -1071,6 +1120,7 @@
     {
       "live": "test/e2e/live/token-rotation.test.ts",
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-phase-environment.test.ts",
@@ -1087,6 +1137,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/channels-stop-start-cleanup.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
@@ -1101,7 +1152,9 @@
     },
     {
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+      "liveSources": ["test/e2e/fixtures/hermes-switchyard-package.ts"],
       "fast": [
+        "test/agents/hermes/hermes-switchyard-package.test.ts",
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
         "test/agents/hermes/hermes-start-config-integrity.test.ts",
@@ -1132,6 +1185,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/e2e/support/hermes-slack-cleanup.test.ts",
         "test/e2e/support/hermes-slack-credential-transport.test.ts",
         "test/e2e/support/hermes-slack-proof.test.ts",

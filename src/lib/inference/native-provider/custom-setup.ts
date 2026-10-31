@@ -19,8 +19,48 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
+import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
+import { assertOpenShellPolicyEndpointPins } from "../../adapters/openshell/policy-boundary";
+import { cliOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy-cli";
+import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
+import { isRouteOnlySandboxReservation } from "../../state/registry/route-reservation";
+import type { SandboxEntry } from "../../state/registry/types";
 
-/** Existing shared-route sandboxes retain their route until recreated. */
+export { isHostedCustomEndpoint };
+
+/** Read retained rules before re-onboarding can prepare a custom provider. */
+export async function readCustomNativeSandboxPolicy(input: {
+  gatewayName: string;
+  sandboxName: string;
+  recordedSandbox: Pick<SandboxEntry, "createdAt" | "pendingRouteReservation"> | null | undefined;
+  rebuildSandboxPolicyDocument?: string;
+  reader?: Pick<OpenShellSandboxPolicyReader, "readSandboxPolicy">;
+  redactDiagnostic: (message: string) => string;
+}): Promise<string | null> {
+  // Rebuild has removed the live sandbox; its retained rules still constrain the replacement.
+  if (input.rebuildSandboxPolicyDocument !== undefined) return input.rebuildSandboxPolicyDocument;
+  if (!input.recordedSandbox || isRouteOnlySandboxReservation(input.recordedSandbox)) return null;
+  const policy = await (input.reader ?? cliOpenShellSandboxPolicyReader).readSandboxPolicy({
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    scope: "base",
+  });
+  if (!policy.ok) {
+    throw new Error(
+      `Cannot inspect the sandbox policy before selecting a custom endpoint: ${input.redactDiagnostic(policy.error.message)} Resolve the policy-read error before retrying. No provider was changed.`,
+    );
+  }
+  return policy.value.document;
+}
+
+/**
+ * Existing shared-route sandboxes retain their route until recreated.
+ *
+ * A Personal sandbox keeps a new custom endpoint on the shared inference.local
+ * route. OpenShell rejects Personal's hostless port-443 rule beside an attached
+ * provider endpoint on the same port (NVIDIA/OpenShell#4662), so a native
+ * provider would make the Personal policy unappliable.
+ */
 export function usesCustomNativeOnboarding(
   provider: string,
   endpointUrl: string | null,
@@ -32,13 +72,14 @@ export function usesCustomNativeOnboarding(
       }
     | null
     | undefined,
+  policyTier: string | undefined = process.env.NEMOCLAW_POLICY_TIER,
 ): boolean {
+  const personal = policyTier?.trim().toLowerCase() === PERSONAL_POLICY_TIER_NAME;
   return Boolean(
     sandboxName &&
     isHostedCustomEndpoint(provider, endpointUrl) &&
-    (!recorded ||
-      recorded.pendingRouteReservation ||
-      recorded.nativeHostedProviderAttachment?.custom),
+    (recorded?.nativeHostedProviderAttachment?.custom ||
+      (!personal && (!recorded || recorded.pendingRouteReservation))),
   );
 }
 
@@ -66,7 +107,11 @@ export async function prepareCustomNativeProvider(input: {
   credentialEnv: string;
   credentialValue: string | null;
   adapter: OpenShellProviderAdapter;
+  /** Null only before onboarding creates the sandbox; existing sandboxes supply their base policy. */
+  sandboxPolicyDocument: string | null;
   recordedAttachment?: NativeProviderAttachment;
+  /** Registry sandbox that owns `recordedAttachment`. */
+  recordedSandboxName?: string | null;
   lookup?: EndpointDnsLookupFn;
   trustedPrivateHosts?: readonly string[];
   ensureBedrockAdapter?: typeof ensureBedrockRuntimeAdapter;
@@ -117,10 +162,18 @@ export async function prepareCustomNativeProvider(input: {
         : [],
     ...(bedrock ? { adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } : {}),
   } satisfies Omit<CustomNativeBinding, "provider" | "api"> & { provider: string; api: string });
+  if (input.sandboxPolicyDocument !== null) {
+    assertOpenShellPolicyEndpointPins(
+      input.sandboxPolicyDocument,
+      definition.endpoint,
+      definition.allowedIps ?? [],
+    );
+  }
   const lifecycle = nativeProviderLifecycle(definition);
+  const gatewayAuthority = input.readAuthority(input.gatewayName, definition.providerName);
   const expected = lifecycle.resolveGatewayNativeProviderAuthority({
     gatewayName: input.gatewayName,
-    gatewayAuthority: input.readAuthority(input.gatewayName, definition.providerName),
+    gatewayAuthority,
     recordedAttachment: sameBinding ? previous : undefined,
   });
   // A credential key name alone cannot authorize reuse at a different endpoint or API.
@@ -147,6 +200,9 @@ export async function prepareCustomNativeProvider(input: {
     // Model changes and rebuilds reuse verified ownership without rotating credentials.
     credentialValue,
     ...(expected ? { expected } : {}),
+    ...(expected && !gatewayAuthority && input.recordedSandboxName
+      ? { recordedSandboxName: input.recordedSandboxName }
+      : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.adapter,

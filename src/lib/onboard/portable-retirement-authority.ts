@@ -388,8 +388,8 @@ function assertOrdinaryOnboardAuthority(
   if (
     rawEntry.name !== sandboxIdentity.value.name ||
     row.name !== sandboxIdentity.value.name ||
-    rawEntry.openshellDriver !== "docker" ||
-    row.openshellDriver !== "docker" ||
+    (rawEntry.openshellDriver !== "docker" && rawEntry.openshellDriver !== "podman") ||
+    row.openshellDriver !== rawEntry.openshellDriver ||
     rawEntry.pendingRouteReservation === true ||
     row.pendingRouteReservation === true ||
     rawEntry.gatewayName !== gatewayAuthority.value.gatewayName ||

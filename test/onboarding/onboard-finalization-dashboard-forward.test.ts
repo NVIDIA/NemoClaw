@@ -53,6 +53,7 @@ function harness(options: {
   listSandboxes: ListSandboxesFn;
   isWsl?: boolean;
   initialStates?: ReadonlyMap<number, ForwardState>;
+  initialHosts?: ReadonlyMap<number, OpenShellForwardIdentity["localHost"]>;
   startFailurePort?: number;
   gatewayAuthority?: () => {
     readonly gatewayEndpoint: string;
@@ -60,11 +61,17 @@ function harness(options: {
   };
 }) {
   const states = new Map(options.initialStates);
+  const hosts = new Map(options.initialHosts);
+  const stateFor = (forward: OpenShellForwardIdentity): ForwardState => {
+    const state = states.get(forward.port) ?? "absent";
+    const host = hosts.get(forward.port);
+    return state === "owned" && host !== undefined && host !== forward.localHost
+      ? "foreign"
+      : state;
+  };
   const observeForwards = vi.fn(async (request: ObserveOpenShellForwardsRequest) => {
     await request.assertCurrent?.();
-    const observations = request.forwards.map((forward) =>
-      observation(forward, states.get(forward.port) ?? "absent"),
-    );
+    const observations = request.forwards.map((forward) => observation(forward, stateFor(forward)));
     await request.assertCurrent?.();
     return observations;
   });
@@ -88,7 +95,7 @@ function harness(options: {
             },
           };
       }
-      const state = states.get(request.forward.port) ?? "absent";
+      const state = stateFor(request.forward);
       switch (state) {
         case "owned":
           return { state: "reused" as const, forward: request.forward };
@@ -106,6 +113,7 @@ function harness(options: {
           break;
       }
       states.set(request.forward.port, "owned");
+      hosts.set(request.forward.port, request.forward.localHost);
       await request.assertCurrent?.();
       return {
         state: "started" as const,
@@ -117,13 +125,16 @@ function harness(options: {
       };
     },
   );
-  const retireLegacyForward = vi.fn(async (request: RetireLegacyOpenShellForwardRequest) => {
-    await request.assertCurrent?.();
-    await request.authorize(request.forward);
-    states.set(request.forward.port, "absent");
-    await request.assertCurrent?.();
-    return { state: "retired" as const, forward: request.forward };
-  });
+  const retireLegacyForward = vi.fn<OpenShellForwardAdapter["retireLegacyForward"]>(
+    async (request: RetireLegacyOpenShellForwardRequest) => {
+      await request.assertCurrent?.();
+      await request.authorize(request.forward);
+      states.set(request.forward.port, "absent");
+      hosts.delete(request.forward.port);
+      await request.assertCurrent?.();
+      return { state: "retired" as const, forward: request.forward };
+    },
+  );
   const adapter = {
     observeForwards,
     startForward,
@@ -147,7 +158,7 @@ function harness(options: {
     resolveForwardGatewayName: (sandbox) => sandbox?.gatewayName ?? "nemoclaw",
     forwardAdapterForAuthority: vi.fn(() => adapter),
   });
-  return { helpers, observeForwards, retireLegacyForward, startForward, states };
+  return { helpers, observeForwards, retireLegacyForward, startForward, states, hosts };
 }
 
 afterEach(() => {
@@ -156,6 +167,206 @@ afterEach(() => {
 });
 
 describe("finalization dashboard ForwardTcp reconciliation", () => {
+  it.each(
+    [
+      { exposure: "WSL", isWsl: true, dashboardBind: undefined, persistedRemoteBind: false },
+      {
+        exposure: "explicit remote bind",
+        isWsl: false,
+        dashboardBind: "0.0.0.0",
+        persistedRemoteBind: false,
+      },
+      {
+        exposure: "persisted remote bind",
+        isWsl: false,
+        dashboardBind: undefined,
+        persistedRemoteBind: true,
+      },
+    ].flatMap((exposure) =>
+      [false, true].flatMap((resume) =>
+        [8_642, 8_643].map((apiPort) => ({ ...exposure, resume, apiPort })),
+      ),
+    ),
+  )(
+    "keeps Hermes API $apiPort on loopback with $exposure and resume=$resume (#13441)",
+    async ({ isWsl, dashboardBind, persistedRemoteBind, resume, apiPort }) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
+      const test = harness({
+        isWsl,
+        listSandboxes: () => ({
+          sandboxes: [
+            {
+              name: "hermes-test",
+              agent: "hermes",
+              dashboardPort: 18_790,
+              hermesApiPort: apiPort,
+              dashboardRemoteBindPrepared: persistedRemoteBind,
+            },
+          ],
+        }),
+        initialStates: resume
+          ? new Map([
+              [18_790, "owned"],
+              [apiPort, "owned"],
+            ])
+          : undefined,
+      });
+
+      await expect(
+        test.helpers.ensureFinalizationAgentDashboardForward("hermes-test", loadAgent("hermes")),
+      ).resolves.toBe(18_790);
+      const started = test.startForward.mock.calls.map(([request]) => request.forward);
+      expect(started).toMatchObject([
+        { sandboxName: "hermes-test", localHost: "0.0.0.0", port: 18_790 },
+        { sandboxName: "hermes-test", localHost: "127.0.0.1", port: apiPort },
+      ]);
+      await expect(
+        test.helpers.createForwardPortObserver("hermes-test", "loopback")([apiPort]),
+      ).resolves.toMatchObject([{ state: "owned", forward: started[1] }]);
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+      expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([8_642, 8_643])(
+    "migrates an owned wildcard Hermes API on port %s to loopback (#13441)",
+    async (apiPort) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+      const test = harness({
+        listSandboxes: () => ({
+          sandboxes: [
+            {
+              name: "hermes-test",
+              agent: "hermes",
+              dashboardPort: 18_790,
+              hermesApiPort: apiPort,
+              dashboardRemoteBindPrepared: true,
+            },
+          ],
+        }),
+        initialStates: new Map([
+          [18_790, "owned"],
+          [apiPort, "owned"],
+        ]),
+        initialHosts: new Map([
+          [18_790, "0.0.0.0"],
+          [apiPort, "0.0.0.0"],
+        ]),
+      });
+      await expect(
+        test.helpers.ensureFinalizationAgentDashboardForward("hermes-test", loadAgent("hermes")),
+      ).resolves.toBe(18_790);
+      expect(test.retireLegacyForward).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          forward: expect.objectContaining({
+            sandboxName: "hermes-test",
+            localHost: "0.0.0.0",
+            port: apiPort,
+          }),
+          migrateToLoopback: true,
+        }),
+      );
+      expect(test.hosts.get(apiPort)).toBe("127.0.0.1");
+      expect(test.hosts.get(18_790)).toBe("0.0.0.0");
+    },
+  );
+
+  it.each([
+    { agent: "openclaw", hermesApiPort: 8_643 },
+    { agent: undefined, hermesApiPort: 8_643 },
+    { agent: "hermes", hermesApiPort: 8_644 },
+  ])("refuses wildcard finalization outside the registered Hermes API: %j", async (entry) => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const test = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, ...entry }],
+      }),
+      initialStates: new Map([[8_643, "owned"]]),
+      initialHosts: new Map([[8_643, "0.0.0.0"]]),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      test.helpers.ensureAgentFixedForward("hermes-test", 8_643, "messaging"),
+    ).resolves.toBe(false);
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
+  it("leaves an owned wildcard non-Hermes fixed forward untouched during finalization", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const test = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "openclaw-test", agent: "openclaw", dashboardPort: 18_789 }],
+      }),
+      initialStates: new Map([[8_643, "owned"]]),
+      initialHosts: new Map([[8_643, "0.0.0.0"]]),
+    });
+    const agent = { ...loadAgent("openclaw")!, forward_ports: [18_789, 8_643] };
+    await expect(
+      test.helpers.ensureFinalizationAgentDashboardForward("openclaw-test", agent),
+    ).rejects.toThrow("foreign listener");
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
+  it.each([
+    { field: "agent", update: { agent: "openclaw" } },
+    { field: "port", update: { hermesApiPort: 8_644 } },
+  ])("refuses API migration after registered $field changes", async ({ update }) => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const entry = { name: "hermes-test", agent: "hermes", hermesApiPort: 8_643 };
+    const test = harness({
+      listSandboxes: () => ({ sandboxes: [entry] }),
+      initialStates: new Map([[8_643, "owned"]]),
+      initialHosts: new Map([[8_643, "0.0.0.0"]]),
+    });
+    test.observeForwards.mockImplementationOnce(async (request) => {
+      Object.assign(entry, update);
+      return request.forwards.map((forward) => observation(forward, "owned"));
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      test.helpers.ensureAgentFixedForward("hermes-test", 8_643, "agent API"),
+    ).resolves.toBe(false);
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
+  it("does not replace a wildcard API forward whose release cannot be proved (#13441)", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const test = harness({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "hermes-test", agent: "hermes", dashboardPort: 18_790, hermesApiPort: 8_643 },
+        ],
+      }),
+      initialStates: new Map([
+        [18_790, "owned"],
+        [8_643, "owned"],
+      ]),
+      initialHosts: new Map([
+        [18_790, "0.0.0.0"],
+        [8_643, "0.0.0.0"],
+      ]),
+    });
+    test.retireLegacyForward.mockImplementationOnce(async (request) => ({
+      state: "release_unproved",
+      forward: request.forward,
+      effect: "possible",
+      error: { kind: "cleanup", message: "NemoClaw could not prove OpenShell forward cleanup." },
+    }));
+    await expect(
+      test.helpers.ensureFinalizationAgentDashboardForward("hermes-test", loadAgent("hermes")),
+    ).rejects.toThrow("could not prove OpenShell forward cleanup");
+    expect(
+      test.startForward.mock.calls.filter(([request]) => request.forward.port === 8_643),
+    ).toHaveLength(1);
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
   it("proves exact ownership for pre-delete port reservation", async () => {
     const test = harness({
       listSandboxes: () => ({
@@ -175,6 +386,65 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
       localHost: "127.0.0.1",
       port: 8_643,
     });
+  });
+
+  it.each(["foreign", "indeterminate"] as const)(
+    "refuses a %s auxiliary listener without retiring or replacing it (#13441)",
+    async (state) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const test = harness({
+        isWsl: true,
+        listSandboxes: () => ({
+          sandboxes: [
+            { name: "hermes-test", agent: "hermes", dashboardPort: 18_790, hermesApiPort: 8_643 },
+          ],
+        }),
+        initialStates: new Map([
+          [18_790, "owned"],
+          [8_643, state],
+        ]),
+      });
+
+      await expect(
+        test.helpers.ensureFinalizationAgentDashboardForward("hermes-test", loadAgent("hermes")),
+      ).rejects.toThrow(/foreign listener|could not prove/u);
+      expect(test.states.get(8_643)).toBe(state);
+      expect(test.retireLegacyForward).not.toHaveBeenCalled();
+      expect(
+        test.startForward.mock.calls.filter(([request]) => request.forward.port === 8_643),
+      ).toHaveLength(1);
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+    },
+  );
+
+  it("rejects a changed sandbox identity before starting the API forward (#13441)", async () => {
+    vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:18790");
+    const test = harness({
+      isWsl: true,
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "hermes-test", agent: "hermes", dashboardPort: 18_790, hermesApiPort: 8_643 },
+        ],
+      }),
+    });
+    let changed = false;
+    await expect(
+      test.helpers.ensureFinalizationAgentDashboardForward(
+        "hermes-test",
+        loadAgent("hermes"),
+        () => {
+          expect(changed, "sandbox identity changed").toBe(false);
+        },
+        {
+          releaseBeforeForward: (_name, port) => {
+            changed = port === 8_643;
+          },
+        },
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+    expect(test.startForward.mock.calls.map(([request]) => request.forward.port)).toEqual([18_790]);
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
   it.each([

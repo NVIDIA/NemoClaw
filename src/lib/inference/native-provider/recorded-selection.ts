@@ -3,9 +3,13 @@
 
 import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
 } from "../native-nvidia/contract";
-import { requireHostedProviderAttachment } from "./hosted-attachment";
+import {
+  requireHostedProviderAttachment,
+  hostedNativeProviderForAttachment,
+} from "./hosted-attachment";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import type { NativeProviderAttachment } from "./contract";
 
@@ -51,4 +55,25 @@ export function recordedNativeProviderAttachment(selection: {
     return nvidia;
   }
   return hosted;
+}
+
+export function matchesRecordedNativeProviderEndpoint(
+  selection: Parameters<typeof recordedNativeProviderAttachment>[0],
+  endpoint: unknown,
+): boolean {
+  try {
+    const attachment = recordedNativeProviderAttachment(selection);
+    const expected =
+      selection.provider === NVIDIA_HOSTED_LOGICAL_PROVIDER
+        ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+        : hostedNativeProviderForAttachment(attachment)?.endpoint;
+    return Boolean(
+      attachment &&
+      typeof endpoint === "string" &&
+      expected &&
+      new URL(endpoint).href.replace(/\/$/u, "") === new URL(expected).href.replace(/\/$/u, ""),
+    );
+  } catch {
+    return false;
+  }
 }

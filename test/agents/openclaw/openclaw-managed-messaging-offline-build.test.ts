@@ -78,7 +78,8 @@ describe("OpenClaw managed messaging offline image build", () => {
     };
 
     expect(runtimeManifest.overrides).toEqual({
-      "@modelcontextprotocol/sdk": "1.31.0",
+      "@modelcontextprotocol/sdk": "1.32.0",
+      "body-parser": "2.4.0",
       "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {
         "@discord/embedded-app-sdk@2.5.0": {
@@ -103,10 +104,12 @@ describe("OpenClaw managed messaging offline image build", () => {
       expect(runtimeLock.packages[location]?.version).toMatch(/^\d/u);
     });
     expect(runtimeManifest.dependencies).toMatchObject({
+      zod: "4.6.6",
       "@emnapi/core": "1.11.1",
       "@emnapi/runtime": "1.11.3",
     });
     expect(runtimeLock.packages[""].dependencies).toMatchObject({
+      zod: "4.6.6",
       "@emnapi/core": "1.11.1",
       "@emnapi/runtime": "1.11.3",
     });
@@ -129,16 +132,24 @@ describe("OpenClaw managed messaging offline image build", () => {
   });
 
   it("pins the complete lock graphs below the cold-build layer limit", () => {
-    const amd64Lock = lockedArchives(runtimeLockSource, {
-      cpu: "x64",
-      libc: "glibc",
-      os: "linux",
-    });
-    const arm64Lock = lockedArchives(runtimeLockSource, {
-      cpu: "arm64",
-      libc: "glibc",
-      os: "linux",
-    });
+    const amd64Lock = lockedArchives(
+      runtimeLockSource,
+      {
+        cpu: "x64",
+        libc: "glibc",
+        os: "linux",
+      },
+      JSON.stringify(runtimeManifest),
+    );
+    const arm64Lock = lockedArchives(
+      runtimeLockSource,
+      {
+        cpu: "arm64",
+        libc: "glibc",
+        os: "linux",
+      },
+      JSON.stringify(runtimeManifest),
+    );
     const amd64Names = new Set(amd64Lock.map(({ archive }) => archive));
     const arm64Names = new Set(arm64Lock.map(({ archive }) => archive));
     const commonLock = amd64Lock.filter(({ archive }) => arm64Names.has(archive));

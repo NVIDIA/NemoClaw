@@ -8,6 +8,7 @@ import type { ManagedInferenceReadinessSource } from "../inference/serving/types
 import type { AgentDefinition } from "../agent/defs";
 import {
   OPENROUTER_CLOUD_MODEL_OPTIONS,
+  OPENROUTER_FEATURED_MODEL_ID_ALIASES,
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
@@ -243,6 +244,7 @@ export interface SetupNimFlowDeps {
     state: SetupNimSelectionState,
     requestedModel: string | null,
     recoveredModel: string | null,
+    managedRuntime?: true,
   ): Promise<SetupNimSelectionResult>;
   handleNimLocalSelection(
     gpu: SetupNimGpu,
@@ -1017,6 +1019,7 @@ export function createSetupNim(
     let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
     let selectedModelOrigin: SelectedModelOrigin | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
+    const agentDefaultModel = resolveAgentDefaultCloudModel(agent);
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       onModelSelected: (model, source) => {
         selectedModelOrigin = {
@@ -1025,7 +1028,7 @@ export function createSetupNim(
           provider: deps.remoteProviderConfig.build.providerName,
         };
       },
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      defaultModel: agentDefaultModel,
       writeLine: deps.log,
     });
     const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
@@ -1036,8 +1039,10 @@ export function createSetupNim(
           provider: deps.remoteProviderConfig.openrouter.providerName,
         };
       },
-      defaultModel: resolveAgentDefaultCloudModel(agent),
+      defaultModel:
+        OPENROUTER_FEATURED_MODEL_ID_ALIASES.get(agentDefaultModel) ?? agentDefaultModel,
       fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
+      modelIdAliases: OPENROUTER_FEATURED_MODEL_ID_ALIASES,
       retiredModelIds: [],
       writeLine: deps.log,
     });
@@ -1383,7 +1388,7 @@ export function createSetupNim(
             continue selectionLoop;
           }
           state.model = installed.model;
-          const result = await deps.handleLlamaCppSelection(state, installed.model, null);
+          const result = await deps.handleLlamaCppSelection(state, installed.model, null, true);
           ({
             model,
             provider,

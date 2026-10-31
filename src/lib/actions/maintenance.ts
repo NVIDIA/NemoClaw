@@ -28,6 +28,7 @@ import { garbageCollectImagesWithoutPortableAuthority } from "./maintenance/gc";
 import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 import {
   backupStartedSandboxState,
+  createUnreachableEngineNameLookup,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   startedSandboxBackupTransactionDeadline,
@@ -71,6 +72,14 @@ async function withHermesPortableMaintenanceAdmission<T>(
     assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), commandId);
     return operation();
   });
+}
+
+function engineUnavailableBackupSkipMessage(
+  name: string,
+  engineName: string,
+  retry: string,
+): string {
+  return `Skipping '${name}' (${engineName} is not responding, so its stopped container cannot be started; start ${engineName}, then ${retry})`;
 }
 
 function notRunningBackupSkipMessage(name: string): string {
@@ -304,6 +313,11 @@ export async function backupAllUnderPortableHostFence(
   );
 
   const purpose = options.purpose ?? "pre-upgrade";
+  const strictRetry =
+    purpose === "pre-uninstall"
+      ? "rerun the original uninstall command"
+      : `run '${CLI_NAME} backup-all' again`;
+  const unreachableEngineName = createUnreachableEngineNameLookup();
   const skipUnreachable =
     options.skipUnreachable ?? shouldSkipUnreachableSandboxBackup(process.env);
   const requireAll = options.requireAll ?? process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
@@ -313,6 +327,8 @@ export async function backupAllUnderPortableHostFence(
   let skipped = 0;
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
+  const unavailableEngineNames = new Set<string>();
+  let unavailableEngineSkipped = 0;
   const strandedOrphans: string[] = [];
   const backupRegisteredSandbox = async (sb: (typeof sandboxes)[number]): Promise<void> => {
     // Lock acquisition can reject entry before the stopped container path
@@ -382,6 +398,19 @@ export async function backupAllUnderPortableHostFence(
         strandedOrphans.push(sb.name);
         return;
       }
+      // Distinguish "the container is stopped" from "the engine that owns the
+      // container does not respond": only the first is fixed by starting the
+      // sandbox, so the not-running remediation must not be offered (#12749).
+      const unavailableEngineName = unreachableEngineName(sb.name);
+      if (unavailableEngineName) {
+        console.log(
+          `  ${D}${engineUnavailableBackupSkipMessage(sb.name, unavailableEngineName, strictRetry)}${R}`,
+        );
+        unavailableEngineNames.add(unavailableEngineName);
+        skipped++;
+        unavailableEngineSkipped++;
+        return;
+      }
       console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
       skipped++;
       notRunningSkipped++;
@@ -410,14 +439,20 @@ export async function backupAllUnderPortableHostFence(
       const nativeArchive = result.manifest?.nativeState
         ? path.join(result.manifest.backupPath, result.manifest.nativeState.archive)
         : null;
-      const backupDescription = nativeArchive
-        ? `native state archived in ${nativeArchive} (files are inside the archive)`
-        : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
+      const archiveCounts = result.nativeArchiveCounts;
+      const backupDescription =
+        nativeArchive && archiveCounts
+          ? `${archiveCounts.directories} dirs, ${archiveCounts.files} files → ${nativeArchive}`
+          : nativeArchive
+            ? `native state archived in ${nativeArchive} (entry counts unavailable)`
+            : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
       console.log(`  ${G}✓${R} ${sb.name}: ${backupDescription}`);
       backed++;
     } else {
       if (result.unreachable) {
-        if (skipUnreachable) {
+        // Strict mode cannot skip it, so report the failed backup instead of
+        // a skip that the strict gate would reject without guidance (#13782).
+        if (skipUnreachable && !requireAll) {
           console.log(
             `  ${YW}⚠${R} Skipped '${sb.name}' (running but SSH-unreachable; NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 set). Any uncommitted state since the last successful backup will be lost.`,
           );
@@ -469,10 +504,6 @@ export async function backupAllUnderPortableHostFence(
   console.log(
     `  ${purposeLabel} backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`,
   );
-  const strictRetry =
-    purpose === "pre-uninstall"
-      ? "rerun the original uninstall command"
-      : `run '${CLI_NAME} backup-all' again`;
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
@@ -490,6 +521,11 @@ export async function backupAllUnderPortableHostFence(
         console.error(
           `  Strict ${purpose} backup cannot skip these sandboxes. Restore their gateway health, then ${strictRetry}.`,
         );
+        if (skipUnreachable) {
+          console.error(
+            `  NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 applies only to a standalone '${CLI_NAME} backup-all'; it does not relax strict ${purpose} backup.`,
+          );
+        }
       } else {
         console.error(
           `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,
@@ -505,6 +541,15 @@ export async function backupAllUnderPortableHostFence(
     console.error(
       `  Strict ${purpose} backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
+    if (unavailableEngineSkipped > 0) {
+      const engineLabel = [...unavailableEngineNames].sort().join(" and ");
+      const cleanupConsequence =
+        purpose === "pre-uninstall" ? " and their containers cannot be cleaned up" : "";
+      console.error(
+        `  ${unavailableEngineSkipped} skipped sandbox(es) could not be started for backup because ${engineLabel} did not respond${cleanupConsequence}.`,
+      );
+      console.error(`  Start ${engineLabel}, then ${strictRetry}.`);
+    }
     if (notRunningSkipped > 0) {
       console.error(
         `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then ${

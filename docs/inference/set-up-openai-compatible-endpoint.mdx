@@ -14,13 +14,22 @@ Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/c
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
 <AgentOnly variant="openclaw">
-The agent connects to `inference.local` inside the sandbox.
-OpenShell forwards that traffic to the endpoint configured during onboarding.
+New hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
+Fresh Personal-tier selections and retained shared routes use `inference.local`.
+OpenShell holds the upstream credential and supplies it at egress.
 </AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes sandboxes use sandbox-attached OpenShell providers for qualified host-local endpoints.
-The agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
-Other compatible endpoints retain the shared `inference.local` route.
+<AgentOnly variant="deepagents">
+New Deep Agents Code sandboxes normally use sandbox-attached OpenShell providers for hosted compatible endpoints and qualified host-local endpoints.
+Fresh onboarding keeps a hosted compatible endpoint on `inference.local` when you select the Personal policy tier.
+For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
+</AgentOnly>
+<AgentOnly variant="hermes">
+New Hermes sandboxes use sandbox-attached OpenShell providers for hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+Fresh Personal-tier hosted selections stay on `inference.local` without a native attachment.
+For an attached route, the agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
+Retained shared routes and owned Local NVIDIA NIM use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -60,6 +69,14 @@ Endpoints configured with `COMPATIBLE_API_KEY` use a different authenticated pat
 
 ## Run Onboarding
 
+If you rerun onboarding for an existing sandbox with an attached custom provider, NemoClaw reads its base policy before changing the provider.
+When the provider pins destination IP addresses, existing rules that cover the endpoint's host and port must have matching IP pins.
+This includes wildcard host rules and IP-only rules on that port.
+If pins are absent or differ, follow [Customize the Sandbox Network Policy](../../network-policy/customize-network-policy) to inspect and correct the named policy before retrying.
+If NemoClaw cannot read the policy, resolve the reported OpenShell error before retrying.
+Either refusal leaves the provider unchanged.
+During rebuild, NemoClaw checks the retained base policy captured before deleting the original sandbox.
+
 Start the onboard wizard.
 
 ```bash
@@ -72,14 +89,28 @@ Enter the server base URL and the model ID reported by the server.
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
-NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+NemoClaw validates the entered URL from the host.
+Shared selections use `https://inference.local/v1` inside the sandbox.
+Attached selections use the recorded endpoint; qualified host-local selections may use `host.openshell.internal:<port>` to reach the host.
 <AgentOnly variant="openclaw">
-Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+Shared OpenClaw compatible selections use the base `inference.local` policy.
+New hosted selections outside the Personal tier use their endpoint-bound attached provider profile.
+Neither route requires adding the `local-inference` preset.
 </AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the selected agent runtime binaries.
-Other compatible endpoints use the base `inference.local` policy.
-Neither path requires adding the `local-inference` preset.
+<AgentOnly variant="deepagents">
+For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the managed DCode runtime binaries.
+Hosted compatible endpoints normally use their recorded endpoint through an attached provider.
+Fresh Personal-tier onboarding keeps a hosted compatible endpoint on the base `inference.local` policy and does not create a native provider attachment.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment; create a new sandbox instead.
+Retained shared routes and owned Local NVIDIA NIM use the base `inference.local` policy.
+These routes do not require the `local-inference` preset.
+Refer to [Policy Tiers](../../reference/network-policies#policy-tiers) for the Personal-tier limitation and recovery steps.
+</AgentOnly>
+<AgentOnly variant="hermes">
+For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the Hermes runtime binaries.
+New hosted compatible endpoints outside the Personal tier use an endpoint-bound attached provider.
+Fresh Personal-tier and retained shared selections use the base `inference.local` policy.
+These routes do not require adding the `local-inference` preset.
 </AgentOnly>
 For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those authenticated URLs require a separately compatible runtime topology and network policy.

@@ -69,7 +69,7 @@ jobs:
       - name: Setup Node.js for docs-only checks
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -112,7 +112,7 @@ jobs:
     needs: [changes, openshell-sdk-package]
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 22
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,6 +137,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -191,7 +195,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -236,6 +240,10 @@ jobs:
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -317,7 +325,7 @@ jobs:
         if: steps.locate.outputs.required == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
 
       - name: Install reviewed npm for archive verification
         if: steps.locate.outputs.required == 'true'
@@ -378,6 +386,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/check-dist-sourcemaps.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
@@ -454,6 +466,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -483,7 +499,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -526,6 +542,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -588,7 +608,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -604,6 +624,18 @@ jobs:
         env:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
         run: npx vitest run --project integration test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
+
+      - name: Verify remediated OpenClaw plugin runtimes
+        env:
+          NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS: "1"
+          NEMOCLAW_REAL_OPENCLAW_BODY_PARSER_HARNESS: "1"
+          NEMOCLAW_REAL_OPENCLAW_MSAL_HARNESS: "1"
+        run: >-
+          npx vitest run --project integration
+          test/agents/openclaw/openclaw-zod-runtime.test.ts
+          test/agents/openclaw/openclaw-body-parser-runtime.test.ts
+          test/agents/openclaw/openclaw-msal-runtime.test.ts
+          --silent=false --reporter=default
 
   cli-test-shards:
     needs: [changes, compile-artifacts, openshell-sdk-package]
@@ -647,6 +679,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -784,6 +820,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts
@@ -841,6 +881,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/checks/candidate-openshell-sdk.mts

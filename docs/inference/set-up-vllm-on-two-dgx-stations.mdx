@@ -67,6 +67,11 @@ A missing, malformed, or mismatched ownership field remains foreign state and st
 For the first non-interactive setup, pass the managed provider and peer to the shell installer.
 The installer qualifies the pair and creates the peer binding that managed vLLM requires.
 Do not set `NEMOCLAW_DGX_STATION_SSH_BINDING` yourself or run `$$nemoclaw onboard` directly for the first pair setup.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \

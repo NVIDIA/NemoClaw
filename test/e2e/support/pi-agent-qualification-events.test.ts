@@ -8,14 +8,20 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
-import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
+import { directDockerfileContextSources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
+import {
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 import {
   buildPiReadTask,
   classifyPiReadTaskAttempt,
+  hasCompletedPiTurn,
   isTransientPiInferenceFailure,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
@@ -156,11 +162,283 @@ function failedProbe(): ShellProbeResult {
   };
 }
 describe("Pi qualification event oracle", () => {
+  it.each([
+    ["pending Pi turn", ""],
+    ["truncated final event", '\n{"type":"message_update","message":{"role":"assistant"}'],
+  ])("retries a timed-out %s once and records both attempts (#13755)", async (_label, suffix) => {
+    const pendingEvents = parsePiJsonEvents(
+      events({ type: "agent_start" }, { type: "message_start", message: { role: "assistant" } }) +
+        suffix,
+      { allowTruncatedFinalLine: true },
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(pendingEvents, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(hasCompletedPiTurn(pendingEvents)).toBe(false);
+    const proof = qualifyPiReadTask(parsePiJsonEvents(eventStream()), PATH, TOKEN);
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return attempt === 1
+          ? {
+              failure,
+              proof: undefined,
+              result: { ...failedProbe(), exitCode: 143, timedOut: true },
+              turnCompleted: false,
+            }
+          : {
+              failure: undefined,
+              proof,
+              result: { ...failedProbe(), exitCode: 0 },
+              turnCompleted: true,
+            };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+
+    expect(attempts).toEqual([1, 2]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "passed-after-retry",
+      attempts: [
+        { failureClass: "transient-external", retryScheduled: true },
+        { outcome: "passed", retryScheduled: false },
+      ],
+    });
+    expect(
+      classifyPiReadTaskAttempt(
+        {
+          failure: undefined,
+          proof,
+          result: { ...failedProbe(), exitCode: 0, timedOut: true },
+          turnCompleted: true,
+        },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+  });
+
+  it("keeps completed and malformed final Pi events strict on timeout (#13755)", () => {
+    const completeEvents = eventStream();
+    const truncated = `${completeEvents}\n{"type":"message_update","message":{"role":"assistant"}`;
+    const parsed = parsePiJsonEvents(truncated, { allowTruncatedFinalLine: true });
+    expect(hasCompletedPiTurn(parsed)).toBe(true);
+    expect(qualifyPiReadTask(parsed, PATH, TOKEN)).toBeDefined();
+    expect(() => parsePiJsonEvents(truncated)).toThrow();
+    expect(() => parsePiJsonEvents(`${truncated}\n`, { allowTruncatedFinalLine: true })).toThrow();
+    expect(() =>
+      parsePiJsonEvents(`${completeEvents}\n{"type":bogus}`, {
+        allowTruncatedFinalLine: true,
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a truncated final event with whitespace after its type key (#13755)", () => {
+    const prefix = events({ type: "agent_start" });
+    expect(
+      parsePiJsonEvents(`${prefix}\n{"type": "message_update", "message":`, {
+        allowTruncatedFinalLine: true,
+      }),
+    ).toEqual([{ type: "agent_start" }]);
+  });
+
+  it("retries a timed-out valid read and reply awaiting agent_end (#13755)", async () => {
+    const partialEvents = parsePiJsonEvents(eventStream().split("\n").slice(0, -1).join("\n"));
+    const proof = qualifyPiReadTask(partialEvents, PATH, TOKEN);
+    expect(hasCompletedPiTurn(partialEvents)).toBe(false);
+
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return {
+          failure: undefined,
+          proof,
+          result: { ...failedProbe(), exitCode: attempt === 1 ? 143 : 0, timedOut: attempt === 1 },
+          turnCompleted: attempt === 2,
+        };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+
+    expect(attempts).toEqual([1, 2]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "passed-after-retry",
+      attempts: [
+        { failureClass: "transient-external", retryScheduled: true },
+        { outcome: "passed", retryScheduled: false },
+      ],
+    });
+  });
+
+  it.each(['{"type":bogus', '{"type":true,"message":', '{"type":"message_update","message":bogus'])(
+    "does not retry a malformed timed-out final event %s (#13755)",
+    async (malformedFinalLine) => {
+      const stdout = `${events({ type: "agent_start" })}\n${malformedFinalLine}`;
+      const attempts: number[] = [];
+      const execution = await runBoundedRetry({
+        operation: "pi-agent-qualification.read-after-recovery",
+        owner: "inference-provider",
+        idempotence: "read-only",
+        maxAttempts: 2,
+        run: async (attempt) => {
+          attempts.push(attempt);
+          let failure: unknown;
+          try {
+            parsePiJsonEvents(stdout, { allowTruncatedFinalLine: true });
+          } catch (error) {
+            failure = error;
+          }
+          return {
+            failure,
+            proof: undefined,
+            result: { ...failedProbe(), exitCode: 143, timedOut: true },
+            turnCompleted: false,
+          };
+        },
+        classify: classifyPiReadTaskAttempt,
+      });
+      expect(attempts).toEqual([1]);
+      expect(execution.evidence).toMatchObject({
+        outcome: "failed-no-retry",
+        attempts: [{ failureClass: "deterministic", retryScheduled: false }],
+      });
+    },
+  );
+
+  it.each([
+    ["disallowed tool", { toolName: "bash" }],
+    ["wrong read path", { args: { path: "/sandbox/other" } }],
+  ])("does not retry a timed-out partial stream with a %s (#13755)", async (_label, override) => {
+    const partialEvents = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "tool_execution_start",
+          toolCallId: "call-read",
+          toolName: "read",
+          args: { path: PATH },
+          ...override,
+        },
+      ) + '\n{"type":"message_update","message":{"role":"assistant"}',
+      { allowTruncatedFinalLine: true },
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(partialEvents, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(hasCompletedPiTurn(partialEvents)).toBe(false);
+
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 143, timedOut: true },
+          turnCompleted: false,
+        };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+    expect(attempts).toEqual([1]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "failed-no-retry",
+      attempts: [{ failureClass: "deterministic", retryScheduled: false }],
+    });
+  });
+
+  it("does not retry a completed Pi response without a read call (#13755)", async () => {
+    const completedEvents = parsePiJsonEvents(
+      events(
+        { type: "agent_start" },
+        {
+          type: "message_end",
+          message: { role: "assistant", content: [{ type: "text", text: TOKEN }] },
+        },
+        { type: "agent_end", messages: [], willRetry: false },
+      ),
+    );
+    let failure: unknown;
+    try {
+      qualifyPiReadTask(completedEvents, PATH, TOKEN);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(hasCompletedPiTurn(completedEvents)).toBe(true);
+
+    expect(
+      classifyPiReadTaskAttempt(
+        {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 0 },
+          turnCompleted: true,
+        },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+    expect(
+      classifyPiReadTaskAttempt(
+        {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 143, timedOut: true },
+          turnCompleted: true,
+        },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+    const attempts: number[] = [];
+    const execution = await runBoundedRetry({
+      operation: "pi-agent-qualification.read-after-recovery",
+      owner: "inference-provider",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      run: async (attempt) => {
+        attempts.push(attempt);
+        return {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 143, timedOut: true },
+          turnCompleted: hasCompletedPiTurn(completedEvents),
+        };
+      },
+      classify: classifyPiReadTaskAttempt,
+    });
+    expect(attempts).toEqual([1]);
+    expect(execution.evidence).toMatchObject({
+      outcome: "failed-no-retry",
+      attempts: [{ failureClass: "deterministic", retryScheduled: false }],
+    });
+  });
+
   it("keeps every Pi image source in the AMD64 lifecycle target ownership boundary (#7926)", () => {
     const imageSources = new Set<string>([
       ".dockerignore",
       ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
-        directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+        directDockerfileContextSources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
           ({ source }) => source,
         ),
       ),
@@ -182,6 +460,30 @@ describe("Pi qualification event oracle", () => {
 
     expect(targetIds).toContain("pi-agent-qualification-amd64");
     expect(targetIds).not.toContain("pi-agent-qualification-arm64");
+  });
+
+  it("qualifies the AMD64 target against public Super VL", () => {
+    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3.5-super-vl-120b-a12b");
+    expect(catalogueTarget("pi-agent-qualification-amd64").environment).toMatchObject({
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_MODEL: DEFAULT_CLOUD_MODEL,
+    });
+    const config = (model: string) =>
+      JSON.stringify({
+        providers: {
+          openshell: {
+            api: "openai-completions",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            models: [{ id: model }],
+          },
+        },
+      });
+    expect(parsePiInferenceEvidence(config(DEFAULT_CLOUD_MODEL), DEFAULT_CLOUD_MODEL).model).toBe(
+      DEFAULT_CLOUD_MODEL,
+    );
+    expect(() =>
+      parsePiInferenceEvidence(config("nvidia/nemotron-3-super-120b-a12b"), DEFAULT_CLOUD_MODEL),
+    ).toThrow("does not match the qualified route");
   });
 
   it("accepts one successful read and an exact final response", () => {
@@ -214,9 +516,26 @@ describe("Pi qualification event oracle", () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("instead of exact file contents");
+    expect(hasCompletedPiTurn(stream)).toBe(true);
     expect(
       classifyPiReadTaskAttempt(
-        { failure, proof: undefined, result: { ...failedProbe(), exitCode: 0 } },
+        {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 0 },
+          turnCompleted: true,
+        },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+    expect(
+      classifyPiReadTaskAttempt(
+        {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 143, timedOut: true },
+          turnCompleted: true,
+        },
         undefined,
       ),
     ).toEqual({ outcome: "failed", failureClass: "deterministic" });
@@ -292,7 +611,21 @@ describe("Pi qualification event oracle", () => {
 
     expect(failure).toBeInstanceOf(PiInferenceFailure);
     expect(
-      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+      classifyPiReadTaskAttempt(
+        { failure, proof: undefined, result: failedProbe(), turnCompleted: true },
+        undefined,
+      ),
+    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+    expect(
+      classifyPiReadTaskAttempt(
+        {
+          failure,
+          proof: undefined,
+          result: { ...failedProbe(), exitCode: 143, timedOut: true },
+          turnCompleted: hasCompletedPiTurn(eventValues),
+        },
+        undefined,
+      ),
     ).toEqual({ outcome: "failed", failureClass: "transient-external" });
   });
 
@@ -336,7 +669,10 @@ describe("Pi qualification event oracle", () => {
 
     expect(failure).toBeInstanceOf(PiInferenceFailure);
     expect(
-      classifyPiReadTaskAttempt({ failure, proof: undefined, result: failedProbe() }, undefined),
+      classifyPiReadTaskAttempt(
+        { failure, proof: undefined, result: failedProbe(), turnCompleted: true },
+        undefined,
+      ),
     ).toEqual({ outcome: "failed", failureClass: "transient-external" });
   });
 

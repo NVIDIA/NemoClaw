@@ -14,17 +14,26 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 ## Protect Provider Credentials
 
 <AgentOnly variant="openclaw">
-The agent inside the sandbox sends requests to `inference.local` instead of connecting to the upstream endpoint directly.
+New direct hosted custom selections outside the Personal policy tier use the recorded endpoint through a sandbox-attached OpenShell provider.
+Fresh Personal-tier selections and retained shared routes use `inference.local`.
 </AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider when the host-local selection qualifies.
-Other custom endpoints retain the shared `inference.local` route.
+<AgentOnly variant="deepagents">
+New Deep Agents Code sandboxes normally use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints and qualified host-local endpoints.
+Bedrock selections use a host-local adapter endpoint instead.
+A fresh Personal-tier hosted compatible selection instead uses `inference.local` without creating a native attachment.
+Other retained shared routes and owned Local NVIDIA NIM also use `inference.local`.
+Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
+</AgentOnly>
+<AgentOnly variant="hermes">
+New Hermes sandboxes use the recorded endpoint through a sandbox-attached OpenShell provider for direct hosted compatible endpoints outside the Personal policy tier and qualified host-local endpoints.
+Bedrock selections use a host-local adapter endpoint instead.
+Fresh Personal-tier hosted selections and retained custom routes without an attachment use `inference.local`.
 Refer to [How Inference Routing Works](../about-inference-routing) for the qualification boundary.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Live qualification of the Hermes native local lifecycle is pending.
 </AgentOnly>
-OpenShell mediates inference traffic and injects the provider credential at egress.
+OpenShell mediates inference traffic and injects the direct provider credential or Bedrock adapter token at egress.
 The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.

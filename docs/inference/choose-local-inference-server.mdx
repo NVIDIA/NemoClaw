@@ -102,6 +102,12 @@ It runs the remaining onboarding steps non-interactively and can recreate the na
 The runtime stores an owner-only bearer API key and model artifacts on the host.
 </Warning>
 
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
+Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
+
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 <AgentOnly variant="openclaw">

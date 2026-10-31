@@ -11,7 +11,10 @@ import { isDeepStrictEqual } from "node:util";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
-import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
+import {
+  managedImageRuntimeIdentity,
+  type ManagedImageAgent,
+} from "../../onboard/managed-image/agents";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -29,6 +32,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
+  normalizeRuntimeProviderIdentity,
   requireRuntimeProviderDestructiveCleanupAuthority,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
@@ -58,7 +62,11 @@ import {
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
 import { removeExactOpenShellDockerSandboxContainers } from "../../onboard/openshell-docker-sandbox-containers";
-import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
+import {
+  type DestroyRunOpenshell,
+  SANDBOX_DESTROY_TIMEOUT_MS,
+  createGatewayScopedDestroyRunner,
+} from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
@@ -76,6 +84,8 @@ export function stopSandboxInferenceResources(
   sandboxName: string,
   sandbox: SandboxEntry | null,
 ): void {
+  // Legacy NIM containers belong to Docker, not another sandbox runtime.
+  if (normalizeRuntimeProviderIdentity(sandbox?.openshellDriver) !== "docker") return;
   const nim = require("../../inference/nim") as {
     stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
     stopNimContainerByName: (name: string) => void;
@@ -90,7 +100,15 @@ export function stopSandboxInferenceResources(
 }
 
 const SANDBOX_NATIVE_ROOT = "/sandbox";
-const COMPLETE_NATIVE_HOME_AGENTS = new Set(["hermes", "langchain-deepagents-code", "openclaw"]);
+const COMPLETE_NATIVE_HOME_AGENTS = new Set<string>([
+  "hermes",
+  "langchain-deepagents-code",
+  "openclaw",
+] satisfies ManagedImageAgent[]);
+
+function isCompleteNativeHomeAgent(agentName: string): agentName is ManagedImageAgent {
+  return COMPLETE_NATIVE_HOME_AGENTS.has(agentName);
+}
 
 function requireNormalizedNativeRoot(agentName: string, configuredRoot: string): string {
   const normalized = path.posix.normalize(configuredRoot);
@@ -163,7 +181,7 @@ export function wipeAgentNativeHome(
   ) => RuntimeProviderStoppedSandboxStateCleanupResult,
   runAsSandboxUser?: (command: readonly string[]) => RuntimeProviderPrivilegedSandboxCommandResult,
 ): void {
-  if (!COMPLETE_NATIVE_HOME_AGENTS.has(agentName)) return;
+  if (!isCompleteNativeHomeAgent(agentName)) return;
   const agent = resolveRegisteredAgentDefinition({ agent: agentName });
   if (!agent) {
     throw new Error(
@@ -263,11 +281,11 @@ export function wipeAgentNativeHome(
       }
       throw error;
     }
-    // Deep Agents' native tree contains both sandbox-owned state and root-owned
-    // managed files. Rootless Podman cannot always remove the former as root.
-    // Complete the same validated wipe as the image's pinned sandbox user.
+    // Rootless Podman root may lack permission to remove sandbox-user state,
+    // including agent SQLite files. Finish the validated wipe as the image's
+    // pinned sandbox user before attempting stopped-volume cleanup.
     if (
-      agentName === "langchain-deepagents-code" &&
+      isCompleteNativeHomeAgent(agentName) &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser
@@ -518,6 +536,10 @@ export async function executeSandboxDestroy({
       runtimeProviders,
     );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
+    const resolveEffectiveDeleteGatewayName = () =>
+      pendingCreateIdentity?.gatewayName ??
+      destroyRuntimeSelection?.gatewayName ??
+      deleteGatewayName;
     const expectedSandboxIdentityFingerprint =
       pendingCreateIdentity?.sandboxIdentityFingerprint ?? expectedContainerIdentityFingerprint;
     const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
@@ -572,7 +594,7 @@ export async function executeSandboxDestroy({
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingCreateIdentity?.gatewayName ?? deleteGatewayName,
+          gatewayName: resolveEffectiveDeleteGatewayName(),
           ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
         });
         if (
@@ -757,14 +779,14 @@ export async function executeSandboxDestroy({
       };
     }
     destroyRuntimeSelection = mcpPreparation.runtimeSelection;
-    const selectedRunOpenshell: DestroyRunOpenshell = destroyRuntimeSelection
-      ? (args, options = {}) =>
-          runOpenshell(args, {
-            ...options,
-            env: buildSelectedOpenShellSubprocessEnv(destroyRuntimeSelection!),
-            replaceEnv: true,
-          })
-      : runOpenshell;
+    const effectiveDeleteGatewayName = resolveEffectiveDeleteGatewayName();
+    const selectedRunOpenshell = createGatewayScopedDestroyRunner(
+      runOpenshell,
+      effectiveDeleteGatewayName,
+      destroyRuntimeSelection
+        ? () => buildSelectedOpenShellSubprocessEnv(destroyRuntimeSelection)
+        : undefined,
+    );
     // Prepared-only/incomplete adds have no external resources and are safely
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
@@ -816,6 +838,7 @@ export async function executeSandboxDestroy({
       (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
     if (sandbox && !sandboxRuntimeConfirmedAbsent) {
       try {
+        const agentName = sandbox.agent || "openclaw";
         const registeredSandboxNames = new Set([sandboxName]);
         for (const entry of listSandboxes?.().sandboxes ?? []) {
           if (typeof entry.name === "string" && entry.name) registeredSandboxNames.add(entry.name);
@@ -847,13 +870,14 @@ export async function executeSandboxDestroy({
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
                 : {}),
             });
-          if (sandbox.agent === "langchain-deepagents-code" && control.executeAsSandboxUser) {
+          if (isCompleteNativeHomeAgent(agentName) && control.executeAsSandboxUser) {
+            const identity = managedImageRuntimeIdentity(agentName);
             runAsSandboxUser = (command) =>
               control.executeAsSandboxUser!({
                 sandbox,
                 sandboxName,
                 registeredSandboxNames: [...registeredSandboxNames],
-                sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+                sandboxUser: `${identity.uid}:${identity.gid}`,
                 command,
                 sanitizeEnvironment: true,
                 timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,
@@ -880,7 +904,7 @@ export async function executeSandboxDestroy({
         markMutationStarted();
         (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
-          sandbox.agent || "openclaw",
+          agentName,
           selectedRunOpenshell,
           sandbox.hostMounts,
           runPrivileged,
@@ -959,10 +983,6 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const effectiveDeleteGatewayName =
-      pendingCreateIdentity?.gatewayName ??
-      destroyRuntimeSelection?.gatewayName ??
-      deleteGatewayName;
     const hasNativeLocalAuthority =
       Boolean(sandbox?.nativeLocalProviderAttachment) ||
       listNativeLocalProviderAuthorities(sandboxName, effectiveDeleteGatewayName).length > 0;

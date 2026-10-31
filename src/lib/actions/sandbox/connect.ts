@@ -123,6 +123,7 @@ import {
   publicationFromDecision,
   publishLaunchReadiness,
   getNativeProviderAttachment,
+  hasRecordedNativeNvidiaAttachment,
   requireNativeInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
@@ -182,6 +183,7 @@ export type SandboxConnectOptions = {
   managedHermesGatewayProcessObserved?: true;
   probeOnly?: boolean;
   requireLaunchReadinessPublication?: boolean;
+  allowTransientNvidiaInvocationOnStart?: boolean;
 };
 
 /** Resolve connect state from the registry root that owns the sandbox. */
@@ -392,6 +394,7 @@ async function runSandboxConnectProbe(
     startedStoppedContainer = false,
     probeOnly,
     probeTiming,
+    allowTransientNvidiaInvocationOnStart = false,
   }: {
     hermesPortable?: boolean;
     hermesPortableCommandAuthority?: HermesPortableReadinessCommandAuthority;
@@ -399,6 +402,7 @@ async function runSandboxConnectProbe(
     startedStoppedContainer?: boolean;
     probeOnly: true;
     probeTiming?: ProbeTimingRecorder;
+    allowTransientNvidiaInvocationOnStart?: boolean;
   },
 ): Promise<void> {
   if (probeOnly !== true) throw new Error("connect recovery requires probe-only authority");
@@ -529,7 +533,11 @@ async function runSandboxConnectProbe(
     );
   }
   if (processCheck.wasRunning) {
-    await measureAsync("inference", () => ensureSandboxInferenceRouteOrExit(sandboxName, agent));
+    await measureAsync("inference", () =>
+      ensureSandboxInferenceRouteOrExit(sandboxName, agent, {
+        allowTransientNvidiaInvocation: allowTransientNvidiaInvocationOnStart,
+      }),
+    );
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -546,7 +554,11 @@ async function runSandboxConnectProbe(
     return;
   }
   if (processCheck.recovered) {
-    await measureAsync("inference", () => ensureSandboxInferenceRouteOrExit(sandboxName, agent));
+    await measureAsync("inference", () =>
+      ensureSandboxInferenceRouteOrExit(sandboxName, agent, {
+        allowTransientNvidiaInvocation: allowTransientNvidiaInvocationOnStart,
+      }),
+    );
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     if (!(await measureAsync("pairing", () => settlePortablePairingOrExit(sandboxName)))) {
       measure("pairing", () => runConnectAutoPairApprovalPass(sandboxName));
@@ -554,7 +566,11 @@ async function runSandboxConnectProbe(
     console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
     return;
   }
-  await measureAsync("inference", () => ensureSandboxInferenceRouteOrExit(sandboxName, agent));
+  await measureAsync("inference", () =>
+    ensureSandboxInferenceRouteOrExit(sandboxName, agent, {
+      allowTransientNvidiaInvocation: allowTransientNvidiaInvocationOnStart,
+    }),
+  );
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}'. Restart it through the native agent or restart the sandbox through OpenShell.`,
   );
@@ -615,7 +631,11 @@ function describeHermesPortableForwardRecoveryFailure(
   context?: HermesPortableForwardRecoveryContext,
 ): string {
   if (failure === "restoration-unproved" && context) {
-    return `${describeHermesPortableForwardRecoveryFailure(failure)} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
+    const restorationDetail =
+      context.restorationPort === undefined
+        ? ""
+        : ` NemoClaw could not prove that the migrated API forward on host port ${String(context.restorationPort)} was retained.`;
+    return `${describeHermesPortableForwardRecoveryFailure(failure)}${restorationDetail} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
   }
   switch (context?.cause) {
     case "port-occupied":
@@ -623,7 +643,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-list-failed":
       return "The OpenShell `forward list` command failed, so NemoClaw could not prove the recorded forward state. Restore OpenShell access and retry.";
     case "forward-list-invalid":
-      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the complete forward list before retrying.";
+      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the forward list and the sandbox's recorded forward state before retrying.";
     case "forward-port-resolution-failed":
       return "NemoClaw could not resolve the required recorded host ports. It made no forward changes. Inspect the sandbox registry and launch-forward configuration before retrying.";
     case "forward-reachability-failed":
@@ -637,7 +657,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-occupied":
       return "A required recorded host port is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.";
     case "forward-state-unavailable":
-      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect `openshell forward list` before retrying.";
+      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect the sandbox's status and recorded forward state before retrying. `openshell forward list` can omit receipt-owned forwards.";
     case "recovery-failed":
       return "NemoClaw could not establish the required recorded host forwards within the recovery bound. Inspect the recorded forward state before retrying.";
     case "restoration-unproved":
@@ -1300,22 +1320,30 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
   process.exit(1);
 }
 
+// Prints refused container identities (#10869, #12799). False if none.
+function printUnmatchedContainerIdentity(
+  sandboxName: string,
+  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+): boolean {
+  const identityLines = inspectDockerIdentity
+    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
+    : null;
+  if (!identityLines) return false;
+  for (const line of identityLines) console.error(`  ${line}`);
+  return true;
+}
+
 // A terminal phase can follow from a container identity that NemoClaw refused
 // to match rather than from a crashed sandbox. Name that boundary instead of
 // steering the user to runtime logs and status (#10869).
 function failConnectReadinessTerminalPhase(
   sandboxName: string,
   transition: string,
-  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+  identity: { inspectDockerIdentity: boolean; retryCommand: string },
 ): never {
   console.error("");
   console.error(`  Sandbox '${sandboxName}' ${transition} state.`);
-  const identityLines = inspectDockerIdentity
-    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
-    : null;
-  if (identityLines) {
-    for (const line of identityLines) console.error(`  ${line}`);
-  } else {
+  if (!printUnmatchedContainerIdentity(sandboxName, identity)) {
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
   }
@@ -1704,7 +1732,10 @@ async function resetManagedInferenceRoute(
 async function ensureSandboxInferenceRouteUnlocked(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { quiet = false }: { quiet?: boolean } = {},
+  {
+    quiet = false,
+    allowTransientNvidiaInvocation = false,
+  }: { quiet?: boolean; allowTransientNvidiaInvocation?: boolean } = {},
 ): Promise<SandboxInferenceRouteEnsureResult> {
   let sb: SandboxEntry | null = null;
   let inference: ReturnType<typeof registry.getSandboxEntryInference> | null = null;
@@ -1725,6 +1756,7 @@ async function ensureSandboxInferenceRouteUnlocked(
         agentName: agent?.name,
         entry: sb,
         deps: {},
+        allowTransientNvidiaInvocation,
       });
       return { sandbox: sb, routeHealthy: true };
     }
@@ -1873,7 +1905,10 @@ async function ensureSandboxInferenceRouteUnlocked(
 async function ensureSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { quiet = false }: { quiet?: boolean } = {},
+  {
+    quiet = false,
+    allowTransientNvidiaInvocation = false,
+  }: { quiet?: boolean; allowTransientNvidiaInvocation?: boolean } = {},
 ): Promise<SandboxInferenceRouteEnsureResult> {
   const snapshot = readConnectSandbox(sandboxName);
   if (!snapshot) return { sandbox: null, routeHealthy: null };
@@ -1883,7 +1918,10 @@ async function ensureSandboxInferenceRoute(
     getNativeProviderAttachment(snapshot) ||
     snapshot.nativeLocalProviderAttachment !== undefined
   ) {
-    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, {
+      quiet,
+      allowTransientNvidiaInvocation,
+    });
   }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);
   return withGatewayRouteMutationLock(gatewayName, () => {
@@ -1898,17 +1936,24 @@ async function ensureSandboxInferenceRoute(
       );
       process.exit(1);
     }
-    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, {
+      quiet,
+      allowTransientNvidiaInvocation,
+    });
   });
 }
 
 async function ensureSandboxInferenceRouteOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { quiet = false }: { quiet?: boolean } = {},
+  {
+    quiet = false,
+    allowTransientNvidiaInvocation = false,
+  }: { quiet?: boolean; allowTransientNvidiaInvocation?: boolean } = {},
 ): Promise<SandboxEntry | null> {
   const result = await ensureSandboxInferenceRoute(sandboxName, agent, {
     quiet,
+    allowTransientNvidiaInvocation,
   });
   if (agent?.name === "langchain-deepagents-code" && result.routeHealthy === null) {
     console.error(
@@ -2100,10 +2145,17 @@ export async function waitForSandboxReadyOrExit(
     const suggestedTimeout = Math.max(300, timeout * 2);
     console.error("");
     console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
-    console.error("  Check: openshell sandbox list");
-    console.error(
-      `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
-    );
+    if (
+      !printUnmatchedContainerIdentity(sandboxName, {
+        inspectDockerIdentity: allowDockerRuntimeInspection,
+        retryCommand,
+      })
+    ) {
+      console.error("  Check: openshell sandbox list");
+      console.error(
+        `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
+      );
+    }
     process.exit(1);
   }
   console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
@@ -2491,7 +2543,9 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
         : null;
       const sb = portableInference
         ? portableInference.entry
-        : await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
+        : await ensureSandboxInferenceRouteOrExit(sandboxName, agent, {
+            allowTransientNvidiaInvocation: true,
+          });
       await requalify();
       if (hermesPortable && !portableInference?.forwardsRecovered) {
         const authority = requireHermesPortableActiveLifecycleAuthority(
@@ -2562,10 +2616,26 @@ async function prepareConnectSandboxWithinLifecycleFence(
     managedHermesGatewayProcessObserved,
     probeOnly = false,
     requireLaunchReadinessPublication = true,
+    allowTransientNvidiaInvocationOnStart = false,
   }: SandboxConnectOptions,
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectSession | null> {
+  if (allowTransientNvidiaInvocationOnStart) {
+    const entry = readConnectSandbox(sandboxName);
+    if (
+      !probeOnly ||
+      requireLaunchReadinessPublication ||
+      !entry ||
+      (entry.agent ?? "openclaw") !== "openclaw" ||
+      !hasRecordedNativeNvidiaAttachment(entry)
+    ) {
+      throw new Error(
+        "degraded start verification requires a recorded native NVIDIA OpenClaw route",
+      );
+    }
+  }
   if (probeOnly) {
+    console.log(`  Target gateway: ${getSandboxTargetGatewayName(sandboxName)}`);
     let portableAuthorityReady = false;
     let hermesMissingFastPathEligible = false;
     let hermesReadinessAuthority: {
@@ -2751,7 +2821,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
       }
       throw error;
     }
-    let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
+    let publication: Awaited<ReturnType<typeof publishLaunchReadiness>> | null;
     while (true) {
       if (readiness.kind === "accepted") {
         const acceptedReadiness = readiness;
@@ -2993,6 +3063,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
               startedStoppedContainer,
               probeOnly: true,
               probeTiming,
+              allowTransientNvidiaInvocationOnStart,
             });
             if (!hermesPortable) {
               await probeTiming!.measureAsync("gateway", () =>
@@ -3007,6 +3078,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
             await requalify();
           },
         });
+        // Start owns the final inference classification. Its gateway check must
+        // not publish launch readiness from a tolerated transient response.
+        if (allowTransientNvidiaInvocationOnStart) return null;
         const retainedCommand = hermesReadinessAuthority?.command;
         if (retainedCommand) {
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
@@ -3081,6 +3155,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
       publication = gated.value;
       break;
     }
+    if (publication === null) return null;
     if (publication.kind === "validation-failed") {
       probeTiming!.markFailureStage("publication");
       const failedCheck = publication.failedCheck
