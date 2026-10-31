@@ -44,6 +44,7 @@ import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential.js";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract.js";
 import { shellQuote } from "../runner.js";
 import {
   createTempSshConfig,
@@ -1367,7 +1368,7 @@ function stripNativeStructuredCredentials(config: unknown, normalized: string): 
   const provider = upstream.provider;
   if (provider !== "openrouter-api" && provider !== "nvidia-prod") return sanitized;
   const endpoint =
-    provider === "nvidia-prod" ? "https://integrate.api.nvidia.com/v1" : HERMES_OPENROUTER_ENDPOINT;
+    provider === "nvidia-prod" ? NVIDIA_HOSTED_NATIVE_ENDPOINT : HERMES_OPENROUTER_ENDPOINT;
   const template =
     provider === "nvidia-prod" ? NVIDIA_INFERENCE_PLACEHOLDER : HERMES_OPENROUTER_TEMPLATE;
   const managed = isObjectRecord(providers) ? providers[provider] : null;

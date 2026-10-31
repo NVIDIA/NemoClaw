@@ -14,6 +14,7 @@ import {
   refreshHermesNativeLocalCredential,
   type HermesManagedRouting,
 } from "../../src/lib/hermes-managed-route.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
 import { useOrderedNativeCapture } from "../support/native-snapshot.ts";
 
 const ORIGINAL_HOME = process.env.HOME;
@@ -61,7 +62,7 @@ describe("complete native-home machine authority", () => {
     },
     {
       provider: "nvidia-prod",
-      baseUrl: "https://integrate.api.nvidia.com/v1",
+      baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       template: "${NVIDIA_INFERENCE_API_KEY}",
     },
   ])("Hermes $provider archive references", ({ provider, baseUrl, template }) => {
@@ -237,7 +238,7 @@ describe("complete native-home machine authority", () => {
         const route = {
           model: "nvidia/nemotron-3-ultra-550b-a55b",
           upstreamProvider: "nvidia-prod",
-          baseUrl: "https://integrate.api.nvidia.com/v1",
+          baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
           inferenceApi: "openai-completions",
           contextWindow: 131072,
         };
