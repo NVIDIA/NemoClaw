@@ -8,14 +8,14 @@ ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=7aedb66be0d0b7fc5a0d466539d87f835f16b1c1
-ARG FABRIC_SHA256=30740262e6ec422bc16dcebdabaf76d67cc16726d42ddc547841de9ec19f9726
-# OpenClaw release 2026.9.4, the version the pinned Fabric's OpenClaw adapter
-# documents; move it with the Fabric revision, not on its own.
-ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
+ARG FABRIC_REVISION=6cad35045ea534e096c48f634f739d804baef5ee
+ARG FABRIC_SHA256=b10ab138607cc84f7bcc3e2630efdbeaccaabf4eadd9ebffeedeb4dab84de92a
+# OpenClaw release 2026.9.34, the only version the pinned Fabric's OpenClaw
+# adapter supports; move it with the Fabric revision, not on its own.
+ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
 # Hermes Agent's release image for HERMES_REVISION; only its built dashboard
 # and TUI bundle are copied. Move it with HERMES_REVISION, not on its own.
-ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.22.4@sha256:7a69201726bc64db2072a1371557137c23312d29705cda2b8ea2a0214a50a4cf
+ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.22.5@sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d
 # The harness stage the catalog and labeled stages build on.
 ARG STAGE=generic
 FROM ${RUST_IMAGE} AS rust
@@ -64,6 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 # Share downloads only; compiled artifacts stay in this source-specific layer.
 RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
+    && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/sdk/python/nemo-fabric-evidence \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/sdk/python/nemo-fabric-adapter-catalog
@@ -116,9 +117,9 @@ RUN printf '%s\n' '{"nvidia.fabric.openclaw": {"files": ["/app"], "binaries": ["
 USER node
 
 FROM base AS hermes-assets
-# Hermes Agent release v0.22.4, which includes its native Relay integration.
-ARG HERMES_REVISION=4d04303818b61bf3aa09278af48356315515965b
-ARG HERMES_SHA256=147a567a05402c2832ca12d7e0a33f48fc0e7f627018687cbae1f333dafff0c2
+# Hermes Agent release v0.22.5, which includes its native Relay integration.
+ARG HERMES_REVISION=bf0203a794a07aac3ff764972ab9087baa4e4f4e
+ARG HERMES_SHA256=0dc2cca54657d162845a77f634e107c61c3fb0bd6c8505212aa2e200591b7cc9
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
@@ -154,20 +155,30 @@ COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay
 # packages it shares with Fabric, as Fabric installs into Hermes's environment.
 # From the messaging extra, only aiohttp, which Hermes's API server needs, is
 # installed; the messaging platform clients are pruned.
+# Hermes's lock overrides some dependencies' requirements, such as
+# browser-harness's Pillow pin, so the exported closure is installed without
+# re-resolving it, and Hermes's own pm.pip_check accepts exactly the dependency
+# check failures those overrides cause, as Hermes's installer does.
 # Hermes resolves bundled assets relative to its source checkout.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
     uv export --project /opt/hermes --frozen --no-dev --extra mcp --extra messaging \
         --prune discord-py --prune python-telegram-bot --prune slack-bolt --prune slack-sdk --prune qrcode --prune brotlicffi \
         --no-emit-project --format requirements-txt --output-file /opt/nemoclaw/source/hermes-requirements.txt \
-    && uv pip install --python /opt/fabric/bin/python --require-hashes -r /opt/nemoclaw/source/hermes-requirements.txt \
+    && uv pip install --python /opt/fabric/bin/python --require-hashes --no-deps -r /opt/nemoclaw/source/hermes-requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --no-deps -e /opt/hermes --config-settings editable_mode=compat \
-    && uv pip check --python /opt/fabric/bin/python
+    && if ! uv pip check --python /opt/fabric/bin/python > /tmp/pip-check.txt 2>&1; then \
+        PYTHONPATH=/opt/hermes python3 -c 'import sys; from pathlib import Path; from pm.pip_check import unexpected_incompatibilities; sys.exit(unexpected_incompatibilities(sys.stdin.read(), Path("/opt/hermes/uv.lock")) != [])' \
+            < /tmp/pip-check.txt || { cat /tmp/pip-check.txt; exit 1; }; \
+    fi \
+    && rm /tmp/pip-check.txt
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 # Hermes's dashboard and browser chat use these prebuilt assets and this Node.js
 # instead of building or installing their own, which the read-only, offline
 # sandbox would refuse.
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist HERMES_NODE=/usr/local/bin/node
-RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard"], "binaries": []}}' > /opt/nemoclaw/adapters.json
+# Browser chat runs Hermes's terminal UI in a pseudo-terminal, so this image's
+# default policy lets the agent open one; catalog.py adds read_write to it.
+RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard"], "binaries": [], "read_write": ["/dev/pts", "/dev/ptmx"]}}' > /opt/nemoclaw/adapters.json
 USER node
 
 FROM common-wheels AS pi-build
@@ -249,7 +260,7 @@ RUN --mount=type=cache,target=/root/.cache/uv uv tool run --from ruff==0.16.7 ru
 
 FROM common-wheels AS unit-tests
 COPY image/fabric/ /catalog/image/fabric/
-RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /wheels/nemo_fabric_adapter_catalog-*.whl \
+RUN uv pip install --python /opt/fabric/bin/python /wheels/nemo_fabric_runtime-*.whl /wheels/nemo_fabric_evidence-*.whl /wheels/nemo_fabric_adapter_contract-*.whl /wheels/nemo_fabric_adapters_common-*.whl /wheels/nemo_fabric_adapter_catalog-*.whl \
     && uv pip install --python /opt/fabric/bin/python PyYAML==6.0.3
 COPY image/fabric/ /tests/
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

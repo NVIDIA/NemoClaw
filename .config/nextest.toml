@@ -44,7 +44,7 @@ default-filter = '''
     | test(/^kubernetes_agents::/)
     | test(/^multi_agent::/) | test(/^multiple_providers::/)
     | test(/^remote_service::/) | test(/^helm_recovery::/)
-    | test(/^travel_example::/)
+    | test(/^hcl_integration::/) | test(/^travel_example::/)
     | test(/^travel_team_example::/)
 ))
 '''
@@ -67,6 +67,11 @@ slow-timeout = { period = "12s", terminate-after = 2 }
 filter = 'binary_id(=openshell-provider::contract)'
 slow-timeout = { period = "8s", terminate-after = 2 }
 
+
+# The tofu test integration shards share one fixed engine socket.
+[[profile.lifecycle.overrides]]
+filter = 'test(/^hcl_integration::/)'
+test-group = "hcl-integration"
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. The Docker tests share one engine,
 # so they run one at a time; the offline runtime rebuild uses no engine and
@@ -79,7 +84,7 @@ default-filter = '''
 (package(nemoclaw-build) & test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/) | test(/^docker_registry::/)
-    | test(/^managed_gateway::/) | test(/^dummy_agent::/)
+    | test(/^managed_gateway::/) | test(/^dummy_agent::/) | test(/^interfaces_live::/)
 ))
 | (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
@@ -116,6 +121,7 @@ store-failure-output = false
 [test-groups]
 docker-engine = { max-threads = 1 }
 build-integration = { max-threads = 2 }
+hcl-integration = { max-threads = 1 }
 
 # Every live Docker test uses the engine.
 [[profile.live-docker.overrides]]

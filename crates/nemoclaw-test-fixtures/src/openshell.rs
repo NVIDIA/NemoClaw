@@ -91,6 +91,12 @@ pub struct State {
     pub services: std::collections::BTreeMap<(String, String, String), p::ServiceEndpoint>,
     /// The exposures each CreateSandbox request carried, as sent.
     pub sandbox_exposures: Vec<Vec<p::SandboxServiceExposure>>,
+    /// The path of every OpenShell RPC the fixture received, in order.
+    pub rpcs: Vec<String>,
+    /// Each provider registration as CreateProvider stored it, kept after deletion.
+    pub created_providers: Vec<p::Provider>,
+    /// Each sandbox as CreateSandbox stored it, kept after deletion.
+    pub created_sandboxes: Vec<p::Sandbox>,
 }
 impl State {
     fn created(&mut self, kind: &str) {
@@ -224,6 +230,11 @@ impl tower::Service<http::Request<Body>> for Service {
     fn call(&mut self, request: http::Request<Body>) -> Self::Future {
         let state = self.0.clone();
         Box::pin(async move {
+            state
+                .lock()
+                .unwrap()
+                .rpcs
+                .push(request.uri().path().to_owned());
             let rejection = {
                 let mut state = state.lock().unwrap();
                 let rejection = state
@@ -458,6 +469,7 @@ fn create_provider(
     created_metadata.annotations = meta.annotations;
     provider.metadata = Some(created_metadata);
     state.providers.insert(key, provider.clone());
+    state.created_providers.push(provider.clone());
     state.created("provider");
     if std::mem::take(&mut state.lose_create) {
         return Err(Status::unavailable("lost create reply secret"));
@@ -647,6 +659,7 @@ fn create_sandbox(
         execution.create(&sandbox, &credentials)?;
     }
     state.sandboxes.insert(key.clone(), sandbox.clone());
+    state.created_sandboxes.push(sandbox.clone());
     if let Some((field, value)) = state.substitute_sandbox_after_create.take() {
         let metadata = state
             .sandboxes

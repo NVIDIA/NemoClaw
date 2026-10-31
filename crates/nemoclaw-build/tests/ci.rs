@@ -242,6 +242,48 @@ fn gateway_documents_parse_as_current_configuration() {
     );
 }
 
+/// The interface live test's document: OpenClaw's dashboard and Hermes's API
+/// server and dashboard, with a model endpoint on the gateway network's host
+/// address and a key the test supplies. Both sandboxes take their image's
+/// default policy, which lets Hermes's browser chat open a terminal.
+#[cfg(feature = "sdk")]
+#[test]
+fn the_interfaces_document_enables_each_p0_interface() {
+    use ci::live::{INTERFACES_MODEL_KEY, InterfacesInputs, interfaces_document, uuid};
+    let uid = uuid().unwrap();
+    let image = |name: &str| format!("nc-live-{name}@sha256:{}", "a".repeat(64));
+    let document = interfaces_document(&InterfacesInputs {
+        name: "live-interfaces",
+        uid: &uid,
+        port: 17951,
+        subnet: "172.30.203.0/24",
+        openclaw: &image("openclaw"),
+        hermes: &image("hermes"),
+        model_port: 18431,
+    });
+    let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
+    let value = serde_json::to_value(&parsed).unwrap();
+    let provider = &value["spec"]["inferenceProviders"]["model"];
+    assert_eq!(provider["endpoint"], "http://172.30.203.1:18431/v1");
+    assert_eq!(provider["credential"]["env"], INTERFACES_MODEL_KEY);
+    let sandboxes = &value["spec"]["sandboxes"];
+    assert_eq!(
+        sandboxes["claw"]["harness"]["settings"]["interfaces"],
+        serde_json::json!({"dashboard": {"port": 18789}})
+    );
+    assert_eq!(
+        sandboxes["hermes"]["harness"]["settings"]["interfaces"],
+        serde_json::json!({"api": {"port": 8642}, "dashboard": {"port": 9119}})
+    );
+    for sandbox in ["claw", "hermes"] {
+        assert_eq!(
+            sandboxes[sandbox]["network"],
+            serde_json::json!({"tier": "isolated"}),
+            "{sandbox}"
+        );
+    }
+}
+
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, bytes) in entries {
@@ -333,6 +375,41 @@ fn nextest_archive_installs_only_its_single_executable() {
         tar_gz(&[]),
     ] {
         assert!(ci::install_nextest(&archive, &directory.path().join("other"), false).is_err());
+    }
+}
+
+#[test]
+fn openshell_archive_installs_only_its_single_executable() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary =
+        ci::install_openshell(&tar_gz(&[("openshell", b"cli")]), directory.path()).unwrap();
+    assert_eq!(binary, directory.path().join("openshell"));
+    assert_eq!(std::fs::read(&binary).unwrap(), b"cli");
+    for archive in [
+        tar_gz(&[("openshell", b"cli"), ("openshell-gateway", b"x")]),
+        tar_gz(&[("bin/openshell", b"cli")]),
+        tar_gz(&[]),
+    ] {
+        assert!(ci::install_openshell(&archive, &directory.path().join("other")).is_err());
+    }
+}
+
+/// The live suites run the OpenShell CLI at the SDK's pinned version.
+#[test]
+fn the_pinned_openshell_cli_matches_the_openshell_version() {
+    let pins: serde_json::Value =
+        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
+    let version = pins["openshell"].as_str().unwrap();
+    for platform in ["linux_arm64", "linux_amd64"] {
+        let url = pins["platforms"][platform]["openshell"]["url"]
+            .as_str()
+            .unwrap();
+        assert!(
+            url.starts_with(&format!(
+                "https://github.com/NVIDIA/OpenShell/releases/download/v{version}/openshell-"
+            )),
+            "{platform}: {url}"
+        );
     }
 }
 

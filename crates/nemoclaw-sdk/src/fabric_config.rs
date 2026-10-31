@@ -116,8 +116,9 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
             result["models"]["default"] = projected;
         }
     }
-    // Fabric's OpenCode adapter refuses a plain-HTTP model endpoint outside
-    // loopback unless its settings list the host. The deployment names each
+    // Fabric's adapters that declare the setting (OpenCode, and Claude, Codex
+    // and Pi under Relay) refuse a plain-HTTP model endpoint outside loopback
+    // unless their settings list the host. The deployment names each
     // endpoint, so an adapter that declares the setting trusts their hosts.
     let lists_trusted_hosts = descriptor.is_some_and(|descriptor| {
         descriptor["settings_schema"]["properties"]

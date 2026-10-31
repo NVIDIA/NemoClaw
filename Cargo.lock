@@ -2987,8 +2987,8 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "nemo-fabric-core"
-version = "0.6.0"
-source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=7aedb66be0d0b7fc5a0d466539d87f835f16b1c1#7aedb66be0d0b7fc5a0d466539d87f835f16b1c1"
+version = "0.7.0"
+source = "git+https://github.com/NVIDIA/NeMo-Fabric?rev=6cad35045ea534e096c48f634f739d804baef5ee#6cad35045ea534e096c48f634f739d804baef5ee"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -3127,10 +3127,12 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "fabric-provider",
+ "futures-util",
  "getrandom 0.4.3",
  "http",
  "k8s-openapi 0.28.0",
  "kube 4.2.0",
+ "nemoclaw-backend",
  "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
@@ -3153,6 +3155,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
+ "tokio-tungstenite 0.29.0",
  "toml 1.1.5+spec-1.1.0",
  "tonic",
  "tonic-prost",
@@ -3164,6 +3167,7 @@ dependencies = [
 name = "nemoclaw-fabric"
 version = "0.1.0"
 dependencies = [
+ "jsonschema 0.56.0",
  "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-docker",
@@ -3365,11 +3369,13 @@ dependencies = [
 name = "nemoclaw-test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "http",
  "nemoclaw-openshell",
  "openshell-core",
  "prost",
  "rustls",
+ "serde",
  "serde_json",
  "similar",
  "tar",

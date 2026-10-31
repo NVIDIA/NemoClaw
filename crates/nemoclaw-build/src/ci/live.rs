@@ -106,3 +106,93 @@ spec:
 "
     )
 }
+
+/// The variable holding the model key the interface live test supplies.
+pub const INTERFACES_MODEL_KEY: &str = "NEMOCLAW_TEST_INTERFACES_MODEL_KEY";
+
+pub struct InterfacesInputs<'a> {
+    pub name: &'a str,
+    pub uid: &'a str,
+    pub port: u16,
+    pub subnet: &'a str,
+    pub openclaw: &'a str,
+    pub hermes: &'a str,
+    /// Where the test serves its model stand-in, on the host.
+    pub model_port: u16,
+}
+
+/// A managed Docker gateway with OpenClaw's dashboard and Hermes's API server
+/// and dashboard enabled. The model endpoint is the test's stand-in on the
+/// gateway network's host address, with a key the test supplies. Both
+/// sandboxes take their image's default policy.
+pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
+    let InterfacesInputs {
+        name,
+        uid,
+        port,
+        subnet,
+        openclaw,
+        hermes,
+        model_port,
+    } = inputs;
+    let host = subnet
+        .strip_suffix(".0/24")
+        .map(|prefix| format!("{prefix}.1"))
+        .expect("a /24 subnet");
+    // JSON is a YAML flow mapping, so serializing cannot produce malformed YAML.
+    format!(
+        "apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: {name}
+  uid: {uid}
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    engine: unix:///var/run/docker.sock
+    endpoint: http://127.0.0.1:{port}
+    networkCIDR: {subnet}
+  inferenceProviders:
+    model:
+      provider: openai
+      endpoint: http://{host}:{model_port}/v1
+      credential:
+        env: {INTERFACES_MODEL_KEY}
+  sandboxes:
+    claw:
+      image:
+        ref: {openclaw}
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        settings: {{\"interfaces\": {{\"dashboard\": {{\"port\": 18789}}}}}}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
+    hermes:
+      image:
+        ref: {hermes}
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        settings: {{\"interfaces\": {{\"api\": {{\"port\": 8642}}, \"dashboard\": {{\"port\": 9119}}}}}}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
+"
+    )
+}

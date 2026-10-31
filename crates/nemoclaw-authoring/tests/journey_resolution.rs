@@ -86,6 +86,7 @@ fn omitted_optional_sdk_field_stays_absent_even_when_its_scope_is_asked() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -1609,6 +1610,7 @@ fn invalid_complete_native_settings_cannot_reach_review() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -1636,6 +1638,7 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -2411,6 +2414,7 @@ fn sparse_journey_visits_each_route_and_keeps_its_model_answers_separate() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -2581,14 +2585,12 @@ fn referenced_harness_settings_are_owned_by_the_referenced_definition() {
             .question(field)
             .is_some()
     );
-    state
-        .answer(&capabilities, field, Some(json!(301)))
-        .unwrap();
+    state.answer(&capabilities, field, Some(json!(61))).unwrap();
     assert_eq!(
         state
             .values()
             .pointer("/spec/harnesses/assistant/settings/startup_timeout_seconds"),
-        Some(&json!(301))
+        Some(&json!(61))
     );
     assert!(
         state
@@ -3024,6 +3026,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
         "adapter:nvidia.fabric.openclaw:/agent_id",
         "adapter:nvidia.fabric.openclaw:/channel_config",
         "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/interfaces",
         "adapter:nvidia.fabric.openclaw:/openclaw_command",
         "adapter:nvidia.fabric.openclaw:/port_range",
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -3120,6 +3123,7 @@ fn inference_preset_updates_sparse_values_and_reopens_dependent_answers() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -3480,6 +3484,7 @@ fn optional_sdk_question_can_be_deliberately_omitted() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -3673,6 +3678,7 @@ fn fully_supplied_express_definition_has_no_current_questions() {
         "adapter:nvidia.fabric.openclaw:/agent_id",
         "adapter:nvidia.fabric.openclaw:/channel_config",
         "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/interfaces",
         "adapter:nvidia.fabric.openclaw:/openclaw_command",
         "adapter:nvidia.fabric.openclaw:/port_range",
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -3725,6 +3731,7 @@ fn supplied_template_can_finish_a_guided_journey_through_one_resolver() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -3858,6 +3865,7 @@ fn external_gateway_choice_reveals_its_required_endpoint() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -4056,6 +4064,7 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -4270,6 +4279,7 @@ fn minimally_supplied_inline_envelope_materializes_through_one_resolver() {
             "adapter:nvidia.fabric.openclaw:/agent_id",
             "adapter:nvidia.fabric.openclaw:/channel_config",
             "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+            "adapter:nvidia.fabric.openclaw:/interfaces",
             "adapter:nvidia.fabric.openclaw:/openclaw_command",
             "adapter:nvidia.fabric.openclaw:/port_range",
             "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",

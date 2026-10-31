@@ -82,9 +82,29 @@ exit "${CARGO_RESULT:-0}"
             fs::write(&path, script).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // The live-docker step installs the pinned OpenShell CLI unless it is
+        // already where the pin puts it. Seed it there, as an earlier run
+        // would have; fixtures must never download it, so its pin points
+        // nowhere they can reach and a step that tries fails at once.
+        let mut pins: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../../versions.json")).unwrap();
+        for artifacts in pins["platforms"].as_object_mut().unwrap().values_mut() {
+            if let Some(openshell) = artifacts.get_mut("openshell") {
+                let checksum = openshell["sha256"].as_str().unwrap();
+                let cli = root
+                    .path()
+                    .join(".tools")
+                    .join(format!("openshell-{}", &checksum[..12]))
+                    .join("openshell");
+                fs::create_dir_all(cli.parent().unwrap()).unwrap();
+                fs::write(&cli, "#!/bin/sh\n").unwrap();
+                fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+                openshell["url"] = "http://offline.invalid/openshell.tar.gz".into();
+            }
+        }
         fs::write(
             root.path().join("versions.json"),
-            include_bytes!("../../../versions.json"),
+            serde_json::to_vec_pretty(&pins).unwrap(),
         )
         .unwrap();
         Self(root)
@@ -444,7 +464,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 }
 
 #[test]
-fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compressed() {
+fn live_images_builds_the_agent_hermes_dummy_and_proxy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     let output = fixture.run(&["live-images"]);
@@ -454,10 +474,10 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds OpenClaw and the reference dummy, under the shared prefix
-    // the live steps load: each exports its catalog, then builds its labeled
-    // stage.
-    for name in ["openclaw", "dummy"] {
+    // ARM64 builds OpenClaw, Hermes and the reference dummy, under the shared
+    // prefix the live steps load: each exports its catalog, then builds its
+    // labeled stage.
+    for name in ["openclaw", "hermes", "dummy"] {
         assert!(
             log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
             "{log}"
@@ -487,7 +507,7 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
         "{archive}"
     );
 }

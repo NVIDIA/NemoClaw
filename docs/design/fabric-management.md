@@ -41,7 +41,7 @@ Success exits 0; failure and unsupported operations exit 1.
 Requests are limited to 512 KiB and responses to 4 MiB.
 Diagnostics carry only Fabric's fixed stages and codes, never its messages.
 A timeout, malformed response, or disconnection leaves the outcome unconfirmed; callers do not replay starts or invocations.
-Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/7aedb66be0d0b7fc5a0d466539d87f835f16b1c1/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
+Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/6cad35045ea534e096c48f634f739d804baef5ee/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
 
 Fabric can start another runtime in a sandbox after a stop.
 After a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`, which the provider reports with guidance to replace the sandbox.
@@ -70,7 +70,8 @@ These controls belong only to the reference fixture.
 
 `cargo images build` ([source](../../crates/nemoclaw-build/src/images.rs)) builds each image's `catalog` stage, which runs [`catalog.py`](../../image/fabric/catalog.py) without starting an adapter, then its `labeled` stage with the result as `io.nemoclaw.fabric.catalog`.
 A Dockerfile can't set a label from something its own build computes, so the catalog passes between the two builds as a build argument, and the `labeled` stage fails unless it matches the installed catalog.
-Each harness stage declares its adapters, their files, and their executables in `/opt/nemoclaw/adapters.json`.
+Each harness stage declares its adapters, their files, their executables, and any paths their harness writes beyond the image's default policy in `/opt/nemoclaw/adapters.json`.
+The catalog adds those paths, such as the terminal devices the Hermes image declares for browser chat, to that image's `runtime.policy.filesystem_policy.read_write`; other images' default policies are unchanged.
 The descriptors come unmodified from Fabric's `nemo-fabric-adapter-catalog` package; an adapter Fabric does not publish, such as the test adapter, declares the descriptor file its package installed.
 Direct Docker Bake builds attach no metadata.
 
@@ -100,7 +101,8 @@ The following boundaries need coordination; these notes do not claim upstream ac
 | Owner | Work or agreement |
 |---|---|
 | NeMo-Fabric | Report a harness process that exited as failed rather than unknown, so refresh can start it again ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)). |
-| NeMo-Fabric | Configuring OpenClaw's dashboard and web search ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360), [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Configuring OpenClaw's web search ([#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Reporting each runtime's interfaces from its handle, instead of the P0 conventions NemoClaw follows ([NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565)), and interface tokens the agent's own tools can't read, an interface check, and exposed service URLs ([NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566)). |
 | OpenShell | Qualify completed sandbox stop as the boundary that terminates all old workload processes before start, while retaining required data; request implementation changes only for demonstrated gaps. |
 
 ## Observation Limits

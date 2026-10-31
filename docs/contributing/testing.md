@@ -117,7 +117,7 @@ A coverage test in each binary requires a contract test for every type the provi
 ### System
 
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
-System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `travel_example`, and `travel_team_example` modules.
+System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `hcl_integration`, `travel_example`, and `travel_team_example` modules.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.
@@ -155,12 +155,12 @@ A contract test runs the provider built from the checkout, but a system test run
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
-It pulls the pinned OpenShell and Ollama images; builds the OpenClaw agent image, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
-It requests no inference and needs no GPU or credentials.
+It requests no inference from a model server and needs no GPU or credentials; the [agent interface test](live-tests.md#agent-interfaces) answers its agents' model requests with a stand-in in the test process.
 
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
@@ -169,14 +169,14 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
 To build the live images once for both suites, run `cargo ci live-images`.
-It builds the agent image, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+It builds the OpenClaw and Hermes agent images, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
-Instead of either, `--images-commit COMMIT` pulls the agent, reference, and proxy images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`, and derives the two proxy images from the pushed proxy with one label each.
-`cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all three images for both architectures, provided the image rules find no change between it and `HEAD`.
+Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, reference, and proxy images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`, and derives the two proxy images from the pushed proxy with one label each.
+`cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all four images for both architectures, provided the image rules find no change between it and `HEAD`.
 
 ## Budgets and Per-Test Limits
 

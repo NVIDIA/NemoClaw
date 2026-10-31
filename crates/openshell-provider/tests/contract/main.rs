@@ -9,6 +9,11 @@ use nemoclaw_test_fixtures::{openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::Path, process::Output};
 
+/// A fake Docker engine with volumes, containers, and files, shared with
+/// nemoclaw-e2e's `tofu test` integration case.
+#[cfg(unix)]
+#[path = "../../../test-support/docker_engine.rs"]
+mod docker_engine;
 #[path = "../../../test-support/http.rs"]
 mod http_fixture;
 /// The in-memory Kubernetes API shared with the SDK tests, which reaches its

@@ -75,8 +75,112 @@ The foreground command forwards through the authenticated OpenShell connection t
 Keep forwarding bound to loopback, follow the adapter's authentication requirements, and stop forwarding with Ctrl-C.
 Stopping a client forward does not stop the sandbox or its Fabric runtime.
 
-No bundled adapter's Fabric configuration currently enables a browser interface.
-OpenClaw's dashboard ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360)) and Hermes's API, dashboard, and browser TUI ([#13321](https://github.com/NVIDIA/NemoClaw/issues/13321)) return when Fabric's adapters support configuring them.
+Apply prints this command for each interface that an agent's configuration enables; see [Reach an Agent Interface](#reach-an-agent-interface).
+
+## Reach an Agent Interface
+
+OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
+Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
+The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/6cad35045ea534e096c48f634f739d804baef5ee/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/6cad35045ea534e096c48f634f739d804baef5ee/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
+
+### Enable an Interface
+
+Declare each interface under the agent's `harness.settings.interfaces` with an exact `port`:
+
+```yaml
+sandboxes:
+  claw:
+    harness:
+      kind: nvidia.fabric.openclaw
+      settings:
+        interfaces:
+          dashboard:
+            port: 18789
+  hermes:
+    harness:
+      kind: nvidia.fabric.hermes
+      settings:
+        interfaces:
+          api:
+            port: 8642
+          dashboard:
+            port: 9119
+```
+
+| Harness | Interface | Fields | Token | Sign-in |
+|---|---|---|---|---|
+| OpenClaw | `dashboard`, the Control UI with browser chat | `port` (required, at most 65425), `enabled`, `public_origins` | Yes | `http://127.0.0.1:PORT/#token=TOKEN` |
+| Hermes | `api`, the OpenAI-compatible API server | `port` (required), `enabled` | Yes | `Authorization: Bearer TOKEN` |
+| Hermes | `dashboard`, with browser chat | `port` (required), `enabled` | No | None |
+
+An interface is on while it is present, unless it sets `enabled: false`.
+OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
+Hermes's `startup_timeout_seconds` setting, 60 by default and at most 75, bounds how long its interfaces have to start.
+
+Planning checks each interface against its schema in the image's adapter descriptor.
+It rejects an interface name or field that the adapter doesn't declare, for example `sandbox/claw: adapter/nvidia.fabric.openclaw compatibility rejected; harness_interfaces: harness.settings.interfaces.terminal: the image's adapter does not support this interface setting`, and a missing required field, a wrong type, or an out-of-range value, for example `harness_interfaces: harness.settings.interfaces.api.port: is required by the image's adapter`.
+Fabric checks the rest when it starts the agent: settings outside the interfaces, combinations such as OpenClaw's `port` with `port_range`, and a port that is already in use. The agent fails to start if an enabled interface can't start.
+Changing an agent's settings, including its interfaces, replaces its sandbox, deleting its files and conversations.
+
+### Forward, Read the Token, and Sign In
+
+After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token:
+
+```text
+Agent interfaces:
+  In each terminal, select this deployment's gateway and workspace:
+    unset OPENSHELL_GATEWAY
+    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
+  claw/dashboard on port 18789
+    Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
+    Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
+    Sign in:  open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token
+```
+
+JSON results carry the same facts under `interfaces`.
+The gateway selection follows [Select the Gateway and Workspace](#select-the-gateway-and-workspace); for a gateway that needs an OpenShell profile, the output asks for your profile's name.
+
+1. Run the forward in its own terminal and keep it running.
+2. Read the token with the `Token` command, in another terminal with the same selection.
+   The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
+   The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
+   After the runtime restarts, apply prints the new path; read the token again.
+3. Sign in:
+   - OpenClaw: open `http://127.0.0.1:PORT/#token=TOKEN` in a browser. The Control UI removes the token from the address bar. OpenClaw accepts any loopback origin with the token, so a forward to another local port also works; `public_origins` lists other origins.
+   - Hermes's API server: send `Authorization: Bearer TOKEN` with each request, for example to `http://127.0.0.1:PORT/v1/models`.
+   - Hermes's dashboard: open `http://127.0.0.1:PORT/`. It has no sign-in.
+
+Keep tokens out of YAML, shell history, and shared logs; NemoClaw stores none in its state.
+Hermes's API server and browser chat call the model the agent's configuration names, with its key.
+
+### Who Can Use an Interface
+
+- **The agent's own tools.** Tools that the agent runs in its sandbox run as the same user as its runtime, so they can read and change the token files and reach the interfaces' ports. The agent can sign in to its own interfaces and use their configuration, cron, and plugin features, which can change what it does outside the guardrails of its harness, though not OpenShell's policy.
+- **Hermes's dashboard.** Anyone who can reach its forward can use it, including its browser chat, which runs the agent without approvals. Its gateway actions, such as restarting the gateway, start Hermes processes that replace the one Fabric started and can keep running after the runtime stops.
+- **Forwards and exposed URLs.** Prefer `openshell forward service`: the gateway authorizes each forwarded connection for your identity and workspace. A [service exposure](#expose-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
+
+Configuration changed through an interface isn't kept: the adapter regenerates the harness's configuration at each start.
+Conversations in an interface aren't promised to share history with requests sent through `fabric-agent-ctl invoke`.
+
+### Hermes's Browser Chat
+
+Browser chat runs Hermes's terminal UI in a pseudo-terminal, which needs read-write access to `/dev/pts`, where the `ptmx` device that `/dev/ptmx` links to lives.
+The Hermes image's default filesystem policy grants read-write `/dev/pts` and `/dev/ptmx`, so a Hermes sandbox that omits `network` or declares `tier: isolated` can use browser chat.
+Other agent images' default policies grant neither.
+
+With those devices writable, every process in the Hermes sandbox, including the agent's own tools, can open pseudo-terminals.
+The image's catalog label lists the defaults under `runtime.policy.filesystem_policy`.
+
+An [explicit policy](sandbox-network.md#choose-a-policy) replaces the image's defaults.
+For browser chat, its `filesystem_policy.read_write` must list `/dev/pts`; `/dev/ptmx` alone isn't enough, and without `/dev/pts` the chat fails with `out of pty devices`.
+The API server and the rest of the dashboard work either way.
+
+### Interface Failures
+
+Only the agent's runtime check decides whether NemoClaw finds the agent running.
+OpenClaw's Control UI is served by its Gateway, which is the runtime itself, so its failure is the runtime's.
+A Hermes interface process that exits leaves the agent running: plan reports no change, neither Fabric nor NemoClaw restarts the process or reports its failure, and the interface returns when the runtime next starts.
 
 ## Expose a Service Through the Gateway
 

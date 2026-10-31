@@ -53,8 +53,9 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
-| Hermes's native API server, dashboard and browser TUI | [#13321](https://github.com/NVIDIA/NemoClaw/issues/13321) |
-| OpenClaw's dashboard | [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360) |
+| Deep Agents Code's terminal interface | [#14011](https://github.com/NVIDIA/NemoClaw/issues/14011) |
+| Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) |
+| Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |

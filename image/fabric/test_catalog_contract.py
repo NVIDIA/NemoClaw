@@ -108,6 +108,26 @@ class CatalogContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not describe"):
             self.installed({ADAPTER_ID: {"files": [], "binaries": [], "descriptor": str(path)}})
 
+    def test_paths_an_adapter_writes_join_only_its_images_default_policy(self):
+        writes = {"files": [], "binaries": [], "read_write": ["/dev/pts", "/dev/ptmx"]}
+        catalog = self.installed({ADAPTER_ID: writes})
+        self.assertEqual(
+            catalog["runtime"]["policy"]["filesystem_policy"]["read_write"],
+            ["/dev/pts", "/dev/ptmx"],
+        )
+        self.assertNotIn("read_write", catalog["adapters"][0])
+        # An image whose adapter declares none keeps the manifest's policy.
+        catalog = self.installed({ADAPTER_ID: {"files": [], "binaries": []}})
+        self.assertEqual(catalog["runtime"]["policy"], self.layout["policy"])
+        # A path the manifest already grants isn't listed twice.
+        self.layout["policy"]["filesystem_policy"]["read_write"] = ["/dev/pts"]
+        self.manifest.write_text(json.dumps(self.layout))
+        catalog = self.installed({ADAPTER_ID: writes})
+        self.assertEqual(
+            catalog["runtime"]["policy"]["filesystem_policy"]["read_write"],
+            ["/dev/pts", "/dev/ptmx"],
+        )
+
     def test_an_adapter_without_files_adds_no_runtime_files(self):
         catalog = self.installed({ADAPTER_ID: {"files": [], "binaries": []}})
         self.assertNotIn("runtime_files", catalog)
@@ -128,6 +148,14 @@ class CatalogContract(unittest.TestCase):
                 "absolute descriptor",
             ),
             ({ADAPTER_ID: {"files": [], "binaries": [], "unknown": True}}, "files and binaries"),
+            (
+                {ADAPTER_ID: {"files": [], "binaries": [], "read_write": ["dev/pts"]}},
+                "absolute paths",
+            ),
+            (
+                {ADAPTER_ID: {"files": [], "binaries": [], "read_write": "/dev/pts"}},
+                "absolute paths",
+            ),
         ]:
             with self.subTest(declared=declared), self.assertRaisesRegex(ValueError, message):
                 read_adapters(self.declare(declared))

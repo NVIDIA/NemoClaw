@@ -27,7 +27,8 @@ Managed inference means an accepted Ollama or vLLM service configuration, with t
 It does not promise arbitrary model compatibility.
 The selected adapter’s settings schema supplies native constraints.
 The current Fabric descriptor contract does not establish API-subtype compatibility for every adapter; missing claims remain unknown.
-OpenCode refuses a plain-HTTP model endpoint outside loopback unless `harness.settings.insecure_http_model_hosts` lists its host; NemoClaw adds the host of each such endpoint the deployment sends, and keeps any hosts you list.
+OpenCode refuses a plain-HTTP model endpoint outside loopback unless `harness.settings.insecure_http_model_hosts` lists its host, and Claude Code, Codex, and Pi do the same when NeMo Relay is enabled.
+For an adapter whose settings declare `insecure_http_model_hosts`, NemoClaw adds the host of each such endpoint the deployment sends, and keeps any hosts you list.
 Apply verifies configuration and readiness without generating a model response.
 The external Ollama proxy uses OpenAI Completions; Fabric metadata determines adapter compatibility.
 The inference provider stays `management: external`, while NemoClaw manages only the proxy and its credential storage.

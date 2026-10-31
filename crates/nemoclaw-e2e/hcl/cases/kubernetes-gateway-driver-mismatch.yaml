@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One OpenClaw agent for an external gateway that must run OpenShell's
+# Kubernetes driver. The fixture gateway reports Docker instead, so planning
+# must stop before OpenShell or Fabric receive any change.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-driver-mismatch
+  uid: 5e2d9c41-7a3b-4f60-b8e1-2c4d6f8a0b17
+spec:
+  gateway:
+    management: external
+    runtime:
+      provider: kubernetes
+    endpoint: https://openshell.example.com
+  inferenceProviders:
+    inference:
+      provider: openai
+      endpoint: https://inference.example.com/v1
+      credential: {env: INFERENCE_API_KEY}
+  sandboxes:
+    assistant:
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: fixture/agent@sha256:df92da3a84aa584bf32ce3a858eae51fd3e84cbc0224a120d17175b968adab16
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: inference
+              overrides:
+                model: example-model
