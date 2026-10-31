@@ -1940,7 +1940,9 @@ export async function actionApply(
     if (runtimeIdentityConfig) {
       await revalidateNativeInference();
       progress(40, "Configuring runtime identity");
+      log(`Runtime identity configure started at ${new Date().toISOString()}`);
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
+      log(`Runtime identity configure completed at ${new Date().toISOString()}`);
       persistRunPlan();
     }
 
@@ -1950,9 +1952,13 @@ export async function actionApply(
 
     if (runtimeIdentityReceipt) {
       await revalidateNativeInference();
+      log(`Runtime identity attach started at ${new Date().toISOString()}`);
       await attachRuntimeIdentity(runtimeIdentityReceipt, sandboxName, identityDeps);
+      log(`Runtime identity attach completed at ${new Date().toISOString()}`);
       await revalidateNativeInference();
+      log(`Runtime identity rotate started at ${new Date().toISOString()}`);
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
+      log(`Runtime identity rotate completed at ${new Date().toISOString()}`);
       await revalidateNativeInference();
     }
 

@@ -281,6 +281,17 @@ openshell sandbox provider list <sandbox-name>
 
 The direct runner `status` action reports the non-secret identity ownership receipt.
 
+### Compare Credential Operation Times
+
+During apply, the runner logs UTC start and completion timestamps for identity configuration, attachment, and explicit rotation.
+These timing messages contain only the operation, its start or completion, and the timestamp.
+A missing completion message leaves that operation's outcome unverified.
+
+The protected E2E OAuth fixture also records each token request's `receivedAt` timestamp and `sequence` in its existing `*-oauth-token-requests.json` artifact.
+Compare those records with the apply timing messages to locate token requests relative to the runner operations.
+Timing alone does not identify the gateway caller or its refresh reason, establish causation, or prove that duplicate issuance is fixed.
+The conformance assertions and experimental qualification requirement still apply.
+
 ## Roll Back Runtime Identity
 
 The `rollback` action refuses cleanup when the run contains a runtime identity receipt, native inference creation intent, or resources recorded as created by apply.
