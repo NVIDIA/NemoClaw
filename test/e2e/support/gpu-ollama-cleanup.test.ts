@@ -57,7 +57,12 @@ async function runCleanupFixture(termination: string, sleepCommand: string) {
       writeFileSync(filename, `#!/bin/sh\n${body}\n`);
       chmodSync(filename, 0o755);
     }
-    const result = await new Promise<{ code: number | string; stderr: string }>((resolve) => {
+    const result = await new Promise<{
+      code: number;
+      killed: boolean | undefined;
+      signal: string | undefined;
+      stderr: string;
+    }>((resolve) => {
       execFile(
         "bash",
         ["-c", ollamaCleanupScript(port)],
@@ -72,7 +77,12 @@ async function runCleanupFixture(termination: string, sleepCommand: string) {
           killSignal: "SIGKILL",
         },
         (error, _stdout, stderr) =>
-          resolve({ code: error ? (typeof error.code === "number" ? error.code : -1) : 0, stderr }),
+          resolve({
+            code: error ? (typeof error.code === "number" ? error.code : -1) : 0,
+            killed: error?.killed,
+            signal: error?.signal,
+            stderr,
+          }),
       );
     });
     return { ...result, waits: readFileSync(sleepLog, "utf8").trim().split("\n").filter(Boolean) };
@@ -115,4 +125,7 @@ it("rejects a signal-terminated cleanup command (#14041)", async () => {
   const result = await runCleanupFixture("", 'kill -KILL "$PPID"');
 
   expect(result.code).toBe(-1);
+  expect(result.signal).toBe("SIGKILL");
+  expect(result.killed).toBe(false);
+  expect(result.waits).toEqual(["0.1"]);
 });
