@@ -142,6 +142,52 @@ describe("agent variant docs", () => {
     expect(render("hermes")).not.toContain(forwardPrerequisites);
   });
 
+  it.each(
+    findGeneratedNavigationTargets()
+      .filter((target) => target.sourcePath === "reference/commands.mdx")
+      .map((target) => target.variant),
+  )("documents startup verification for %s without promising gateway repair", (variant) => {
+    const sourcePath = "reference/commands.mdx";
+    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+    const rendered = renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const startReference = rendered.split(" <name> start`\n")[1]?.split("\n### ")[0] ?? "";
+
+    expect(startReference).toContain("Then verify agent runtime readiness.");
+    expect(startReference).toContain(
+      "After runtime verification and any required host-forward checks pass",
+    );
+    expect(startReference).not.toContain("then repair the in-sandbox gateway");
+    expect(startReference).not.toContain("Before it repairs the gateway");
+    expect(startReference).not.toContain("name-recover)");
+    const nativeGateway = ["openclaw", "hermes"].includes(variant);
+    expect(
+      startReference.includes("Gateway startup observation does not relaunch the agent."),
+    ).toBe(nativeGateway);
+    expect(startReference.includes("Gateway startup observation")).toBe(nativeGateway);
+    expect(startReference.includes("[native gateway restart procedure]")).toBe(nativeGateway);
+    expect(startReference.includes("#recover-the-agent-runtime)")).toBe(nativeGateway);
+  });
+
+  it("limits the reference's supervised recovery exception to Hermes", () => {
+    const sourcePath = "reference/commands.mdx";
+    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+    const render = (variant: (typeof agentVariants)[number]) =>
+      renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const supervisedRecovery =
+      "`recover` requests a supervised gateway relaunch before verification.";
+
+    expect(render("hermes")).toContain(supervisedRecovery);
+    expect(render("hermes")).toContain("after a clean exit or exit status `79`");
+    expect(render("hermes")).toContain(
+      "Otherwise, `recover` reports a stopped gateway without relaunching it.",
+    );
+    expect(render("openclaw")).toContain(
+      "If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.",
+    );
+    expect(render("openclaw")).not.toContain(supervisedRecovery);
+    expect(render("deepagents")).not.toContain(supervisedRecovery);
+  });
+
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");
 

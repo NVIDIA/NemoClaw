@@ -1105,7 +1105,18 @@ Inspect the process separately with `ps -p <PID> -o user=,args=`. Stop it only w
 
 ### Sandbox Keeps Using the Previous Messaging Credential
 
-Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential. When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry. When you provide a replacement credential, NemoClaw runs the channel's configured checks before it transfers the complete native home/workspace, destroys the sandbox, recreates it, and restores the transfer. If an available pre-recreation check fails, onboarding stops before the transfer or deletion. Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation, so send a real test message after onboarding and confirm that the recreated sandbox receives it and responds. If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state. If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation. If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
+Rerunning `$$nemoclaw onboard --non-interactive` with a replacement `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, or `MSTEAMS_APP_PASSWORD` previously reported success while the sandbox kept using the old credential.
+When you rerun onboarding, NemoClaw evaluates every active messaging credential binding and compares each supplied credential with its SHA-256 hash in the sandbox registry.
+When you provide a replacement credential, NemoClaw runs the channel's configured checks before it transfers the complete native home/workspace, destroys the sandbox, recreates it, and restores the transfer.
+If an available pre-recreation check fails, onboarding stops before the transfer or deletion.
+Discord verifies the replacement token before recreation.
+Rejected, rate-limited, unreachable, or timed-out verification leaves the existing sandbox unchanged.
+Correct the token or host access, wait before retrying a rate-limited request, then rerun onboarding with the replacement.
+Microsoft Teams requires non-empty replacement input but cannot prove upstream credential validity before recreation.
+After onboarding, send a real test message and confirm that the recreated sandbox receives it and responds.
+If the channel state changes during rotation, onboarding stops before it destroys the existing sandbox and asks you to retry with the updated state.
+If you do not supply a credential, or the supplied credential matches the recorded hash, the credential check does not trigger recreation.
+If you replace a credential for a channel that you stopped with `channels stop`, onboarding does not trigger recreation because that channel is inactive.
 
 If you suspect a sandbox is still using a stale messaging credential, follow [Rotate a Messaging Credential](../security/credential-rotation#rotate-a-messaging-credential) to export the replacement without putting it in shell history. Then rerun onboarding so the credential check runs:
 
@@ -1865,17 +1876,24 @@ Confirm that the target sandbox has the `tavily` preset applied:
 nemo-deepagents <name> policy list
 ```
 
-If it is missing, apply the preset, register the host-side credential, and rebuild so the provider attaches:
+If the preset is missing, apply it.
+Use the sandbox's recorded `<gateway-port>` and `<gateway-name>` from [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
+Register the credential on that gateway and attach the provider to the sandbox:
 
 ```bash
 nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
-nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
+NEMOCLAW_GATEWAY_PORT=<gateway-port> nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
-nemo-deepagents <name> rebuild
+openshell sandbox provider attach -g <gateway-name> <name> tavily-search
 ```
 
-If Tavily is still blocked after rebuild, inspect recent policy denials:
+After removal, NemoClaw keeps the saved Tavily selection disabled.
+Deep Agents has no managed web-search configuration for a durable Tavily attachment.
+Repeat the attachment after each rebuild.
+
+Retry the Tavily request from sandbox Python.
+If Tavily is still blocked after attachment, inspect recent policy denials:
 
 ```bash
 nemo-deepagents <name> logs --tail 50
@@ -3218,12 +3236,15 @@ After recovery, verify that Hermes starts and the gateway health check passes.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
-`nemohermes onboard` forwards the sandbox's API port, which is `8642` when no other sandbox or host listener already holds it. Hermes serves an OpenAI-compatible API at that port, not a chat dashboard. A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
+`nemohermes onboard` forwards the sandbox's API port, which is `8642` when no other sandbox or host listener already holds it.
+Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
+Replace `<api-port>` below with the port in the OpenAI-compatible API URL printed after onboarding.
+A browser visit to `http://127.0.0.1:<api-port>/` (or any non-API path) returns nothing renderable.
 
 Confirm the agent is healthy with the API health endpoint instead:
 
 ```bash
-curl -sf http://127.0.0.1:8642/health
+curl -sf "http://127.0.0.1:<api-port>/health"
 ```
 
 Expected output:
@@ -3232,7 +3253,8 @@ Expected output:
 { "status": "ok", "platform": "hermes-agent" }
 ```
 
-Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions. For terminal use, run `nemohermes launch <name>`.
+Point an OpenAI-compatible client at `http://127.0.0.1:<api-port>/v1` for chat completions.
+For terminal use, run `nemohermes launch <name>`.
 
 ### Onboarding Reports Hermes Is Not Ready With an Unreachable API Port
 
@@ -3263,14 +3285,34 @@ An HTTP status of `200` or `401` means the managed host forward is reachable. An
 
 OpenShell port forwards are host-side relays managed by the OpenShell gateway process, not Docker `-p` publish mappings on the sandbox container. `docker port openshell-hermes-<id>` reflects only Docker-published ports, so it returns nothing for OpenShell-managed forwards even when the host bind is live.
 
-Use OpenShell's own view as the supported acceptance signal:
+Read the sandbox's allocated API port from the OpenAI-compatible API URL printed after onboarding.
+Replace `<api-port>` below with that port, then check readiness and host reachability:
 
 ```bash
-openshell forward list                       # shows the host bind for each forwarded port
-curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
+nemohermes <name> status
+curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 "http://127.0.0.1:<api-port>/health"
 ```
 
-If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing. Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next verified available API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging. A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`. A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action. To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`. Set `<N>` to a free port from `8642` through `8652`. Onboarding rejects a value outside that range. It also rejects an in-range value that another sandbox or host listener already holds. A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
+An HTTP status of `200` or `401` means the API endpoint is reachable; it does not validate the inference credential.
+If the connection fails or status reports an API forward failure, run `nemohermes <name> recover` to verify or restore the sandbox's required forwards.
+Follow the reported gateway or forwarding diagnostic if recovery fails.
+New and successfully migrated API forwards bind to `127.0.0.1`.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Do not assume loopback isolation until recovery succeeds.
+`openshell forward list` lists legacy and user-managed forwards; it can omit NemoClaw's receipt-owned API forward.
+A missing row alone does not mean that the API forward is absent or unhealthy.
+
+A second Hermes sandbox on the same host receives the next verified available API port.
+Use that sandbox's printed API URL instead of assuming that it owns port `8642`.
+A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`.
+A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action.
+To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`.
+Set `<N>` to a free port from `8642` through `8652`.
+Onboarding rejects a value outside that range.
+It also rejects an in-range value that another sandbox or host listener already holds.
+A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
 
 ### Install reports `Could not restore the Hermes forward`
 

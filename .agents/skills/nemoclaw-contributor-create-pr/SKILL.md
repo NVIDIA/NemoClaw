@@ -8,7 +8,7 @@ description: Create or update a NemoClaw pull request with its authoring-session
 
 # Create or Update a Pull Request
 
-Session reporting follows v1 PR #13918 at `7238cbdff9`, retaining its notices and report contract. Main retains its publication and validation requirements.
+Session reporting retains the format from v1 PR #13918. Main also accepts reports posted by repository maintainers, including when they take over an existing PR.
 
 Before publication, follow [Validation](references/validation.md) and [Publication](references/publication.md). For an open PR, first follow the [PR follow-up contract](../_shared/pr-follow-up.md); route valid code repairs to `nemoclaw-contributor-implement-issue`. These references own trusted-base validation, source-repository selection, guarded writes, verified commits, DCO, draft handling, and review follow-up. Follow [Writing and review](../_shared/documentation-writing-review.md) for PR text.
 
@@ -22,11 +22,11 @@ When changing live E2E evidence, require the implementation handoff to apply [De
    /tmp/pr-session-report report-comment.md
    ```
 
-3. Publish through the [publication procedure](references/publication.md), preserving main’s description sections, DCO, and draft requirements. Read all pages of PR comments before posting, including after an uncertain retry; reuse an existing opening report by the PR author instead of duplicating it. If absent, post once as the PR author with `gh pr comment NUMBER --body-file report-comment.md`.
-4. Read back the description and comments. Verify the description has no report, exactly one opening report by the PR author exists, and its contents match the intended report. Keep the exact summary `Authoring session — opening`. Validate the retrieved files with `/tmp/pr-session-report --pr description.md author-comment-1.md author-comment-2.md`; pass every PR-author comment, including later reports and unrelated comments. Comments by others are ignored; a maintainer's comment cannot substitute for an automated PR author's report.
+3. Publish through the [publication procedure](references/publication.md), preserving main’s description sections, DCO, and draft requirements. Read all pages of PR comments before posting, including after an uncertain retry. Reuse an existing opening report from the PR author or a repository maintainer. If absent, either may post it with `gh pr comment NUMBER --body-file report-comment.md`. When a maintainer takes over an existing or automated PR, do not require the original author to post the report or add a separate takeover record.
+4. Read back the description and comments. Verify the description has no report, exactly one eligible opening report exists, and its contents match the intended report. CI accepts the PR author and accounts with repository `maintain` or `admin` permission, verified through GitHub's collaborator-permission API. Keep the exact summary `Authoring session — opening`. Validate the retrieved files with `/tmp/pr-session-report --pr description.md report-comment-1.md report-comment-2.md`; pass comments from eligible accounts, including later reports and unrelated comments. Ignore reports from other accounts.
 5. Follow checks and automated reviews on the latest commit. If the metadata job fetched comments before the opening report was posted, wait for that run to finish, then use `gh run rerun --job JOB_ID` for its failed `commit-lint` job. Select the job from this PR's latest-revision run; a rerun retains the original revision but fetches current comments. Reruns require repository write permission, so external contributors may need a maintainer. Confirm the rerun passes.
 
-CI fetches the description and all comment pages on PR opening, updates, reopening, and description/title edits. It checks the presence and format of the PR author's opening report, not the truth or completeness of its evidence. Fetch failures fail the check. Comment posting, editing, or deletion alone does not trigger a refresh; rerun the metadata job after such changes.
+CI fetches the description and all comment pages on PR opening, updates, reopening, and description/title edits. It checks the report's presence, format, and posting account's eligibility, not the truth or completeness of its evidence. Comment or permission fetch failures fail the check. Comment posting, editing, or deletion alone does not trigger a refresh; rerun the metadata job after such changes.
 
 The check uses the candidate checkout's validator and workflow. It does not protect against a PR changing its own validation; trusted-base enforcement is outside this check's scope.
 
@@ -34,7 +34,7 @@ Preserve historical reports and their cutoffs. Optional later commit or merge re
 
 ## Session Report
 
-Report the session that wrote the change, up to a cutoff you state; if this session only publishes the PR, mark every row unavailable.
+Report the session that wrote the change, up to a cutoff you state. When publishing or taking over a PR without the original authoring-session evidence, mark the fields unavailable; the report does not need to come from the person who wrote the change.
 Give each row one status:
 
 - `recorded`: the session record covers the whole session.

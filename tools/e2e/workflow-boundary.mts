@@ -1740,7 +1740,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         : -1;
     const sharedBoundaryBuildIndex =
       jobName === "managed-image-multiarch-startup"
-        ? workflowSteps.findIndex((step) => step.name === "Build shared policy boundary")
+        ? workflowSteps.findIndex(
+            (step) => step.name === "Build candidate CLI and shared policy boundary",
+          )
         : -1;
     const pinnedV1ToolchainIndex =
       jobName === "live" || jobName === "hermes-e2e"

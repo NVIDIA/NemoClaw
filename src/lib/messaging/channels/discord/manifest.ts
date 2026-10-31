@@ -229,6 +229,13 @@ export const discordManifest = {
   ],
   hooks: [
     {
+      id: "discord-hermes-status-health",
+      phase: "status",
+      handler: "discord.statusHealth",
+      agents: ["hermes"],
+      outputs: [{ id: "channelHealth", kind: "status" }],
+    },
+    {
       id: "discord-openclaw-bridge-health",
       phase: "health-check",
       handler: "discord.openclawBridgeHealth",
@@ -238,7 +245,7 @@ export const discordManifest = {
     {
       id: "discord-token-paste",
       phase: "enroll",
-      handler: "common.tokenPaste",
+      handler: "discord.tokenPaste",
       outputs: [
         {
           id: "botToken",

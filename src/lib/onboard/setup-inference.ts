@@ -26,6 +26,7 @@ import {
   isHostedCustomEndpoint,
   prepareHostedNativeProvider,
   prepareCustomNativeProvider,
+  readCustomNativeSandboxPolicy,
   usesCustomNativeOnboarding,
 } from "../inference/native-provider/setup";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
@@ -236,6 +237,7 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  sandboxPolicyReader?: Parameters<typeof readCustomNativeSandboxPolicy>[0]["reader"];
   recordMigratedProviderCredential?: (
     name: string,
     credentialEnv: string,
@@ -1518,6 +1520,15 @@ export function createSetupInference(
               );
             const selectedCredentialEnv = credentialEnv || customNativeCredentialEnv(provider);
             const credentialValue = deps.hydrateCredentialEnv(selectedCredentialEnv) || null;
+            const sandboxPolicyDocument = await readCustomNativeSandboxPolicy({
+              gatewayName,
+              sandboxName: sandboxName!,
+              recordedSandbox,
+              rebuildSandboxPolicyDocument: options.rebuildSandboxPolicyDocument,
+              reader: deps.sandboxPolicyReader,
+              redactDiagnostic: (message) => hostLocalInferenceFailureDetail(message, deps),
+            });
+            revalidateSandboxIdentity?.("prepare the custom native provider");
             nativeHostedProviderAttachment = await prepareCustomNativeProvider({
               gatewayName,
               provider,
@@ -1526,6 +1537,7 @@ export function createSetupInference(
               credentialEnv: selectedCredentialEnv,
               credentialValue,
               adapter: deps.providerAdapter,
+              sandboxPolicyDocument,
               recordedAttachment:
                 recordedSandbox?.provider === provider
                   ? recordedSandbox.nativeHostedProviderAttachment

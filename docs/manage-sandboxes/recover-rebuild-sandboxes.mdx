@@ -268,9 +268,11 @@ The OpenShell CLI has no command that starts a gateway, and `openshell status` o
   instead of destroying and recreating.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-  If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled
-  Tavily Search, or want to pick up a new base image without losing the complete
-  native home, use `rebuild` instead of destroying and recreating.
+  If you changed the underlying Dockerfile, upgraded Deep Agents Code, or want
+  to pick up a new base image without losing the complete native home, use
+  `rebuild` instead of destroying and recreating.
+  To enable Tavily egress, follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
+  The procedure requires an explicit provider attachment. Repeat the attachment after rebuilding if the sandbox still needs Tavily.
 </AgentOnly>
 
 ```bash

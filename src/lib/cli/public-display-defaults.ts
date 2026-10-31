@@ -51,7 +51,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Credentials",
       order: 39,
-      description: "Remove a stored credential so onboard re-prompts",
+      description: "Remove a provider credential from the OpenShell gateway",
       flags: "<PROVIDER> [--yes|-y]",
     },
   ],

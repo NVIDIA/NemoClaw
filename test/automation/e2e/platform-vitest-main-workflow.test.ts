@@ -9,6 +9,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES,
+  FULL_E2E_TEST_TIMEOUT_MINUTES,
+} from "../../../tools/e2e/full-e2e-timeout-contract.mts";
+
+import {
   readRepoText,
   readYaml,
   type Workflow,
@@ -111,9 +116,81 @@ describe("platform evidence workflow", () => {
     expect(live.run).toContain('test "`$(git rev-parse HEAD)" = "$env:GITHUB_SHA"');
   });
 
-  it.each([0, 17])(
-    "preserves full-suite status %s on the native Docker WSL runner",
-    (fullStatus) => {
+  // source-shape-contract: compatibility -- The WSL job budget must contain its selected serial live tests and cleanup without terminating evidence upload
+  it("budgets WSL shard 1 for serial live tests, cleanup and evidence upload", () => {
+    expect(job("wsl-vitest")["timeout-minutes"]).toBe("${{ matrix.timeout_minutes }}");
+    const shards = job("wsl-vitest").strategy?.matrix?.include as Array<{
+      shard: number;
+      timeout_minutes: number;
+    }>;
+    const firstShard = shards.find((entry) => entry.shard === 1)!;
+    // Reserve time for shard-1 root contracts, runtime startup and live-evidence upload.
+    const shardOneReserveMinutes = 30;
+    const nonLiveMinutes = Math.max(
+      ...shards.filter((entry) => entry.shard !== 1).map((entry) => entry.timeout_minutes),
+    );
+    const dashboardSource = readRepoText("test/e2e/live/dashboard-remote-bind.test.ts");
+    const dashboardMinutes = Number(
+      dashboardSource.match(/const TEST_TIMEOUT_MS = (\d+) \* 60_000;/u)?.[1],
+    );
+    expect(dashboardMinutes).toBeGreaterThan(0);
+    expect(step("wsl-vitest", "Run WSL live E2E").run).toContain(
+      "dashboard-remote-bind.test.ts -t hermes",
+    );
+    expect(firstShard.timeout_minutes).toBeGreaterThanOrEqual(
+      nonLiveMinutes +
+        FULL_E2E_TEST_TIMEOUT_MINUTES +
+        dashboardMinutes +
+        2 * FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES +
+        shardOneReserveMinutes,
+    );
+  });
+
+  it("runs Hermes remote-dashboard isolation before and after restart on WSL", () => {
+    const live = step("wsl-vitest", "Run WSL live E2E");
+    const command = live.run
+      ?.split("\n")
+      .find((line) => line.includes("test/e2e/live/dashboard-remote-bind.test.ts"))
+      ?.split(" || ")[0];
+    expect(command).toBeDefined();
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+      dashboardArtifacts='wsl-evidence'
+      npx() {
+        printf '%s\n' "$E2E_ARTIFACT_DIR" "$NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND" "$@"
+        return 19
+      }
+      ${command}
+    `,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(19);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "wsl-evidence",
+      "1",
+      "vitest",
+      "run",
+      "--project",
+      "e2e-live",
+      "test/e2e/live/dashboard-remote-bind.test.ts",
+      "-t",
+      "hermes",
+      "--silent=false",
+      "--reporter=default",
+    ]);
+  });
+  it.each([
+    [0, 0],
+    [17, 0],
+    [0, 19],
+    [17, 19],
+  ])(
+    "runs both WSL suites and preserves failure for full=%s and dashboard=%s",
+    (fullStatus, dashboardStatus) => {
       const run = step("wsl-vitest", "Run WSL live E2E").run ?? "";
       const script = run.match(/\$script = @"\n([\s\S]*?)\n"@/u)?.[1];
       expect(script).toBeDefined();
@@ -122,6 +199,7 @@ describe("platform evidence workflow", () => {
         const shell = script!
           .replaceAll("$workdir", '"$TEST_WORKSPACE"')
           .replaceAll("$exports", "")
+          .replaceAll("$dashboardArtifacts", '"$TEST_WORKSPACE/dashboard"')
           .replaceAll("$env:GITHUB_SHA", "test-revision")
           .replaceAll("`", "");
         const result = spawnSync(
@@ -134,7 +212,8 @@ describe("platform evidence workflow", () => {
           python3() { return 42; }
           npx() {
             case "$*" in
-              *full-e2e.test.ts*) return "$TEST_FULL_STATUS" ;;
+              *full-e2e.test.ts*) echo full-e2e; return "$TEST_FULL_STATUS" ;;
+              *dashboard-remote-bind.test.ts*) echo dashboard; return "$TEST_DASHBOARD_STATUS" ;;
               *) echo 'Native Docker has no IPv6-only host alias' >&2; return 42 ;;
             esac
           }
@@ -147,11 +226,13 @@ describe("platform evidence workflow", () => {
               PATH: process.env.PATH,
               TEST_WORKSPACE: workspace,
               TEST_FULL_STATUS: String(fullStatus),
+              TEST_DASHBOARD_STATUS: String(dashboardStatus),
             },
           },
         );
         expect(result.error).toBeUndefined();
-        expect(result.status, result.stderr).toBe(fullStatus);
+        expect(result.status, result.stderr).toBe(fullStatus || dashboardStatus);
+        expect(result.stdout.trim().split("\n")).toEqual(["full-e2e", "dashboard"]);
       } finally {
         rmSync(workspace, { recursive: true, force: true });
       }

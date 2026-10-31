@@ -5,6 +5,19 @@
 
 Direct E2E coverage runs through Vitest.
 
+Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
+switching, and token-rotation targets use a
+test-only Node preload for their synthetic Discord enrollment tokens. The
+fixture runs in installer and CLI children and returns a bot identity only for
+the matching synthetic token at Discord's identity endpoint. Other requests
+and real credentials retain normal authentication. This fixture establishes
+enrollment state for those targets; it does not prove live Discord authentication
+or message delivery. `support/discord-enrollment-child.test.ts` owns the child
+transport and production compiler contract. Existing live assertions still own
+provider attachment, persisted state, native configuration, stop/start, and cleanup.
+The native Hermes rebuild receives the synthetic transport separately from the
+stored bot token. The rebuild still reads that token from its credential store.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
@@ -31,6 +44,28 @@ pinned managed DCode profile for the canonical and hosted model IDs. The public
 NVIDIA endpoint keeps its existing request shape. The headless check verifies
 that malformed native inference evidence stops connect before session attach;
 native response bodies remain absent from diagnostics.
+
+The `ubuntu-repo-cloud-langchain-deepagents-code` target requires `NVIDIA_INFERENCE_API_KEY`.
+`TAVILY_API_KEY` is optional and remains subject to the workflow's credential trust rules.
+When the Tavily key is absent, the runner skips only the Tavily check and records the reason in
+`actions/cloud-experimental-09-deepagents-code-tavily-opt-in-skipped.json`. Onboarding, the other cloud checks,
+and required configuration-export validation still run.
+When the key is present, the Tavily check enables `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`,
+registers a uniquely named disposable provider on the host, and attaches it to the test sandbox.
+The real key stays in the host/gateway credential path. Sandbox Python submits a placeholder
+that OpenShell rewrites at egress. The check requires HTTP 200 before removal and a new
+`DENIED` audit event for `api.tavily.com:443` afterward.
+The audit event must follow the captured log cursor and identify the fresh managed-Python probe process.
+Cleanup removes the disposable provider and restores the prior `ocsf_json_enabled` setting, including its unset state.
+Cleanup removes the Tavily preset only after this invocation successfully applied it.
+Earlier setup failures preserve existing policy while disposable-provider removal and audit-setting restoration still run.
+Removal preserves shared gateway credentials and unrelated sandbox attachments.
+Adding the preset alone restores its direct network rule; provider access requires an explicit attachment.
+A raw OpenShell attachment is temporary: it leaves the saved opt-out unchanged, so rebuild omits Tavily again.
+Linux x86_64 qualification uses the existing target. WSL ARM qualification remains manual;
+there is no supported WSL ARM selector for this scenario.
+The policy live-state tests own attachment discovery, identity checks, partial failures, and operator-rule preservation.
+The extra-provider planning and recreate tests own rebuild exclusion and explicit re-enable behavior.
 
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
@@ -83,7 +118,9 @@ The install refuses package removals, preserving the runner's Docker and contain
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
-  components. The scenario proves that mismatched receipt and registry authority
+  components. The scenario retains the trusted job's compatible crun selection
+  when host preparation replaces the client configuration, so local image builds
+  and the managed registry use the reviewed runtime. It proves that mismatched receipt and registry authority
   pauses onboarding and makes `doctor` fail. It then restores valid authority
   and requires finalization and `doctor` to accept the same authenticated
   readiness evidence. Deterministic finalization tests own unhealthy gateway,
@@ -234,8 +271,12 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
-The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
-It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
+The `managed-image-multiarch-startup` job builds the candidate CLI and its shared policy boundary before native Hermes qualification.
+It rejects preexisting output, verifies the required artifacts, and then starts the direct managed-image contracts.
+When an older trusted workflow exports startup evidence without a Hermes Discord result,
+the candidate consumer builds its CLI and runs the native contract against the same immutable Hermes image.
+Identity validation precedes that execution. A failed native contract rejects qualification,
+and the original evidence artifact remains unchanged.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
 base activation. PR image-publication runs build all three managed-agent bases
@@ -692,7 +733,10 @@ It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in fo
 The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
-The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+The first WSL shard has a 300-minute budget: 90 minutes for shared setup and non-live tests,
+100 minutes for full E2E, 50 minutes for the selected Hermes dashboard case, and 15 minutes
+after each live suite for cleanup and artifact retention. A further 30 minutes covers shard-1
+root contracts, runtime startup, and live-evidence upload. The other shards have 90 minutes.
 
 WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
 probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
@@ -701,6 +745,8 @@ distro so the masks survive a restart. The test script checks Docker again immed
 Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
+WSL shard 1 also runs the Hermes case from `dashboard-remote-bind` through the production installer and OpenShell CLI.
+It checks remote dashboard reachability, loopback API health, and non-loopback API refusal before and after sandbox restart.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -724,7 +770,7 @@ and staging Launchable job own its product coverage:
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
 | `messaging-compatible-endpoint` | Unified E2E | `messaging-compatible-endpoint` |
-| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup. |
+| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup for OpenClaw and Hermes. It retains OpenClaw remote-dashboard audit findings and verifies after onboarding and restart that Hermes API health works on loopback while the host non-loopback API port refuses TCP connections. |
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
@@ -923,21 +969,27 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
-The `openclaw-inference-switch` target owns fresh custom-image route initialization.
-Its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff;
-the successful onboard and authenticated baseline request require a ready sandbox from that image.
+The `openclaw-inference-switch` target owns baseline route initialization, lifecycle, and provider switching.
+Its Docker variant also owns fresh custom-image route initialization.
+On Docker, its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff.
+Podman uses stock managed-image onboarding because its driver does not support Dockerfile workloads.
+The host fixture checks its durable managed-image receipt against the selected cohort before post-onboarding probes.
+Both paths require a ready sandbox and an authenticated baseline request from the selected image.
 The deterministic build, inspect, create-reference, and failed-build stop checks live in
 `test/onboarding/onboard-custom-dockerfile.test.ts`.
-Its fixture contains only a different baked model and stale limits.
+The Dockerfile fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
 The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
-Both endpoints use the runner's private address through the existing explicit private-host trust setting.
+Both Anthropic-variant endpoints use public HTTPS quick tunnels from the verified cloudflared package.
+Rootless Pasta copies the runner's primary IP into its namespace, so that IP cannot identify the host fixture there.
+The local HTTP hop stays on the runner; host and sandbox probes use the same public endpoint without private-host trust overrides.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+The interactive policy-preset sequencing fixture uses the same public HTTPS transport and retains its Personal shared-route assertions.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
 The baseline model expectation comes from the environment passed to installation.
@@ -978,9 +1030,45 @@ The execution profile owns the credentials available to its target step:
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
-The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
+The Personal and C2 OpenClaw public-reference agent assertions disable ordinary agent-attempt shell artifacts because OpenClaw stdout can contain fetched content and complete URLs.
+OpenShell SSH configuration stays in a private temporary file outside the artifact directory.
+The assertion attempts removal after it finishes and fails if the directory remains.
+A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
 Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
-The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
+Both scenarios collect bounded session tool-result diagnostics even when the agent reply fails its assertion.
+At most 64 tool-result records retain numeric HTTP status, a tool-error flag, and a call-pairing flag.
+HTTP status comes from a numeric tool-result field or the fixed `Web fetch failed (NNN):` prefix in an OpenClaw `web_fetch` error result.
+These records exclude raw content, URLs, and credentials.
+An agent's final text alone does not establish the HTTP result.
+Missing tool-result evidence remains unavailable; collection does not add retries or change the fetch and reply assertions.
+After an unsuccessful agent assertion, both scenarios make one separate sandbox curl request to the same expected HTTPS URL.
+The probe uses a 15-second curl limit within a 20-second command limit and does not follow redirects.
+Its artifact records HTTP status, exit code, signal, and timeout state, or marks the probe unavailable.
+It does not retain response bodies, headers, or raw errors.
+This separate request cannot establish the original `web_fetch` response and never changes success or retry decisions.
+Diagnostic write errors after a failed turn preserve the original retry classification.
+Required evidence for a successful turn must still be saved.
+The Personal live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
+C2 retains its expected-reply and parsed-result checks; its tool-result diagnostics do not add the Personal validation contract.
+
+The `concurrent-gateway-ports` target records the original dashboard listener before and after its raw, unscoped OpenShell restart.
+A separate observed forward uses an ephemeral localhost port and records readiness, exit status, signal, and allowlisted sandbox-state or bind-failure flags.
+Its diagnostics exclude raw process output and credentials.
+An unavailable forward or an unset flag does not establish the cause of an earlier dashboard failure.
+The observed forward cannot recover the original dashboard or satisfy its assertions.
+Diagnostic cleanup terminates only the separately owned forward; the target retains its existing sandbox and gateway cleanup.
+Listener inspection and diagnostic write failures do not replace the restart outcome.
+Unconfirmed observer cleanup fails an otherwise successful restart.
+After raw stop/start succeeds and the sandbox reaches Ready or Running, the target waits for OpenClaw's in-sandbox HTTP endpoint.
+It uses the manifest endpoint, `http://localhost:18789/`, independently of the host dashboard forward.
+The read-only poll accepts HTTP 200 or 401 and retries only curl connection-refused or empty-response results (7 or 52 with HTTP 000).
+Transport failures, other curl results, and unexpected HTTP responses fail immediately; each attempt has its own artifact.
+The target then runs one `nemoclaw <sandbox> recover` in the survivor's gateway context.
+The readiness poll and recovery share the existing 120-second recovery deadline; the poll also retains the configured probe-attempt bound.
+Recovery runs after both listener snapshots and observer cleanup, so it cannot hide the original forward's exit.
+Both gateway-cleanup policies require recovery to succeed and the dashboard to answer within the existing probe budget.
+The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
+Raw OpenShell start does not restore a forward that exits when its readiness poll observes the stopped sandbox.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.

@@ -119,6 +119,19 @@ describe("authenticated MCP live fixtures", () => {
     ).toBeNull();
   });
 
+  it("publishes a loopback HTTP fixture behind public HTTPS (#13904)", () => {
+    expect(buildCloudflaredQuickTunnelArgs(43123, "http")).toEqual([
+      "tunnel",
+      "--no-autoupdate",
+      "--protocol",
+      "http2",
+      "--url",
+      "http://127.0.0.1:43123",
+      "--loglevel",
+      "info",
+    ]);
+  });
+
   it("requires three consecutive public readiness probes and resets after a failure", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-fixture-"));
     const cloudflared = path.join(directory, "cloudflared");
