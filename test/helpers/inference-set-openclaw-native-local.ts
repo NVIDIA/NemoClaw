@@ -24,7 +24,7 @@ export const attachment = {
   providerId: "owned-local-provider",
 };
 
-export function fixture() {
+export function fixture(selectedAttachment = attachment) {
   const config: ConfigObject = {
     agents: { defaults: { model: { primary: "inference/old-model" } } },
     models: {
@@ -48,17 +48,21 @@ export function fixture() {
       model: "old-model",
       endpointUrl: binding.endpointUrl,
       preferredInferenceApi: "openai-completions",
-      nativeLocalProviderAttachment: attachment,
+      nativeLocalProviderAttachment: selectedAttachment,
     },
   });
 }
 
-export function switchingFixture() {
-  const deps = fixture();
+export function switchingFixture(
+  previous = attachment,
+  provider: "ollama-local" | "vllm-local" = "vllm-local",
+) {
+  const deps = fixture(previous);
   const nextBinding = {
     ...binding,
-    provider: "vllm-local" as const,
-    endpointUrl: "http://host.openshell.internal:8000/v1",
+    provider,
+    endpointUrl:
+      provider === "ollama-local" ? binding.endpointUrl : "http://host.openshell.internal:8000/v1",
   };
   const next = {
     ...nextBinding,
@@ -75,9 +79,9 @@ export function switchingFixture() {
   };
   deps.resolveLocalSwitchRuntime = () => ({
     endpointUrl: next.endpointUrl,
-    credentialValue: "dummy",
+    credentialValue: provider === "ollama-local" ? "ollama" : "dummy",
     authMode: "sentinel",
-    ownedProxy: false,
+    ownedProxy: provider === "ollama-local",
   });
   const adapter = deps.providerAdapter;
   const original = { ...adapter };

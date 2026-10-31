@@ -48,6 +48,13 @@ const CONFIG = JSON.parse(
 };
 
 describe("reviewed archive graph materialization", () => {
+  it("selects patched npm for the aggregate archive audit", () => {
+    expect(reviewedArchiveGraphManifest("7.5.21").overrides.npm).toEqual({
+      ".": "12.2.1",
+      undici: "6.29.1",
+    });
+  });
+
   it("rejects an affected tar release", () => {
     expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
       "reviewed archive graph tar version must be exactly 7.5.21",
@@ -870,7 +877,7 @@ describe("npm audit provenance", () => {
     const provenance = buildAuditProvenance({
       finishedAt: "2026-07-21T20:09:41.000Z",
       label: "reviewed archive graph",
-      nodeVersion: "v24.18.1",
+      nodeVersion: "v24.22.1",
       npmIntegrity: NPM_INTEGRITY,
       npmVersion: "12.0.2",
       packageSpecs: ["openclaw@2026.6.10", "@openclaw/slack@2026.6.10"],
@@ -885,7 +892,7 @@ describe("npm audit provenance", () => {
         name: "npm audit",
         npmIntegrity: NPM_INTEGRITY,
         npmVersion: "12.0.2",
-        nodeVersion: "v24.18.1",
+        nodeVersion: "v24.22.1",
       },
       registry: deriveAuditEndpoints("https://registry.npmjs.org/"),
       run: { startedAt: "2026-07-21T20:09:12.000Z", finishedAt: "2026-07-21T20:09:41.000Z" },
@@ -904,7 +911,7 @@ describe("npm audit provenance", () => {
       failure: "npm audit failed without vulnerability findings: ECONNREFUSED",
       finishedAt: "2026-07-21T20:09:41.000Z",
       label: "reviewed archive graph",
-      nodeVersion: "v24.18.1",
+      nodeVersion: "v24.22.1",
       npmIntegrity: NPM_INTEGRITY,
       npmVersion: "12.0.2",
       packageSpecs: ["openclaw@2026.6.10"],
@@ -962,7 +969,7 @@ describe("npm audit provenance", () => {
           graph: "fixture-graph",
           provenance: {
             label: "fixture graph",
-            nodeVersion: "v24.18.1",
+            nodeVersion: "v24.22.1",
             npmIntegrity: NPM_INTEGRITY,
             npmVersion: "12.0.2",
             packageSpecs: ["fixture@1.0.0"],

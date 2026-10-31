@@ -110,6 +110,7 @@ assert exit_code == 0
       },
     });
     expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toBe("");
   });
 
   it("suppresses progress output without corrupting the success envelope (#7773)", () => {
@@ -286,7 +287,10 @@ assert exit_code == 1
     expect(result.stdout).not.toContain("x".repeat(100));
   });
 
-  it("preserves the existing text-mode stdout contract (#7773)", () => {
+  it.each([
+    ["False", ""],
+    ["True", "Thread: thread-1\n"],
+  ])("preserves text output and thread notices with quiet=%s (#7773)", (quiet, stderr) => {
     const result = runDriver(`
 ${preamble}
 async def succeed(*args, **kwargs):
@@ -295,11 +299,12 @@ async def succeed(*args, **kwargs):
     return 0
 
 target._run_non_interactive_impl = succeed
-exit_code = asyncio.run(target.run_non_interactive("task"))
+exit_code = asyncio.run(target.run_non_interactive("task", quiet=${quiet}))
 assert exit_code == 0
 `);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("PONG");
+    expect(result.stderr).toBe(stderr);
   });
 });

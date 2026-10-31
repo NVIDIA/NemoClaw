@@ -42,6 +42,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,
+    testsToRun: runTests("test/e2e/support/discord-enrollment-child.test.ts"),
+  },
+  {
     pattern:
       /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
     testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),
@@ -147,8 +151,16 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/install-switchyard\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-package.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
     testsToRun: runTests("test/agents/hermes/hermes-image-build-probes.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/patch-agent-home\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-agent-home-patch.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/patch-cron-restore-drain\.py$/,
@@ -176,6 +188,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       if (match[1] === "agents/hermes/") {
         return [
           "test/generation/providerless-agent-config.test.ts",
+          "test/agents/hermes/hermes-image-build-probes.test.ts",
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
@@ -226,7 +239,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/runtime-config-guard\.py$/,
-    testsToRun: runTests("src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts"),
+    testsToRun: runTests(
+      "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
+      "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/refresh-openclaw-wechat-placeholder\.py$/,
@@ -280,6 +297,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
+      "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
+      "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
@@ -387,6 +406,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/(?:pr-limits\.json|workflows\/pr-limit\.yaml)$/,
+    testsToRun: runTests("test/automation/pull-requests/pr-limit-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,

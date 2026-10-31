@@ -40,7 +40,7 @@ export type ProtectedManagedImageActivation = {
 export type ProtectedManagedImageDirectRun = Pick<
   ProtectedManagedImageContract,
   "agent" | "digest" | "platform" | "reference"
->;
+> & { readonly hermesDiscordStatus?: "passed" };
 
 export type ProtectedManagedImageEvidence = {
   readonly baseSha: string;
@@ -276,7 +276,13 @@ export function parseProtectedManagedImageEvidence(
     const directRun = record(value);
     requireExactKeys(
       directRun,
-      ["agent", "digest", "platform", "reference"],
+      [
+        "agent",
+        "digest",
+        "platform",
+        "reference",
+        ...(directRun.agent === "hermes" ? ["hermesDiscordStatus"] : []),
+      ],
       "protected managed-image direct run",
     );
     const contract =
@@ -288,7 +294,8 @@ export function parseProtectedManagedImageEvidence(
       seenAgents.has(contract.agent) ||
       directRun.digest !== contract.digest ||
       directRun.platform !== contract.platform ||
-      directRun.reference !== contract.reference
+      directRun.reference !== contract.reference ||
+      (contract.agent === "hermes" && directRun.hermesDiscordStatus !== "passed")
     ) {
       throw new Error("protected managed-image direct run does not match its exact contract");
     }
@@ -298,6 +305,7 @@ export function parseProtectedManagedImageEvidence(
       digest: contract.digest,
       platform: contract.platform,
       reference: contract.reference,
+      ...(contract.agent === "hermes" ? { hermesDiscordStatus: "passed" as const } : {}),
     };
   });
   if (seenAgents.size !== PROTECTED_MANAGED_IMAGE_AGENTS.length) {

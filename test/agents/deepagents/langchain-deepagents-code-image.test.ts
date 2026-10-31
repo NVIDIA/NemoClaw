@@ -25,9 +25,12 @@ import {
   TRACING_ENABLE_ENV_NAMES,
 } from "../../helpers/langchain-deepagents-code-headless.ts";
 import {
+  assertEveryRequirementIsHashLocked,
+  baseImagePipInstallArgs,
   makeWrapperFixture,
   readAgentFile,
   runWrapper,
+  writeMinimalWheel,
 } from "../../helpers/langchain-deepagents-code-image.ts";
 import { dcodeStateDir, makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
 
@@ -109,16 +112,85 @@ function expectVersionsMatchLock(requirementsLock: string, versions: Record<stri
 }
 
 const TARGETED_ADVISORY_VERSIONS = [
-  ["aiohttp", "3.14.3"],
+  ["aiohttp", "3.14.4"],
   ["cryptography", "50.0.0"],
-  ["uv", "0.11.33"],
-  ["langgraph-checkpoint-sqlite", "3.1.1"],
-  ["mcp", "2.0.0"],
-  ["pillow", "12.3.0"],
+  ["uv", "0.13.4"],
+  ["langgraph-checkpoint-sqlite", "3.1.2"],
+  ["mcp", "2.2.0"],
+  ["pillow", "13.0.0"],
   ["pyasn1", "0.6.4"],
 ] as const;
 
 describe("targeted dependency advisory review", () => {
+  it("uses the lock override contract for installed metadata and rejects drift before writing", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import base64, csv, hashlib, importlib.util, io, json, re, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+agent = Path("agents/langchain-deepagents-code")
+spec = importlib.util.spec_from_file_location("managed_patch", agent / "patch-dependency-compatibility.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+for name, version in module.dependency_overrides().items():
+    assert re.search(r"(?m)^" + name + "==" + re.escape(version) + r"\\s", (agent / "requirements.lock").read_text())
+
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    module.__file__ = str(root / "patch.py")
+    contract = root / "dependency-overrides.in"
+    contract.write_text("# single input\\nfilelock==9.8.7\\npillow==6.5.4\\n")
+    expected = {"filelock": "9.8.7", "pillow": "6.5.4"}
+    prefix = "deepagents_code-0.1.87.dist-info/"
+    metadata = root / prefix / "METADATA"
+    metadata.parent.mkdir()
+    original = ("Name: deepagents-code\\nVersion: 0.1.87\\n"
+                "Requires-Dist: filelock<3.30,>=3.29.7\\n"
+                "Requires-Dist: pillow<13.0.0,>=12.3.0\\n"
+                "Requires-Dist: pillow<13.0.0,>=12.3.0; extra == 'media'\\n").encode()
+    metadata.write_bytes(original)
+    module.METADATA_SHA256 = hashlib.sha256(original).hexdigest()
+    digest = base64.urlsafe_b64encode(hashlib.sha256(original).digest()).rstrip(b"=").decode()
+    record = metadata.with_name("RECORD")
+    record.write_text(f"{prefix}METADATA,sha256={digest},{len(original)}\\n")
+    distribution = SimpleNamespace(version="0.1.87", locate_file=lambda relative: root / relative)
+    with patch.object(module.importlib.metadata, "distribution", return_value=distribution), patch.object(module.importlib.metadata, "version", side_effect=expected.__getitem__):
+        receipt = module.patch_installed_dependency_metadata()
+        assert receipt["overrides"] == expected
+        assert "Requires-Dist: filelock==9.8.7\\n" in metadata.read_text()
+        assert "Requires-Dist: pillow==6.5.4\\n" in metadata.read_text()
+        assert "Requires-Dist: pillow==6.5.4; extra == 'media'\\n" in metadata.read_text()
+        receipt_file = metadata.with_name("NEMOCLAW_DEPENDENCY_PATCH.json")
+        assert json.loads(receipt_file.read_text()) == receipt
+        rows = list(csv.reader(io.StringIO(record.read_text())))
+        for installed in [metadata, receipt_file]:
+            data = installed.read_bytes()
+            checksum = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+            assert [prefix + installed.name, "sha256=" + checksum, str(len(data))] in rows
+        before = {p: p.read_bytes() for p in metadata.parent.iterdir()}
+        assert module.patch_installed_dependency_metadata() == receipt
+        assert {p: p.read_bytes() for p in metadata.parent.iterdir()} == before
+        for invalid in ["filelock==9.8.6\\npillow==6.5.4\\n", "filelock==9.8.7\\n", "filelock>=9.8.7\\npillow==6.5.4\\n", "filelock==9.8.7\\nfilelock==9.8.7\\npillow==6.5.4\\n"]:
+            contract.write_text(invalid)
+            try:
+                module.patch_installed_dependency_metadata()
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("invalid or mismatched override was accepted")
+            assert {p: p.read_bytes() for p in metadata.parent.iterdir()} == before
+`,
+      ],
+      { cwd: repoRoot, encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it.each(TARGETED_ADVISORY_VERSIONS)(
     "documents the reviewed %s %s pin",
     (distribution, version) => {
@@ -133,78 +205,6 @@ describe("targeted dependency advisory review", () => {
     },
   );
 });
-
-function writeMinimalWheel(directory: string): string {
-  const wheelPath = path.join(directory, "nemoclaw_hash_contract-1.0-py3-none-any.whl");
-  execFileSync(
-    "python3",
-    [
-      "-c",
-      `
-import sys
-import zipfile
-
-wheel_path = sys.argv[1]
-dist_info = "nemoclaw_hash_contract-1.0.dist-info"
-with zipfile.ZipFile(wheel_path, "w") as wheel:
-    wheel.writestr("nemoclaw_hash_contract/__init__.py", "")
-    wheel.writestr(
-        f"{dist_info}/METADATA",
-        "Metadata-Version: 2.1\\nName: nemoclaw-hash-contract\\nVersion: 1.0\\n",
-    )
-    wheel.writestr(
-        f"{dist_info}/WHEEL",
-        "Wheel-Version: 1.0\\nGenerator: nemoclaw-test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
-    )
-    wheel.writestr(f"{dist_info}/RECORD", f"{dist_info}/RECORD,,\\n")
-`,
-      wheelPath,
-    ],
-    { stdio: "pipe" },
-  );
-  return wheelPath;
-}
-
-function baseImagePipInstallArgs(dockerfile: string, requirementsPath: string): string[] {
-  const logicalDockerfile = dockerfile.replace(/\\\r?\n\s*/g, " ");
-  const copiedLock = logicalDockerfile.match(
-    /COPY\s+agents\/langchain-deepagents-code\/requirements\.lock\s+(\S+)/,
-  );
-  expect(copiedLock, "base image must copy the reviewed lockfile").not.toBeNull();
-  const invocation = logicalDockerfile.match(/"\$VIRTUAL_ENV\/bin\/pip3" install\s+([^\n]+?)\s+&&/);
-  expect(
-    invocation,
-    "base image must install the reviewed lockfile with the managed venv",
-  ).not.toBeNull();
-  const args = (invocation?.[1] ?? "").trim().split(/\s+/);
-  const requirementsFlag = args.indexOf("-r");
-  expect(
-    requirementsFlag,
-    "base image pip install must consume a requirements file",
-  ).toBeGreaterThanOrEqual(0);
-  expect(args[requirementsFlag + 1]).toBe(copiedLock?.[1]);
-  return [...args.slice(0, requirementsFlag), "-r", requirementsPath];
-}
-
-function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
-  const lines = requirementsLock.split(/\r?\n/);
-  const requirementStarts = lines
-    .map((line, index) => ({ line, index }))
-    .filter(({ line }) => line.length > 0 && !/^\s|#/.test(line));
-  expect(requirementStarts.length).toBeGreaterThan(0);
-
-  for (const [position, requirement] of requirementStarts.entries()) {
-    expect(
-      requirement.line,
-      `lock entry on line ${requirement.index + 1} must be exactly pinned`,
-    ).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[^\]]+\])?==[^\s\\]+\s+\\$/);
-    const nextIndex = requirementStarts[position + 1]?.index ?? lines.length;
-    const block = lines.slice(requirement.index, nextIndex).join("\n");
-    const hashTokens = block.match(/--hash=[^\s\\]+/g) ?? [];
-    expect(hashTokens.length, requirement.line).toBeGreaterThan(0);
-    expect(hashTokens.every((token) => /^--hash=sha256:[a-f0-9]{64}$/.test(token))).toBe(true);
-  }
-}
 
 describe("LangChain Deep Agents Code image contracts", () => {
   it.each([
@@ -1030,6 +1030,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "https://integrate\\.api\\.nvidia\\.com/v1",
     "references_attached_provider_placeholder_key",
     'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"',
+    "references_native_compatible_route",
+    'HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"',
+    "references_compatible_provider_placeholder_key",
+    'selected_openai_provider_scalar api_key_env)" = "COMPATIBLE_API_KEY"',
     "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
@@ -1167,11 +1171,49 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
+    [
+      "native-compatible",
+      [
+        "[models.providers.openai]",
+        'base_url = "https://inference-api.nvidia.com/v1"',
+        'api_key_env = "COMPATIBLE_API_KEY"',
+      ].join("\n"),
+    ],
   ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
     expect(runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toBe(
       `${expected}\n`,
     );
   });
+
+  it.each(["https://custom.example.test/v1", "https://integrate.api.nvidia.com/v1"])(
+    "accepts selected compatible endpoint %s and rejects a different endpoint",
+    (endpoint) => {
+      const config = (baseUrl: string) =>
+        [
+          "[models.providers.openai]",
+          `base_url = "${baseUrl}"`,
+          'api_key_env = "COMPATIBLE_API_KEY"',
+        ].join("\n");
+      expect(
+        runHeadlessCheckHelper("inference-route-contract", {
+          CONFIG: config(endpoint),
+          NEMOCLAW_ENDPOINT_URL: endpoint,
+        }),
+      ).toBe("native-compatible\n");
+      expect(() =>
+        runHeadlessCheckHelper("inference-route-contract", {
+          CONFIG: config("https://other.example.test/v1"),
+          NEMOCLAW_ENDPOINT_URL: endpoint,
+        }),
+      ).toThrow();
+      expect(() =>
+        runHeadlessCheckHelper("inference-route-contract", {
+          CONFIG: config(endpoint).replace("COMPATIBLE_API_KEY", "DEEPAGENTS_CODE_OPENAI_API_KEY"),
+          NEMOCLAW_ENDPOINT_URL: endpoint,
+        }),
+      ).toThrow();
+    },
+  );
 
   it.each([
     [
@@ -1189,6 +1231,28 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
+    [
+      "compatible endpoint with managed placeholder",
+      [
+        "[models.providers.openai]",
+        'base_url = "https://inference-api.nvidia.com/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "commented compatible key",
+      '[models.providers.openai]\nbase_url = "https://inference-api.nvidia.com/v1"\n' +
+        '# api_key_env = "COMPATIBLE_API_KEY"\napi_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    ],
+    ...["[models.providers.other]", "[[other]]"].map((header) => [
+      `compatible key in ${header}`,
+      [
+        "[models.providers.openai]",
+        'base_url = "https://inference-api.nvidia.com/v1"',
+        header,
+        'api_key_env = "COMPATIBLE_API_KEY"',
+      ].join("\n"),
+    ]),
   ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {
     expect(() => runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toThrow();
   });
@@ -1377,10 +1441,10 @@ print(json.dumps(values, sort_keys=True))`,
   });
 
   it.each([
-    ["aiohttp", "3.14.3"],
+    ["aiohttp", "3.14.4"],
     ["cryptography", "50.0.0"],
-    ["deepagents-code", "0.1.71"],
-    ["langgraph-checkpoint-sqlite", "3.1.1"],
+    ["deepagents-code", "0.1.87"],
+    ["langgraph-checkpoint-sqlite", "3.1.2"],
   ] as const)(
     "records dependency advisory review for the lockfile [case %#]",
     (name, expectedVersion) => {
@@ -1401,17 +1465,17 @@ print(json.dumps(values, sort_keys=True))`,
       expect(review).toMatch(/Complete-lock audit result:.*No known vulnerabilities found/is);
       expect(review).toContain("`GHSA-cq5v-8q36-5273`");
       expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
-      expect(review).toContain("Deep Agents Code `0.1.71`");
-      expect(review).toContain("semantic migration from `0.1.55` through `0.1.71`");
-      expect(requirementsLock).toContain("uv==0.11.33");
-      expect(requirementsLock).toContain("aiohttp==3.14.3");
+      expect(review).toContain("Deep Agents Code `0.1.87`");
+      expect(review).toContain("semantic migration from `0.1.55` through `0.1.87`");
+      expect(requirementsLock).toContain("uv==0.13.4");
+      expect(requirementsLock).toContain("aiohttp==3.14.4");
       expect(requirementsLock).toContain("cryptography==50.0.0");
       expect(requirementsLock).not.toContain("aiohttp==3.14.1");
       expect(requirementsLock).not.toContain("cryptography==49.0.0");
-      expect(requirementsLock).toContain("mcp==2.0.0");
-      expect(requirementsLock).toContain("pillow==12.3.0");
+      expect(requirementsLock).toContain("mcp==2.2.0");
+      expect(requirementsLock).toContain("pillow==13.0.0");
       expect(requirementsLock).toContain("pyasn1==0.6.4");
-      expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");
+      expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.2");
       const dockerfileBase = readAgentFile("Dockerfile.base");
       const versionSource =
         name === "deepagents-code" ? readAgentFile("validate-runtime-contract.py") : dockerfileBase;

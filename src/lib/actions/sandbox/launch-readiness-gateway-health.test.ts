@@ -12,16 +12,46 @@ import type { SandboxEntry } from "../../state/registry";
 import {
   LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
+  hasRecordedNativeNvidiaAttachment,
   requireLaunchSemanticHealth,
   requireNativeInferenceHealth,
   type LaunchReadinessHealthDeps,
 } from "./launch-readiness/health";
+import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { runSandboxInferenceInvocationProbe } from "./inference-route-health";
+import {
+  NATIVE_LOCAL_CREDENTIAL_HANDLE,
+  recordingProbeShell,
+} from "../../../../test/helpers/native-local-probe-shell";
+import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedHermesGatewayProcess,
 } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
+  it("requires a valid recorded native NVIDIA attachment for degraded start", () => {
+    const entry = {} as SandboxEntry;
+    expect(hasRecordedNativeNvidiaAttachment(entry)).toBe(false);
+    expect(
+      hasRecordedNativeNvidiaAttachment({
+        ...entry,
+        nativeNvidiaProviderAttachment: { providerId: "invalid" },
+      } as SandboxEntry),
+    ).toBe(false);
+    expect(
+      hasRecordedNativeNvidiaAttachment({
+        ...entry,
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "provider-123",
+        },
+      } as SandboxEntry),
+    ).toBe(true);
+  });
+
   it.each([
     ["becomes observable", [null, null, null, null, null, true], true],
     ["remains unavailable", [null, null, null, null, null, null], false],
@@ -228,6 +258,13 @@ function dcodeHealthDeps(
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
+    commandExecutor: {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: `dcode ${dcodeAgent.expectedVersion}`,
+        stderr: "",
+      })),
+    },
     gatewayHealth: vi.fn(async () => true),
     forwardsHealthy: vi.fn(() => true),
     inferenceProbe: vi.fn(async () => ({
@@ -447,4 +484,111 @@ describe("Hermes native-local readiness authority", () => {
       }),
     );
   });
+});
+
+describe("native NVIDIA diagnostic connect health (#13616)", () => {
+  const entry = {
+    name: "alpha",
+    agent: "openclaw",
+    provider: "nvidia-prod",
+    model: "fixture-model",
+    nativeNvidiaProviderAttachment: {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "owned-provider-id",
+    },
+  };
+
+  it.each([429, 500])(
+    "opens diagnostic connect after a trusted HTTP %i transient",
+    async (httpStatus) => {
+      const verifyNativeNvidiaAttachment = vi.fn(async () => {});
+      const inferenceInvocationProbe = vi.fn(async () => ({
+        ok: false as const,
+        detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+        httpStatus,
+      }));
+      const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: "alpha",
+          gatewayName: "selected",
+          entry,
+          deps: { verifyNativeNvidiaAttachment, inferenceInvocationProbe },
+          allowTransientNvidiaInvocation: true,
+        }),
+      ).resolves.toBe(true);
+      expect(verifyNativeNvidiaAttachment).toHaveBeenCalledOnce();
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("inference is degraded"));
+      warning.mockRestore();
+    },
+  );
+
+  it.each([401, 403, 404])("refuses diagnostic connect after HTTP %i", async (httpStatus) => {
+    await expect(
+      requireNativeInferenceHealth({
+        sandboxName: "alpha",
+        gatewayName: "selected",
+        entry,
+        deps: {
+          verifyNativeNvidiaAttachment: vi.fn(async () => {}),
+          inferenceInvocationProbe: vi.fn(async () => ({
+            ok: false as const,
+            detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
+            httpStatus,
+          })),
+        },
+        allowTransientNvidiaInvocation: true,
+      }),
+    ).rejects.toBeInstanceOf(LaunchReadinessObservationError);
+  });
+});
+
+describe("OpenClaw native-local readiness identity (#13338)", () => {
+  it.each([
+    { agentName: undefined, agent: "openclaw" },
+    { agentName: undefined, agent: undefined },
+    { agentName: "openclaw", agent: "openclaw" },
+  ])(
+    "sends the health request to the recorded endpoint (selected $agentName, recorded $agent)",
+    async ({ agentName, agent }) => {
+      const receipt = nativeLocalTestReceipt(
+        "llama-cpp-local",
+        "http://host.openshell.internal:8081/v1",
+        {
+          agent: "openclaw",
+          gatewayName: "selected",
+        },
+      );
+      const shell = recordingProbeShell("200", '{"choices":[{"message":{"content":"OK"}}]}');
+      await expect(
+        requireNativeInferenceHealth({
+          sandboxName: "alpha",
+          gatewayName: "selected",
+          ...(agentName ? { agentName } : {}),
+          entry: {
+            name: "alpha",
+            ...(agent ? { agent } : {}),
+            provider: "llama-cpp-local",
+            model: "local-model",
+            nativeLocalProviderAttachment: receipt,
+          },
+          deps: {
+            verifyNativeLocalAttachment: vi.fn(async () => {}),
+            inferenceInvocationProbe: (input) =>
+              runSandboxInferenceInvocationProbe(input, (selected, _deps, timeoutMs) =>
+                probeSandboxInferenceInvocation(selected, { execute: shell.execute }, timeoutMs),
+              ),
+          },
+        }),
+      ).resolves.toBe(true);
+      expect(shell.destinations()).toEqual([
+        "http://host.openshell.internal:8081/v1/chat/completions",
+      ]);
+      expect(shell.requests[0]).toContain(
+        `Authorization: Bearer ${NATIVE_LOCAL_CREDENTIAL_HANDLE}`,
+      );
+    },
+  );
 });

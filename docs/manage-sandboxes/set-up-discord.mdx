@@ -46,5 +46,38 @@ export DISCORD_REQUIRE_MENTION=1
 Replace `<your-discord-bot-token>` with the real token before you run onboarding or add the channel.
 NemoClaw rejects the literal placeholder and does not save it or configure Discord.
 
+During initial onboarding enrollment and `channels add discord`, NemoClaw verifies the token with Discord before activating the channel.
+If Discord rejects a new enrollment token, NemoClaw leaves Discord inactive and prints a credential warning.
+Other onboarding work can continue.
+If verification times out, is rate-limited, or cannot reach Discord, NemoClaw also skips the new enrollment.
+Failed `channels add discord` verification does not change an existing provider or active channel.
+The message that a token is available from the environment or credential store confirms input availability only.
+
+When replacing an active Discord credential through onboarding, failed or inconclusive verification stops rotation before recreation and preserves the existing sandbox.
+Refer to [Rotate a Messaging Credential](../../security/credential-rotation#rotate-a-messaging-credential) for replacement and retry steps.
+
 Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).
 If the bot logs in but delivery fails, refer to [Discord bot logs in, but the channel still does not work](../../reference/troubleshooting#discord-bot-logs-in-but-the-channel-still-does-not-work).
+
+## Retry Authentication
+
+If Discord rejects the token, replace `DISCORD_BOT_TOKEN` with a bot token from the Discord Developer Portal.
+If verification is inconclusive, check host access to `discord.com` and wait before retrying a rate-limited request.
+Retry enrollment for your sandbox:
+
+```bash
+$$nemoclaw <name> channels add discord
+```
+
+<AgentOnly variant="hermes">
+Check the Hermes Discord connection after enrollment:
+
+```bash
+nemohermes <name> channels status --channel discord
+```
+
+The command reports authentication rejection from Hermes' native runtime status as a `credential_rejected` verdict.
+A `healthy` verdict confirms the adapter connection; it does not prove message delivery.
+Missing, stale, or unreadable runtime evidence produces an `unknown` verdict with a warning.
+Registration and policy coverage alone do not prove authentication.
+</AgentOnly>

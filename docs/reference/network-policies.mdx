@@ -145,6 +145,10 @@ To narrow it, explicitly remove `brew` and apply `brew-balanced`.
 Resuming onboarding reapplies the saved selection; skipping optional setup preserves existing grants.
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
+Fresh onboarding keeps a hosted custom endpoint on the shared `inference.local` route when you select Personal.
+NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment.
+Create a new sandbox, enter the custom endpoint, and choose Personal when prompted for the policy tier.
+For non-interactive onboarding, set `NEMOCLAW_POLICY_TIER=personal` before onboarding.
 
 <Warning title="Personal Tier Network Access">
 The Personal tier applies the `personal-open-internet` policy preset with a hostless L4 endpoint on destination ports `80` and `443`.
@@ -224,12 +228,12 @@ OpenShell mediates inference traffic and keeps provider credentials outside the 
 
 <AgentOnly variant="openclaw">
 
-Local providers and custom endpoints retain the shared `inference.local` route.
+New hosted custom endpoints outside the Personal tier use sandbox-attached providers. A fresh Personal-tier hosted selection, custom endpoints without an attachment, owned Local NVIDIA NIM, and retained shared selections use `inference.local`. Qualified new Ollama, standalone vLLM, and llama.cpp selections also use attached providers.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-New Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
+New Hermes hosted compatible selections outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
 The profile restricts the recorded host, port, methods, paths, and Hermes runtime binaries.
 OpenShell replaces the scoped credential reference at the allowed endpoint; the upstream credential remains outside the sandbox.
 Owned Local NVIDIA NIM, nonqualifying custom endpoints, and retained legacy local routes continue to use `inference.local`.
@@ -239,13 +243,15 @@ Refer to [How Inference Routing Works](../inference/about-inference-routing) for
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-New Deep Agents Code sandboxes use native providers for qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible endpoints.
-The attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.
+New Deep Agents Code sandboxes use attached providers for hosted compatible endpoints outside the Personal tier.
+A fresh Personal-tier hosted compatible selection instead stays on `inference.local` without creating a native attachment.
+Qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible endpoints also use native providers.
+The local attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.
 These local HTTP endpoints do not use TLS termination on port `443`.
 OpenShell replaces the sandbox's credential placeholder at the allowed endpoint.
 For a credentialless upstream, the protected local proxy removes the sentinel authorization header before forwarding the request.
 
-Nonqualifying custom endpoints and owned Local NVIDIA NIM retain the shared `inference.local` route.
+Custom endpoints without a native attachment and owned Local NVIDIA NIM retain the shared `inference.local` route.
 Existing DCode local sandboxes without native authority require explicit recreation; NemoClaw does not migrate them automatically.
 Before recreation, download the state you need to an independently managed location and verify that the download is complete.
 Follow [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before deleting the existing sandbox.

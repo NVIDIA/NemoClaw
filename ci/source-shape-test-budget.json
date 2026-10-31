@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/dockerignore-security-contract.test.ts",
+      "test": "excludes secret-bearing names at every directory depth",
+      "category": "security"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -130,6 +135,11 @@
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "selects exact-commit rootless evidence for Portable recovery changes (#9707)",
       "category": "security"
+    },
+    {
+      "file": "test/e2e/support/portable-sandbox-build-diagnostics.test.ts",
+      "test": "reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)",
+      "category": "compatibility"
     },
     {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
@@ -432,6 +442,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/upgrade-bundled-npm.test.ts",
+      "test": "keeps the DCode image upgrade cache out of native home when the command exits %i (#13241)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"
@@ -479,6 +494,21 @@
     {
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "installs container clients before Vitest but starts Docker only afterward",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/install/remediate-openclaw-runtime-dependencies.test.ts",
+      "test": "preserves %s metadata after a partial write failure and permits retry",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+      "test": "runs npm and messaging consumers after retrying an interrupted %s manifest write",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
       "category": "compatibility"
     }
   ]

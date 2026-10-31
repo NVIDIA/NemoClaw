@@ -40,6 +40,12 @@ If you use the coding-agent prompt in the preceding section, you can skip this p
 
 <Steps>
   <Step title="Install NemoClaw for Deep Agents">
+    NemoClaw collects operation telemetry to help improve the project.
+    Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+    Production delivery is not enabled.
+    To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
+    Refer to [Operation Telemetry](/user-guide/deepagents/security/best-practices#operation-telemetry) for details.
+
     Run the hosted installer.
 
     ```bash
@@ -165,7 +171,28 @@ The wizard asks for an inference provider, model, required credential, and sandb
 
 When you edit inference, NemoClaw clears the credential staged for the discarded selection. NemoClaw preserves the sandbox name. When you edit the sandbox name, NemoClaw preserves the inference selection. The sandbox prompt shows the prior name as its default. After you apply the configuration, routine editing ends. If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again. Provider registration, inference setup, policy selection, and sandbox creation then continue forward. The default Deep Agents sandbox name is `deepagents-code`. Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side. Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider-specific prompts.
 
-The image installs hash-locked Deep Agents Code `0.1.71` with NVIDIA provider support. After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest. Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified. If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding. NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider and sets `use_responses_api = false` for Chat Completions compatibility. NVIDIA Endpoints uses `https://integrate.api.nvidia.com/v1` through a least-privilege OpenShell provider attached to the sandbox. Supported fixed hosted providers also use their native endpoints through sandbox-attached providers. New Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use their qualified host-local endpoint through a sandbox-attached OpenShell provider. Other custom endpoints and owned Local NVIDIA NIM retain `https://inference.local/v1`. Both paths put a scoped placeholder in the agent config instead of the real provider key. When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, managed startup writes that value to a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter. Leave `NEMOCLAW_REASONING_EFFORT` unset to keep the endpoint's own default. Deep Agents Code has no runtime `inference set` path, so re-onboard the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox` to change the recorded effort. When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`. For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.15`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards. Rebuild existing Deep Agents Code sandboxes after upgrading NemoClaw so their image includes the pinned runtime and profile. This agent-specific default does not change the shared Nemotron 3 Super default for OpenClaw and Hermes. The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts. Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding. The image includes `ripgrep` and `dos2unix`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
+The image installs hash-locked Deep Agents Code `0.1.87` with NVIDIA provider support.
+After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
+Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
+If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
+NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider and sets `use_responses_api = false` for Chat Completions compatibility.
+NVIDIA Endpoints uses `https://integrate.api.nvidia.com/v1` through a least-privilege OpenShell provider attached to the sandbox.
+Supported fixed hosted providers also use their native endpoints through sandbox-attached providers.
+New Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use their qualified host-local endpoint through a sandbox-attached OpenShell provider.
+New hosted compatible endpoints normally use their recorded endpoint through a sandbox-attached provider.
+A fresh Personal-tier hosted compatible selection instead uses `https://inference.local/v1` without creating a native provider attachment.
+Other retained shared selections and owned Local NVIDIA NIM also use `https://inference.local/v1`.
+Each route puts a scoped placeholder in the agent config instead of the real provider key.
+When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, managed startup writes that value to a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
+Leave `NEMOCLAW_REASONING_EFFORT` unset to keep the endpoint's own default.
+Deep Agents Code has no runtime `inference set` path, so re-onboard the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox` to change the recorded effort.
+When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
+For this model, the managed image maps the OpenAI-compatible route to Deep Agents `0.7.29`'s native Nemotron 3 Ultra harness profile, including model-specific tool-calling, filesystem, retry, context, and final-answer safeguards.
+Rebuild existing Deep Agents Code sandboxes after upgrading NemoClaw so their image includes the pinned runtime and profile.
+This agent-specific default does not change the shared Nemotron 3.5 Super VL default for OpenClaw and Hermes.
+The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
+Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
+The image includes `ripgrep` and `dos2unix`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
 
   </Accordion>
 
@@ -192,7 +219,21 @@ Deep Agents Code state lives in its native home under `/sandbox`. OpenShell keep
 
 Deep Agents Code does not currently have a NemoClaw-managed web-search feature. If your project code or a manually configured tool needs Tavily, opt the sandbox Python egress path into Tavily explicitly. Register the raw key only with the OpenShell gateway on the host, not inside the sandbox, in `.env`, or in Deep Agents config files. The gateway injects it at egress instead. The managed Deep Agents Code entry points reject credential-shaped process environment values, disable project `.env` and global `/sandbox/.deepagents/.env` loading, and block upstream `/auth`, `/connect`, startup/onboarding credential prompts, model-selector credential prompts, notification-service key prompts, and ChatGPT OAuth. These controls apply to Deep Agents Code and do not sanitize arbitrary Python programs in the sandbox. Use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state. NemoClaw does not enable Tavily or observability by default for this harness. The sandbox policy denies `api.tavily.com` until you opt into Tavily and continues to deny direct `api.smith.langchain.com` egress when you enable observability.
 
-To allow Tavily egress for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches. The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
+To allow Tavily egress for the current sandbox, apply the `tavily` preset, register the credential on the host, and attach the provider explicitly.
+Registration is gateway-wide, but a raw OpenShell attachment changes only live state.
+It does not change NemoClaw's saved web-search selection.
+A rebuild can omit this provider, including after Tavily removal recorded a disabled selection.
+Repeat the explicit attachment after rebuilding if the sandbox still needs Tavily.
+
+Identify the sandbox's recorded gateway before registering or attaching the provider.
+Find the entry keyed by your sandbox name in the `sandboxes` object of the host registry.
+The default registry is `~/.nemoclaw/sandboxes.json`; non-default gateway registries are `~/.nemoclaw/gateways/<port>/sandboxes.json`.
+Use its `gatewayName` and `gatewayPort` for `<gateway-name>` and `<gateway-port>` below.
+Gateway `nemoclaw` uses port `8080`; gateway `nemoclaw-<port>` uses the port in its name.
+Use this mapping if only one field is recorded.
+If an older entry has neither field, use the port from its gateway-specific registry directory, or `8080` for the top-level registry.
+Stop if the entry is missing, appears in multiple registries, or has conflicting gateway values.
+Do not use the active OpenShell gateway as a substitute for the recorded binding.
 
 ```bash
 # Preview the endpoints the preset opens:
@@ -202,14 +243,18 @@ nemo-deepagents <sandbox-name> policy add tavily --yes
 # Export the key on the host (NemoClaw reads it from the current shell):
 export TAVILY_API_KEY=tvly-...
 # Register the provider with the gateway:
-nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
+NEMOCLAW_GATEWAY_PORT=<gateway-port> nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 # Remove the raw key from the host shell after the gateway stores it:
 unset TAVILY_API_KEY
-# Attach the new provider to the sandbox:
-nemo-deepagents <sandbox-name> rebuild
+# Attach the provider to the current sandbox:
+openshell sandbox provider attach -g <gateway-name> <sandbox-name> tavily-search
 ```
 
-The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`. Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in. Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value. NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`. Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
+The attached Tavily provider can independently grant managed-Python access to the same endpoint.
+Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
+NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`.
+Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
 Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 
@@ -217,7 +262,15 @@ Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 nemo-deepagents <sandbox-name> policy remove tavily --yes
 ```
 
-This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it. When no sandbox needs the provider, remove it globally with `nemo-deepagents credentials reset tavily-search --yes`. The command detaches current sandbox attachments, removes the gateway provider, and reports every detached sandbox that you must rebuild after registering a replacement.
+Removal detaches every Tavily provider from this sandbox and verifies that effective policy no longer permits Tavily search or extraction requests.
+Rebuilds preserve that disabled selection.
+The gateway-wide `tavily-search` registration and its credential remain available to other sandboxes.
+To restore access to the current sandbox, add the preset and run `openshell sandbox provider attach -g <gateway-name> <sandbox-name> tavily-search`.
+This recovery is temporary: the saved selection remains disabled, and the next rebuild omits the Tavily provider again.
+Deep Agents Code has no NemoClaw-managed web-search configuration that makes this attachment durable.
+When no sandbox needs the provider, remove it globally with `NEMOCLAW_GATEWAY_PORT=<gateway-port> nemo-deepagents credentials reset tavily-search --yes`.
+The command detaches current sandbox attachments and removes the gateway provider.
+After registering a replacement, explicitly attach it to each sandbox that still needs Tavily, including after any required rebuild.
 
   </Accordion>
 
@@ -254,7 +307,12 @@ If you upgrade from a release that persisted LangSmith environment values, rebui
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape. If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime. Proxy launchers and startup scripts are baked into the sandbox image. After upgrading from a release that used `inference.local` for NVIDIA Endpoints, recreate each NVIDIA sandbox during onboarding. NemoClaw does not add the required native provider attachment to an existing beta sandbox. NemoClaw v0.0.78 and newer clients fail closed when a pre-v0.0.78 sandbox image lacks the trusted `/usr/local/lib/nemoclaw/dcode-managed-exec` route-probe helper, even when the installed Deep Agents Code version still matches the managed manifest. Rebuild the sandbox to install that image-owned helper before retrying `status`, `doctor`, `connect`, or onboarding recovery. There is no dashboard port or long-running gateway process for this harness.
 
-Older Deep Agents Code sandboxes with a standalone local shared route have no native provider attachment. Back up the sandbox before upgrading OpenShell, then recreate it with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`. Expect downtime while the replacement is created. Resume and rebuild stop if the old standalone local route has no native attachment; NemoClaw does not migrate it automatically. Owned Local NVIDIA NIM keeps its shared route and can resume without a native attachment.
+Older Deep Agents Code sandboxes with a standalone local shared route have no native provider attachment.
+Back up the sandbox before upgrading OpenShell, then recreate it with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`.
+Expect downtime while the replacement is created.
+Resume and rebuild stop if the old standalone local route has no native attachment; NemoClaw does not migrate it automatically.
+This requirement applies to Ollama, standalone vLLM, llama.cpp, and qualifying local compatible endpoints.
+Owned Local NVIDIA NIM keeps its shared route and can resume without a native attachment.
 
 ## Next Steps
 

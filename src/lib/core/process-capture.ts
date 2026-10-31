@@ -30,10 +30,30 @@ type CaptureBudget = {
   overflowed: boolean;
 };
 
+type CapturedProcessWritable = {
+  on(event: "error", listener: (error: Error) => void): unknown;
+  end(chunk: Buffer): unknown;
+};
+
 export type CapturedProcessChild = ProcessSessionChild & {
   stderr: CapturedProcessReadable | null;
   stdout: CapturedProcessReadable | null;
+  stdin?: CapturedProcessWritable | null;
 };
+
+/**
+ * Write caller-supplied input to a child spawned with a piped fd 0, then close it.
+ * Report write failures so a child that exits successfully without reading
+ * its input cannot make the caller report a successful agent turn.
+ */
+export function feedCapturedProcessStdin(
+  child: CapturedProcessChild,
+  input: Buffer,
+  onError: (error: Error) => void,
+): void {
+  child.stdin?.on("error", onError);
+  child.stdin?.end(input);
+}
 
 export type CapturedProcessSpawner = (
   binary: string,
@@ -89,7 +109,7 @@ export async function runCapturedProcess(
   options: {
     maxBufferBytes?: number;
     stdinIsTty?: boolean;
-    stdin?: boolean;
+    stdin?: boolean | Buffer;
   } = {},
   deps: CapturedProcessRunDeps = {},
 ): Promise<CapturedProcessResult> {
@@ -97,12 +117,17 @@ export async function runCapturedProcess(
   const stdoutChunks: Buffer[] = [];
   const captureBudget: CaptureBudget = { bytes: 0, overflowed: false };
   let overflowError: Error | undefined;
+  let stdinError: Error | undefined;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_CAPTURE_LIMIT_BYTES;
   const spawnChild = deps.spawnChild ?? defaultCapturedProcessSpawner;
   const stdinIsTty = options.stdinIsTty ?? isStdinTty();
   const result = await superviseProcessSession(
     () => {
       const child = spawnChild(binary, args, capturedProcessStdio(stdinIsTty, options.stdin));
+      if (Buffer.isBuffer(options.stdin))
+        feedCapturedProcessStdin(child, options.stdin, (error) => {
+          stdinError ??= error;
+        });
       const setOverflowError = (error: Error) => {
         overflowError ??= error;
       };
@@ -131,7 +156,9 @@ export async function runCapturedProcess(
     return {
       status: result.status,
       signal: result.signal,
-      ...(result.error || overflowError ? { error: result.error ?? overflowError } : {}),
+      ...(result.error || overflowError || stdinError
+        ? { error: result.error ?? overflowError ?? stdinError }
+        : {}),
       stderr: Buffer.concat(stderrChunks).toString("utf-8"),
       stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
     };
@@ -142,12 +169,13 @@ export async function runCapturedProcess(
 
 /**
  * Stdio for a non-interactive agent dispatch. An interactive terminal is
- * withheld from fd 0. Callers can close unused input explicitly; other pipes
- * and redirects retain their original bytes.
+ * withheld from fd 0. Callers can close unused input explicitly or supply the
+ * bytes they already read; other pipes and redirects retain their original bytes.
  */
 export function capturedProcessStdio(
   stdinIsTty: boolean = isStdinTty(),
-  stdin = true,
+  stdin: boolean | Buffer = true,
 ): StdioOptions {
+  if (Buffer.isBuffer(stdin)) return ["pipe", "pipe", "pipe"];
   return [stdinIsTty || !stdin ? "ignore" : "inherit", "pipe", "pipe"];
 }

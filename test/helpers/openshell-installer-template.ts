@@ -25,6 +25,16 @@ export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: strin
   });
 }
 
+export function prepareTrustedFormulaMismatchFixture(root: string, mode: FixtureMode): void {
+  if (mode !== "trusted-formula-mismatch") return;
+  const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  registry.releases.find(
+    (release: { version: string }) => release.version === "0.0.116",
+  ).formula.sha256 = "0".repeat(64);
+  fs.writeFileSync(registryPath, JSON.stringify(registry));
+}
+
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
   ASSETS: readonly string[],

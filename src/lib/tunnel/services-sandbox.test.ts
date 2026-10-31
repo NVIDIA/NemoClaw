@@ -186,4 +186,16 @@ describe("stopAll with sandbox channels", () => {
     expect(output).not.toContain("cloudflared was not running");
     expect(output).toContain("All services stopped");
   });
+
+  it("does not call a valid name invalid when destroy skips cloudflared (#13815)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    // Destroy's call shape; stopCloudflared: false leaves the resolved pidDir unused.
+    stopAllWithoutOllama({ pidDir, sandboxName: "my-assistant", stopCloudflared: false });
+
+    expect(stopSandboxChannels).toHaveBeenCalledWith("my-assistant", expect.anything());
+    const output = logSpy.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).not.toContain("Invalid sandbox name");
+    expect(output).toContain("All services stopped");
+  });
 });

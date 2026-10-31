@@ -15,7 +15,7 @@ import type {
   ManagedImagePlatform,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import * as managedImageContract from "../../src/lib/onboard/managed-image/contract.ts";
-import { directDockerfileCopySources } from "../lib/dockerfile-copy-sources.mts";
+import { directDockerfileContextSources } from "../lib/dockerfile-copy-sources.mts";
 
 type CandidateAuthorityModule = typeof candidateAuthority & { default?: typeof candidateAuthority };
 type ManagedImageContractModule = typeof managedImageContract & {
@@ -116,7 +116,7 @@ function changedPathsFromBase(git: GitRunner, revision: string): string[] {
 
 function piImageSourcePaths(rootDir: string): string[] {
   const copiedSources = PI_DOCKERFILES.flatMap((dockerfile) =>
-    directDockerfileCopySources(path.join(rootDir, dockerfile), dockerfile).map(
+    directDockerfileContextSources(path.join(rootDir, dockerfile), dockerfile).map(
       ({ source }) => source,
     ),
   );

@@ -31,3 +31,21 @@ When upgrading the SDK, obtain the reviewed registry archive and replace `nvidia
 Do not substitute a locally repacked archive: its compressed bytes can differ from the reviewed checksum.
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
+
+## Trusted E2E Setup
+
+The production SDK remains `0.0.116`; `ci/reviewed-npm-audit.json` also admits `0.1.5` as the reviewed replacement for the OpenShell upgrade.
+When compiling the candidate CLI and plugin, the E2E planner requires successful SDK packaging, downloads that run's archive bundle, and uses explicit artifact mode.
+Explicit candidate dispatches that select only `llama-cpp-dgx-spark-qualification` or `native-runtime-qualification-producer`, with no target selector, skip SDK packaging and candidate compilation.
+Those dispatches use their trusted producer plans.
+All other planner paths stop if SDK packaging fails, is cancelled, or is unexpectedly skipped.
+
+The `prepare-e2e` action defaults both `install-dependencies` and `build-cli` to `true`.
+Jobs that prepare a candidate checkout set both inputs to `false` to prepare Node.js and npm without installing dependencies or building the CLI.
+They download the reviewed archive before calling `install-reviewed-openshell-sdk` once to verify and install dependencies.
+Trusted Spark preparation retains the default installation and build behavior.
+The protected runtime controller first installs dependencies from the trusted workflow checkout, then installs the reviewed SDK after projecting candidate OpenShell versions.
+
+Dependency preparation selects the archive from the candidate lockfile and verifies its registry identity and SHA-512 integrity against the trusted policy before installation.
+Downstream SDK installation actions must use an immutable commit pin whose trusted policy includes the same reviewed replacement.
+Package credentials remain confined to the producer's download step, and dependency installation keeps npm lifecycle scripts disabled.

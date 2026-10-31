@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
+import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
 import {
   type CommandRunner,
   GatewayClient,
@@ -554,11 +555,30 @@ describe("LifecyclePhaseFixture profile dispatch", () => {
 describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   const sandboxName = "e2e-dcode-cloud";
   const validCredential = "valid-fixture-credential";
+  const nativeProvider = customNativeProvider({
+    provider: "compatible-endpoint",
+    endpointUrl: "https://inference-api.nvidia.com/v1",
+    api: "openai-completions",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  const attachment = {
+    schemaVersion: 1,
+    profileId: nativeProvider.profileId,
+    providerName: nativeProvider.providerName,
+    providerId: "provider-fixture-id",
+    endpointUrl: nativeProvider.endpoint,
+    allowedIps: nativeProvider.allowedIps,
+    custom: nativeProvider.custom,
+  };
   const options = dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
     {
       agent: "langchain-deepagents-code",
       gatewayName: "nemoclaw",
       provider: "compatible-endpoint",
+      endpointUrl: nativeProvider.endpoint,
+      preferredInferenceApi: "openai-completions",
+      nativeHostedProviderAttachment: attachment,
       model: "nvidia/nvidia/nemotron-3-ultra",
     },
     validCredential,
@@ -633,7 +653,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         runner.enqueue(
           shellResult(
             0,
-            "unknown-home\nworkspace\npackage\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
+            "unknown-home\nworkspace\npackage\nnpm-cache\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
           ),
         );
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
@@ -683,6 +703,12 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
         );
         expect(providerUpdates).toHaveLength(2);
+        expect(providerUpdates[0].args).toContain(nativeProvider.providerName);
+        const baselineProbe = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
+        );
+        expect(baselineProbe?.args).toContain(options.endpoint);
+        expect(baselineProbe?.args.join(" ")).not.toContain("inference.local");
         const invalidCredential = providerUpdates[0].options?.env?.COMPATIBLE_API_KEY;
         expect(invalidCredential).toMatch(/^nvapi-e2e-invalid-/);
         expect(providerUpdates[0].args).not.toContain(invalidCredential);
@@ -712,6 +738,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
         );
         expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.npm/_cacache/nemoclaw-dcode-cache-marker",
+        );
+        expect(nativeStateWrite?.args).toContain(
           "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
         );
         expect(nativeStateWrite?.args).toContain(
@@ -730,6 +759,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         expect(nativeStateRead?.args).toContain("/sandbox/workspace/nemoclaw-dcode/project.txt");
         expect(nativeStateRead?.args).toContain(
           "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.npm/_cacache/nemoclaw-dcode-cache-marker",
         );
         expect(nativeStateRead?.args).toContain(
           "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
@@ -836,8 +868,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   it("derives only the expected DCode compatible-endpoint binding", () => {
     expect(options).toEqual({
       gatewayName: "nemoclaw",
-      providerName: "compatible-endpoint",
+      providerName: nativeProvider.providerName,
       credentialEnv: "COMPATIBLE_API_KEY",
+      endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
       model: "nvidia/nvidia/nemotron-3-ultra",
       validCredential,
     });
@@ -852,5 +885,28 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         validCredential,
       ),
     ).toThrow(/registry agent/);
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          agent: "langchain-deepagents-code",
+          gatewayName: "nemoclaw",
+          provider: "compatible-endpoint",
+          model: "nvidia/model",
+        },
+        validCredential,
+      ),
+    ).toThrow(/attached native completion provider/);
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          agent: "langchain-deepagents-code",
+          gatewayName: "nemoclaw",
+          provider: "compatible-endpoint",
+          model: "nvidia/model",
+          nativeHostedProviderAttachment: { ...attachment, providerName: "wrong-provider" },
+        },
+        validCredential,
+      ),
+    ).toThrow(/native hosted provider attachment/);
   });
 });

@@ -25,6 +25,7 @@ import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { prepareManagedRebuildProfileHandoff } from "./agents/managed-workload-rebuild-profile";
 import {
+  getPersistedSandboxTargetGateway,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
@@ -206,7 +207,10 @@ export async function prepareRebuildTargetPreflights(args: {
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile, fromImage } = targetConfig;
   // An unavailable replacement catalog must not hide a rejected replacement key.
   if (!(await preflightRebuildTargetHostCredential(targetConfig, bail))) return null;
-  const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sandboxEntry.imageTag);
+  const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(
+    sandboxEntry.imageTag,
+    sandboxEntry.openshellDriver,
+  );
   const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
   const recreateOptions = prepareRebuildRecreateOptions(
     sandboxName,
@@ -297,6 +301,7 @@ export async function prepareRebuildTargetPreflights(args: {
     try {
       recreateOptions.managedWorkloadRebuild = prepareManagedRebuildProfileHandoff({
         catalogHandoff: managedWorkloadRebuildCatalog,
+        gatewayPort: getPersistedSandboxTargetGateway(sandboxEntry).gatewayPort,
         targetConfig,
         recreateOptions,
         messagingPlan,

@@ -19,6 +19,7 @@ filesystem_policy:
     - /lib
     - /opt/hermes
     - /proc
+    - /sys/class/drm               # Discover GPU device names for startup identity checks.
     - /dev/urandom
     - /app
     - /run/nemoclaw/managed-gateway-expected-exit

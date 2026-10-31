@@ -23,8 +23,10 @@ import {
 } from "../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
 import {
+  isHostedCustomEndpoint,
   prepareHostedNativeProvider,
   prepareCustomNativeProvider,
+  readCustomNativeSandboxPolicy,
   usesCustomNativeOnboarding,
 } from "../inference/native-provider/setup";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
@@ -51,6 +53,7 @@ import {
   ensureNativeNvidiaProvider,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
   persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
@@ -234,6 +237,7 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  sandboxPolicyReader?: Parameters<typeof readCustomNativeSandboxPolicy>[0]["reader"];
   recordMigratedProviderCredential?: (
     name: string,
     credentialEnv: string,
@@ -243,6 +247,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   requireNativeProviderPolicy?: typeof requireNativeProviderPolicy;
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
+  /** Resolve the current onboarding policy tier before provider mutation. */
+  resolvePolicyTier?: () => Promise<string>;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
   trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
@@ -751,16 +757,31 @@ async function cleanupUnreservedNativeLocalAfterHostFailure(input: {
   }
 }
 
-function resolveHostedSelection(input: {
+async function resolveHostedSelection(input: {
   provider: string;
   endpointUrl: string | null;
   sandboxName: string | null;
   gatewayName: string;
   deps: SetupInferenceDeps;
+  options: ProviderInferenceSetupOptions;
 }) {
-  const { provider, endpointUrl, sandboxName, gatewayName, deps } = input;
+  const { provider, endpointUrl, sandboxName, gatewayName, deps, options } = input;
   const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
-  const custom = usesCustomNativeOnboarding(provider, endpointUrl, sandboxName, recordedSandbox);
+  const freshCustomSelection = Boolean(
+    sandboxName &&
+    isHostedCustomEndpoint(provider, endpointUrl) &&
+    !recordedSandbox?.nativeHostedProviderAttachment?.custom &&
+    (!recordedSandbox || recordedSandbox.pendingRouteReservation),
+  );
+  const resolvePolicyTier = options.resolvePolicyTier ?? deps.resolvePolicyTier;
+  const policyTier = freshCustomSelection ? await resolvePolicyTier?.() : undefined;
+  const custom = usesCustomNativeOnboarding(
+    provider,
+    endpointUrl,
+    sandboxName,
+    recordedSandbox,
+    policyTier,
+  );
   const authority =
     provider === "hermes-provider"
       ? ((recordedSandbox?.provider === provider
@@ -1084,6 +1105,15 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const policyTierResolver = options.resolvePolicyTier ?? deps.resolvePolicyTier;
+    let policyTierResolution: Promise<string> | undefined;
+    const resolvePolicyTier = policyTierResolver
+      ? () => (policyTierResolution ??= policyTierResolver())
+      : undefined;
+    const hostedSelectionOptions = resolvePolicyTier ? { ...options, resolvePolicyTier } : options;
+    if (sandboxName && isHostedCustomEndpoint(provider, endpointUrl)) {
+      await resolvePolicyTier?.();
+    }
     let selectingNativeLocal = false;
     let nativeLocalAgent: string | null | undefined;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
@@ -1112,7 +1142,14 @@ export function createSetupInference(
           selected: nativeHostedSelection,
           custom: nativeCustomSelection,
           recordedSandbox,
-        } = resolveHostedSelection({ provider, endpointUrl, sandboxName, gatewayName, deps });
+        } = await resolveHostedSelection({
+          provider,
+          endpointUrl,
+          sandboxName,
+          gatewayName,
+          deps,
+          options: hostedSelectionOptions,
+        });
         const selectedInferenceApi = resolveCustomNativeApi(
           provider,
           options.preferredInferenceApi,
@@ -1208,7 +1245,7 @@ export function createSetupInference(
         let hostLocalInferenceRuntimeProviderId: string | undefined;
         let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
-        let nativeHostedEndpoint: string | undefined;
+        let nativeProviderEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
         let retainedNativeHostedCredential = false;
@@ -1244,7 +1281,8 @@ export function createSetupInference(
           const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
             provider: selectedProvider,
             model: selectedModel,
-            endpointUrl: nativeHostedEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
+            endpointUrl:
+              nativeProviderEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
             endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
             credentialEnv: nativeHostedCredentialEnv ?? credentialEnv,
             preferredInferenceApi: selectedInferenceApi,
@@ -1482,6 +1520,15 @@ export function createSetupInference(
               );
             const selectedCredentialEnv = credentialEnv || customNativeCredentialEnv(provider);
             const credentialValue = deps.hydrateCredentialEnv(selectedCredentialEnv) || null;
+            const sandboxPolicyDocument = await readCustomNativeSandboxPolicy({
+              gatewayName,
+              sandboxName: sandboxName!,
+              recordedSandbox,
+              rebuildSandboxPolicyDocument: options.rebuildSandboxPolicyDocument,
+              reader: deps.sandboxPolicyReader,
+              redactDiagnostic: (message) => hostLocalInferenceFailureDetail(message, deps),
+            });
+            revalidateSandboxIdentity?.("prepare the custom native provider");
             nativeHostedProviderAttachment = await prepareCustomNativeProvider({
               gatewayName,
               provider,
@@ -1490,10 +1537,13 @@ export function createSetupInference(
               credentialEnv: selectedCredentialEnv,
               credentialValue,
               adapter: deps.providerAdapter,
+              sandboxPolicyDocument,
               recordedAttachment:
                 recordedSandbox?.provider === provider
                   ? recordedSandbox.nativeHostedProviderAttachment
                   : undefined,
+              recordedSandboxName:
+                recordedSandbox?.provider === provider ? recordedSandbox.name : null,
               lookup: endpointPinnedAddresses
                 ? async () => endpointPinnedAddresses!.map((address) => ({ address }))
                 : deps.resolveEndpointHost,
@@ -1563,7 +1613,7 @@ export function createSetupInference(
                     readAuthority: deps.getNativeHostedProviderAuthority,
                     writeAuthority: deps.setNativeHostedProviderAuthority,
                   });
-                  nativeHostedEndpoint =
+                  nativeProviderEndpoint =
                     nativeHostedProviderAttachment.endpointUrl ??
                     hostedNativeProvider(provider)!.endpoint;
                   nativeHostedCredentialEnv = "OPENAI_API_KEY";
@@ -1604,9 +1654,10 @@ export function createSetupInference(
                 `Sandbox '${sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before using native NVIDIA inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
               );
             }
+            const gatewayAuthority = deps.getNativeNvidiaProviderAuthority?.(gatewayName);
             const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority({
               gatewayName,
-              gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
+              gatewayAuthority,
               recordedAttachment,
             });
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
@@ -1615,7 +1666,13 @@ export function createSetupInference(
               credentialValue,
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(providerAuthority ? { expected: providerAuthority } : {}),
+              ...(providerAuthority && !gatewayAuthority && recordedSandbox
+                ? { recordedSandboxName: recordedSandbox.name }
+                : {}),
             });
+            nativeProviderEndpoint = NVIDIA_HOSTED_NATIVE_ENDPOINT;
+            // The retained gateway credential is unavailable to a host-side smoke.
+            retainedNativeHostedCredential = !credentialValue;
             if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
               await persistNativeNvidiaProviderAuthority({
                 adapter: providerAdapter,
@@ -1847,7 +1904,7 @@ export function createSetupInference(
               provider,
               model,
               endpointUrl:
-                nativeHostedEndpoint ??
+                nativeProviderEndpoint ??
                 nativeHostedProviderAttachment?.endpointUrl ??
                 hostedNativeProvider(provider)?.endpoint ??
                 endpointUrl,

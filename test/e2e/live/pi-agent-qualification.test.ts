@@ -6,12 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
+import { directDockerfileContextSources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
 } from "../../../src/lib/agent/candidate.ts";
-import { PI_QUALIFICATION_TEST_TIMEOUT_MS } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import {
+  PI_COMMAND_TIMEOUT_MS,
+  PI_PROVIDER_MAX_ATTEMPTS,
+  PI_PROVIDER_RETRY_DELAY_MS,
+  PI_QUALIFICATION_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
@@ -32,6 +38,7 @@ import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
   buildPiReadTask,
   classifyPiReadTaskAttempt,
+  hasCompletedPiTurn,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   qualificationPlatform,
@@ -40,13 +47,10 @@ import {
 } from "./pi-agent-qualification-events.ts";
 
 const GATEWAY = "nemoclaw";
-const MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const MODEL = DEFAULT_CLOUD_MODEL;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v3";
 const LIVE_TIMEOUT_MS = PI_QUALIFICATION_TEST_TIMEOUT_MS;
-const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
-const PI_PROVIDER_MAX_ATTEMPTS = 2;
-const PI_PROVIDER_RETRY_DELAY_MS = 10_000;
 const PI_TRUST_PRESERVATION_MARKER = "NEMOCLAW_PI_TRUST_MUST_SURVIVE";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
@@ -199,12 +203,17 @@ async function runReadTask(
       });
       let failure: unknown;
       let proof: ReturnType<typeof qualifyPiReadTask> | undefined;
+      let turnCompleted = false;
       try {
-        proof = qualifyPiReadTask(parsePiJsonEvents(result.stdout), remotePath, token);
+        const events = parsePiJsonEvents(result.stdout, {
+          allowTruncatedFinalLine: result.timedOut,
+        });
+        turnCompleted = hasCompletedPiTurn(events);
+        proof = qualifyPiReadTask(events, remotePath, token);
       } catch (error) {
         failure = error;
       }
-      return { failure, proof, result };
+      return { failure, proof, result, turnCompleted };
     },
     classify: classifyPiReadTaskAttempt,
     onEvidence: async (evidence) => {
@@ -346,7 +355,7 @@ test(
     progress.phase("validate the exact Pi candidate receipt");
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
     const copiedSources = piDockerfiles.flatMap((dockerfile) =>
-      directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+      directDockerfileContextSources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
         ({ source }) => source,
       ),
     );

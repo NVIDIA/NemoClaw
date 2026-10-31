@@ -8,6 +8,7 @@ import type {
   ChannelSecretInputSpec,
 } from "../../manifest";
 import type {
+  MessagingHookContext,
   MessagingHookHandler,
   MessagingHookOutputMap,
   MessagingHookRegistration,
@@ -36,6 +37,11 @@ export interface TokenPasteHookOptions {
     options?: { readonly secret?: boolean; readonly maskCap?: number },
   ) => Promise<string>;
   readonly log?: (message: string) => void;
+  /** Verify resolved credentials before staging or reporting them as saved. */
+  readonly beforePersist?: (
+    context: MessagingHookContext,
+    outputs: MessagingHookOutputMap,
+  ) => void | Promise<void>;
   readonly resolveField?: (
     channelId: string,
     output: ChannelHookOutputSpec,
@@ -77,6 +83,8 @@ export function createTokenPasteHook(options: TokenPasteHookOptions = {}): Messa
         value: resolved.token,
       };
     }
+
+    await options.beforePersist?.(context, outputs);
 
     for (const resolved of resolvedFields) {
       persistTokenValue(resolved.field, resolved.token, resolved.source, options);
@@ -231,11 +239,7 @@ function logTokenStatus(
 ): void {
   const log = options.log ?? ((message: string) => console.log(message));
   if (source === "existing") {
-    log(
-      output.id === "botToken"
-        ? `  ✓ ${channelId} — already configured`
-        : `  ✓ ${channelId} ${tokenNoun(output)} — already configured`,
-    );
+    log(`  ✓ ${channelId} ${tokenNoun(output)} available from the environment or credential store`);
     return;
   }
   log(`  ✓ ${channelId} ${tokenNoun(output)} saved`);

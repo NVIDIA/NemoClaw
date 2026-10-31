@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -25,6 +24,10 @@ import {
   recoverHermesPortableLaunchForwards,
 } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
+import {
+  handleFinalizationState,
+  handlePostVerifyState,
+} from "../../../src/lib/onboard/machine/handlers/finalization.ts";
 import { enrollHermesPortableContainer } from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
 import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
 import {
@@ -59,13 +62,36 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { recordPortableHermesGatewayProbeFailure } from "../fixtures/portable-hermes-probe-diagnostics.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import {
+  capturePortableRegistryProcessBoundary,
+  collectPortableRegistryReadinessFailure,
+} from "../fixtures/portable-registry-readiness.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
+import {
+  createPortableHermesFinalizationOptions,
+  runPortableDoctor,
+  withoutPodmanConnectionSelectors,
+  writePortableRegistry,
+} from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
+import {
+  PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
+  cleanupPortablePodmanResources,
+  createPodmanGroupReconciliationTracker,
+  portableSandboxImageBuilder as buildImageFixture,
+  preservePortableE2eCrunForTarget,
+  publishPortableSandboxImage as publishImage,
+  retirePortableGeneratedBuildContext,
+  runPortableE2eWithCleanup,
+} from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   getSandboxConfigRequest,
   mintSandboxJwt,
@@ -335,24 +361,12 @@ function parseOnePodmanRecord(raw: string, label: string): Record<string, unknow
   return record as Record<string, unknown>;
 }
 
-async function waitForRegistry(attempt = 0): Promise<void> {
-  assert.ok(attempt < 60, "The managed local registry did not become ready.");
-  const ready = await new Promise<boolean>((resolve) => {
-    const request = http.get("http://127.0.0.1:5000/v2/", (response) => {
-      response.resume();
-      response.once("end", () => resolve(response.statusCode === 200));
-    });
-    request.once("error", () => resolve(false));
-    request.setTimeout(500, () => {
-      request.destroy();
-      resolve(false);
-    });
-  });
-  return ready
-    ? undefined
-    : new Promise<void>((resolve) => setTimeout(resolve, 250)).then(() =>
-        waitForRegistry(attempt + 1),
-      );
+async function waitForRegistry(artifacts: ArtifactSink, shellProbe: ShellProbe): Promise<void> {
+  assert.equal(
+    await collectPortableRegistryReadinessFailure({ artifacts, shellProbe }),
+    undefined,
+    "The managed local registry did not become ready. See the bounded registry readiness artifacts.",
+  );
 }
 
 function selectInstallerPodmanRuntime(repoRoot: string): string {
@@ -491,10 +505,7 @@ function waitForOpenShellTerminalPhase(
       sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
     },
   );
-  assert.ok(
-    phase === "Error" || phase === "Stopped",
-    "OpenShell did not independently report a terminal phase",
-  );
+  assert.equal(phase, "Stopped", "OpenShell did not reach the phase required for public restart");
   return phase;
 }
 
@@ -571,24 +582,35 @@ function waitForOpenShellSandboxAbsent(
   assert.ok(observation.absent, `OpenShell sandbox cleanup did not settle: ${observation.detail}`);
 }
 
-function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const blocked = new Set([
-    "CONTAINER_CONNECTION",
-    "CONTAINER_CERT_PATH",
-    "CONTAINER_HOST",
-    "CONTAINER_SSHKEY",
-    "CONTAINER_TLS_VERIFY",
-    "CONTAINERS_CONF",
-    "CONTAINERS_STORAGE_CONF",
-    "DOCKER_CONTEXT",
-    "DOCKER_HOST",
-    "DOCKER_TLS",
-    "DOCKER_TLS_VERIFY",
-    "DOCKER_CERT_PATH",
-    "PODMAN_CONNECTIONS_CONF",
-    "REGISTRY_AUTH_FILE",
-  ]);
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !blocked.has(name)));
+async function provePortableHermesFinalization(input: {
+  readonly lifecycleEnv: NodeJS.ProcessEnv;
+  readonly registry: SandboxEntry;
+  readonly sandboxName: string;
+}): Promise<Record<string, true>> {
+  const { lifecycleEnv, registry, sandboxName } = input;
+  const options = createPortableHermesFinalizationOptions(sandboxName, lifecycleEnv);
+
+  writePortableRegistry(lifecycleEnv.HOME!, sandboxName, {
+    ...registry,
+    lifecycleGeneration: `${HERMES_PORTABLE_E2E_GENERATION}-mismatch`,
+  });
+  const incomplete = await handleFinalizationState(options);
+  assert.equal(incomplete.stateResult.type, "pause");
+  assert.equal(runPortableDoctor(sandboxName, lifecycleEnv), 1);
+
+  writePortableRegistry(lifecycleEnv.HOME!, sandboxName, registry);
+  const finalization = await handleFinalizationState(options);
+  assert.equal(finalization.stateResult.type, "transition");
+  const postVerify = await handlePostVerifyState(options);
+  assert.equal(postVerify.stateResult.type, "complete");
+  assert.equal(runPortableDoctor(sandboxName, lifecycleEnv), 0);
+  return {
+    mismatchedAuthorityRejected: true,
+    doctorRejectedMismatchedAuthority: true,
+    finalizationAdvanced: true,
+    onboardingCompleted: true,
+    doctorHealthy: true,
+  };
 }
 
 async function proveHistoricalHermesPortableLifecycle(input: {
@@ -644,56 +666,60 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     "--",
     ...startupArgv,
   ];
-  let observedCreatePhase = "";
-  const createResult = await streamSandboxCreate(
-    "/usr/bin/timeout",
-    ["--signal=TERM", "--kill-after=5s", "240s", input.openshellBin, ...createArgs],
-    input.openshellClientEnv,
-    {
-      initialPhase: "create",
-      readyCheck: () => {
-        try {
-          observedCreatePhase = readOpenShellSandbox(
-            input.openshellBin,
-            input.openshellClientEnv,
-            sandboxName,
-          ).phase;
-        } catch {
-          observedCreatePhase = "";
-        }
-        return observedCreatePhase === "Ready";
-      },
-      failureCheck: () =>
-        observedCreatePhase === "Error"
-          ? "OpenShell Hermes sandbox entered Error during creation."
-          : null,
-      readyCheckOutputPatterns: [/Setting up NemoClaw/u],
-      waitForReadyTermination: true,
-    },
-  );
-  requireOpenShellResult(
-    {
-      status: createResult.status,
-      stdout: createResult.output,
-      stderr: "",
-    },
-    "OpenShell Hermes sandbox creation",
-  );
-
   let primaryFailed = false;
   let primaryFailure: unknown;
   let lifecycleEvidence: Record<string, unknown> | undefined;
   try {
+    let observedCreatePhase = "";
+    const createResult = await streamSandboxCreate(
+      "/usr/bin/timeout",
+      ["--signal=TERM", "--kill-after=5s", "240s", input.openshellBin, ...createArgs],
+      input.openshellClientEnv,
+      {
+        initialPhase: "create",
+        readyCheck: () => {
+          try {
+            observedCreatePhase = readOpenShellSandbox(
+              input.openshellBin,
+              input.openshellClientEnv,
+              sandboxName,
+            ).phase;
+          } catch {
+            observedCreatePhase = "";
+          }
+          return observedCreatePhase === "Ready";
+        },
+        failureCheck: () =>
+          observedCreatePhase === "Error"
+            ? "OpenShell Hermes sandbox entered Error during creation."
+            : null,
+        readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+        waitForReadyTermination: true,
+      },
+    );
+    requireOpenShellResult(
+      {
+        status: createResult.status,
+        stdout: createResult.output,
+        stderr: "",
+      },
+      "OpenShell Hermes sandbox creation",
+    );
+
     const live = readOpenShellSandbox(input.openshellBin, input.openshellClientEnv, sandboxName);
     const liveIdentityFingerprint = createHash("sha256").update(live.id).digest("hex");
     const registry: SandboxEntry = {
       name: sandboxName,
       agent: "hermes",
       gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+      gatewayPort: 8080,
       lifecycleGeneration: HERMES_PORTABLE_E2E_GENERATION,
       lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
       openshellDriver: "docker",
       openshellVersion: openshellExecutableAuthority.version,
+      portableLifecycleProfile: "hermes",
+      provider: "custom",
+      model: "e2e-readiness",
     };
     const context = {
       agent: "hermes",
@@ -775,6 +801,12 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       captureOpenShell: capture,
       readRegistry: () => registry,
     };
+
+    const finalizationEvidence = await provePortableHermesFinalization({
+      lifecycleEnv,
+      registry,
+      sandboxName,
+    });
 
     lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
@@ -869,6 +901,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
           authenticatedHealth: "verified-by-public-start-before-forward-verification",
         },
+        finalization: finalizationEvidence,
         postRecoveryStop: {
           result: postRecoveryStop.kind,
           containerStatus: postRecoveryContainerStatus,
@@ -919,7 +952,11 @@ async function proveHistoricalHermesPortableLifecycle(input: {
   return primaryFailed || cleanupFailed ? Promise.reject(failure) : lifecycleEvidence!;
 }
 
-async function main(progress: TestProgress): Promise<void> {
+async function main(
+  progress: TestProgress,
+  artifacts: ArtifactSink,
+  shellProbe: ShellProbe,
+): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
   const sourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
@@ -936,6 +973,7 @@ async function main(progress: TestProgress): Promise<void> {
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  let verifiedPodmanUrl = "";
   const hermesBaseStorageHome = process.env.E2E_HERMES_BASE_STORAGE_HOME;
   const disposableNetworkName = `nemoclaw-portable-id-proof-${String(process.pid)}`;
   let disposableNetworkCreated = false;
@@ -945,6 +983,8 @@ async function main(progress: TestProgress): Promise<void> {
   let hermesImageId: string | null = null;
   let hermesImageRef: string | null = null;
   let hermesContextRetired = false;
+  let generatedBuildContext: string | null = null;
+  const podmanGroup = createPodmanGroupReconciliationTracker();
   let hermesLifecycleEvidence: Record<string, unknown> | null = null;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
@@ -963,7 +1003,7 @@ async function main(progress: TestProgress): Promise<void> {
     NEMOCLAW_SANDBOX_PREBUILD: "1",
   });
 
-  try {
+  await runPortableE2eWithCleanup(async () => {
     progress.phase("select the Podman-reported runtime socket");
     const installerDockerHost = selectInstallerPodmanRuntime(process.cwd());
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
@@ -983,7 +1023,11 @@ async function main(progress: TestProgress): Promise<void> {
     const prepared = preparePortableExperimentalHost(process.env, { home });
     assert.equal(prepared?.authority.configHome, configHome);
     const runtimeAuthority = prepared!.authority;
-    assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
+    const expectedPodmanSocket =
+      process.env.E2E_TARGET_ID === "portable-hermes-finalization"
+        ? process.env.OPENSHELL_PODMAN_SOCKET
+        : `${runtimeDir}/podman/podman.sock`;
+    assert.equal(process.env.DOCKER_HOST, `unix://${expectedPodmanSocket}`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
@@ -997,10 +1041,25 @@ async function main(progress: TestProgress): Promise<void> {
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
-    await waitForRegistry();
+    verifiedPodmanUrl = String(process.env.DOCKER_HOST);
+    preservePortableE2eCrunForTarget(process.env, verifiedPodmanUrl);
+    const markUnreconciled = podmanGroup.mark;
+    const buildImage = buildImageFixture(
+      artifacts,
+      progress,
+      verifiedPodmanUrl,
+      BASE_IMAGE,
+      undefined,
+      markUnreconciled,
+    );
+    await waitForRegistry(artifacts, shellProbe);
+    process.env.E2E_TARGET_ID === "portable-hermes-finalization" &&
+      (await capturePortableRegistryProcessBoundary({
+        artifacts,
+        shellProbe,
+      }));
 
     progress.phase("verify immutable non-force network removal");
-    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     // Netavark rejects the retired link-local subnet before this pinned runtime can create it.
     // Deterministic tests own that state; this live boundary proves the emitted full-ID form.
     run("podman", ["--url", verifiedPodmanUrl, "network", "create", disposableNetworkName]);
@@ -1035,7 +1094,6 @@ async function main(progress: TestProgress): Promise<void> {
         timeout: 15_000,
       },
     );
-    assert.equal(absentInspection.error, undefined);
     assert.notEqual(absentInspection.status, 0);
     const remainingNetworkIds = run("podman", [
       "--url",
@@ -1052,6 +1110,7 @@ async function main(progress: TestProgress): Promise<void> {
 
     progress.phase("build and publish the sandbox image");
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
+    generatedBuildContext = buildCtx;
     fs.chmodSync(buildCtx, 0o700);
     const dockerfile = path.join(buildCtx, "Dockerfile");
     fs.writeFileSync(
@@ -1067,11 +1126,13 @@ async function main(progress: TestProgress): Promise<void> {
       dockerDriverGateway: true,
       env: process.env,
       origin: "generated",
+      buildImage: buildImage("sandbox"),
+      publishImage: (args, options) =>
+        publishImage(args, options, artifacts, progress, undefined, markUnreconciled),
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
     assert.equal(imageRef, "127.0.0.1:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
-
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);
     assert.match(
@@ -1127,6 +1188,9 @@ async function main(progress: TestProgress): Promise<void> {
         sandboxName: HERMES_PORTABLE_E2E_SANDBOX_NAME,
         dockerDriverGateway: true,
         env: process.env,
+        buildImage: buildImage("hermes"),
+        publishImage: (args, options) =>
+          publishImage(args, options, artifacts, progress, undefined, markUnreconciled),
         origin: "generated",
         log: console.log,
       });
@@ -1186,15 +1250,6 @@ async function main(progress: TestProgress): Promise<void> {
       )?.map(({ subnet }) => subnet),
       [PORTABLE_DOCKER_NETWORK_SUBNET],
     );
-    assert.equal(
-      run("docker", [
-        "inspect",
-        "--format",
-        `{{with index .NetworkSettings.Networks ${JSON.stringify(PORTABLE_DOCKER_NETWORK_NAME)}}}{{.IPAddress}}{{end}}`,
-        "nemoclaw-portable-registry",
-      ]),
-      PORTABLE_REGISTRY_IP,
-    );
     const currentNetwork = parseOnePodmanRecord(
       run("podman", [
         "--url",
@@ -1215,7 +1270,6 @@ async function main(progress: TestProgress): Promise<void> {
       ]),
       "portable registry inspection",
     );
-
     const openshellBin = run("bash", ["-lc", "command -v openshell"]);
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
     const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
@@ -1276,6 +1330,7 @@ async function main(progress: TestProgress): Promise<void> {
         configPath: gatewayEnv.OPENSHELL_GATEWAY_CONFIG,
         sandboxId,
       });
+      artifacts.addRedactionValues([sandboxToken]);
       const gatewayProbe = runSandboxTokenContainerProbe({
         authorization: `Bearer ${sandboxToken}`,
         dockerBin: "podman",
@@ -1285,6 +1340,7 @@ async function main(progress: TestProgress): Promise<void> {
         port: 8080,
         stateDir,
       });
+      await recordPortableHermesGatewayProbeFailure(artifacts, sandboxToken, gatewayProbe);
       assert.equal(gatewayProbe.status, 0, "The authenticated same-network gateway probe failed.");
       const gatewayResult = JSON.parse(gatewayProbe.stdout) as {
         grpcStatus?: string;
@@ -1403,61 +1459,42 @@ async function main(progress: TestProgress): Promise<void> {
     );
 
     console.log("Portable profile rootless environment E2E passed.");
-  } finally {
-    void (disposableNetworkCreated
-      ? spawnSync(
-          "podman",
-          [
-            "--url",
-            `unix://${runtimeDir}/podman/podman.sock`,
-            "network",
-            "rm",
-            disposableNetworkId ?? disposableNetworkName,
-          ],
-          {
-            env: process.env,
-            killSignal: "SIGKILL",
-            stdio: "ignore",
-            timeout: 15_000,
-          },
-        )
-      : undefined);
-    spawnSync("podman", ["rm", "--force", "nemoclaw-portable-registry"], {
-      env: process.env,
-      killSignal: "SIGKILL",
-      stdio: "ignore",
-      timeout: 15_000,
-    });
-    void (hermesImageRef
-      ? spawnSync("podman", ["image", "rm", "--force", hermesImageRef], {
-          env: process.env,
-          killSignal: "SIGKILL",
-          stdio: "ignore",
-          timeout: 15_000,
-        })
-      : undefined);
-    spawnSync("podman", ["system", "reset", "--force"], {
-      env: process.env,
-      killSignal: "SIGKILL",
-      stdio: "ignore",
-      timeout: 15_000,
-    });
-    cleanupPortableHostGatewayAlias(
-      PORTABLE_HOST_GATEWAY_IP,
-      gatewayAliasPresentBefore,
-      process.env,
-    );
-    await cleanupPortableProfileRootlessFixture(runtimeDir, root);
-  }
+  }, [
+    async () => {
+      await cleanupPortablePodmanResources({
+        artifacts,
+        ...podmanGroup.recoveryState(),
+        selectedPodmanUrl: verifiedPodmanUrl,
+        disposableNetworkCreated,
+        disposableNetworkId,
+        disposableNetworkName,
+        runtimeDir,
+        hermesImageRef,
+        env: process.env,
+      });
+    },
+    () => {
+      assert.ok(
+        retirePortableGeneratedBuildContext(generatedBuildContext),
+        "Generated build context survived cleanup",
+      );
+    },
+    () =>
+      cleanupPortableHostGatewayAlias(
+        PORTABLE_HOST_GATEWAY_IP,
+        gatewayAliasPresentBefore,
+        process.env,
+      ),
+    () => cleanupPortableProfileRootlessFixture(runtimeDir, root),
+  ]);
 }
-
 test(
   "portable profile rootless environment completes authenticated routes and enforces the configured Hermes dashboard Host",
   {
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
-    timeout: 900_000,
+    timeout: PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
   },
-  async ({ progress }) => {
-    await main(progress);
+  async ({ artifacts, progress, shellProbe }) => {
+    await main(progress, artifacts, shellProbe);
   },
 );

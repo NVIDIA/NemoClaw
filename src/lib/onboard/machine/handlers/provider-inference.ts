@@ -15,6 +15,7 @@ import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
   type GatewayRouteDiscoveryConstraints,
+  gatewayRouteIdentityConflictReasons,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
@@ -76,6 +77,8 @@ import {
 import {
   assertProviderInferenceRouteCompatible,
   guardProviderInferenceRouteSelection,
+  hasNativeLocalProviderAuthority,
+  type NativeLocalResumeSelection,
   type ProviderInferenceProbeRoute,
 } from "./provider-inference-route-containment";
 
@@ -90,7 +93,11 @@ function selectedNativeInference(
 }
 
 export interface ProviderInferenceSetupOptions {
+  /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
+  rebuildSandboxPolicyDocument?: string;
   agentName?: string;
+  /** Resolve the policy tier before a custom provider can mutate gateway state. */
+  resolvePolicyTier?: () => Promise<string>;
   /** Local NIM shares vllm-local's provider ID but keeps its existing route. */
   localNimSelected?: boolean;
   /** Resume the exact published Pi shared route without selecting a new native provider. */
@@ -182,6 +189,7 @@ export interface ProviderSelectionResult {
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
+  rebuildSandboxPolicyDocument?: string;
   gatewayName: string;
   resume: boolean;
   fresh: boolean;
@@ -271,7 +279,13 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ) => Promise<boolean>;
     startRecordedStep(
       stepName: string,
-      updates?: { provider?: string | null; model?: string | null },
+      updates?: {
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        credentialEnv?: string | null;
+        preferredInferenceApi?: string | null;
+      },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     recordStepRejected(stepName: string): Promise<Session>;
@@ -329,6 +343,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
     isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
+    hasNativeLocalProviderAuthority?(
+      sandboxName: string,
+      gatewayName: string,
+      selection: NativeLocalResumeSelection,
+    ): boolean;
     getSandboxRegistryEntry?(sandboxName: string): Partial<SandboxEntry> | null;
     isRoutedInferenceProvider(provider: string): boolean;
     reconcileModelRouter(): Promise<void>;
@@ -586,8 +605,12 @@ function canResumeInferenceRoute(input: {
   forceProviderSelection: boolean;
   forceInferenceSetup: boolean;
   effectiveResume: boolean;
+  selectsNativeLocal: boolean;
+  nativeLocalAttached(): boolean;
   routeReady(): boolean;
 }): boolean {
+  // A ready shared route does not prove a native local provider attachment:
+  // another sandbox on a reused gateway can own the same shared route.
   return (
     !input.needsBedrockRuntimeAdapter &&
     input.provider !== OPENROUTER_PROVIDER_NAME &&
@@ -595,7 +618,8 @@ function canResumeInferenceRoute(input: {
     !input.forceProviderSelection &&
     !input.forceInferenceSetup &&
     input.effectiveResume &&
-    input.routeReady()
+    input.routeReady() &&
+    (!input.selectsNativeLocal || input.nativeLocalAttached())
   );
 }
 
@@ -1075,6 +1099,18 @@ function reviewRecoveryState(session: Session | null, sandboxName: string | null
   );
 }
 
+function hasIncompleteCustomRoute(session: Session | null): boolean {
+  if (!session) return false;
+  const route = {
+    provider: session.provider,
+    model: session.model,
+    endpointUrl: session.endpointUrl,
+    credentialEnv: session.credentialEnv,
+    preferredInferenceApi: session.preferredInferenceApi,
+  };
+  return gatewayRouteIdentityConflictReasons(route, route).includes("incomplete-custom-route");
+}
+
 function canResumeProviderSelection(
   forceProviderSelection: boolean,
   effectiveResume: boolean,
@@ -1083,7 +1119,23 @@ function canResumeProviderSelection(
   interruptedReview: boolean,
   provider: string | null,
   model: string | null,
+  interactive: boolean,
 ): boolean {
+  // An interrupted Station review has a provider/model but no validated model
+  // identity yet. Retry selection so its checkpoint can bind that identity.
+  if (
+    session?.stationExpressIntent &&
+    session.stationExpressIntent.kind !== "spark" &&
+    session.steps.provider_selection.status !== "complete"
+  ) {
+    return false;
+  }
+  // Review checkpoints from earlier releases kept only provider and model, so
+  // a custom route cannot pass the gateway check. Ask again interactively;
+  // non-interactive resume keeps failing closed at that check.
+  if (interactive && interruptedReview && hasIncompleteCustomRoute(session)) {
+    return false;
+  }
   return (
     !forceProviderSelection &&
     effectiveResume &&
@@ -1219,7 +1271,9 @@ interface ConfigurationReviewInput<Agent> {
   agent: Agent;
   provider: string;
   model: string;
+  endpointUrl: string | null;
   credentialEnv: string | null;
+  preferredInferenceApi: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[];
@@ -1258,9 +1312,14 @@ async function reviewProviderConfiguration<Agent>(
     // claiming that provider registration or inference setup completed.
     await deps.checkpointSandboxIdentity(sandboxName, input.agent);
     if (needsSelectionRecovery && !selectionRecoveryStarted) {
+      // Resume checks this route against the shared gateway route before it
+      // shows the review again, so keep the same secret-free route identity.
       await deps.startRecordedStep("provider_selection", {
         provider: input.provider,
         model: input.model,
+        endpointUrl: input.endpointUrl,
+        credentialEnv: input.credentialEnv,
+        preferredInferenceApi: input.preferredInferenceApi,
       });
       selectionRecoveryStarted = true;
     }
@@ -1385,6 +1444,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   authoritativeResumeConfig = false,
   providerRecoveryReceipt = null,
   providerRecoveryReceiptLedger,
+  rebuildSandboxPolicyDocument,
   initial,
   selectedMessagingChannels,
   env,
@@ -1525,6 +1585,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     reviewRecoveryState(session, sandboxName),
     provider,
     model,
+    !deps.isNonInteractive(),
   );
   const initialHostLocalPolicyRoute = resolveInitialHostLocalPolicyRoute({
     resumeProviderSelection: initialResumeProviderSelection,
@@ -1575,6 +1636,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       completeRecoveredReviewSelectionAfterInference,
       provider,
       model,
+      !deps.isNonInteractive(),
     );
     const earlyManagedHostLocalLifecycleSelection = resolveEarlyManagedHostLocalLifecycleSelection({
       resumeProviderSelection,
@@ -1978,6 +2040,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceProviderSelection,
       forceInferenceSetup,
       effectiveResume,
+      selectsNativeLocal: usesNativeLocalSelection(
+        agentName(agent),
+        { provider: selectedProvider, endpointUrl },
+        Boolean(nimContainer),
+        preservesLegacyPiRoute(sandboxName, {
+          provider: selectedProvider,
+          model: selectedModel,
+          endpointUrl,
+        }),
+      ),
+      nativeLocalAttached: () =>
+        Boolean(sandboxName) &&
+        (deps.hasNativeLocalProviderAuthority ?? hasNativeLocalProviderAuthority)(
+          sandboxName as string,
+          gatewayName,
+          { provider: selectedProvider, endpointUrl, agent: agentName(agent) },
+        ),
       routeReady: () => deps.isInferenceRouteReady(gatewayName, selectedProvider, selectedModel),
     });
     if (resumeInference) {
@@ -1997,6 +2076,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
             endpointSource,
+            rebuildSandboxPolicyDocument,
             ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
@@ -2244,7 +2324,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           agent,
           provider,
           model,
+          endpointUrl,
           credentialEnv,
+          preferredInferenceApi,
           hermesAuthMethod,
           webSearchConfig,
           hermesToolGateways,
@@ -2351,6 +2433,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         endpointSource,
+        rebuildSandboxPolicyDocument,
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),

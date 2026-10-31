@@ -949,10 +949,23 @@ if (${JSON.stringify(
           false,
         );
       };
+      /** Verify fresh creation skips absent provider cleanup and completes process and registry updates. */
       const assertSuccessfulCreation = () => {
         assert.equal(payload.creationError, null, result.stderr);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.ok(payload.sandboxListCalls >= 2);
+        assert.deepEqual(
+          payload.commandNames.filter((command: string) =>
+            command.includes("sandbox provider detach"),
+          ),
+          [],
+          "fresh create must not inspect absent provider attachments",
+        );
+        assert.doesNotMatch(
+          `${result.stdout}\n${result.stderr}`,
+          /Warning: failed to detach provider/u,
+          "fresh create must not emit absent-sandbox provider cleanup warnings",
+        );
         assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
         assert.deepEqual(payload.killCalls, []);
         assert.equal(payload.unrefCalls, 0);

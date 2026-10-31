@@ -100,6 +100,8 @@ const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
 ];
 const AUTHORITATIVE_REFUSAL_PATTERN =
   /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
+const DECORATED_AMBIGUITY_REFUSAL_PATTERN =
+  /^Error:\s*×\s*code:\s*'The system is not in a state required for the operation's execution',\s*message:\s*'([^\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/u;
 
 /** Parse one sandbox base-policy read into the transport-neutral typed contract. */
 export function parseOpenShellSandboxPolicyRead(raw: string): OpenShellSandboxPolicyRead {
@@ -133,7 +135,13 @@ export function classifyOpenShellSandboxPolicySetResult(
   if (captured.status === 0) return captured.error ? ambiguous() : { kind: "applied" };
   if (captured.status === null) return ambiguous();
   const firstLine = captured.stderr?.split("\n", 1)[0] ?? "";
-  const message = firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim() ?? null;
+  const decorated = firstLine.match(DECORATED_AMBIGUITY_REFUSAL_PATTERN)?.[1] ?? null;
+  const message =
+    firstLine.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim() ??
+    (decorated?.includes("network endpoint ambiguity validation failed")
+      ? decorated.trim()
+      : null) ??
+    null;
   return message === null ? ambiguous() : { kind: "rejected", status: captured.status, message };
 }
 
@@ -457,4 +465,91 @@ export function stripProviderComposedPolicies(policy: string): string {
   const filtered = withoutProviderComposedPolicies(parsed.network_policies);
   if (Object.keys(filtered).length === Object.keys(parsed.network_policies).length) return policy;
   return YAML.stringify({ ...parsed, network_policies: filtered });
+}
+
+/** Compare DNS names and IPv6 addresses in the same form as the provider URL. */
+function normalizedHost(host: string): string {
+  const bare = host.replace(/^\[|\]$/gu, "");
+  return new URL(`https://${bare.includes(":") ? `[${bare}]` : bare}`).hostname
+    .replace(/^\[|\]$/gu, "")
+    .replace(/\.$/u, "");
+}
+
+/** OpenShell keeps * within a DNS label and lets ** span labels. */
+function policyHostMatches(pattern: string, host: string): boolean {
+  if (!pattern) return true;
+  const normalized = pattern.includes(":")
+    ? normalizedHost(pattern)
+    : pattern.toLowerCase().replace(/\.$/u, "");
+  // Track consumed prefixes to avoid backtracking through repeated wildcards.
+  let positions = [0];
+  for (const part of normalized.split(/(\*+)/u)) {
+    positions = [
+      ...new Set(
+        positions.flatMap((start) => {
+          if (!part.startsWith("*")) {
+            return host.startsWith(part, start) ? [start + part.length] : [];
+          }
+          const dot = part.length === 1 ? host.indexOf(".", start) : -1;
+          const end = dot < 0 ? host.length : dot;
+          return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+        }),
+      ),
+    ];
+  }
+  return positions.includes(host.length);
+}
+
+/** Match OpenShell's set comparison of configured address pins. */
+function normalizedPins(pins: readonly string[]): string[] {
+  return [...new Set(pins.map((pin) => pin.trim().toLowerCase()))].sort();
+}
+
+/** Refuse address-pin conflicts using the shared OpenShell endpoint contract. */
+export function assertOpenShellPolicyEndpointPins(
+  document: string,
+  endpointUrl: string,
+  allowedIps: readonly string[],
+): void {
+  if (allowedIps.length === 0) return;
+  const destination = new URL(endpointUrl);
+  const host = normalizedHost(destination.hostname);
+  const port = Number(destination.port || (destination.protocol === "https:" ? 443 : 80));
+  const policies = withoutProviderComposedPolicies(
+    parseOpenShellPolicy(document).policy.network_policies ?? {},
+  );
+  const expected = normalizedPins(allowedIps);
+  for (const [name, policy] of Object.entries(policies)) {
+    if (
+      !isMapping(policy) ||
+      (policy.endpoints !== undefined && !Array.isArray(policy.endpoints))
+    ) {
+      throw new Error(
+        "Cannot inspect malformed sandbox endpoint policies. No provider was changed.",
+      );
+    }
+    for (const endpoint of policy.endpoints ?? []) {
+      if (!isMapping(endpoint)) {
+        throw new Error("Cannot inspect malformed sandbox endpoints. No provider was changed.");
+      }
+      // OpenShell normalizes a single port only when ports is empty or absent.
+      const ports =
+        Array.isArray(endpoint.ports) && endpoint.ports.length > 0
+          ? endpoint.ports
+          : [endpoint.port];
+      if (!ports.includes(port)) continue;
+      const policyHost = endpoint.host ?? "";
+      if (typeof policyHost !== "string" || !policyHostMatches(policyHost, host)) continue;
+      const pins = endpoint.allowed_ips;
+      if (
+        Array.isArray(pins) &&
+        pins.every((pin) => typeof pin === "string") &&
+        isDeepStrictEqual(normalizedPins(pins), expected)
+      )
+        continue;
+      throw new Error(
+        `Existing policy ${JSON.stringify(name)} for ${destination.hostname}:${port} has conflicting IP pins. No provider was changed. Review that policy before retrying.`,
+      );
+    }
+  }
 }

@@ -121,6 +121,7 @@ describe("managed-image staging QA workflow", () => {
     const packageBuilder = "scripts/security/build-native-security-packages.sh";
     const requirements = "agents/langchain-deepagents-code/requirements.lock";
     const runtimeIdentity = "src/lib/agent/deep-agents-code-runtime-identity.json";
+    const dependencyPatch = "agents/langchain-deepagents-code/patch-dependency-compatibility.py";
     const npmSupportFiles = [
       "ci/reviewed-npm-audit.json",
       "scripts/lib/bundled-npm-package.mts",
@@ -133,10 +134,22 @@ describe("managed-image staging QA workflow", () => {
       "scripts/upgrade-bundled-npm.mts",
     ];
     const perlPatch = "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch";
+    const nativeSupportFiles = [
+      "scripts/security/build-perl-security-packages.sh",
+      "scripts/security/libssh2-sftp-response-regression.c",
+      "scripts/security/security-package-inventory.mts",
+      "src/lib/sandbox-base-image/security-package-specs.ts",
+      "agents/langchain-deepagents-code/dependency-overrides.in",
+      "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+      "scripts/security/patches/zlib-1.3.1-write-error.patch",
+      "scripts/security/zlib-write-error.c",
+    ];
     try {
       writeOverlayFixture(candidateRoot, dockerfile, "candidate Dockerfile\n");
       writeOverlayFixture(candidateRoot, packageBuilder, "exit 42\n");
       writeOverlayFixture(candidateRoot, requirements, "candidate requirements\n");
+      writeOverlayFixture(candidateRoot, dependencyPatch, "raise SystemExit(43)\n");
+      writeOverlayFixture(stagingRoot, dependencyPatch, "raise SystemExit(42)\n");
       writeOverlayFixture(candidateRoot, runtimeIdentity, "candidate runtime identity\n");
       writeOverlayFixture(
         candidateRoot,
@@ -149,6 +162,10 @@ describe("managed-image staging QA workflow", () => {
       writeOverlayFixture(stagingRoot, requirements, "staging requirements\n");
       fs.mkdirSync(path.dirname(path.join(stagingRoot, runtimeIdentity)), { recursive: true });
       writeOverlayFixture(stagingRoot, perlPatch, "staging Perl patch\n");
+      nativeSupportFiles.forEach((supportFile) => {
+        writeOverlayFixture(candidateRoot, supportFile, "candidate native support\n");
+        writeOverlayFixture(stagingRoot, supportFile, "staging native support\n");
+      });
       npmSupportFiles.forEach((supportFile) => {
         writeOverlayFixture(candidateRoot, supportFile, "candidate npm support\n");
         writeOverlayFixture(stagingRoot, supportFile, "staging npm support\n");
@@ -175,6 +192,12 @@ describe("managed-image staging QA workflow", () => {
         ]).status,
       ).toBe(0);
       expect(spawnSync("bash", [path.join(stagingRoot, packageBuilder)]).status).toBe(42);
+      expect(spawnSync("python3", [path.join(stagingRoot, dependencyPatch)]).status).toBe(43);
+      nativeSupportFiles.forEach((supportFile) => {
+        expect(fs.readFileSync(path.join(stagingRoot, supportFile), "utf8")).toBe(
+          "candidate native support\n",
+        );
+      });
     } finally {
       fs.rmSync(overlayFixture, { recursive: true, force: true });
     }

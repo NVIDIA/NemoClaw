@@ -242,7 +242,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 | `/sandbox/.hermes/profiles/` | User-created named Hermes profiles. The Web Dashboard uses the shared native Hermes home instead of a separate profile. |
 | `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
 | `/sandbox/.hermes/logs/` | Hermes runtime logs. |
-| `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by OpenShell storage. |
+| `/sandbox/.hermes/SOUL.md` | Durable top-level Hermes persona file preserved by OpenShell storage. |
 
 ## Persistence Behavior
 
@@ -283,7 +283,7 @@ Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below 
 
 | Path | Purpose |
 |---|---|
-| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration. New NVIDIA Endpoints, supported fixed hosted providers, Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use native endpoints with scoped credential references. Owned Local NVIDIA NIM and other routes use `inference.local`. |
+| `/sandbox/.deepagents/config.toml` | NemoClaw-generated model and provider configuration. New NVIDIA Endpoints, supported fixed hosted providers, hosted compatible endpoints outside the Personal tier, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers with scoped credential references. A fresh Personal-tier hosted compatible selection uses `inference.local` without a native attachment. Owned Local NVIDIA NIM, other compatible endpoints without an attachment, and retained shared routes also use `inference.local`. |
 | `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
 | `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |

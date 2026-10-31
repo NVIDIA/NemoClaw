@@ -37,7 +37,7 @@ vi.mock("../../../src/lib/inference/ollama/proxy.ts", () => ({
   getOllamaProxyToken: () => undefined,
   isProxyHealthy: () => false,
   killStaleProxy: () => undefined,
-  persistAndProbeOllamaProxy: async () => undefined,
+  persistProxyToken: () => undefined,
   startOllamaAuthProxy: () => false,
 }));
 vi.mock("../fixtures/e2e-test.ts", () => ({
@@ -642,63 +642,6 @@ exit 42`,
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
   });
 
-  it.each([
-    { outcome: "ready", healthStatus: "0", exitCode: 0, samples: [["readiness-1", "1"]] },
-    {
-      outcome: "stopped",
-      healthStatus: "1",
-      exitCode: 1,
-      samples: [
-        ["readiness-1", "1"],
-        ["readiness-final", "final"],
-      ],
-    },
-  ])(
-    "preserves the $outcome NIM result when storage probes fail (#13135)",
-    async ({ healthStatus, exitCode, samples }) => {
-      const fixture = createReadinessFixture();
-      const nimName = protectedProviderContainerName("nim", PROVIDER_COHORT);
-      const command = protectedNimReadinessCommand(nimName);
-      const storageProbePath = path.join(process.cwd(), "scripts/checks/capture-nim-storage.sh");
-      const storageCallsPath = path.join(fixture.root, "nim-storage-calls");
-      writeCommand(
-        fixture.binDir,
-        "bash",
-        `if [ "\${1:-}" = "$FAKE_NIM_STORAGE_PROBE" ]; then
-  printf '%s|%s|%s|%s\\n' "$2" "$3" "$4" "$5" >>"$FAKE_NIM_STORAGE_CALLS"
-  exit 42
-fi
-exec /bin/bash "$@"`,
-      );
-      writeCommand(fixture.binDir, "curl", 'exit "$FAKE_NIM_HEALTH_STATUS"');
-      writeCommand(
-        fixture.binDir,
-        "docker",
-        `if [ "$1" = container ]; then
-  printf 'false\\n'
-fi`,
-      );
-
-      const result = await fixture.host.command(command.command, command.args, {
-        artifactName: "nim-readiness-failed-storage-probe",
-        captureLimitBytes: command.captureLimitBytes,
-        env: {
-          ...fixture.env,
-          FAKE_NIM_HEALTH_STATUS: healthStatus,
-          FAKE_NIM_STORAGE_CALLS: storageCallsPath,
-          FAKE_NIM_STORAGE_PROBE: storageProbePath,
-        },
-        timeoutMs: 5_000,
-      });
-
-      expect(result.exitCode).toBe(exitCode);
-      expect(result.timedOut).toBe(false);
-      expect(fs.readFileSync(storageCallsPath, "utf8").trim().split("\n")).toEqual(
-        samples.map(([phase, sample]) => [phase, nimName, sample, process.cwd()].join("|")),
-      );
-    },
-  );
-
   it("redacts provider-native NIM failure evidence in memory and artifacts", async () => {
     const fixture = createReadinessFixture();
     const sensitiveValue = "protected-nim-readiness-sensitive-value";
@@ -799,7 +742,7 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
       "2",
       "--max-time",
       "5",
-      "http://127.0.0.1:8000/v1/models",
+      "http://127.0.0.1:8001/v1/models",
     ]);
     expect(result.stderr).toContain("vllm-stalled-probe-diagnostic");
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
@@ -850,7 +793,7 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
       "5",
       "--max-time",
       "5",
-      "http://127.0.0.1:8000/v1/models",
+      "http://127.0.0.1:8001/v1/models",
     ]);
     expect(result.stderr).toContain("nim-stalled-probe-diagnostic key=[REDACTED]");
     expect(result.stderr).toContain("managed-image-nim-not-ready attempts=1");

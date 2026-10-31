@@ -117,7 +117,12 @@ COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
 
 # Standardize stale and same-run bases before applying npm 12 private-tree
 # remediations. The local archive is independently SHA-256 and SRI verified.
-RUN node /scripts/upgrade-bundled-npm.mts \
+RUN set -eu; \
+    dcode_npm_cache="$(mktemp -d /tmp/nemoclaw-dcode-npm-cache.XXXXXX)"; \
+    trap 'rm -rf "$dcode_npm_cache"' EXIT; \
+    trap 'exit 1' HUP INT TERM; \
+    export NPM_CONFIG_CACHE="$dcode_npm_cache" npm_config_cache="$dcode_npm_cache"; \
+    node /scripts/upgrade-bundled-npm.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/npm-12.0.2.tgz
 # hadolint ignore=DL3059
@@ -202,7 +207,7 @@ RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-dee
     && cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
     && chmod -R a+rX /opt/nemoclaw-blueprint \
     && test "$(find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort)" = "$(printf '%s\n' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py')" \
-    && printf '%s  %s\n' 'd7bd880d47d423f27dee2997a96271f5f1c67b88fdafaf771e29b82c0ac8b947' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '6d1ac1371076821f13728008bfd47c5aaad25af5268a0c2e7c784b193642650e' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
+    && printf '%s  %s\n' 'b8c349b409d2583d3f24d7e268872d03e71a5b62031e371a226eb9f6fd1dfcec' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '71689fe3357fe8ca5636325e0f41da907db6e556e3c91de3d71818785c26b0a9' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
     && /opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin \
     && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True)' \
     && /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
@@ -367,37 +372,11 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006
-RUN set -eu; \
-    security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
-    arch="$(dpkg --print-architecture)"; \
-    test -f "$security_inventory"; \
-    test ! -L "$security_inventory"; \
-    test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
-    printf '%s\n' \
-        "architecture=$arch" \
-        "libexpat1=2.8.3-1" \
-        "libonig5=6.9.9-1+b1" \
-        "libjq1=1.8.2-1" \
-        "jq=1.8.2-1" \
-        "vim-common=2:9.2.0858-1" \
-        "vim-tiny=2:9.2.0858-1" \
-        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
-        "libssl3t64=3.5.7-1~deb13u3" \
-        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" \
-        "perl-base=5.44.0-1nemoclaw1" \
-        "perl=5.44.0-1nemoclaw1" \
-        | cmp -s - "$security_inventory"; \
-    test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1"; \
-    test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
-    test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
-    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
-    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u3"; \
-    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
-    test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
+RUN --mount=type=bind,source=scripts/security/security-package-inventory.mts,target=/tmp/nemoclaw-security/scripts/security/security-package-inventory.mts \
+    --mount=type=bind,source=src/lib/sandbox-base-image/security-package-specs.ts,target=/tmp/nemoclaw-security/src/lib/sandbox-base-image/security-package-specs.ts \
+    set -eu; \
+    security_probe="$(node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON /tmp/nemoclaw-security/scripts/security/security-package-inventory.mts probe shared)"; \
+    sh -ec "$security_probe"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \
     ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5'; \
     test "$(jq --version)" = "jq-1.8.2"; \
@@ -420,6 +399,8 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \
     esac \
     && command -v setpriv >/dev/null 2>&1
+# Native restore preserves the old home cache and requires no image-owned collision.
+RUN test ! -e /sandbox/.npm && test ! -L /sandbox/.npm
 USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

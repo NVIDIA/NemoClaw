@@ -22,7 +22,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -235,6 +238,13 @@ test(
         timeoutMs: execTimeout(25 * 60_000),
       },
     );
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, install, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName: "nemoclaw",
+      artifactPrefix: "cloud-install-failure",
+      env: testEnv(),
+      redactionValues,
+    });
     expect(install.exitCode, resultText(install)).toBe(0);
     assertStockManagedImageReceipt({
       environment: testEnv(),
@@ -373,6 +383,7 @@ test(
         artifactPrefix: `cloud-check-${scriptName.replace(/\.sh$/, "")}-failure`,
         redactionValues,
         captureGatewayLog: true,
+        env: testEnv(),
       });
       expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
     }

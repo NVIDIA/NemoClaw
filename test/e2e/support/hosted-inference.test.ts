@@ -759,6 +759,22 @@ printf '{"data":[]}'
         ],
       });
 
+      const toolReply = await fetch(`${fake.baseUrl}/chat/completions`, {
+        body: JSON.stringify({
+          messages: [{ content: "PRIVATE_TOOL_RESULT_BODY", role: "tool" }],
+          model: "nvidia/nvidia/fake-model",
+        }),
+        headers: {
+          Authorization: "Bearer fake-compatible-key",
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      expect(toolReply.status).toBe(200);
+      expect(await toolReply.json()).toMatchObject({
+        choices: [{ message: { content: "CHAT_OK" } }],
+      });
+
       const responses = await fetch(`${fake.baseUrl}/responses`, {
         body: JSON.stringify({ input: "ping", model: "nvidia/nvidia/fake-model", stream: true }),
         headers: {
@@ -791,6 +807,13 @@ printf '{"data":[]}'
             requestCanaryPresent: true,
             stream: false,
           }),
+          expect.objectContaining({
+            auth: "ok",
+            authorizationSent: true,
+            model: "nvidia/nvidia/fake-model",
+            path: "/v1/chat/completions",
+            toolResultPresent: true,
+          }),
           expect.objectContaining({ auth: "ok", path: "/v1/responses", stream: true }),
         ]),
       );
@@ -799,6 +822,8 @@ printf '{"data":[]}'
       ).toBe(1);
       expect(JSON.stringify(requests)).not.toContain("FORBIDDEN_REQUEST_MARKER");
       expect(JSON.stringify(requests)).not.toContain("EXPECTED_REQUEST_CANARY");
+      expect(JSON.stringify(requests)).not.toContain("fake-compatible-key");
+      expect(JSON.stringify(requests)).not.toContain("PRIVATE_TOOL_RESULT_BODY");
     } finally {
       await fake.close();
     }

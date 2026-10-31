@@ -987,7 +987,7 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("manifest boom");
 
     const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(errors).toContain("messaging manifest plan could not be staged");
+    expect(errors).toContain("messaging plan validation failed.");
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);

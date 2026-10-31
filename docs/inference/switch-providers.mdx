@@ -48,7 +48,7 @@ Target a non-default sandbox by name.
 $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 ```
 
-For native NVIDIA and fixed hosted providers, NemoClaw updates only the selected sandbox attachment and verifies a request through its native endpoint. OpenClaw also keeps model switches on a recorded native Ollama, standalone vLLM, or llama.cpp attachment within that sandbox.
+For native NVIDIA and fixed hosted providers, NemoClaw updates only the selected sandbox attachment and verifies a request through its native endpoint. A hosted compatible endpoint uses a native provider during a runtime switch only when the sandbox already records a valid native attachment; a shared-route sandbox keeps its shared route. OpenClaw also keeps model switches on a recorded native Ollama, standalone vLLM, or llama.cpp attachment within that sandbox.
 OpenRouter requests include its attribution headers.
 If sandbox verification fails, NemoClaw tries to restore the previous inference selection and does not commit the agent configuration.
 
@@ -74,7 +74,7 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 <AgentOnly variant="hermes">
 
 For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and managed API-key value.
-Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers without changing the shared route.
+A hosted compatible selection outside the Personal tier uses an attached provider during a runtime switch only when this sandbox already records a valid native attachment. Qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible selections use sandbox-attached providers without changing the shared route.
 Owned Local NVIDIA NIM and nonqualifying custom endpoints retain the shared route.
 A legacy local sandbox without a valid Hermes attachment must be recreated before a native local switch: back up required state, then run `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 Live qualification of the Hermes native local lifecycle is pending.
@@ -155,6 +155,13 @@ $$nemoclaw inference set \
 ```
 
 NemoClaw validates the endpoint before it changes the route.
+For a custom compatible endpoint that uses a native provider, NemoClaw reads the sandbox's base policy before creating or detaching a provider.
+When the provider pins destination addresses, existing endpoint rules that cover its host and port must have matching IP pins.
+This includes wildcard host rules and IP-only rules on that port.
+If the pins are absent or differ, the command names the conflicting policy and leaves providers and the inference selection unchanged.
+{/* This page is published under inference/manage-inference; links follow the navigation slugs in docs/index.yml. */}
+Follow [Customize the Sandbox Network Policy](../../network-policy/customize-network-policy) to inspect the named rule before retrying.
+If NemoClaw cannot read the policy, resolve the reported OpenShell error before retrying.
 For an HTTPS IP-literal or DNS-pinned HTTP endpoint, NemoClaw registers and verifies an absent provider before selecting the route.
 If OpenShell still reports the provider as absent, NemoClaw retries the switch once.
 If provider verification fails or OpenShell confirms that it did not apply the route, NemoClaw leaves the inference selection unchanged.

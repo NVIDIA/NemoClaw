@@ -263,6 +263,7 @@ describe("onboard session", () => {
         model: "qwen3.5:9b",
         endpointUrl: "http://127.0.0.1:11435/v1",
         credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
         sandboxName: "rejected-review",
         sandboxPromptProgress: {
           sandboxName: true,
@@ -300,6 +301,7 @@ describe("onboard session", () => {
       model: null,
       endpointUrl: null,
       credentialEnv: null,
+      preferredInferenceApi: null,
       sandboxName: null,
       sandboxPromptProgress: { sandboxName: false },
       lastStepStarted: null,
@@ -972,6 +974,18 @@ describe("onboard session", () => {
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.metadata.hostMounts).toEqual(hostMounts);
     expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
+  });
+
+  it("keeps only the selected GPU mode and device in persisted GPU intent", () => {
+    session.saveSession(session.createSession());
+    const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    persisted.sandboxGpuSelection = { mode: "auto", device: null, token: "do-not-retain" };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(persisted));
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.sandboxGpuSelection).toEqual({ mode: "auto", device: null });
+    session.saveSession(loaded);
+    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).not.toContain("do-not-retain");
   });
 
   it("preserves a fail-closed marker for malformed host mount metadata", () => {

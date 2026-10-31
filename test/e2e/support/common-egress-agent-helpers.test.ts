@@ -22,8 +22,6 @@ import {
   projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
   reduceOpenClawToolEvidence,
-  runHermesAgentAssertionRetry,
-  runOpenClawAgentAssertionRetry,
   type OpenClawAgentAttemptEvidenceOptions,
   type OpenClawPublicFetchExpectation,
   type OpenClawToolEvidence,
@@ -307,6 +305,8 @@ describe("common-egress agent parsing and classification helpers", () => {
           expectedContentMatches: true,
           expectedUrlMatches: true,
           httpSuccess: true,
+          httpStatus: 200,
+          toolError: false,
           maxCharsWithinLimit: true,
           paired: true,
           resultSuccess: true,
@@ -1233,163 +1233,6 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
   });
 
-  it("records OpenClaw success after the required scope recovery", async () => {
-    const onEvidence = vi.fn();
-    const recover = vi.fn().mockResolvedValue(true);
-    const run = vi
-      .fn()
-      .mockResolvedValueOnce({
-        passed: false,
-        failureClass: "transient-external",
-        recoveryRequired: true,
-      })
-      .mockResolvedValueOnce({ passed: true });
-
-    const result = await runOpenClawAgentAssertionRetry({
-      attempts: 3,
-      delayMs: () => 0,
-      onEvidence,
-      recover,
-      run,
-    });
-
-    expect(result.outcome).toBe("passed");
-    expect(onEvidence).toHaveBeenCalledWith({
-      schemaVersion: 1,
-      operation: "common-egress.openclaw-agent",
-      owner: "openclaw-agent",
-      idempotence: "reconciled-mutation",
-      maxAttempts: 3,
-      outcome: "passed-after-retry",
-      attempts: [
-        {
-          attempt: 1,
-          outcome: "failed",
-          failureClass: "transient-external",
-          reconciled: true,
-          retryScheduled: true,
-        },
-        { attempt: 2, outcome: "passed", retryScheduled: false },
-      ],
-    });
-    expect(recover).toHaveBeenCalledWith(expect.objectContaining({ recoveryRequired: true }), 1);
-  });
-
-  it("does not retry a plain OpenClaw transport failure without reconciliation", async () => {
-    const onEvidence = vi.fn();
-    const recover = vi.fn().mockResolvedValue(true);
-    const run = vi
-      .fn()
-      .mockResolvedValueOnce({ passed: false, failureClass: "transient-external" })
-      .mockResolvedValueOnce({ passed: true });
-
-    const result = await runOpenClawAgentAssertionRetry({
-      attempts: 3,
-      delayMs: () => 0,
-      onEvidence,
-      recover,
-      run,
-    });
-
-    expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(recover).not.toHaveBeenCalled();
-    expect(onEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        idempotence: "reconciled-mutation",
-        outcome: "failed-no-retry",
-        attempts: [
-          {
-            attempt: 1,
-            outcome: "failed",
-            failureClass: "transient-external",
-            reconciled: false,
-            retryScheduled: false,
-          },
-        ],
-      }),
-    );
-  });
-
-  it("does not retry when OpenClaw scope recovery fails", async () => {
-    const onEvidence = vi.fn();
-    const recover = vi.fn().mockResolvedValue(false);
-    const run = vi.fn().mockResolvedValue({
-      passed: false,
-      failureClass: "transient-external",
-      recoveryRequired: true,
-    });
-
-    const result = await runOpenClawAgentAssertionRetry({
-      attempts: 3,
-      delayMs: () => 0,
-      onEvidence,
-      recover,
-      run,
-    });
-
-    expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(recover).toHaveBeenCalledOnce();
-    expect(result.evidence.attempts).toEqual([
-      expect.objectContaining({ reconciled: false, retryScheduled: false }),
-    ]);
-  });
-
-  it("does not retry when OpenClaw scope recovery throws", async () => {
-    const recover = vi.fn().mockRejectedValue(new Error("recovery unavailable"));
-    const run = vi.fn().mockResolvedValue({
-      passed: false,
-      failureClass: "transient-external",
-      recoveryRequired: true,
-    });
-
-    const result = await runOpenClawAgentAssertionRetry({
-      attempts: 3,
-      delayMs: () => 0,
-      onEvidence: vi.fn(),
-      recover,
-      run,
-    });
-
-    expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(result.evidence.attempts).toEqual([
-      expect.objectContaining({ reconciled: false, retryScheduled: false }),
-    ]);
-  });
-
-  it("records a deterministic Hermes failure without retrying", async () => {
-    const onEvidence = vi.fn();
-    const run = vi.fn().mockResolvedValue({ passed: false, failureClass: "deterministic" });
-
-    const result = await runHermesAgentAssertionRetry({
-      attempts: 3,
-      delayMs: () => 0,
-      onEvidence,
-      run,
-    });
-
-    expect(result.outcome).toBe("failed");
-    expect(run).toHaveBeenCalledOnce();
-    expect(onEvidence).toHaveBeenCalledWith({
-      schemaVersion: 1,
-      operation: "common-egress.hermes-agent",
-      owner: "hermes-agent",
-      idempotence: "read-only",
-      maxAttempts: 3,
-      outcome: "failed-no-retry",
-      attempts: [
-        {
-          attempt: 1,
-          outcome: "failed",
-          failureClass: "deterministic",
-          retryScheduled: false,
-        },
-      ],
-    });
-  });
-
   it("classifies pre-contract provider validation skips", () => {
     expect(
       classifyPreContractProviderValidationSkip({
@@ -1459,5 +1302,138 @@ describe("common-egress agent parsing and classification helpers", () => {
       matches: false,
       transientProviderValidationFailure: false,
     });
+  });
+});
+
+describe("failed public-fetch evidence", () => {
+  it.each(["deterministic", "transient-external"] as const)(
+    "collects failed-turn evidence without changing the %s retry classification",
+    async (failureClass) => {
+      const recordToolEvidence = vi.fn();
+      const classification = { passed: false, failureClass, recoveryRequired: true };
+      const result = await validateOpenClawAgentAttemptEvidence(
+        publicFetchAttemptValidationOptions({
+          classification,
+          collectToolEvidence: true,
+          recordToolEvidence,
+        }),
+      );
+      expect(recordToolEvidence).toHaveBeenCalledOnce();
+      expect(result).toEqual({ attempt: classification });
+    },
+  );
+
+  it.each([
+    async () => ({ exitCode: 2, stdout: "secret must-not-remain" }),
+    async () => ({ exitCode: 0, stdout: "malformed must-not-remain" }),
+    async () => {
+      throw new Error("transport must-not-remain");
+    },
+  ])(
+    "preserves the original failure when diagnostic reduction is unavailable",
+    async (reduceToolEvidence) => {
+      const classification = { passed: false, failureClass: "authentication" as const };
+      const recordToolEvidenceReductionFailure = vi.fn();
+      const result = await validateOpenClawAgentAttemptEvidence(
+        publicFetchAttemptValidationOptions({
+          classification,
+          collectToolEvidence: true,
+          reduceToolEvidence,
+          recordToolEvidenceReductionFailure,
+        }),
+      );
+      expect(result).toEqual({ attempt: classification });
+      expect(recordToolEvidenceReductionFailure).toHaveBeenCalledOnce();
+      expect(JSON.stringify(recordToolEvidenceReductionFailure.mock.calls)).not.toContain(
+        "must-not-remain",
+      );
+    },
+  );
+
+  it("records HTTP status from tool results without trusting the assistant's explanation", () => {
+    const session = publicFetchSessionJsonLines({
+      isError: true,
+      payload: publicFetchPayload({ status: 503, text: REDUCER_SECRET_SENTINEL }),
+    });
+    const evidence = reduceOpenClawToolEvidence(session, "", PUBLIC_FETCH_EXPECTATION);
+    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
+    expect(artifact.webFetchDiagnostics).toEqual([
+      { httpStatus: 503, toolError: true, paired: true },
+    ]);
+    expect(artifact.matches).toBe(false);
+    expect(JSON.stringify(artifact)).not.toContain(REDUCER_SECRET_SENTINEL);
+    const assistantOnly = reduceOpenClawToolEvidence(
+      JSON.stringify({
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Wikimedia returned HTTP 503" }],
+        },
+      }),
+      "",
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    expect(
+      projectPersonalPublicFetchToolEvidenceArtifact(assistantOnly).webFetchDiagnostics,
+    ).toEqual([]);
+  });
+
+  it("reads the pinned producer's error prefix without retaining its response detail", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        payload: {
+          status: "error",
+          tool: "web_fetch",
+          error: `Web fetch failed (503): ${REDUCER_SECRET_SENTINEL}`,
+        },
+      }),
+      "",
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
+    expect(artifact.webFetchDiagnostics).toEqual([
+      { httpStatus: 503, toolError: true, paired: true },
+    ]);
+    expect(artifact.matches).toBe(false);
+    expect(evidence.webFetchResults[0]?.httpSuccess).toBe(false);
+    expect(JSON.stringify(evidence)).not.toContain(REDUCER_SECRET_SENTINEL);
+  });
+
+  it.each([
+    { status: "error", tool: "web_fetch", error: "Agent said Web fetch failed (503): details" },
+    { status: "error", tool: "web_fetch", error: "Web fetch failed (999): details" },
+    { status: "error", tool: "web_fetch", error: "Web fetch failed (5030): details" },
+    { status: "error", tool: "other", error: "Web fetch failed (503): details" },
+    { status: "ok", tool: "web_fetch", error: "Web fetch failed (503): details" },
+  ])("does not infer HTTP status from unsupported error shapes: %j", (payload) => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({ payload }),
+      "",
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    expect(
+      projectPersonalPublicFetchToolEvidenceArtifact(evidence).webFetchDiagnostics[0]?.httpStatus,
+    ).toBeNull();
+  });
+
+  it("keeps missing tool HTTP status unknown and bounds diagnostic records", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines({
+        isError: true,
+        payload: { status: "error", error: "private details" },
+      }),
+      "",
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    expect(projectPersonalPublicFetchToolEvidenceArtifact(evidence).webFetchDiagnostics).toEqual([
+      { httpStatus: null, toolError: true, paired: true },
+    ]);
+    evidence.webFetchResults = Array.from({ length: 100 }, () => ({
+      ...evidence.webFetchResults[0]!,
+      httpStatus: 999,
+    }));
+    const artifact = projectPersonalPublicFetchToolEvidenceArtifact(evidence);
+    expect(artifact.webFetchDiagnostics).toHaveLength(64);
+    expect(artifact.webFetchDiagnostics.every((record) => record.httpStatus === null)).toBe(true);
+    expect(JSON.stringify(artifact)).not.toContain("private details");
   });
 });

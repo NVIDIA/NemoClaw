@@ -6,8 +6,10 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
+  configureFailedGatewayList,
   createDestroyHarness,
   resetDestroyModuleCache,
+  sandboxListJson,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import type { SessionCancellationRecovery } from "../../state/onboard-session";
 import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
@@ -265,6 +267,101 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
+    "rejects an ambient gateway endpoint override before identity-free recovery probing",
+    { timeout: 30_000 },
+    async () => {
+      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://foreign.invalid");
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      const recovery = retainedRecoveryRecordWithoutIdentity();
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerRunResult: { status: 0, stdout: "" },
+        registryEntryOverrides: { lifecycleGeneration: recovery.lifecycleGeneration! },
+        retainedRecoveryRecords: [recovery],
+      });
+      harness.sessionState.cancellationRecovery = cancellationRecoveryFor(recovery);
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "OpenShell may bypass the gateway recorded for this sandbox",
+      );
+
+      expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["gateway", "select", expect.any(String)],
+        expect.anything(),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+    },
+  );
+
+  it(
+    "preserves a live gateway during identity-free recovery without global gateway state",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecordWithoutIdentity();
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerRunResult: { status: 0, stdout: "" },
+        registryEntryOverrides: { lifecycleGeneration: recovery.lifecycleGeneration! },
+        retainedRecoveryRecords: [recovery],
+      });
+      harness.sessionState.cancellationRecovery = cancellationRecoveryFor(recovery);
+      configureFailedGatewayList(harness);
+      vi.stubEnv("OPENSHELL_GATEWAY", "");
+
+      harness.captureOpenshellSpy
+        .mockReturnValueOnce({
+          status: 0,
+          output: "[]",
+          stdout: "[]",
+          stderr: "",
+        })
+        .mockReturnValue({
+          status: 0,
+          output: sandboxListJson(["survivor"]),
+          stdout: sandboxListJson(["survivor"]),
+          stderr: "",
+        });
+
+      await expect(
+        harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+      ).rejects.toThrow("process.exit(1)");
+
+      expect(harness.captureOpenshellSpy).toHaveBeenNthCalledWith(
+        1,
+        ["sandbox", "list", "-g", recovery.gatewayName, "--output", "json"],
+        expect.objectContaining({ replaceEnv: true }),
+      );
+      expect(harness.captureOpenshellSpy).toHaveBeenNthCalledWith(
+        2,
+        ["sandbox", "list", "-g", recovery.gatewayName],
+        expect.objectContaining({ replaceEnv: true }),
+      );
+      const initialProbeOptions = harness.captureOpenshellSpy.mock.calls[0]?.[1];
+      const finalProbeOptions = harness.captureOpenshellSpy.mock.calls[1]?.[1];
+      expect(initialProbeOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY");
+      expect(finalProbeOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY");
+      expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["gateway", "list", "-o", "json"],
+        expect.anything(),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["gateway", "select", expect.any(String)],
+        expect.anything(),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    },
+  );
+
+  it(
     "removes every container after OpenShell confirms the retained sandbox absent (#10547)",
     { timeout: 30_000 },
     async () => {
@@ -462,6 +559,12 @@ describe("destroySandbox retained recovery flow", () => {
         },
         retainedRecoveryRecords: [recovery],
       });
+      harness.captureOpenshellSpy.mockReturnValue({
+        status: 0,
+        output: "[]",
+        stdout: "[]",
+        stderr: "",
+      });
 
       await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
@@ -575,6 +678,15 @@ describe("destroySandbox retained recovery flow", () => {
         },
         retainedRecoveryRecords: [recovery],
         ...(sandboxListResult ? { sandboxListResult } : {}),
+      });
+      const captureResult = sandboxListResult ?? {
+        status: 0,
+        stdout: sandboxListJson(["alpha"]),
+        stderr: "",
+      };
+      harness.captureOpenshellSpy.mockReturnValue({
+        ...captureResult,
+        output: captureResult.stdout ?? "",
       });
 
       await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
@@ -787,13 +899,10 @@ describe("destroySandbox retained recovery flow", () => {
         { sandboxName: "alpha", gatewayPort: matchingRecovery.gatewayPort },
         { recoverySandboxName: "alpha" },
       );
-      expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
-        "alpha",
-        matchingRecovery.gatewayName,
-        expect.objectContaining({ selectGateway: expect.any(Function) }),
-        undefined,
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "list", "-g", matchingRecovery.gatewayName, "-o", "json"],
+        expect.objectContaining({ ignoreError: true }),
       );
-      expect(harness.gatewayPinsAtSandboxList).toEqual([matchingRecovery.gatewayName]);
       expect(exitSpy).not.toHaveBeenCalled();
     },
   );

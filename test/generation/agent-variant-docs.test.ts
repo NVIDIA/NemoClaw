@@ -606,6 +606,44 @@ Real content.
     expect(rendered).not.toContain("#nemoclaw-name-recover");
   });
 
+  it.each([
+    "OpenClaw chat and file tools",
+    "The OpenClaw agent path is unaffected",
+    "A real OpenClaw TUI turn used one prompt",
+  ] as const)(
+    "publishes the OpenClaw-only vLLM evidence %s on the OpenClaw page (#13894)",
+    (evidence) => {
+      const sourcePath = path.join(repoRoot, "docs/inference/set-up-vllm.mdx");
+      const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "openclaw", {
+        sourcePath,
+      });
+
+      expect(rendered).toContain(evidence);
+    },
+  );
+
+  it.each([
+    { evidence: "OpenClaw chat and file tools", variant: "hermes" },
+    { evidence: "The OpenClaw agent path is unaffected", variant: "hermes" },
+    { evidence: "A real OpenClaw TUI turn used one prompt", variant: "hermes" },
+    { evidence: "OpenClaw chat and file tools", variant: "deepagents" },
+    { evidence: "The OpenClaw agent path is unaffected", variant: "deepagents" },
+    { evidence: "A real OpenClaw TUI turn used one prompt", variant: "deepagents" },
+  ] as const)(
+    "omits the OpenClaw-only vLLM evidence $evidence from the $variant page (#13894)",
+    ({ evidence, variant }) => {
+      const sourcePath = path.join(repoRoot, "docs/inference/set-up-vllm.mdx");
+      const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), variant, {
+        sourcePath,
+      });
+
+      expect(rendered).not.toContain(evidence);
+      expect(rendered).toContain(
+        "The pinned `nvcr.io/nvidia/vllm` images are public, so Docker pulls them without NGC registry login.",
+      );
+    },
+  );
+
   it("leaves no shared page section heading without content in any published variant (#9731)", () => {
     const pages = sharedVariantPages();
     const renderEveryPublishedVariant = () =>

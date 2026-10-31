@@ -60,6 +60,8 @@ function allowLocalTelemetry(): void {
   for (const key of [
     "CI",
     "GITHUB_ACTIONS",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
     "VITEST",
     "NODE_ENV",
     "NEMOCLAW_DISABLE_TELEMETRY",
@@ -72,27 +74,19 @@ function localReceiver(): void {
   telemetryRuntime.config = { endpoint: new URL("http://127.0.0.1:31337/"), localReceiver: true };
 }
 
-it("selects the fixed TEST receiver only for an approved QA label (#12859)", () => {
-  expect(resolveTelemetryDeliveryConfig({})).toBeNull();
-  expect(resolveTelemetryDeliveryConfig({ NEMOCLAW_TELEMETRY_TEST_LABEL: "invalid" })).toBeNull();
-  expect(
-    resolveTelemetryDeliveryConfig({
-      NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-telemetry:client:attempt-1",
-      NEMOCLAW_DISABLE_TELEMETRY: "1",
-    }),
-  ).toBeNull();
-  expect(telemetryRuntime.config).toBeNull();
+it.each([undefined, "qa-telemetry:client:attempt-1"])(
+  "selects the fixed TEST receiver with test label %j",
+  (testLabel) => {
+    const config = resolveTelemetryDeliveryConfig({
+      NEMOCLAW_TELEMETRY_TEST_LABEL: testLabel,
+    });
+    expect(config?.endpoint.href).toBe(TEST_TELEMETRY_ENDPOINT);
+    expect(config?.localReceiver).not.toBe(true);
+  },
+);
 
-  const config = resolveTelemetryDeliveryConfig({
-    NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-telemetry:client:attempt-1",
-  });
-  expect(config?.endpoint.href).toBe(TEST_TELEMETRY_ENDPOINT);
-  expect(config?.localReceiver).not.toBe(true);
-});
-
-it("starts CLI and installer contexts for approved QA runs (#12859)", async () => {
+it("starts CLI and installer contexts without a test label", async () => {
   allowLocalTelemetry();
-  vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-telemetry:client:attempt-1");
   await withTelemetryOperation("update", async () => {
     expect(isTelemetryOperationActive()).toBe(true);
     expect(telemetryRuntime.config?.endpoint.href).toBe(TEST_TELEMETRY_ENDPOINT);
@@ -126,32 +120,101 @@ it("reports partial collection when count evidence is unavailable (#12859)", asy
   expect(event.parameters.collectionStatus).toBe("partial");
 });
 
-it("sends one schema-valid envelope without private position keys (#12859)", async () => {
-  allowLocalTelemetry();
-  localReceiver();
-  const privateValue = "secret-key_https://private.example/home_10.0.0.7_sandbox-name";
-  collectOperationSnapshot.mockResolvedValue({
-    ...snapshot,
-    targetPositions: new Map([[privateValue, 0]]),
-  });
-  const fetchMock = vi.fn(
-    async (_url: URL, _request: RequestInit) => new Response(null, { status: 200 }),
-  );
-  vi.stubGlobal("fetch", fetchMock);
+it.each([
+  ["NEMOCLAW_TELEMETRY_TEST_LABEL", undefined, undefined, undefined, ""],
+  ["NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-a:b:attempt-1", undefined, undefined, "qa-a:b:attempt-1"],
+  ["CI", "true", undefined, undefined, "qa-ci:generic:attempt-1"],
+  ["CI", "1", undefined, undefined, "qa-ci:generic:attempt-1"],
+  ["GITHUB_ACTIONS", "true", "1", "1", "qa-ci:gh-1:attempt-1"],
+  [
+    "GITHUB_ACTIONS",
+    "true",
+    "99999999999999999999",
+    "999",
+    "qa-ci:gh-99999999999999999999:attempt-999",
+  ],
+  ...[
+    [undefined, "1"],
+    ["invalid", "1"],
+    ["100000000000000000000", "1"],
+    ["0", "1"],
+    ["01", "1"],
+    ["1", undefined],
+    ["1", "invalid"],
+    ["1", "1000"],
+    ["1", "0"],
+    ["1", "01"],
+  ].map(([runId, attempt]): [string, string, string | undefined, string | undefined, string] => [
+    "GITHUB_ACTIONS",
+    "true",
+    runId,
+    attempt,
+    "qa-ci:generic:attempt-1",
+  ]),
+] satisfies [string, string | undefined, string | undefined, string | undefined, string][])(
+  "sends one anonymous TEST envelope when %s=%j, run ID=%j, and attempt=%j",
+  async (key, value, runId, attempt, testLabel) => {
+    allowLocalTelemetry();
+    vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", "qa-a:b:attempt-1");
+    vi.stubEnv(key, value);
+    vi.stubEnv("GITHUB_RUN_ID", runId);
+    vi.stubEnv("GITHUB_RUN_ATTEMPT", attempt);
+    resolveTelemetryDeliveryConfig();
+    const privateValue = "secret-key_https://private.example/home_10.0.0.7_sandbox-name";
+    collectOperationSnapshot.mockResolvedValue({
+      ...snapshot,
+      targetPositions: new Map([[privateValue, 0]]),
+    });
+    const fetchMock = vi.fn(
+      async (_url: URL, _request: RequestInit) => new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
 
-  expect(await sendOperationTelemetry(context, 1_000)).toBe("accepted");
-  expect(fetchMock).toHaveBeenCalledOnce();
-  const [, request] = fetchMock.mock.calls[0];
-  const body = JSON.parse(String(request.body));
-  expect(body.events).toHaveLength(1);
-  expect(isOperationEvent(body.events[0])).toBe(true);
-  expect(JSON.stringify(body)).not.toContain(privateValue);
+    expect(await sendOperationTelemetry(context, 1_000)).toBe("accepted");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url.href).toBe(TEST_TELEMETRY_ENDPOINT);
+    expect(request).toMatchObject({ redirect: "error", credentials: "omit" });
+    const body = JSON.parse(String(request.body));
+    expect(body.events).toHaveLength(1);
+    expect(isOperationEvent(body.events[0])).toBe(true);
+    expect(body.events[0].parameters.testLabel).toBe(testLabel);
+    expect(body).toMatchObject({
+      deviceGdprFuncOptIn: "Temp",
+      deviceId: "undefined",
+      externalUserId: "undefined",
+      sessionId: "undefined",
+      userId: "undefined",
+    });
+    expect(JSON.stringify(body)).not.toContain(privateValue);
+  },
+);
+
+it.each(
+  [
+    ["NEMOCLAW_DISABLE_TELEMETRY", "1"],
+    ["VITEST", "true"],
+    ["NODE_ENV", "test"],
+    ["NEMOCLAW_TELEMETRY_TEST_LABEL", "invalid"],
+    ["NEMOCLAW_TELEMETRY_TEST_LABEL", ""],
+  ].flatMap(([key, value]) => [undefined, "true"].map((ci) => ({ key, value, ci }))),
+)("does not collect or send when $key=$value and CI=$ci", async ({ key, value, ci }) => {
+  allowLocalTelemetry();
+  vi.stubEnv("CI", ci);
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  vi.stubEnv(key, value);
+  expect(resolveTelemetryDeliveryConfig()).toBeNull();
+  localReceiver();
+  expect(await sendOperationTelemetry(context, 1_000)).toBe("disabled");
+  expect(collectOperationSnapshot).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it("does not collect or send when opted out or given a disallowed receiver (#12859)", async () => {
+it("blocks delivery when opted out, given a disallowed receiver, or when the CI identity changes (#12859)", async () => {
   allowLocalTelemetry();
   localReceiver();
-  const fetchMock = vi.fn();
+  const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv("NEMOCLAW_DISABLE_TELEMETRY", "1");
   expect(await sendOperationTelemetry(context, 1_000)).toBe("disabled");
@@ -160,6 +223,24 @@ it("does not collect or send when opted out or given a disallowed receiver (#128
 
   telemetryRuntime.config = { endpoint: new URL("https://private.example/") };
   expect(await sendOperationTelemetry(context, 1_000)).toBe("disabled");
+  expect(fetchMock).not.toHaveBeenCalled();
+
+  localReceiver();
+  vi.stubEnv("GITHUB_ACTIONS", "true");
+  vi.stubEnv("GITHUB_RUN_ID", "1");
+  vi.stubEnv("GITHUB_RUN_ATTEMPT", "1");
+  let resumeSnapshot!: (value: TelemetrySnapshot) => void;
+  collectOperationSnapshot.mockReturnValueOnce(
+    new Promise<TelemetrySnapshot>((resolve) => {
+      resumeSnapshot = resolve;
+    }),
+  );
+  const delivery = sendOperationTelemetry(context, 1_000);
+  await vi.waitFor(() => expect(collectOperationSnapshot).toHaveBeenCalledOnce());
+  resumeSnapshot(snapshot);
+  // The event keeps attempt 1; the sender must reject it after the identity changes.
+  queueMicrotask(() => vi.stubEnv("GITHUB_RUN_ATTEMPT", "2"));
+  expect(await delivery).toBe("disabled");
   expect(fetchMock).not.toHaveBeenCalled();
 });
 

@@ -252,7 +252,7 @@ export async function removeSandboxSkill(
     console.error(`  Usage: ${CLI_NAME} <sandbox> skill remove <name>`);
     process.exit(2);
   }
-  if (!skillInstall.validateSkillName(skillName)) {
+  if (!skillInstall.validateSkillName(skillName, { allowLegacyLength: true })) {
     console.error(`  Invalid skill name: '${skillName}'`);
     process.exit(2);
   }

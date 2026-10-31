@@ -71,7 +71,7 @@ NemoClaw binds the OpenShell gateway to loopback by default.
 | Aspect | Detail |
 |---|---|
 | Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
-| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` during onboarding and on later `connect` calls for remote dashboard/API access. Recreate a local-only sandbox before changing it to a remote bind. |
+| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` during onboarding and on later `connect` calls for remote dashboard access. Recreate a local-only sandbox before changing it to a remote bind. |
 | Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway. NemoClaw rejects wildcard Docker-driver gateway binds while gateway JWT auth is active. |
 | Recommendation | Keep the gateway loopback default and expose only the dashboard forward when remote access is needed. |
 
@@ -149,8 +149,16 @@ Do not approve an unexpected client or an unrelated `operator.admin` request.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can optionally expose the native Hermes dashboard.
-Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
+Hermes exposes an OpenAI-compatible API and can optionally expose the native Hermes dashboard.
+New and successfully migrated API forwards bind to `127.0.0.1`, including after restart and on WSL.
+`NEMOCLAW_DASHBOARD_BIND=0.0.0.0` changes only the dashboard bind.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Run `$$nemoclaw <name> status` and `$$nemoclaw <name> recover`, then follow any refusal diagnostic.
+Do not assume loopback isolation until recovery succeeds.
+For remote API access, use the [SSH forwarding procedure](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details).
+Protect any remotely exposed dashboard with your own access controls.
 
 NemoClaw keeps provider credentials in OpenShell.
 NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
