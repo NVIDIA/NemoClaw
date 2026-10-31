@@ -23,6 +23,7 @@ import type {
   ObserveOpenShellForwardsRequest,
   OpenShellForwardIdentity,
   OpenShellForwardObservation,
+  OpenShellForwardReleaseResult,
   OpenShellLegacyForwardRetirementResult,
   RetireLegacyOpenShellForwardRequest,
   StartOpenShellForwardRequest,
@@ -597,6 +598,47 @@ describe("declared and cleanup forward sets", () => {
     ).toEqual([18_790, 3_001, 8_643]);
     expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]?.localHost).toBe("0.0.0.0");
   });
+
+  it.each(["bound", "timeout", "authority", "validation"] as const)(
+    "reports forward release %s without including the error message",
+    async (outcome) => {
+      mocks.getRegisteredAgent.mockReturnValue(null);
+      const errors = {
+        timeout: { kind: "timeout", message: "The OpenShell forward operation timed out." },
+        authority: {
+          kind: "authority",
+          message: "NemoClaw could not prove current OpenShell forward authority.",
+        },
+        validation: { kind: "validation", message: "The OpenShell forward request is invalid." },
+      } as const;
+      mocks.verifyForwardRelease.mockImplementationOnce(
+        async (
+          request: VerifyOpenShellForwardReleaseRequest,
+        ): Promise<OpenShellForwardReleaseResult> =>
+          outcome === "bound"
+            ? { state: "bound", forwards: request.forwards }
+            : {
+                state: "indeterminate",
+                ...(outcome === "validation" ? {} : { forwards: request.forwards }),
+                error: errors[outcome],
+              },
+      );
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+      await expect(teardownSandboxDashboardForward("box")).resolves.toBe(false);
+      const classification = outcome === "bound" ? "bound" : `indeterminate/${outcome}`;
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+        "  ForwardTcp port release was not verified for registered host port(s): 18789. " +
+          `[forward-release ${classification}]`,
+      );
+      expect(mocks.verifyForwardRelease).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ timeoutMs: 5_000, assertCurrent: expect.any(Function) }),
+      );
+      expect(mocks.startForward).not.toHaveBeenCalled();
+      expect(mocks.retireLegacyForward).not.toHaveBeenCalled();
+    },
+  );
 });
 
 it.each([
