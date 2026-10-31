@@ -87,6 +87,7 @@ export function createPhases(
     endpointProvenance?: Partial<EndpointProvenanceOptions>;
     inspectSandboxForCreate?: ProviderOptions["inspectSandboxForCreate"];
     providerEnv?: NodeJS.ProcessEnv;
+    providerOptions?: Pick<ProviderOptions, "rebuildSandboxPolicyDocument">;
     providerDeps?: Partial<ProviderOptions["deps"]>;
     sandboxOptions?: Partial<Omit<SandboxOptions, "deps">>;
     sandboxDeps?: Partial<SandboxOptions["deps"]>;
@@ -109,6 +110,7 @@ export function createPhases(
   const providerInference = createProviderInferenceOnboardFlowPhase<CoreContext, TestHost>({
     gatewayName: "nemoclaw",
     forceProviderSelection: false,
+    ...overrides.providerOptions,
     inspectSandboxForCreate:
       overrides.inspectSandboxForCreate ??
       (() => ({ existingEntry: null, preservedMcpState: undefined, liveExists: false })),

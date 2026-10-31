@@ -613,7 +613,11 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     const profile = input.runtime.ensurePreparedProfile(input.workload);
     if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");
     dashboardRemoteBindPrepared =
-      profile.profile.dashboard.agent === "openclaw" && profile.profile.dashboard.mode === "remote";
+      profile.profile.dashboard.agent === "openclaw"
+        ? profile.profile.dashboard.mode === "remote"
+        : profile.profile.dashboard.agent === "hermes" &&
+          profile.profile.dashboard.mode === "loopback-forwarded" &&
+          launchInput.env?.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
     const rootApplyRequest = createManagedStartupRootApplyRequest({
       agent: profile.profile.agent,
       encodedProfile: profile.encodedProfile,

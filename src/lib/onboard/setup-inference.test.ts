@@ -4,6 +4,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import type { OpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy";
+import { customNativeProvider } from "../inference/native-provider/custom";
+import { nativeProviderLifecycle } from "../inference/native-provider";
+import type { SandboxEntry } from "../state/registry/types";
+import { redactFullWithUrls } from "../security/redact";
+import { createDirectSetupInferenceHarnessFactory } from "../../../test/support/setup-inference-test-harness";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
 import {
@@ -312,6 +318,228 @@ describe("Personal custom endpoint onboarding", () => {
     expect(createProvider).not.toHaveBeenCalled();
     expect(attachProvider).not.toHaveBeenCalled();
     expect(inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledOnce();
+  });
+});
+
+describe("custom native onboarding policy admission", () => {
+  function fixture(
+    document: string,
+    registration: Pick<SandboxEntry, "createdAt" | "pendingRouteReservation"> | null = {
+      createdAt: "2026-10-28T00:00:00Z",
+    },
+    setupOptions: Record<string, unknown> = {},
+  ) {
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      allowedIps: ["8.8.8.8"],
+    } as const;
+    const definition = customNativeProvider(binding);
+    const metadata = (selected: typeof definition) => ({
+      name: selected.providerName,
+      type: selected.profileId,
+      credentialKeys: [selected.credentialEnv],
+      configKeys: [],
+      revision: { id: "provider-identity", resourceVersion: 1 },
+    });
+    const previous = customNativeProvider({
+      ...binding,
+      endpointUrl: "https://old.example.com/v1",
+    });
+    let present = false;
+    const adapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
+        present
+          ? { ok: true, value: metadata(definition) }
+          : { ok: false, error: { kind: "command", reason: "not_found", message: "absent" } },
+      ),
+      createProvider: vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => {
+        present = true;
+        return { ok: true };
+      }),
+      attachProvider: vi.fn<OpenShellProviderAdapter["attachProvider"]>(),
+      updateProvider: vi.fn<OpenShellProviderAdapter["updateProvider"]>(),
+    };
+    const readSandboxPolicy = vi.fn<OpenShellSandboxPolicyReader["readSandboxPolicy"]>(
+      async () => ({
+        ok: true,
+        value: { document, appliedRevision: 1 },
+      }),
+    );
+    const writeAuthority = vi.fn();
+    const h = createDirectSetupInferenceHarnessFactory((deps) =>
+      createSetupInference(deps as SetupInferenceDeps),
+    )({
+      overrides: {
+        providerAdapter: adapter as unknown as OpenShellProviderAdapter,
+        sandboxPolicyReader: { readSandboxPolicy },
+        getSandbox: () =>
+          registration
+            ? {
+                name: "alpha",
+                agent: "openclaw",
+                provider: binding.provider,
+                ...registration,
+                nativeHostedProviderAttachment: nativeProviderLifecycle(
+                  previous,
+                ).nativeProviderAttachmentFromMetadata(metadata(previous)),
+              }
+            : null,
+        getNativeHostedProviderAuthority: () => undefined,
+        setNativeHostedProviderAuthority: writeAuthority,
+        hydrateCredentialEnv: () => "synthetic-secret",
+        resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
+        resolvePolicyTier: async () => "balanced",
+        requireNativeProviderPolicy: async () => {},
+        redact: redactFullWithUrls,
+        compactText: (value) => value,
+      },
+    });
+    const select = () =>
+      h.setupInference(
+        "alpha",
+        "model-a",
+        binding.provider,
+        binding.endpointUrl,
+        binding.credentialEnv,
+        null,
+        [],
+        { skipHostInferenceSmoke: true, ...setupOptions },
+      );
+    return { ...h, adapter, readSandboxPolicy, writeAuthority, select };
+  }
+
+  const policy = (pins = "") =>
+    `version: 1\nnetwork_policies:\n  existing_policy:\n    endpoints:\n      - host: '*.example.com'\n        port: 443\n${pins}`;
+
+  const generatedPolicy =
+    "  _provider_previous_custom:\n    endpoints:\n      - host: api.example.com\n        port: 443\n";
+  const matchingPolicyWithGeneratedRule =
+    policy("        allowed_ips: [8.8.8.8]\n") + generatedPolicy;
+
+  it.each([
+    { source: "live", setupOptions: {} },
+    {
+      source: "retained rebuild",
+      setupOptions: { rebuildSandboxPolicyDocument: matchingPolicyWithGeneratedRule },
+    },
+  ])(
+    "ignores generated rules in the $source policy before provider setup",
+    async ({ setupOptions }) => {
+      const h = fixture(matchingPolicyWithGeneratedRule, undefined, setupOptions);
+      await expect(h.select()).resolves.toMatchObject({ ok: true });
+      expect(h.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(h.writeAuthority).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("refuses a retained base conflict beside a generated rule before provider setup", async () => {
+    const h = fixture(policy() + generatedPolicy);
+    await expect(h.select()).rejects.toThrow(/existing_policy.*IP pins/);
+    expect(h.adapter.createProvider).not.toHaveBeenCalled();
+    expect(h.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(h.writeAuthority).not.toHaveBeenCalled();
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "        allowed_ips: [1.1.1.1]\n"])(
+    "rejects existing sandbox pin conflicts before provider mutation (%j)",
+    async (pins) => {
+      const h = fixture(policy(pins));
+      await expect(h.select()).rejects.toThrow('Existing policy "existing_policy"');
+      expect(h.readSandboxPolicy).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "alpha",
+        scope: "base",
+      });
+      expect(h.adapter.createProvider).not.toHaveBeenCalled();
+      expect(h.adapter.attachProvider).not.toHaveBeenCalled();
+      expect(h.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(h.writeAuthority).not.toHaveBeenCalled();
+      expect(h.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("stops existing sandbox onboarding when its policy cannot be read", async () => {
+    const h = fixture(policy());
+    h.readSandboxPolicy.mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "timeout",
+        message: "policy read timed out Authorization: Bearer synthetic-policy-secret",
+      },
+    });
+    const failure = await h.select().then(
+      () => "unexpected success",
+      (error: Error) => error.message,
+    );
+    expect(failure).toContain("policy read timed out");
+    expect(failure).toContain("Bearer <REDACTED>");
+    expect(failure).not.toContain("synthetic-policy-secret");
+    expect(h.adapter.createProvider).not.toHaveBeenCalled();
+    expect(h.writeAuthority).not.toHaveBeenCalled();
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("keeps matching pins valid for existing sandbox onboarding", async () => {
+    const h = fixture(policy("        allowed_ips: [8.8.8.8]\n"));
+    await expect(h.select()).resolves.toMatchObject({ ok: true });
+    expect(h.readSandboxPolicy).toHaveBeenCalledOnce();
+    expect(h.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(h.writeAuthority).toHaveBeenCalledOnce();
+  });
+
+  it("admits a rebuilt provider using its retained policy after sandbox deletion", async () => {
+    const h = fixture(policy(), undefined, {
+      rebuildSandboxPolicyDocument: policy("        allowed_ips: [8.8.8.8]\n"),
+    });
+    h.readSandboxPolicy.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "sandbox was deleted for rebuild" },
+    });
+    await expect(h.select()).resolves.toMatchObject({ ok: true });
+    expect(h.readSandboxPolicy).not.toHaveBeenCalled();
+    expect(h.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(h.writeAuthority).toHaveBeenCalledOnce();
+  });
+
+  it.each([policy(), "version: 1\nnetwork_policies: []\n"])(
+    "rejects an incompatible retained rebuild policy before provider mutation (%j)",
+    async (rebuildSandboxPolicyDocument) => {
+      const h = fixture(policy("        allowed_ips: [8.8.8.8]\n"), undefined, {
+        rebuildSandboxPolicyDocument,
+      });
+      await expect(h.select()).rejects.toThrow();
+      expect(h.readSandboxPolicy).not.toHaveBeenCalled();
+      expect(h.adapter.createProvider).not.toHaveBeenCalled();
+      expect(h.writeAuthority).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, { pendingRouteReservation: true as const }])(
+    "prepares a provider before sandbox creation without reading an absent policy (%j)",
+    async (registration) => {
+      const h = fixture(policy(), registration);
+      await expect(h.select()).resolves.toMatchObject({ ok: true });
+      expect(h.readSandboxPolicy).not.toHaveBeenCalled();
+      expect(h.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(h.writeAuthority).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("checks the policy of a created sandbox even when its route reservation is pending", async () => {
+    const h = fixture(policy(), {
+      pendingRouteReservation: true,
+      createdAt: "2026-10-28T00:00:00Z",
+    });
+    await expect(h.select()).rejects.toThrow('Existing policy "existing_policy"');
+    expect(h.readSandboxPolicy).toHaveBeenCalledOnce();
+    expect(h.adapter.createProvider).not.toHaveBeenCalled();
+    expect(h.writeAuthority).not.toHaveBeenCalled();
   });
 });
 

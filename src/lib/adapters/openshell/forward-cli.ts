@@ -1929,6 +1929,7 @@ export function createCliOpenShellForwardAdapter(
     request: RetireLegacyOpenShellForwardRequest,
   ): Promise<OpenShellLegacyForwardRetirementResult> {
     const forward = snapshotForward(request.forward);
+    const migrateToLoopback = request.migrateToLoopback === true;
     const requestedTimeoutMs = request.timeoutMs;
     const authorize = request.authorize;
     const assertCurrent = request.assertCurrent;
@@ -1936,7 +1937,8 @@ export function createCliOpenShellForwardAdapter(
     if (
       !runtimeValid ||
       !runtimeSelection ||
-      !validBatch([forward], requestedTimeoutMs, gatewayEndpoint, runtimeSelection)
+      !validBatch([forward], requestedTimeoutMs, gatewayEndpoint, runtimeSelection) ||
+      (migrateToLoopback && forward.localHost !== "0.0.0.0")
     ) {
       return { state: "failed", effect: "none", error: VALIDATION_ERROR };
     }
@@ -1947,7 +1949,7 @@ export function createCliOpenShellForwardAdapter(
         timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
         assertCurrent,
       },
-      true,
+      !migrateToLoopback,
     );
     const [observed] = observedEvidence.observations;
     if (!observed) {
@@ -1956,13 +1958,17 @@ export function createCliOpenShellForwardAdapter(
     if (!("forward" in observed)) {
       return { state: "failed", effect: "none", error: observed.error };
     }
-    if (observed.state !== "stale") {
+    const ownedDirectPid = migrateToLoopback
+      ? observedEvidence.ownedPids.get(forward.port)
+      : undefined;
+    if (observed.state !== "stale" && ownedDirectPid === undefined) {
       return observed.state === "owned" || observed.state === "absent"
         ? { state: "not_needed", observation: observed }
         : { state: "refused", observation: observed };
     }
     const preEndpointPid = observedEvidence.preEndpointPids.get(forward.port);
-    const observedPid = observedEvidence.legacyPids.get(forward.port) ?? preEndpointPid;
+    const observedPid =
+      observedEvidence.legacyPids.get(forward.port) ?? preEndpointPid ?? ownedDirectPid;
     if (observedPid === undefined) {
       return { state: "failed", forward, effect: "none", error: OWNERSHIP_ERROR };
     }
@@ -1976,7 +1982,7 @@ export function createCliOpenShellForwardAdapter(
         timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
         assertCurrent,
       },
-      true,
+      !migrateToLoopback,
     );
     const [confirmed] = confirmedEvidence.observations;
     if (!confirmed) {
@@ -1985,14 +1991,20 @@ export function createCliOpenShellForwardAdapter(
     if (!("forward" in confirmed)) {
       return { state: "failed", effect: "none", error: confirmed.error };
     }
-    if (confirmed.state !== "stale") {
+    if (
+      confirmed.state !== "stale" &&
+      !(ownedDirectPid !== undefined && confirmed.state === "owned")
+    ) {
       return confirmed.state === "owned" || confirmed.state === "absent"
         ? { state: "not_needed", observation: confirmed }
         : { state: "refused", observation: confirmed };
     }
     const confirmedPreEndpointPid = confirmedEvidence.preEndpointPids.get(forward.port);
     if (
-      (confirmedEvidence.legacyPids.get(forward.port) ?? confirmedPreEndpointPid) !== observedPid ||
+      (ownedDirectPid !== undefined
+        ? confirmedEvidence.ownedPids.get(forward.port)
+        : (confirmedEvidence.legacyPids.get(forward.port) ?? confirmedPreEndpointPid)) !==
+        observedPid ||
       (preEndpointPid !== undefined) !== (confirmedPreEndpointPid !== undefined)
     ) {
       return { state: "failed", forward, effect: "none", error: OWNERSHIP_ERROR };
@@ -2013,9 +2025,9 @@ export function createCliOpenShellForwardAdapter(
       return { state: "failed", forward, effect: "none", error: finalCurrentness };
     }
     let result: CliOpenShellForwardCommandResult | null = null;
-    if (preEndpointPid !== undefined) {
+    if (preEndpointPid !== undefined || ownedDirectPid !== undefined) {
       try {
-        signalProcess(preEndpointPid, "SIGKILL");
+        signalProcess(observedPid, "SIGKILL");
       } catch (error) {
         if (!noSuchProcess(error)) {
           return {

@@ -35,6 +35,11 @@ export async function ensureAgentDashboardForward(options: {
   sandboxName: string;
   agent: AgentDashboardForwardConfig;
   ensureDashboardForward: EnsureDashboardForward;
+  ensureLoopbackForward: (
+    sandboxName: string,
+    port: number,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ) => Promise<void> | void;
   chatUiUrl?: string;
   controlUiPort?: number;
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
@@ -48,6 +53,7 @@ export async function ensureAgentDashboardForward(options: {
     sandboxName,
     agent,
     ensureDashboardForward,
+    ensureLoopbackForward,
     chatUiUrl,
     controlUiPort,
     hermesApiPort,
@@ -105,15 +111,16 @@ export async function ensureAgentDashboardForward(options: {
         ? replaceUrlPort(chatUiUrl, agentDashboardPort)
         : `http://127.0.0.1:${agentDashboardPort}`;
     await beforeForwardPort?.(agentDashboardPort);
-    const actualAgentDashboardPort = await ensureDashboardForward(
-      sandboxName,
-      requestedDashboardUrl,
-      {
+    let actualAgentDashboardPort = agentDashboardPort;
+    if (usesFixedApiPort) {
+      await ensureLoopbackForward(sandboxName, agentDashboardPort, revalidateIdentity);
+    } else {
+      actualAgentDashboardPort = await ensureDashboardForward(sandboxName, requestedDashboardUrl, {
         allowPortReallocation: false,
         ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
         ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
-      },
-    );
+      });
+    }
     if (!usesFixedApiPort) {
       revalidateIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
       process.env.CHAT_UI_URL = replaceUrlPort(requestedDashboardUrl, actualAgentDashboardPort);
@@ -123,15 +130,18 @@ export async function ensureAgentDashboardForward(options: {
       if (port === agentDashboardPort) continue;
       try {
         await beforeForwardPort?.(port);
-        const forwardUrl =
-          port === optionalDashboardPort && chatUiUrl
+        if (port === optionalDashboardPort) {
+          const forwardUrl = chatUiUrl
             ? replaceUrlPort(chatUiUrl, port)
             : `http://127.0.0.1:${port}`;
-        await ensureDashboardForward(sandboxName, forwardUrl, {
-          allowPortReallocation: false,
-          ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
-          ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
-        });
+          await ensureDashboardForward(sandboxName, forwardUrl, {
+            allowPortReallocation: false,
+            ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
+            ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
+          });
+        } else {
+          await ensureLoopbackForward(sandboxName, port, revalidateIdentity);
+        }
       } catch (err) {
         if (reuseExistingForward || err === identityFailure) throw err;
         warn(

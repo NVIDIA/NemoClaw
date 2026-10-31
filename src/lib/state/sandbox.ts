@@ -76,7 +76,10 @@ import type {
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
-import { inspectExtractedDcodeSessionsDatabase } from "./snapshot/dcode-session-credential-scan.js";
+import {
+  inspectExtractedDcodeSessionsDatabase,
+  inspectExtractedOpenClawDatabase,
+} from "./snapshot/sqlite-credential-scan.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import {
@@ -1680,6 +1683,11 @@ function dcodeSessionsDatabaseEntryRole(entry: string): DcodeSessionsDatabaseEnt
   return null;
 }
 
+function isOpenClawDatabaseEntry(entry: string): boolean {
+  const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
+  return OPENCLAW_SQLITE_CAPTURE_TARGETS.some(({ archivePath }) => archivePath === normalized);
+}
+
 function isBundledProviderProfileSchema(entry: string): boolean {
   const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
   return /^\.nemoclaw\/blueprints\/[^/]+\/provider-profiles\/[^/]+\.(?:json|ya?ml)$/u.test(
@@ -2180,7 +2188,8 @@ function nativeArchiveRawCredentialViolation(
         // SQLite inspection of the main database does not cover unused sidecar bytes.
         if (
           shouldSkipNativeRawCredentialScan(fileName) ||
-          dcodeSessionsDatabaseRole === "database"
+          dcodeSessionsDatabaseRole === "database" ||
+          isOpenClawDatabaseEntry(entry)
         ) {
           return null;
         }
@@ -2237,6 +2246,7 @@ function nativeArchiveCredentialViolation(
     fileName: string;
     isDependencyPackage: boolean;
     dcodeSessionsDatabaseRole: DcodeSessionsDatabaseEntryRole;
+    isOpenClawDatabase: boolean;
     isEnv: boolean;
     isLockfile: boolean;
   }> = [];
@@ -2247,6 +2257,7 @@ function nativeArchiveCredentialViolation(
     const segments = path.posix.normalize(entry.replace(/^\.\//u, "")).split("/");
     const isDependencyPackage = fileName === "package.json" && segments.includes("node_modules");
     const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+    const isOpenClawDatabase = isOpenClawDatabaseEntry(entry);
     const isSensitive = isSensitiveFile(fileName);
     const isOpenClawConfig =
       nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
@@ -2258,6 +2269,7 @@ function nativeArchiveCredentialViolation(
       !isLockfile &&
       !isDependencyPackage &&
       dcodeSessionsDatabaseRole === null &&
+      !isOpenClawDatabase &&
       !isEnv &&
       !isSensitive &&
       !isOpenClawConfig &&
@@ -2270,6 +2282,7 @@ function nativeArchiveCredentialViolation(
       fileName,
       isDependencyPackage,
       dcodeSessionsDatabaseRole,
+      isOpenClawDatabase,
       isEnv,
       isLockfile,
     });
@@ -2326,6 +2339,15 @@ function nativeArchiveCredentialViolation(
           scanRoot,
           candidate.entry,
           (reason) => console.error(`DCode session database inspection failed (${reason}).`),
+        );
+        if (containsCredential !== false) return candidate.entry;
+        continue;
+      }
+      if (candidate.isOpenClawDatabase) {
+        const containsCredential = inspectExtractedOpenClawDatabase(
+          scanRoot,
+          candidate.entry,
+          (reason) => console.error(`OpenClaw database inspection failed (${reason}).`),
         );
         if (containsCredential !== false) return candidate.entry;
         continue;

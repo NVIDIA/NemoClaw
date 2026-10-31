@@ -4,16 +4,17 @@
 // Hosted switching and native local routing share the OpenClaw live contract.
 
 import fs from "node:fs";
-import http, { type Server } from "node:http";
+import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
-import { discoverHostAddress } from "../fixtures/host-address.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -26,8 +27,8 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import {
   type CompatibleAnthropicSwitchBinding,
-  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
+  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchEnv,
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
@@ -46,13 +47,18 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
+import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
+import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
+import {
+  createMockAnthropicProviderServer,
+  type MockAnthropicRequest,
+} from "./openclaw-anthropic-provider.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   getRouteOutput,
   readOpenClawConfig,
   agentReplyContainsToken,
-  anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
   classifyUnavailableInitialProviderEvidence,
@@ -133,20 +139,6 @@ interface SandboxRegistry {
       nativeNvidiaProviderAttachment?: unknown;
     }
   >;
-}
-
-interface MockAnthropicProvider {
-  endpointUrl: string;
-  requests(): readonly MockAnthropicRequest[];
-  close(): Promise<void>;
-}
-
-interface MockAnthropicRequest {
-  method: string;
-  model: string | null;
-  path: string;
-  stream: boolean;
-  toolCount: number | null;
 }
 
 function parsePortEnv(name: string, fallback: number): number {
@@ -281,25 +273,10 @@ async function resetOpenClawInferenceSwitchState(
   );
 }
 
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function sseResponse(res: http.ServerResponse, events: Array<[string, unknown]>): void {
-  res.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-  });
-  for (const [name, payload] of events) {
-    res.write(`event: ${name}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  }
-  res.end();
+interface MockAnthropicProvider {
+  endpointUrl: string;
+  requests(): readonly MockAnthropicRequest[];
+  close(): Promise<void>;
 }
 
 function closeServer(server: Server): Promise<void> {
@@ -308,112 +285,24 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function startMockAnthropicProvider(host: HostCliClient): Promise<MockAnthropicProvider> {
-  const nativeHost = SWITCH_NATIVE_CUSTOM
-    ? (await discoverHostAddress(host, "native-anthropic-endpoint-address")).address
-    : undefined;
-  let binding: CompatibleAnthropicSwitchBinding;
-
-  const requests: MockAnthropicRequest[] = [];
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://mock.local");
-    if (req.method === "GET" && url.pathname === "/health") {
-      jsonResponse(res, 200, { ok: true });
-      return;
-    }
-    if (
-      req.method === "GET" &&
-      ["/v1/models", "/v1/models/mock-anthropic-model"].includes(url.pathname)
-    ) {
-      jsonResponse(res, 200, { data: [{ id: "mock-anthropic-model" }] });
-      return;
-    }
-    const invalidCredential =
-      SWITCH_NATIVE_CUSTOM && req.headers["x-api-key"] !== binding.credentialValue;
-    if (req.method !== "POST" || url.pathname !== "/v1/messages" || invalidCredential) {
-      jsonResponse(res, invalidCredential ? 401 : 404, {
-        error: "request rejected",
-        path: url.pathname,
-      });
-      return;
-    }
-
-    let raw = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk) => {
-      raw += chunk;
-    });
-    req.on("end", () => {
-      let payload: { model?: unknown; stream?: unknown; tools?: unknown } = {};
-      try {
-        payload = JSON.parse(raw || "{}") as {
-          stream?: unknown;
-          tools?: unknown;
-        };
-      } catch {
-        payload = {};
-      }
-      const model = typeof payload.model === "string" ? payload.model : "mock-anthropic-model";
-      requests.push({
-        method: req.method ?? "",
-        model: typeof payload.model === "string" ? payload.model : null,
-        path: url.pathname,
-        stream: payload.stream === true,
-        toolCount: anthropicToolCount(payload.tools),
-      });
-      if (payload.stream === true) {
-        const message = {
-          id: "msg_mock",
-          type: "message",
-          role: "assistant",
-          model,
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 1, output_tokens: 0 },
-        };
-        sseResponse(res, [
-          ["message_start", { type: "message_start", message }],
-          [
-            "content_block_start",
-            {
-              type: "content_block_start",
-              index: 0,
-              content_block: { type: "text", text: "" },
-            },
-          ],
-          [
-            "content_block_delta",
-            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PONG" } },
-          ],
-          ["content_block_stop", { type: "content_block_stop", index: 0 }],
-          [
-            "message_delta",
-            {
-              type: "message_delta",
-              delta: { stop_reason: "end_turn", stop_sequence: null },
-              usage: { output_tokens: 1 },
-            },
-          ],
-          ["message_stop", { type: "message_stop" }],
-        ]);
-        return;
-      }
-      jsonResponse(res, 200, {
-        id: "msg_mock",
-        type: "message",
-        role: "assistant",
-        model,
-        content: [{ type: "text", text: "PONG" }],
-        stop_reason: "end_turn",
-        usage: { input_tokens: 1, output_tokens: 1 },
-      });
-    });
+export async function startMockAnthropicProvider(options: {
+  cleanup: CleanupRegistry;
+  progress: TestProgress;
+  cloudflaredBin?: string;
+  nativeCustom: boolean;
+  port: number;
+}): Promise<MockAnthropicProvider> {
+  const { credentialValue } = compatibleAnthropicSwitchBinding(
+    compatibleAnthropicMockEndpointUrl(options.port),
+  );
+  const { server, requests } = createMockAnthropicProviderServer({
+    nativeCustom: options.nativeCustom,
+    credentialValue,
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(SWITCH_MOCK_PORT, "0.0.0.0", () => {
+    server.listen(options.port, options.nativeCustom ? "127.0.0.1" : "0.0.0.0", () => {
       server.off("error", reject);
       resolve();
     });
@@ -424,14 +313,28 @@ async function startMockAnthropicProvider(host: HostCliClient): Promise<MockAnth
     throw new Error("mock Anthropic provider did not expose a TCP port");
   }
   const port = (address as AddressInfo).port;
-  const endpointUrl = nativeHost
-    ? `http://${nativeHost}:${port}`
-    : compatibleAnthropicMockEndpointUrl(port);
-  binding = compatibleAnthropicSwitchBinding(endpointUrl);
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => (closePromise ??= closeServer(server));
+  options.cleanup.trackDisposable("close mock Anthropic inference provider", close);
+  let endpointUrl = compatibleAnthropicMockEndpointUrl(port);
+  if (options.nativeCustom) {
+    endpointUrl = (
+      await startPublicMcpHttpsTunnel({
+        cleanup: options.cleanup,
+        progress: options.progress,
+        cloudflaredBin: options.cloudflaredBin,
+        label: "Anthropic switch inference",
+        server: { port, close },
+        originProtocol: "http",
+        readinessPath: "/health",
+        readinessStatus: 200,
+      })
+    ).origin;
+  }
   return {
     endpointUrl,
     requests: () => requests,
-    close: () => closeServer(server),
+    close,
   };
 }
 
@@ -868,12 +771,6 @@ async function runOpenClawInferenceSetWithRetry(
         artifactName: `nemoclaw-inference-set-${attempt}`,
         env: {
           ...compatibleAnthropicSwitchEnv(switchBinding),
-          ...(SWITCH_NATIVE_CUSTOM && switchBinding
-            ? {
-                NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: new URL(switchBinding.endpointUrl)
-                  .hostname,
-              }
-            : {}),
           ...(publicNvidiaApiKey ? { NVIDIA_INFERENCE_API_KEY: publicNvidiaApiKey } : {}),
         },
         redactionValues,
@@ -890,8 +787,8 @@ test(
       e2ePhases: [
         "confirm the selected runtime and choose the baseline provider",
         "clear existing inference-switch state",
-        "onboard a custom-image baseline OpenClaw",
-        "prove the selected route after custom-image onboarding",
+        "onboard baseline OpenClaw",
+        "prove the selected route after onboarding",
         "prove the selected route after gateway restart",
         "prove the selected route after rebuild",
         "prepare the switched provider and endpoint",
@@ -912,8 +809,10 @@ test(
       switchInferenceApi: SWITCH_INFERENCE_API,
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
-        "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
-        "fresh custom-image onboarding replaces the baked primary route with the selected model",
+        runtimeProvider.id === "podman"
+          ? "stock onboard selects the OpenClaw image from the selected managed-image cohort without a Dockerfile build"
+          : "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
+        "fresh onboarding initializes the primary route with the selected model; the Docker fixture replaces a deliberately incorrect baked route",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
         "nemoclaw inference set switches the running sandbox route",
@@ -936,19 +835,37 @@ test(
     const useMockBaseline =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
-    // OpenShell reaches this fixture from its gateway network namespace, where
-    // the runner's loopback address is not routable.
-    const nativeBaselineHost = SWITCH_NATIVE_CUSTOM
-      ? (await discoverHostAddress(host, "native-baseline-endpoint-address")).address
-      : undefined;
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
-      ? await startMockOpenClawBaselineProvider(progress, nativeBaselineHost)
+      ? await startMockOpenClawBaselineProvider(progress)
       : undefined;
     cleanup.trackDisposable("close baseline inference provider", async () => {
       await baselineProvider?.close();
     });
+    const cloudflaredBin = SWITCH_NATIVE_CUSTOM
+      ? await resolveVerifiedCloudflaredBinary(cleanup, host)
+      : undefined;
+    // Hosted endpoint qualification must cross a network boundary. The runner's
+    // primary address refers to the guest itself in a rootless Pasta namespace.
+    const baselineTunnel =
+      cloudflaredBin && baselineProvider
+        ? await startPublicMcpHttpsTunnel({
+            cloudflaredBin,
+            cleanup,
+            label: "OpenClaw switch baseline",
+            progress,
+            server: {
+              port: Number(new URL(baselineProvider.baseUrl).port),
+              close: () => baselineProvider.close(),
+            },
+            originProtocol: "http",
+            readinessPath: "/v1/models",
+            readinessStatus: 200,
+          })
+        : undefined;
     const baseline = baselineProvider
-      ? mockBaselineInference(baselineProvider.baseUrl)
+      ? mockBaselineInference(
+          baselineTunnel ? `${baselineTunnel.origin}/v1` : baselineProvider.baseUrl,
+        )
       : requireHostedInferenceConfig({
           required: (name) => publicApiKey ?? secrets.required(name),
         });
@@ -965,10 +882,8 @@ test(
         fs.rmSync(home, { recursive: true, force: true });
       },
     );
-    cleanup.trackDisposable("close switched Anthropic provider", async () => {
-      await mockProvider?.close();
-    });
-    const customDockerfile = writeCustomOpenClawDockerfile(home);
+    const imageArgs =
+      runtimeProvider.id === "podman" ? [] : ["--from", writeCustomOpenClawDockerfile(home)];
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-openclaw-inference-switch",
       env: commandEnv(home),
@@ -990,22 +905,16 @@ test(
     progress.phase("clear existing inference-switch state");
     await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
-    progress.phase("onboard a custom-image baseline OpenClaw");
-    const onboard = await host.nemoclaw(
-      ["onboard", "--non-interactive", "--yes", "--from", customDockerfile],
-      {
-        artifactName: "onboard-custom-image-openclaw-inference-switch",
-        env: commandEnv(home, {
-          ...baseline.env,
-          ...(nativeBaselineHost
-            ? { NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: nativeBaselineHost }
-            : {}),
-          NEMOCLAW_RECREATE_SANDBOX: "1",
-        }),
-        redactionValues,
-        timeoutMs: INSTALL_TIMEOUT_MS,
-      },
-    );
+    progress.phase("onboard baseline OpenClaw");
+    const onboard = await host.nemoclaw(["onboard", "--non-interactive", "--yes", ...imageArgs], {
+      artifactName: "onboard-custom-image-openclaw-inference-switch",
+      env: commandEnv(home, {
+        ...baseline.env,
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+      }),
+      redactionValues,
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    });
     const onboardText = resultText(onboard);
     const providerValidationUnavailable =
       onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText);
@@ -1037,7 +946,7 @@ test(
         model: baseline.model,
         inferenceApi: "openai-completions",
         artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
-        nativeCustomEndpoint: nativeBaselineHost ? baseline.endpointUrl : undefined,
+        nativeCustomEndpoint: baselineTunnel ? baseline.endpointUrl : undefined,
       });
       await checkOpenClawGatewayInference(
         host,
@@ -1047,7 +956,7 @@ test(
           model: baseline.model,
           inferenceApi: "openai-completions",
           artifactName: `openclaw-gateway-inference-initial-route-${artifactSuffix}`,
-          phase: `prove initial custom-image route ${artifactSuffix}`,
+          phase: `prove initial route ${artifactSuffix}`,
         },
         undefined,
         baselineProvider,
@@ -1057,7 +966,7 @@ test(
       expect(result.exitCode, resultText(result)).toBe(0);
     };
 
-    progress.phase("prove the selected route after custom-image onboarding");
+    progress.phase("prove the selected route after onboarding");
     await verifyInitialRoute("after-onboard");
 
     progress.phase("prove the selected route after gateway restart");
@@ -1082,7 +991,13 @@ test(
 
     progress.phase("prepare the switched provider and endpoint");
     if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
-      mockProvider = await startMockAnthropicProvider(host);
+      mockProvider = await startMockAnthropicProvider({
+        cleanup,
+        progress,
+        cloudflaredBin,
+        nativeCustom: SWITCH_NATIVE_CUSTOM,
+        port: SWITCH_MOCK_PORT,
+      });
       await artifacts.writeJson("mock-anthropic-provider.json", {
         endpointUrl: mockProvider.endpointUrl,
       });
@@ -1195,11 +1110,11 @@ test(
       status: "passed",
       assertions: {
         runtimeProviderAvailable: true,
-        customImageOnboardingCompleted: onboard.exitCode === 0,
-        customImageInitialRouteSelected: true,
-        customImageRouteSurvivedGatewayRestart: true,
-        customImageRouteSurvivedRebuild: true,
-        customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
+        baselineOnboardingCompleted: onboard.exitCode === 0,
+        baselineInitialRouteSelected: true,
+        baselineRouteSurvivedGatewayRestart: true,
+        baselineRouteSurvivedRebuild: true,
+        baselineGatewayReachedFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,

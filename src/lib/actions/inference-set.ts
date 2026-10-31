@@ -214,6 +214,10 @@ function providerCommitFailureAfterSelection(options: {
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+  sandboxPolicyReader?: Pick<
+    import("../adapters/openshell/sandbox-policy").OpenShellSandboxPolicyReader,
+    "readSandboxPolicy"
+  >;
   requireNativeProviderPolicy?: typeof requireNativeProviderPolicy;
   resolveLocalSwitchRuntime?: typeof resolveLocalSwitchRuntime;
   getDefaultSandbox: () => string | null;

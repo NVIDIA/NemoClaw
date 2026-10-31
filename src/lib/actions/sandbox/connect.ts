@@ -631,7 +631,11 @@ function describeHermesPortableForwardRecoveryFailure(
   context?: HermesPortableForwardRecoveryContext,
 ): string {
   if (failure === "restoration-unproved" && context) {
-    return `${describeHermesPortableForwardRecoveryFailure(failure)} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
+    const restorationDetail =
+      context.restorationPort === undefined
+        ? ""
+        : ` NemoClaw could not prove that the migrated API forward on host port ${String(context.restorationPort)} was retained.`;
+    return `${describeHermesPortableForwardRecoveryFailure(failure)}${restorationDetail} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
   }
   switch (context?.cause) {
     case "port-occupied":
@@ -639,7 +643,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-list-failed":
       return "The OpenShell `forward list` command failed, so NemoClaw could not prove the recorded forward state. Restore OpenShell access and retry.";
     case "forward-list-invalid":
-      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the complete forward list before retrying.";
+      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the forward list and the sandbox's recorded forward state before retrying.";
     case "forward-port-resolution-failed":
       return "NemoClaw could not resolve the required recorded host ports. It made no forward changes. Inspect the sandbox registry and launch-forward configuration before retrying.";
     case "forward-reachability-failed":
@@ -653,7 +657,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-occupied":
       return "A required recorded host port is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.";
     case "forward-state-unavailable":
-      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect `openshell forward list` before retrying.";
+      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect the sandbox's status and recorded forward state before retrying. `openshell forward list` can omit receipt-owned forwards.";
     case "recovery-failed":
       return "NemoClaw could not establish the required recorded host forwards within the recovery bound. Inspect the recorded forward state before retrying.";
     case "restoration-unproved":
@@ -1316,22 +1320,30 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
   process.exit(1);
 }
 
+// Prints refused container identities (#10869, #12799). False if none.
+function printUnmatchedContainerIdentity(
+  sandboxName: string,
+  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+): boolean {
+  const identityLines = inspectDockerIdentity
+    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
+    : null;
+  if (!identityLines) return false;
+  for (const line of identityLines) console.error(`  ${line}`);
+  return true;
+}
+
 // A terminal phase can follow from a container identity that NemoClaw refused
 // to match rather than from a crashed sandbox. Name that boundary instead of
 // steering the user to runtime logs and status (#10869).
 function failConnectReadinessTerminalPhase(
   sandboxName: string,
   transition: string,
-  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+  identity: { inspectDockerIdentity: boolean; retryCommand: string },
 ): never {
   console.error("");
   console.error(`  Sandbox '${sandboxName}' ${transition} state.`);
-  const identityLines = inspectDockerIdentity
-    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
-    : null;
-  if (identityLines) {
-    for (const line of identityLines) console.error(`  ${line}`);
-  } else {
+  if (!printUnmatchedContainerIdentity(sandboxName, identity)) {
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
   }
@@ -2133,10 +2145,17 @@ export async function waitForSandboxReadyOrExit(
     const suggestedTimeout = Math.max(300, timeout * 2);
     console.error("");
     console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
-    console.error("  Check: openshell sandbox list");
-    console.error(
-      `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
-    );
+    if (
+      !printUnmatchedContainerIdentity(sandboxName, {
+        inspectDockerIdentity: allowDockerRuntimeInspection,
+        retryCommand,
+      })
+    ) {
+      console.error("  Check: openshell sandbox list");
+      console.error(
+        `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
+      );
+    }
     process.exit(1);
   }
   console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
