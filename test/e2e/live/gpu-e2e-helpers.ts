@@ -307,6 +307,7 @@ fi
 # Manual daemons can close their listener before finishing GPU shutdown.
 # Keep the wait inside the caller's 30-second command budget.
 for ((attempt = 0; attempt < 50; attempt++)); do
+  sleep 0.1
   if ! pgrep -f '[o]llama serve' >/dev/null 2>&1; then
     if (exec 3<>/dev/tcp/127.0.0.1/${listenerPort}) 2>/dev/null; then
       echo 'Ollama cleanup left a listener on 127.0.0.1:${listenerPort}' >&2
@@ -314,7 +315,6 @@ for ((attempt = 0; attempt < 50; attempt++)); do
     fi
     exit 0
   fi
-  sleep 0.1
 done
 
 echo 'Ollama cleanup left a daemon process' >&2

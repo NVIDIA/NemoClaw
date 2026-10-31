@@ -71,7 +71,8 @@ async function runCleanupFixture(termination: string, sleepCommand: string) {
           timeout: 5_000,
           killSignal: "SIGKILL",
         },
-        (error, _stdout, stderr) => resolve({ code: error?.code ?? 0, stderr }),
+        (error, _stdout, stderr) =>
+          resolve({ code: error ? (typeof error.code === "number" ? error.code : -1) : 0, stderr }),
       );
     });
     return { ...result, waits: readFileSync(sleepLog, "utf8").trim().split("\n").filter(Boolean) };
@@ -98,4 +99,20 @@ it("rejects an Ollama process that survives the bounded shutdown wait (#14041)",
   expect(result.code).toBe(1);
   expect(result.stderr).toContain("Ollama cleanup left a daemon process");
   expect(result.waits).toEqual(Array(50).fill("0.1"));
+});
+
+it("accepts Ollama shutdown during the final polling interval (#14041)", async () => {
+  const result = await runCleanupFixture(
+    'setInterval(() => { if (require("node:fs").readFileSync(sleepLog, "utf8").trim().split("\\n").length === 50) process.exit(0); }, 10)',
+    'if [ "$(wc -l < "$SLEEP_LOG")" -eq 50 ]; then while kill -0 "$OWNED_PID" 2>/dev/null; do /bin/sleep 0.01; done; fi',
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.waits).toEqual(Array(50).fill("0.1"));
+});
+
+it("rejects a signal-terminated cleanup command (#14041)", async () => {
+  const result = await runCleanupFixture("", 'kill -KILL "$PPID"');
+
+  expect(result.code).toBe(-1);
 });
