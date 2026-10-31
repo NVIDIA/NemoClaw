@@ -366,7 +366,7 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
 }
 
 /** Select the final agent response without treating JSON log records as responses. */
-function finalAgentResponse(docs: unknown[]): {
+export function openClawFinalAgentResponse(docs: unknown[]): {
   document: UnknownRecord;
   response: UnknownRecord;
   meta: UnknownRecord;
@@ -381,37 +381,77 @@ function finalAgentResponse(docs: unknown[]): {
   return null;
 }
 
+/** Fixed categories and bounded counts only; never retain reply text or arbitrary metadata. */
+export function projectOpenClawAgentCompletion(documents: unknown[]) {
+  return completionEvidence(openClawFinalAgentResponse(documents));
+}
+
+function completionEvidence(final: ReturnType<typeof openClawFinalAgentResponse>) {
+  const meta = (final?.response.meta ?? {}) as Record<string, unknown>;
+  const summary = meta.toolSummary;
+  const tools =
+    summary !== null && typeof summary === "object" && !Array.isArray(summary)
+      ? (summary as Record<string, unknown>)
+      : {};
+  const count = (value: unknown): number | null =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? Math.min(1000, value)
+      : null;
+  const visible =
+    typeof meta.finalAssistantVisibleText === "string" ? meta.finalAssistantVisibleText.trim() : "";
+  let stopReasonIsStop = false;
+  try {
+    stopReasonIsStop = normalized(meta.stopReason) === "stop";
+  } catch {
+    // JSON metadata can shadow conversion methods. Keep malformed markers rejected.
+    stopReasonIsStop = false;
+  }
+  const payloads = final?.response.payloads;
+  return {
+    runCompleted:
+      final !== null &&
+      (final.document === final.response
+        ? meta.aborted === false && stopReasonIsStop
+        : final.document.status === "ok" && final.document.summary === "completed"),
+    aborted: meta.aborted === true,
+    errorPresent: meta.error !== undefined,
+    stopReasonIsStop,
+    stopReasonAccepted: meta.stopReason === undefined || stopReasonIsStop,
+    toolCalls: count(tools.calls),
+    toolFailures: count(tools.failures),
+    finalTextPresent: visible.length > 0,
+    finalTextMatchesPayload:
+      visible.length > 0 &&
+      Array.isArray(payloads) &&
+      payloads.some((payload: unknown) => {
+        if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+        const record = payload as Record<string, unknown>;
+        return (
+          record.isError !== true &&
+          typeof record.text === "string" &&
+          record.text.trim() === visible
+        );
+      }),
+  };
+}
+
 /** Require a completed tool run and a final reply before accepting replay risk. */
 function hasCompletedToolReply(
   document: UnknownRecord,
   response: UnknownRecord,
   meta: UnknownRecord,
 ): boolean {
-  if (meta.aborted === true || meta.error !== undefined) return false;
-  if (meta.stopReason !== undefined && normalized(meta.stopReason) !== "stop") return false;
-  const completed =
-    document === response
-      ? meta.aborted === false && normalized(meta.stopReason) === "stop"
-      : document.status === "ok" && document.summary === "completed";
-  const summary = meta.toolSummary;
-  const visible =
-    typeof meta.finalAssistantVisibleText === "string" ? meta.finalAssistantVisibleText.trim() : "";
+  const evidence = completionEvidence({ document, response, meta });
   return (
-    completed &&
-    isObjectRecord(summary) &&
-    typeof summary.calls === "number" &&
-    Number.isSafeInteger(summary.calls) &&
-    summary.calls > 0 &&
-    summary.failures === 0 &&
-    visible.length > 0 &&
-    Array.isArray(response.payloads) &&
-    response.payloads.some(
-      (payload) =>
-        isObjectRecord(payload) &&
-        payload.isError !== true &&
-        typeof payload.text === "string" &&
-        payload.text.trim() === visible,
-    )
+    evidence.runCompleted &&
+    !evidence.aborted &&
+    !evidence.errorPresent &&
+    evidence.stopReasonAccepted &&
+    evidence.toolCalls !== null &&
+    evidence.toolCalls > 0 &&
+    evidence.toolFailures === 0 &&
+    evidence.finalTextPresent &&
+    evidence.finalTextMatchesPayload
   );
 }
 
@@ -447,7 +487,7 @@ export function openClawAgentIncompleteTurnSignal(
 ): OpenClawIncompleteTurnSignal | null {
   const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return null;
-  const final = finalAgentResponse(docs);
+  const final = openClawFinalAgentResponse(docs);
   if (!final) return null;
   const { document, response, meta } = final;
   const markers = dedupe(turnMetaMarkers(meta));

@@ -91,8 +91,8 @@ console.log(JSON.stringify({
   baseLifecycleScripts: explicitLifecycleScripts(baseBlock),
   scriptsSuppressed: {
     codex: /npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts/.test(codexBlock),
-    runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
-    base: /npm install -g --ignore-scripts --allow-git=root "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
+    runtime: /npm --prefix \/usr\/local\/lib\/nemoclaw\/openclaw-runtime ci\s+\\\s*--ignore-scripts/.test(runtimeBlock),
+    base: /npm --prefix \/usr\/local\/lib\/nemoclaw\/openclaw-runtime ci\s+\\\s*--ignore-scripts/.test(baseBlock),
     optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
       optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_archive}"'),
     messagingPlugin: [
@@ -103,11 +103,8 @@ console.log(JSON.stringify({
       'npm_config_ignore_scripts: "true"',
     ].every((marker) => messagingInstallBlock.includes(marker)),
   },
-  legacyCoreRunsNoLifecycle: [runtimeBlock, baseBlock].every((block) =>
-    /^\s*2026\.3\.11\)\s+;;/m.test(block),
-  ),
   unknownCoreVersionFailsClosed: [runtimeBlock, baseBlock].every((block) =>
-    /^\s*\*\).*no reviewed lifecycle policy.*exit 1/m.test(block),
+    /if \[ -z "\$EXPECTED_INTEGRITY" \]; then[^]*?OpenClaw.*no committed npm integrity pin[^]*?exit 1/.test(block),
   ),
 }));
 `;
@@ -209,7 +206,6 @@ describe("reviewed npm lifecycle policy", () => {
       .sort((left, right) => left.packageSpec.localeCompare(right.packageSpec));
     expect(audit.runtimeLifecycleScripts).toEqual(audit.baseLifecycleScripts);
     expect(audit.runtimeLifecycleScripts).toEqual(allowedLifecycleScripts);
-    expect(audit.legacyCoreRunsNoLifecycle).toBe(true);
     expect(audit.unknownCoreVersionFailsClosed).toBe(true);
   });
 });

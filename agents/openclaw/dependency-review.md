@@ -73,7 +73,11 @@ The archive audit verifies the final remediated plugin tree before installation.
 The official-install path verifies OpenClaw's trusted provenance record before invoking the same recipe.
 `test/agents/openclaw/openclaw-npm-remediation.test.ts` covers source drift, replacement integrity, and rejection paths.
 Remove a recipe only when a newly reviewed upstream archive contains the replacements and real plugin consumers pass without the recipe.
-Retain historical recipes while supported installed sandboxes can still select their archives.
+Retain historical plugin recipes while supported installed sandboxes can still select their archives.
+
+The production image lifecycle allowlist contains only OpenClaw 2026.9.2.
+The 2026.3.11, 2026.6.10 and 2026.7.1 core archive recipes have been removed because no image build or reviewed audit selects them.
+The final image still includes `openclaw-npm-remediation.mts` because the messaging build applier imports it for supported plugin remediation.
 
 ### Runtime and managed-plugin overrides
 

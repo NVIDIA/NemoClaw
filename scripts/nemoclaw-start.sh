@@ -1599,7 +1599,7 @@ ensure_gateway_token() {
 
   local _write_rc=0
   run_openclaw_config_as_owner /usr/local/bin/node - \
-    "$config_file" "$_DASHBOARD_PORT" <<'NODETOKEN' || _write_rc=$?
+    "$config_file" "$_DASHBOARD_PORT" "${1:-refresh}" <<'NODETOKEN' || _write_rc=$?
 const crypto = require("crypto");
 const fs = require("fs");
 const pathModule = require("path");
@@ -1655,20 +1655,37 @@ try {
     throw new Error("selected gateway port is invalid");
   }
   const cfg = parseConfig(fs.readFileSync(path, "utf8"));
-  const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
-  // Pairing commands intentionally drop environment overrides. Their native
-  // config must resolve the same port passed to gateway run, including when an
-  // external image carries a different baked default.
-  gateway.port = gatewayPort;
-  const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
-  auth.token = tokenUrlSafe(32);
-  // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
-  // while retaining supported metadata such as `lastTouchedVersion`.
-  const meta = cfg.meta;
-  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
-    delete meta.lastTouchedAt;
-    if (Object.keys(meta).length === 0) delete cfg.meta;
+  const previousConfig = JSON.stringify(cfg);
+  // Restored native homes predate the grant required by NemoClaw's safety hooks.
+  // Reconcile only this plugin's hook access without replacing user settings.
+  let hooks = cfg;
+  for (const key of ["plugins", "entries", "nemoclaw", "hooks"]) {
+    const value = hooks[key];
+    if (value !== undefined && (value === null || typeof value !== "object" || Array.isArray(value))) {
+      throw new Error(`OpenClaw ${key} configuration must be an object`);
+    }
+    hooks = hooks[key] ?? (hooks[key] = {});
   }
+  hooks.allowConversationAccess = true;
+  const existingToken = cfg.gateway?.auth?.token;
+  if (process.argv[4] !== "if-missing" || typeof existingToken !== "string" ||
+      !existingToken || existingToken === "[STRIPPED_BY_MIGRATION]") {
+    const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
+    // Pairing commands intentionally drop environment overrides. Their native
+    // config must resolve the same port passed to gateway run, including when an
+    // external image carries a different baked default.
+    gateway.port = gatewayPort;
+    const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
+    auth.token = tokenUrlSafe(32);
+    // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
+    // while retaining supported metadata such as `lastTouchedVersion`.
+    const meta = cfg.meta;
+    if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+      delete meta.lastTouchedAt;
+      if (Object.keys(meta).length === 0) delete cfg.meta;
+    }
+  }
+  if (JSON.stringify(cfg) === previousConfig) process.exit(0);
 
   const dirPath = pathModule.dirname(path);
   let fd;
@@ -1716,17 +1733,11 @@ try {
 NODETOKEN
 
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
-  printf '[token] Gateway auth token refreshed for startup\n' >&2
+  printf '[setup] OpenClaw startup configuration reconciled\n' >&2
 }
 
 ensure_gateway_token_if_missing() {
-  local token
-  token="$(_read_gateway_token)"
-  if [ -n "$token" ] && [ "$token" != "[STRIPPED_BY_MIGRATION]" ]; then
-    return 0
-  fi
-
-  ensure_gateway_token
+  ensure_gateway_token if-missing
 }
 
 export_gateway_token() {
@@ -5300,11 +5311,7 @@ if [ "$(id -u)" -ne 0 ]; then
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_FINISHED_EPOCH
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_PROVIDER_FINISHED_EPOCH
   refresh_openclaw_provider_placeholders
-  prepare_gateway_token_for_current_command
-  export_gateway_token
-  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
-  write_runtime_shell_env
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
@@ -5314,6 +5321,10 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+    prepare_gateway_token_for_current_command
+    export_gateway_token
+    _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
+    write_runtime_shell_env
     install_messaging_runtime_preloads
     verify_messaging_runtime_secret_scans
     _nemoclaw_cmd_rc=0
@@ -5324,6 +5335,10 @@ if [ "$(id -u)" -ne 0 ]; then
   configure_messaging_channels
   run_requested_openclaw_post_upgrade_doctor || exit 1
   refresh_openclaw_provider_placeholders
+  prepare_gateway_token_for_current_command
+  export_gateway_token
+  _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
+  write_runtime_shell_env
   install_messaging_runtime_preloads
   verify_messaging_runtime_secret_scans
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_MESSAGING_FINISHED_EPOCH

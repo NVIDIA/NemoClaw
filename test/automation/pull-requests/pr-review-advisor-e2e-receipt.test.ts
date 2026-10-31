@@ -55,6 +55,31 @@ describe("Review queue context", () => {
     expect(trustedInventory.allowedJobIds).toContain("pi-agent-qualification");
   });
 
+  it("exposes unavailable-search acceptance as a selectable Advisor job (#13594)", () => {
+    const trustedInventory = trustedE2eRecommendationInventory();
+    expect(trustedInventory.allowedJobIds).toContain("common-egress-agent");
+    expect(trustedInventory.manualOnlyJobIds).not.toContain("common-egress-agent");
+    const recommendations = [
+      {
+        selectorType: "job" as const,
+        id: "common-egress-agent",
+        required: true,
+        reason:
+          "Verify the installed OpenClaw unavailable-search reply and preserved direct fetches.",
+      },
+    ];
+    expect(
+      validateE2eRecommendations(
+        {
+          recommendations,
+          noAdditionalE2eReason: null,
+          unresolvedRecommendations: [],
+        },
+        trustedInventory,
+      ).recommendations,
+    ).toEqual(recommendations);
+  });
+
   it("exports the complete existing plan and inventories without session parsing (#11489)", () => {
     const input = {
       ...expected,

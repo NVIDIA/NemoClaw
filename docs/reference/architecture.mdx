@@ -235,9 +235,28 @@ Its durable entry points are `nemoclaw/src/index.ts`, `nemoclaw/src/runtime-cont
 The `nemoclaw/src/commands/` directory contains in-sandbox `/nemoclaw` command handlers and migration helpers.
 The `nemoclaw/src/blueprint/` directory contains runner, persistent-state, internal rollback-capture, SSRF, and private-network validation code.
 
-Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+Before each OpenClaw turn, the plugin prepends a system-context block with the active sandbox name, network and filesystem policy summaries, and web-research guidance.
 This guidance stays out of the visible chat transcript.
-When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
+The web-research guidance distinguishes configured search availability from tool availability and successful retrieval.
+It directs the agent to disclose unavailable search, report failed fetches, and label local knowledge as unverified.
+A press release or announcement must not be presented as installation documentation.
+When web search is disabled, the plugin classifies each request before inference.
+Requests for external research, including official documentation without a supplied source, receive an empty per-turn tool allowlist.
+This restriction applies when any part of the request asks for external research, even if another part supplies a local source or URL.
+Admission requires a nonempty text prompt while web search is disabled.
+If OpenClaw omits that prompt, admission blocks the turn before reserving state, and prompt construction withholds tools.
+Check the gateway logs before retrying a turn rejected for missing prompt evidence.
+Admission reserves turn state and records supplied retrieval URLs and local-source scope independently.
+Prompt construction only selects tools and adds context.
+Ordinary local work and retrieval from user-supplied sources retain their tools when the request does not also ask for external research.
+Quoted research topics do not supply local sources.
+For a filename with spaces, quote an explicit path such as `"./my folder/report.md"`.
+The classifier checks a limit of 4,096 UTF-16 code units before parsing and shares one work budget across all clauses and relationships between local resources.
+If either limit is exceeded while search is disabled, the whole turn loses tool access and supplied-source grants.
+Split an overly complex request into smaller turns before retrying.
+After a denied search attempt, tool interception permits `web_fetch` only for the recorded URLs, including wrapped calls.
+Local-source turns retain local reads and memory queries, but cannot use a shell, browser, or unrelated URL as a substitute.
+The agent can use content successfully retrieved from a user-supplied URL when search is disabled.
 The context tells the agent to try allowed network and filesystem operations before reporting them unavailable, and to distinguish policy denials from DNS, timeout, TLS, or filesystem errors.
 </AgentOnly>
 

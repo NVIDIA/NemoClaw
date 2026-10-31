@@ -417,7 +417,7 @@ describe("fatal process diagnostics", () => {
           "--archive",
           path.join(REPOSITORY_ROOT, "package.json"),
           "--package-spec",
-          "openclaw@2026.7.1",
+          "@openclaw/slack@2026.9.2",
           "--working-directory",
           root,
         ],
