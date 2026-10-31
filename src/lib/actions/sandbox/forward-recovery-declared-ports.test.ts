@@ -617,11 +617,13 @@ describe("declared and cleanup forward sets", () => {
         ): Promise<OpenShellForwardReleaseResult> =>
           outcome === "bound"
             ? { state: "bound", forwards: request.forwards }
-            : {
-                state: "indeterminate",
-                ...(outcome === "validation" ? {} : { forwards: request.forwards }),
-                error: errors[outcome],
-              },
+            : outcome === "validation"
+              ? { state: "indeterminate", error: errors.validation }
+              : {
+                  state: "indeterminate",
+                  forwards: request.forwards,
+                  error: errors[outcome],
+                },
       );
       const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const { teardownSandboxDashboardForward } = await import("./forward-recovery");
