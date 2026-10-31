@@ -1,15 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! OpenClaw's and Hermes's native interfaces through a managed Docker
-//! deployment, reached as a person would: with the forward and token commands
-//! that apply reports, run through the pinned OpenShell CLI.
+//! OpenClaw's, Hermes's and Deep Agents Code's native interfaces through one
+//! managed Docker deployment, reached as a person would: with the forward,
+//! token and terminal commands that apply reports, run through the pinned
+//! OpenShell CLI.
 //!
 //! A model stand-in in this process answers every chat completion with a value
-//! unique to the run and records the credential each request carried. It
-//! doesn't establish inference or model compatibility.
+//! unique to the run, or a reply derived from a prompt that names a token, and
+//! records the credential each request carried. It doesn't establish inference
+//! or model compatibility.
 
+use crate::pseudo_terminal::{Terminal, quoted};
+use fabric_provider::AgentBridge as _;
 use futures_util::{SinkExt as _, StreamExt as _};
+use nemoclaw_e2e::state::{runtime_id, sandbox_binding};
 use nemoclaw_sdk::{OperationResult, Outcome, SignIn, config::Document};
+use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
 use std::{
     fs,
@@ -33,12 +39,38 @@ fn random_hex(bytes: usize) -> String {
     value.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// One request the model stand-in received: its method and path, and whether
-/// it carried the configured key as a Bearer credential.
+/// One request the model stand-in received: its method and path, whether it
+/// carried the configured key as a Bearer credential, and for a chat
+/// completion, the model it named and the reply it got.
 #[derive(Debug)]
 struct ModelRequest {
     target: String,
     keyed: bool,
+    model: Value,
+    reply: String,
+}
+
+/// The stand-in's reply to a chat completion: for a last message that names
+/// `token TOKEN`, `REPLY-` and the token in capitals, which the prompt
+/// doesn't contain; otherwise `default`. A derived reply ties a prompt to
+/// its answer when several clients share the stand-in.
+fn reply_for(request: &Value, default: &str) -> String {
+    let last = request["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .map(Value::to_string)
+        .unwrap_or_default();
+    last.rsplit_once("token ")
+        .map(|(_, rest)| {
+            rest.chars()
+                .take_while(char::is_ascii_alphanumeric)
+                .collect::<String>()
+        })
+        .filter(|token| !token.is_empty())
+        .map_or_else(
+            || default.to_owned(),
+            |token| format!("REPLY-{}", token.to_ascii_uppercase()),
+        )
 }
 
 /// Serve OpenAI-compatible model routes on `port`, on every host address, so
@@ -84,6 +116,7 @@ fn serve_model(port: u16, key: String, reply: String) -> Arc<Mutex<Vec<ModelRequ
                     }
                 }
                 let body: Value = serde_json::from_slice(&buffer[header_end..]).unwrap_or_default();
+                let reply = reply_for(&body, &reply);
                 let target = head
                     .lines()
                     .next()
@@ -94,6 +127,8 @@ fn serve_model(port: u16, key: String, reply: String) -> Arc<Mutex<Vec<ModelRequ
                 recorded.lock().unwrap().push(ModelRequest {
                     target: target.clone(),
                     keyed: header("authorization").as_deref() == Some(&format!("Bearer {key}")),
+                    model: body["model"].clone(),
+                    reply: reply.clone(),
                 });
                 let response = if !target.starts_with("POST ") {
                     let models =
@@ -291,9 +326,29 @@ impl Drop for KeepOnFailure {
     }
 }
 
+#[test]
+fn a_prompt_that_names_a_token_gets_a_reply_derived_from_it() {
+    let prompt = |text: &str| {
+        serde_json::json!({"messages": [
+            {"role": "system", "content": "you are helpful; token ignored"},
+            {"role": "user", "content": text}]})
+    };
+    assert_eq!(
+        reply_for(&prompt("Reply with token ab12cd"), "nc-reply"),
+        "REPLY-AB12CD"
+    );
+    assert_eq!(reply_for(&prompt("Say hi"), "nc-reply"), "nc-reply");
+    assert_eq!(reply_for(&prompt("a token "), "nc-reply"), "nc-reply");
+    assert_eq!(reply_for(&Value::Null, "nc-reply"), "nc-reply");
+    // dcode sends content as parts; the last message still names the token.
+    let parts = serde_json::json!({"messages": [{"role": "user",
+        "content": [{"type": "text", "text": "Reply with token 7f00ff"}]}]});
+    assert_eq!(reply_for(&parts, "nc-reply"), "REPLY-7F00FF");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified bundle, the OpenClaw and Hermes images on local Docker, the pinned OpenShell CLI, and an owned managed-gateway document; creates Docker resources and retains gateway storage"]
-async fn openclaw_and_hermes_interfaces_work_through_forwards() {
+#[ignore = "requires a verified bundle, the OpenClaw, Hermes and Deep Agents Code images on local Docker, the pinned OpenShell CLI, util-linux's script, and an owned managed-gateway document; creates Docker resources and retains gateway storage"]
+async fn openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports() {
     let config = PathBuf::from(required("NEMOCLAW_TEST_INTERFACES_DOCUMENT"));
     let bundle = PathBuf::from(required("NEMOCLAW_TEST_BUNDLE"));
     let program = PathBuf::from(required("NEMOCLAW_TEST_OPENSHELL"));
@@ -392,10 +447,22 @@ async fn openclaw_and_hermes_interfaces_work_through_forwards() {
                 SignIn::TokenInUrlFragment,
                 true
             ),
+            ("coder", "terminal", None, SignIn::SandboxExec, false),
             ("hermes", "api", Some(8642), SignIn::BearerToken, true),
             ("hermes", "dashboard", Some(9119), SignIn::None, false),
         ]
     );
+    // The terminal's launcher is the current runtime's.
+    let runtime = runtime_id(&state_path, "coder");
+    let launcher = format!(
+        "/sandbox/artifacts/.fabric/deepagents-code/runtimes/{runtime}/interfaces/terminal"
+    );
+    let reported_launchers: Vec<_> = applied
+        .interfaces
+        .iter()
+        .filter_map(|access| Some((access.sandbox.as_str(), access.launcher.as_deref()?)))
+        .collect();
+    assert_eq!(reported_launchers, [("coder", launcher.as_str())]);
     let token_path = |sandbox: &str| {
         applied
             .interfaces
@@ -565,6 +632,81 @@ async fn openclaw_and_hermes_interfaces_work_through_forwards() {
     };
     assert!(answered, "browser chat closed before answering");
     let _ = chat.close(None).await;
+
+    // Deep Agents Code: an invocation through Fabric's bridge uses the
+    // runtime's ACP session.
+    let bridge = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
+    let binding = fabric_provider::fabric_binding(sandbox_binding(&state_path, "coder")).unwrap();
+    let invoked = random_hex(6);
+    let result = bridge
+        .invoke_agent(
+            &binding,
+            &runtime,
+            &Value::String(format!("Reply with token {invoked}")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["status"], "succeeded", "{result}");
+    assert_eq!(
+        result["output"]["response"],
+        format!("REPLY-{}", invoked.to_ascii_uppercase()),
+        "{result}"
+    );
+
+    // The terminal command apply reports opens dcode's terminal UI in a local
+    // pseudo-terminal. A new dcode home first asks for a name and offers to
+    // choose a model; Escape skips both, keeping the configured model.
+    let home = tempfile::tempdir().unwrap();
+    let mut terminal = Terminal::start(
+        &format!(
+            "{} sandbox exec -n coder --tty -- {}",
+            quoted(cli.program.to_str().unwrap()),
+            quoted(&launcher)
+        ),
+        &[
+            ("OPENSHELL_GATEWAY_ENDPOINT", cli.endpoint.as_str()),
+            ("OPENSHELL_WORKSPACE", cli.workspace.as_str()),
+        ],
+        home.path(),
+    );
+    terminal.wait_for(0, "Enter to continue", Duration::from_secs(90));
+    terminal.wait_for(0, "openai:fixture-model", Duration::from_secs(10));
+    terminal.send("\x1b");
+    // A terminal reads Escape followed at once by a key as Alt and that key.
+    std::thread::sleep(Duration::from_secs(2));
+    let typed = random_hex(6);
+    let mark = terminal.mark();
+    terminal.send(&format!("Reply with token {typed}"));
+    terminal.wait_for(mark, &typed, Duration::from_secs(10));
+    let mark = terminal.mark();
+    terminal.send("\r");
+    let terminal_reply = format!("REPLY-{}", typed.to_ascii_uppercase());
+    terminal.wait_for(mark, &terminal_reply, Duration::from_secs(90));
+    // Ctrl-D quits the terminal UI, ending the session.
+    terminal.send("\x04");
+    assert!(
+        terminal.exited_within(Duration::from_secs(30)),
+        "the terminal session did not end after Ctrl-D"
+    );
+    drop(terminal);
+    {
+        let requests = model.lock().unwrap();
+        let prompted: Vec<&ModelRequest> = requests
+            .iter()
+            .filter(|request| request.reply == terminal_reply)
+            .collect();
+        assert!(
+            !prompted.is_empty()
+                && prompted
+                    .iter()
+                    .all(|request| request.model == "fixture-model"),
+            "the terminal's prompt must reach the configured model: {prompted:?}"
+        );
+    }
 
     // Every model request came with the configured key.
     {

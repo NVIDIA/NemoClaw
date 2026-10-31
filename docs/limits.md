@@ -53,8 +53,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
-| Deep Agents Code's terminal interface | [#14011](https://github.com/NVIDIA/NemoClaw/issues/14011) |
 | Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) |
+| Deep Agents Code's [terminal](interfaces.md#open-deep-agents-codes-terminal) can list the runtime's thread but can't open it, because the runtime holds it while it runs | [NVIDIA/NeMo-Fabric#567](https://github.com/NVIDIA/NeMo-Fabric/issues/567) |
 | Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
@@ -88,6 +88,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw doesn't set | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
 | OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
+| Deep Agents Code's terminal UI starts an agent server on the sandbox's loopback without authentication, which any process in the sandbox can use while it runs; its launcher is writable by the agent ([terminal](interfaces.md#open-deep-agents-codes-terminal)) | [NVIDIA/NeMo-Fabric#546](https://github.com/NVIDIA/NeMo-Fabric/issues/546) |
 
 ## SDK and Provider
 

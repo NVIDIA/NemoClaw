@@ -360,9 +360,19 @@ pub const LIVE_AGENT: (&str, &str) = ("openclaw", "nvidia.fabric.openclaw");
 /// OpenClaw's.
 pub const LIVE_HERMES: &str = "hermes";
 
+/// The Deep Agents Code agent image, whose terminal the Docker live suite's
+/// interface test opens.
+pub const LIVE_DEEPAGENTS_CODE: &str = "deepagents-code";
+
 /// The pushed images the live suites can pull instead of building: the agent,
-/// Hermes, the reference image, and the proxy.
-pub const LIVE_PULLED: [&str; 4] = [LIVE_AGENT.0, LIVE_HERMES, "dummy", "ollama-proxy"];
+/// Hermes, Deep Agents Code, the reference image, and the proxy.
+pub const LIVE_PULLED: [&str; 5] = [
+    LIVE_AGENT.0,
+    LIVE_HERMES,
+    LIVE_DEEPAGENTS_CODE,
+    "dummy",
+    "ollama-proxy",
+];
 
 /// The reference `v1` pushed for `name` at `commit` on one Linux architecture.
 pub fn commit_image(name: &str, commit: &str, arch: &str) -> String {

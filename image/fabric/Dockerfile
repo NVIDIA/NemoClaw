@@ -250,6 +250,59 @@ RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters/opencode \
     && printf '%s\n' '{"nvidia.fabric.opencode": {"files": ["/opt/fabric-source"], "binaries": ["bun"]}}' > /opt/nemoclaw/adapters.json
 USER node
 
+FROM common-wheels AS deepagents-code-build
+COPY --from=node /node/ /
+RUN mkdir -p /opt/fabric-source/adapter-contract /opt/fabric-source/adapters \
+    && cp -a /src/fabric/adapter-contract/typescript /opt/fabric-source/adapter-contract/ \
+    && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/
+RUN --mount=type=cache,target=/root/.npm \
+    cd /opt/fabric-source/adapter-contract/typescript && npm ci --ignore-scripts --no-audit --no-fund && npm run build \
+    && cd /opt/fabric-source/adapters/typescript \
+    && npm ci --workspace nemo-fabric-adapters-deepagents-code --include-workspace-root --ignore-scripts --no-audit --no-fund \
+    && npm run build --workspace nemo-fabric-adapters-common && npm run build --workspace nemo-fabric-adapters-deepagents-code
+
+# Keep the packed adapter and npm's locked dependencies; drop the links to the
+# workspace's other adapters, which aren't packed.
+RUN mkdir -p /opt/deepagents-code/adapters/typescript \
+    && cp -a /opt/fabric-source/adapters/typescript/node_modules /opt/deepagents-code/adapters/typescript/ \
+    && for link in /opt/deepagents-code/adapters/typescript/node_modules/nemo-fabric-adapters-*; do \
+        case "${link##*/}" in nemo-fabric-adapters-common|nemo-fabric-adapters-deepagents-code) ;; *) rm "$link" ;; esac; \
+    done \
+    && for package in adapter-contract/typescript adapters/typescript/common adapters/typescript/deepagents-code; do \
+        mkdir -p "/opt/deepagents-code/$package" \
+        && (cd "/opt/fabric-source/$package" && npm pack --ignore-scripts --pack-destination "/opt/deepagents-code/$package") \
+        && tar -xzf /opt/deepagents-code/$package/*.tgz -C "/opt/deepagents-code/$package" --strip-components=1 \
+        && rm /opt/deepagents-code/$package/*.tgz || exit 1; \
+    done
+
+# Deep Agents Code pins exact versions and needs Python 3.14, so it gets its
+# own environment from NemoClaw's lock, apart from Fabric's. Its one source
+# distribution, forbiddenfruit, builds with the lock's own setuptools.
+FROM base AS deepagents-code-env
+COPY image/fabric/deepagents-code/pyproject.toml image/fabric/deepagents-code/uv.lock /build/
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
+    uv export --project /build --frozen --no-emit-project --format requirements-txt --output-file /requirements.txt \
+    && python3 -m venv --without-pip /opt/deepagents-code \
+    && uv pip install --python /opt/deepagents-code/bin/python --require-hashes \
+        --build-constraints /requirements.txt -r /requirements.txt \
+    && uv pip check --python /opt/deepagents-code/bin/python
+
+# Fabric's Deep Agents Code adapter runs on Node.js and runs dcode, from its own
+# environment, as an ACP server; dcode's tools use git and ripgrep.
+FROM interactive AS deepagents-code
+COPY --from=deepagents-code-build /opt/deepagents-code /opt/fabric-source
+COPY --from=deepagents-code-env /opt/deepagents-code /opt/deepagents-code
+COPY --from=deepagents-code-env /requirements.txt /opt/nemoclaw/source/deepagents-code-requirements.txt
+# The adapter runs dcode from PATH. Fabric discovery skips symlinked
+# directories, so link only the descriptor.
+RUN ln -s /opt/deepagents-code/bin/dcode /usr/local/bin/dcode \
+    && mkdir -p /opt/fabric/share/nemo-fabric/adapters/deepagents-code \
+    && ln -s /opt/fabric-source/adapters/typescript/deepagents-code/deepagents-code.fabric-adapter.json \
+        /opt/fabric/share/nemo-fabric/adapters/deepagents-code/deepagents-code.fabric-adapter.json \
+    && printf '%s\n' '{"nvidia.fabric.langchain.deepagents-code": {"files": ["/opt/fabric-source", "/opt/deepagents-code"], "binaries": ["node", "dcode"]}}' > /opt/nemoclaw/adapters.json
+USER node
+
+
 FROM base AS lint
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /repo/image

@@ -523,7 +523,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
 
 /// How to reach each enabled interface: the commands a person runs, under the
 /// gateway and workspace selection that the interface guide describes. Only
-/// the person's own retrieval command discloses a token.
+/// the person's own retrieval command discloses a token. A terminal interface
+/// is opened by running its launcher in the sandbox; it has no forward or
+/// token.
 fn interface_access(result: &OperationResult) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
@@ -556,6 +558,19 @@ fn interface_access(result: &OperationResult) -> String {
             }
             None => output.push_str(&format!("  {sandbox}/{interface}\n")),
         }
+        if access.sign_in == SignIn::SandboxExec {
+            match &access.launcher {
+                Some(launcher) => {
+                    let launcher = terminal_text(launcher);
+                    output.push_str(&format!(
+                        "    Open:     openshell sandbox exec -n {sandbox} --tty -- {launcher}\n              (on a noexec mount: openshell sandbox exec -n {sandbox} --tty -- sh {launcher})\n"
+                    ));
+                }
+                None => output.push_str(
+                    "    Open:     unavailable; the deployment state records no runtime ID for this agent\n",
+                ),
+            }
+        }
         let token = matches!(
             access.sign_in,
             SignIn::TokenInUrlFragment | SignIn::BearerToken
@@ -579,12 +594,24 @@ fn interface_access(result: &OperationResult) -> String {
             ),
             SignIn::BearerToken => "    Sign in:  send the header Authorization: Bearer TOKEN, replacing TOKEN with the token\n".into(),
             SignIn::None => "    Sign in:  none; anyone who can reach the forward can use it\n".into(),
+            SignIn::SandboxExec => "    Sign in:  none; anyone who can run openshell sandbox exec in this workspace can open it\n".into(),
             SignIn::AdapterDocumented => "    Sign in:  see the adapter's documentation\n".into(),
         });
     }
-    output.push_str(
-        "  The agent's own tools can read these tokens and reach these ports; see docs/interfaces.md.\n",
-    );
+    let (launchers, others): (Vec<_>, Vec<_>) = result
+        .interfaces
+        .iter()
+        .partition(|access| access.sign_in == SignIn::SandboxExec);
+    if !others.is_empty() {
+        output.push_str(
+            "  The agent's own tools can read these tokens and reach these ports; see docs/interfaces.md.\n",
+        );
+    }
+    if !launchers.is_empty() {
+        output.push_str(
+            "  The agent's own tools can change a terminal launcher, and a terminal session's agent server listens in the sandbox without authentication; see docs/interfaces.md.\n",
+        );
+    }
     output
 }
 
@@ -849,6 +876,56 @@ mod tests {
             !text.contains("export OPENSHELL_GATEWAY_ENDPOINT"),
             "{text}"
         );
+    }
+
+    /// A terminal interface gets the command that opens it with the current
+    /// runtime's launcher, and its `sh` form for a `noexec` mount, under the
+    /// same gateway selection; it has no forward and no token.
+    #[test]
+    fn apply_output_tells_how_to_open_a_terminal_interface() {
+        let launcher =
+            "/sandbox/artifacts/.fabric/deepagents-code/runtimes/rt-3/interfaces/terminal";
+        let interfaces = json!([{"sandbox": "assistant", "interface": "terminal",
+            "launcher": launcher, "signIn": "sandbox_exec"}]);
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection, "interfaces": interfaces});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result.clone());
+        let lines: Vec<String> = text
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        for expected in [
+            "unset OPENSHELL_GATEWAY".to_owned(),
+            "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671".to_owned(),
+            "export OPENSHELL_WORKSPACE=nc-1234567890abcdef".to_owned(),
+            "assistant/terminal".to_owned(),
+            format!("Open: openshell sandbox exec -n assistant --tty -- {launcher}"),
+            format!("(on a noexec mount: openshell sandbox exec -n assistant --tty -- sh {launcher})"),
+            "Sign in: none; anyone who can run openshell sandbox exec in this workspace can open it"
+                .to_owned(),
+        ] {
+            assert!(lines.contains(&expected), "missing {expected:?}:\n{text}");
+        }
+        for absent in ["openshell forward", "Token:", "--no-tty", "these tokens"] {
+            assert!(!text.contains(absent), "unexpected {absent:?}:\n{text}");
+        }
+        assert!(text.contains("change a terminal launcher"), "{text}");
+        let machine: Value = serde_json::from_str(&render(
+            &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
+            result,
+        ))
+        .unwrap();
+        assert_eq!(machine["interfaces"], interfaces);
+
+        // Without the runtime's ID, there is no launcher path to run.
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection,
+            "interfaces": [{"sandbox": "assistant", "interface": "terminal", "signIn": "sandbox_exec"}]});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
+        assert!(
+            text.contains("Open:     unavailable; the deployment state records no runtime ID"),
+            "{text}"
+        );
+        assert!(!text.contains("--tty"), "{text}");
     }
 
     #[test]

@@ -242,10 +242,11 @@ fn gateway_documents_parse_as_current_configuration() {
     );
 }
 
-/// The interface live test's document: OpenClaw's dashboard and Hermes's API
-/// server and dashboard, with a model endpoint on the gateway network's host
-/// address and a key the test supplies. Both sandboxes take their image's
-/// default policy, which lets Hermes's browser chat open a terminal.
+/// The interface live test's document: OpenClaw's dashboard, Hermes's API
+/// server and dashboard, and Deep Agents Code's terminal on one gateway, with a
+/// model endpoint on the gateway network's host address and a key the test
+/// supplies. Every sandbox takes its image's default policy, which lets
+/// Hermes's browser chat open a terminal.
 #[cfg(feature = "sdk")]
 #[test]
 fn the_interfaces_document_enables_each_p0_interface() {
@@ -259,6 +260,7 @@ fn the_interfaces_document_enables_each_p0_interface() {
         subnet: "172.30.203.0/24",
         openclaw: &image("openclaw"),
         hermes: &image("hermes"),
+        deepagents_code: &image("deepagents-code"),
         model_port: 18431,
     });
     let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
@@ -275,7 +277,24 @@ fn the_interfaces_document_enables_each_p0_interface() {
         sandboxes["hermes"]["harness"]["settings"]["interfaces"],
         serde_json::json!({"api": {"port": 8642}, "dashboard": {"port": 9119}})
     );
-    for sandbox in ["claw", "hermes"] {
+    let coder = &sandboxes["coder"];
+    assert_eq!(coder["image"]["ref"], image("deepagents-code"));
+    assert_eq!(
+        coder["harness"]["kind"],
+        "nvidia.fabric.langchain.deepagents-code"
+    );
+    assert_eq!(
+        coder["harness"]["settings"],
+        serde_json::json!({"approval_mode": "auto", "interfaces": {"terminal": {}}})
+    );
+    // Every agent calls the one model stand-in.
+    for sandbox in ["claw", "coder", "hermes"] {
+        assert_eq!(
+            sandboxes[sandbox]["agent"]["inference"]["routes"][0]["providerRef"], "model",
+            "{sandbox}"
+        );
+    }
+    for sandbox in ["claw", "coder", "hermes"] {
         assert_eq!(
             sandboxes[sandbox]["network"],
             serde_json::json!({"tier": "isolated"}),

@@ -130,7 +130,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |
 | `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](../sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
-| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port`, the `tokenPath` in the sandbox for an interface with a token, and `signIn` (`token_in_url_fragment`, `bearer_token`, `none` or `adapter_documented`); never a token; omitted when empty; see [agent interfaces](../interfaces.md#reach-an-agent-interface) |
+| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, the `launcher` in the sandbox for a terminal interface, and `signIn` (`token_in_url_fragment`, `bearer_token`, `none`, `sandbox_exec` or `adapter_documented`); never a token; omitted when empty; see [agent interfaces](../interfaces.md#reach-an-agent-interface) |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
 The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.

@@ -80,6 +80,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 ## Reach an Agent Interface
 
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
+Deep Agents Code's terminal is a launcher for `dcode`'s terminal UI, which you run in the sandbox.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
 The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/e7913b6c473a15095a1b4c3583a127e558e0c124/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/e7913b6c473a15095a1b4c3583a127e558e0c124/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
 
@@ -112,6 +113,7 @@ sandboxes:
 | OpenClaw | `dashboard`, the Control UI with browser chat | `port` (required, at most 65425), `enabled`, `public_origins` | Yes | `http://127.0.0.1:PORT/#token=TOKEN` |
 | Hermes | `api`, the OpenAI-compatible API server | `port` (required), `enabled` | Yes | `Authorization: Bearer TOKEN` |
 | Hermes | `dashboard`, with browser chat | `port` (required), `enabled` | No | None |
+| Deep Agents Code | `terminal`, `dcode`'s terminal UI | `enabled` | No | None beyond OpenShell's: [open it](#open-deep-agents-codes-terminal) with `openshell sandbox exec` |
 
 An interface is on while it is present, unless it sets `enabled: false`.
 OpenClaw reserves the ports from `port` through `port + 110`, and its `port` can't be combined with `port_range`.
@@ -154,11 +156,62 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
 Keep tokens out of YAML, shell history, and shared logs; NemoClaw stores none in its state.
 Hermes's API server and browser chat call the model the agent's configuration names, with its key.
 
+### Open Deep Agents Code's Terminal
+
+Enable the terminal in a Deep Agents Code sandbox's harness settings, as the [example](../examples/fabric-deepagents-code.yaml) does; it takes no port:
+
+```yaml
+harness:
+  kind: nvidia.fabric.langchain.deepagents-code
+  settings:
+    approval_mode: auto
+    interfaces:
+      terminal: {}
+```
+
+After apply, NemoClaw prints the command that opens it, with the current runtime's launcher, and no forward or token:
+
+```text
+Agent interfaces:
+  In each terminal, select this deployment's gateway and workspace:
+    unset OPENSHELL_GATEWAY
+    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17681
+    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
+  assistant/terminal
+    Open:     openshell sandbox exec -n assistant --tty -- /sandbox/artifacts/.fabric/deepagents-code/runtimes/RUNTIME_ID/interfaces/terminal
+              (on a noexec mount: openshell sandbox exec -n assistant --tty -- sh /sandbox/artifacts/.fabric/deepagents-code/runtimes/RUNTIME_ID/interfaces/terminal)
+    Sign in:  none; anyone who can run openshell sandbox exec in this workspace can open it
+```
+
+JSON results carry the launcher's path as `launcher` and `signIn` as `sandbox_exec`.
+Run the `Open` command from a terminal on the client host, with the gateway selection; if the artifacts directory is mounted `noexec`, run the `sh` form instead.
+`openshell sandbox connect` attaches to the sandbox's main process, `fabric-agent-ctl serve`, not to a shell, so it can't open the terminal UI.
+OpenShell's access control is the only authentication: anyone who can run `openshell sandbox exec` in the workspace can open the terminal UI.
+Quit it with Ctrl-D.
+
+The terminal UI opens a separate session from Fabric's invocations, sharing the runtime's `dcode` configuration, home, session store, and workspace:
+
+- It uses the configured model and endpoint.
+  The launcher holds no secret; `dcode` reads the model key from the variable the configuration names, which OpenShell sets in each `sandbox exec` session.
+  For a provider with a credential, that variable holds OpenShell's placeholder, which OpenShell replaces with the key in requests to the endpoint.
+- The first time it opens in a runtime's home, it asks for a name and then offers to choose a model; Escape skips both and keeps the configured model.
+- It uses `dcode`'s own approval behavior, which asks before gated actions, not `approval_mode`, which applies only to invocations.
+- It doesn't show invocations as they run, and it can't open the runtime's own thread.
+  The runtime's ACP session is a `dcode` thread, whose ID is in `interfaces/terminal.running` beside the launcher, and it holds that thread while the runtime runs; `LAUNCHER -r THREAD_ID` fails with `Thread can't be resumed`, because the thread is open elsewhere, and once the runtime stops the launcher refuses to start.
+  `openshell sandbox exec -n SANDBOX --tty -- LAUNCHER threads list` lists the runtime's thread with the terminal's own sessions.
+- Each runtime has its own launcher path; after the runtime restarts, apply prints the new one.
+
+The launcher refuses to start, printing `This NeMo Fabric runtime is not running.`, when `terminal.running` is absent: the adapter writes it once the runtime's session starts and removes it when the runtime stops.
+Terminal sessions already open when the runtime stops keep running.
+If the runtime's process is killed instead of stopped, the marker stays, and the launcher still opens a session with that runtime's configuration until the sandbox is replaced.
+
 ### Who Can Use an Interface
 
 - **The agent's own tools.** Tools that the agent runs in its sandbox run as the same user as its runtime, so they can read and change the token files and reach the interfaces' ports. The agent can sign in to its own interfaces and use their configuration, cron, and plugin features, which can change what it does outside the guardrails of its harness, though not OpenShell's policy.
 - **Hermes's dashboard.** Anyone who can reach its forward can use it, including its browser chat, which runs the agent without approvals. Its gateway actions, such as restarting the gateway, start Hermes processes that replace the one Fabric started and can keep running after the runtime stops.
 - **Forwards and exposed URLs.** Prefer `openshell forward service`: the gateway authorizes each forwarded connection for your identity and workspace. A [service exposure](#expose-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
+- **Deep Agents Code's terminal launcher.** The launcher is a file in `/sandbox/artifacts`, readable and writable by the agent's own tools. The agent can change what the launcher runs; it still runs inside the sandbox, under the sandbox's policy.
+- **Deep Agents Code's terminal UI.** It starts its own agent server on `127.0.0.1` in the sandbox, on a port it chooses, without authentication, as `dcode` always does ([its threat model](https://github.com/langchain-ai/deepagents/blob/0cc119a70ac9df9aaac4ef0939a1141a92b75af0/libs/code/THREAT_MODEL.md), T6). While the terminal UI runs, any process in the sandbox, including the agent's tools, can use that server. Don't forward or expose it. Fabric's invocations use ACP over standard input and output and open no listener.
 
 Configuration changed through an interface isn't kept: the adapter regenerates the harness's configuration at each start.
 Conversations in an interface aren't promised to share history with requests sent through `fabric-agent-ctl invoke`.

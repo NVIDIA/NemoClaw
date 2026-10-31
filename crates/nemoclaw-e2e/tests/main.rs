@@ -66,6 +66,8 @@ mod multi_agent;
 mod multiple_providers;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
+#[path = "pseudo_terminal.rs"]
+mod pseudo_terminal;
 mod registry_fixture;
 #[path = "remote_service.rs"]
 mod remote_service;

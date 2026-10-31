@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# Set the endpoint and model for your service. Fabric's Deep Agents Code adapter
+# runs LangChain's dcode in the sandbox. approval_mode is required: auto lets
+# dcode's classifier review gated actions, yolo allows them all. With
+# interfaces.terminal, the adapter writes a launcher for dcode's terminal UI.
+# See docs/interfaces.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: fabric-deepagents-code
+  uid: df6f3f42-29b5-4b9f-8a5a-55a0339409ba
+spec:
+  gateway:
+    management: external
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    local:
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-fabric-deepagents-code@sha256:ba6e245343593b3bb96659f1931f603d8a305f5b4680994bf0fd3684167de0a5
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents-code
+        settings:
+          approval_mode: auto
+          interfaces:
+            terminal: {}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:4b

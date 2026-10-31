@@ -231,12 +231,14 @@ fn prepare(
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_hermes(platform, &prefix)?;
+            live_images::build_deepagents_code(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
             live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
     let hermes = by_digest(&prefix, live_images::HERMES)?;
+    let deepagents_code = by_digest(&prefix, live_images::DEEPAGENTS_CODE)?;
     // The lifecycle runs an image derived from the reference image, so it
     // also checks that derived images deploy.
     live_images::build_derived(&prefix)?;
@@ -303,7 +305,8 @@ fn prepare(
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
-    // OpenClaw's and Hermes's interfaces share one gateway and model stand-in.
+    // OpenClaw's, Hermes's and Deep Agents Code's interfaces share one gateway
+    // and model stand-in.
     let interfaces = {
         let uid = live::uuid()?;
         let subnet = live::free_subnet(&used, &subnets)?;
@@ -318,6 +321,7 @@ fn prepare(
                 subnet: &subnet,
                 openclaw: &agent,
                 hermes: &hermes,
+                deepagents_code: &deepagents_code,
                 model_port: live::free_port()?,
             }),
         )?;
