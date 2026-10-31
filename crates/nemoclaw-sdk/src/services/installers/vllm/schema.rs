@@ -33,4 +33,9 @@ pub(crate) fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: b
         "sharedMemoryGiB",
         json!({"minimum":1,"maximum":64}),
     );
+    property(
+        &mut defs["ServiceContainer"],
+        "gpu",
+        json!({"pattern": constraints::GPU_DEVICE}),
+    );
 }

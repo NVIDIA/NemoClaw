@@ -18,6 +18,10 @@ pub(crate) const MODEL: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$";
 pub(crate) const APPLICATION_USER: &str = r"^[0-9]{1,9}:[0-9]{1,9}$";
 pub(crate) const APPLICATION_ROOT: &str = r"^(/data|/var/lib/[a-z][a-z0-9-]{0,62})$";
 pub(crate) const IMAGE: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$";
+/// One GPU as `nvidia-smi` names it: its UUID, or an index. A list or `all`
+/// would expose more than the one GPU the model runtimes accept.
+pub(crate) const GPU_DEVICE: &str =
+    r"^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|0|[1-9][0-9]{0,2})$";
 pub(crate) const GATEWAY_ENDPOINT: &str = "http://127.0.0.1:17681";
 /// The engine a managed gateway uses when none is configured: Docker's default socket.
 pub const GATEWAY_ENGINE: &str = "unix:///var/run/docker.sock";
