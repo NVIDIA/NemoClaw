@@ -225,7 +225,7 @@ function validateNames(value: unknown, identity: OpenClawImageIdentity): void {
 function validateOciArchive(
   archive: string,
   names: Set<string>,
-  receipt: Pick<Receipt, "configDigest" | "sourceReference">,
+  receipt: Pick<Receipt, "configDigest">,
   identity: OpenClawImageIdentity,
   layers: string[],
   configSize: number,
@@ -255,11 +255,14 @@ function validateOciArchive(
     ![
       "application/vnd.oci.image.manifest.v1+json",
       "application/vnd.docker.distribution.manifest.v2+json",
-    ].includes(desc.mediaType) ||
-    `${REPOSITORY}@${desc.digest}` !== receipt.sourceReference
+    ].includes(desc.mediaType)
   ) {
-    throw new Error("OpenClaw OCI index does not select the CPU image manifest");
+    throw new Error("OpenClaw OCI index must select an image manifest");
   }
+  // Docker's graphdriver exporter constructs an OCI manifest from uncompressed
+  // layers. Its digest need not equal the registry manifest's digest. Verify
+  // the archive descriptor itself, then bind its config and layers to the
+  // CPU-tested config and Docker archive below.
   const bytes = archiveEntry(archive, `blobs/sha256/${desc.digest.slice(7)}`);
   if (
     Buffer.byteLength(bytes) !== desc.size ||

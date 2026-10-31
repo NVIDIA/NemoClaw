@@ -55,7 +55,7 @@ function exported() {
   clearCalls();
 }
 
-function addOciLayout() {
+function addOciLayout(archiveManifest = manifest) {
   const archive = path.join(root, "archive");
   const blobs = path.join(archive, "blobs", "sha256");
   fs.mkdirSync(blobs, { recursive: true });
@@ -63,7 +63,7 @@ function addOciLayout() {
     path.join(archive, `${configDigest.slice(7)}.json`),
     path.join(blobs, configDigest.slice(7)),
   );
-  fs.writeFileSync(path.join(blobs, hash(manifest)), manifest);
+  fs.writeFileSync(path.join(blobs, hash(archiveManifest)), archiveManifest);
   fs.writeFileSync(
     path.join(archive, "oci-layout"),
     JSON.stringify({ imageLayoutVersion: "1.0.0" }),
@@ -75,8 +75,8 @@ function addOciLayout() {
       manifests: [
         {
           mediaType: "application/vnd.oci.image.manifest.v1+json",
-          digest: `sha256:${hash(manifest)}`,
-          size: Buffer.byteLength(manifest),
+          digest: `sha256:${hash(archiveManifest)}`,
+          size: Buffer.byteLength(archiveManifest),
           annotations: {
             "io.containerd.image.name": tag,
             "org.opencontainers.image.ref.name": identity.revision,
@@ -346,6 +346,43 @@ it("accepts one OCI image when the daemon ID differs from its config digest", ()
   exported();
   expect(restoreOpenClawImage(directory, identity)).toBe(`sha256:${hash(manifest)}`);
   expect(calls().some((args) => args[1] === "load")).toBe(true);
+});
+
+function reencodeSourceManifest() {
+  const archiveManifest = manifest;
+  const source = JSON.parse(manifest);
+  source.mediaType = "application/vnd.docker.distribution.manifest.v2+json";
+  source.config.mediaType = "application/vnd.docker.container.image.v1+json";
+  manifest = JSON.stringify(source);
+  reference = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${hash(manifest)}`;
+  fs.writeFileSync(path.join(root, "manifest.json"), manifest);
+  return archiveManifest;
+}
+
+it("accepts Docker's re-encoded OCI manifest during export while retaining the CPU config", () => {
+  addOciLayout(reencodeSourceManifest());
+  exported();
+  expect(restoreOpenClawImage(directory, identity)).toBe(`sha256:${hash(manifest)}`);
+  expect(calls().some((args) => args[1] === "load")).toBe(true);
+});
+
+it("accepts Docker's re-encoded OCI manifest during restore while retaining the CPU config", () => {
+  const archiveManifest = reencodeSourceManifest();
+  exported();
+  addOciLayout(archiveManifest);
+  repack();
+  expect(restoreOpenClawImage(directory, identity)).toBe(`sha256:${hash(manifest)}`);
+  expect(calls().some((args) => args[1] === "load")).toBe(true);
+});
+
+it("rejects a self-consistent OCI manifest selecting another config before loading", () => {
+  exported();
+  const changed = JSON.parse(manifest);
+  changed.config.digest = `sha256:${"f".repeat(64)}`;
+  addOciLayout(JSON.stringify(changed));
+  repack();
+  expect(() => restoreOpenClawImage(directory, identity)).toThrow();
+  expect(calls()).toEqual([]);
 });
 
 type OciIndex = {
