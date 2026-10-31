@@ -961,38 +961,61 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("keeps the E2E failure and cleanup when the diagnostic budget expires (#6409)", () => {
-    const { calls, env, state, workDir } = fixture({
-      e2eDiagnosticTimesOut: true,
-      e2eFails: true,
-    });
-    const result = run({
-      ...env,
-      FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS: "1",
-    });
+  it.each([
+    {
+      logging: "undelayed",
+      delayFullE2eDiagnosticLog: false,
+      // The shared budget can expire before the first probe starts.
+      gatewayResult:
+        /^Full E2E failure diagnostic gateway state: (?:status 124; output: probe timed out|not run; output: diagnostic budget exhausted)$/,
+    },
+    {
+      logging: "delayed",
+      delayFullE2eDiagnosticLog: true,
+      gatewayResult:
+        /^Full E2E failure diagnostic gateway state: not run; output: diagnostic budget exhausted$/,
+    },
+  ])(
+    "keeps the E2E failure and cleanup when the diagnostic budget expires with $logging logging (#6409)",
+    ({ delayFullE2eDiagnosticLog, gatewayResult }) => {
+      const { calls, env, state, workDir } = fixture({
+        delayFullE2eDiagnosticLog,
+        e2eDiagnosticTimesOut: true,
+        e2eFails: true,
+      });
+      const result = run({
+        ...env,
+        FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS: "1",
+      });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("full E2E failed");
-    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
-    expect(laneLog).toContain(
-      "Full E2E failure diagnostic gateway state: status 124; output: probe timed out",
-    );
-    expect(laneLog).toContain(
-      "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
-    );
-    expect(laneLog).toContain(
-      "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
-    );
-    const commands = fs.readFileSync(calls, "utf8");
-    expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
-    expect(commands.indexOf("ExecMainCode")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
-    );
-    expect(fs.existsSync(state)).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
-      status: "ABSENT",
-    });
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("full E2E failed");
+      const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+      const gatewayDiagnostic = laneLog
+        .split("\n")
+        .find((line) => line.startsWith("Full E2E failure diagnostic gateway state:"));
+      expect(gatewayDiagnostic).toMatch(gatewayResult);
+      expect(laneLog).toContain(
+        "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
+      );
+      expect(laneLog).toContain(
+        "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
+      );
+      const commands = fs.readFileSync(calls, "utf8");
+      expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
+      expect(commands.includes("ExecMainCode")).toBe(laneLog.includes("gateway state: status 124"));
+      expect(commands).toContain("brev delete nclaw-e2e-test-1");
+      expect(commands.slice(commands.indexOf("brev delete nclaw-e2e-test-1"))).not.toContain(
+        "ExecMainCode",
+      );
+      expect(fs.existsSync(state)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        {
+          status: "ABSENT",
+        },
+      );
+    },
+  );
 
   it("protects and removes raw inference evidence without passing the credential to redactor arguments", () => {
     const { calls, env, state, workDir } = fixture();

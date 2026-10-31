@@ -22,7 +22,7 @@ Use the error location to select the correct setting.
 | `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` | Applicable OpenAI-compatible provider validation during onboarding, including DeepSeek V4 Pro streaming validation | Probe-specific; the standard WSL2 profile uses a `20`-second connection and `30`-second total floor, while extended NVIDIA validation uses `30` and `300` seconds on WSL2 or `10` and `300` seconds elsewhere |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint onboarding validation. It also bounds each native-local or provider-neutral in-sandbox inference request during onboarding and rebuild, with a 60-second minimum. | `180` seconds |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation | `180` seconds |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, gateway startup after an intentional OpenClaw stop, and gateway health and OpenShell readiness during managed or provider recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, OpenClaw gateway startup after runtime start, and gateway health and OpenShell readiness during managed or provider recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
 
 The readiness timeout does not govern inference requests or provider validation.
 
@@ -147,11 +147,15 @@ Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` when OpenShell needs more than 120 
 
 <AgentOnly variant="openclaw">
 
-Managed OpenClaw gateway health uses 30 seconds by default.
-After an intentional stop, `$$nemoclaw <sandbox-name> start` uses the same default to wait for the native gateway before checking health and restoring host forwards.
+After OpenShell reports the sandbox ready, `$$nemoclaw <sandbox-name> start` waits up to 120 seconds for the OpenClaw gateway process.
+This wait applies after both an intentional stop and an external Docker restart, regardless of the recorded stop intent.
 The startup budget includes probe execution and delays.
-If it expires, `start` exits nonzero without proceeding to those checks.
-Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` to override this budget.
+It is separate from the preceding 300-second OpenShell readiness wait.
+If the startup budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` to override the startup budget, not the preceding OpenShell readiness wait.
+With a value of `0`, a sandbox not recorded as intentionally stopped skips process observation but still runs normal gateway and inference verification.
+An intentionally stopped sandbox with a zero budget exits nonzero before those checks.
+OpenClaw gateway-health recovery and onboarding process observation retain their 30-second defaults.
 
 </AgentOnly>
 
