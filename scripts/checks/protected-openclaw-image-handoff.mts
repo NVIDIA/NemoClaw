@@ -353,6 +353,8 @@ export function exportOpenClawImage(
   }
   const imageId = inspectImage(reference, identity);
   const tag = imageTag(identity);
+  if (!docker(["image", "ls", "--quiet", "--no-trunc", tag]).trim())
+    docker(["image", "tag", reference, tag]);
   if (inspectImage(tag, identity) !== imageId)
     throw new Error("OpenClaw revision tag changed before export");
   const manifestBytes = docker(["buildx", "imagetools", "inspect", reference, "--raw"]);

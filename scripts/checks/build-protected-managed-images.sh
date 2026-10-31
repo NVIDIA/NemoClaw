@@ -606,7 +606,8 @@ build_agent() {
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${runtime_user}"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
-  if [[ "$agent" == openclaw && "$runtime_user" == sandbox && -n "$cache_from" ]]; then
+  if [[ "$agent" == openclaw && "$runtime_user" == sandbox && -n "$cache_from" &&
+    (-e "$cache_from/openclaw-runtime" || -L "$cache_from/openclaw-runtime") ]]; then
     node "$controller_root/scripts/checks/protected-openclaw-image-handoff.mts" restore \
       "$cache_from/openclaw-runtime" "$revision" "$cohort" "$platform" \
       "$runtime_user" "$base_reference" "$metadata"

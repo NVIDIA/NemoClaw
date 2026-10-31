@@ -499,69 +499,73 @@ describe("Hermes inference switch command shape", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it("retries an actual HTTP 503 response while preserving its body", async () => {
-    const failureBody =
-      '{"message":"Service is not ready","type":"Service Unavailable","code":503}';
-    const successBody = '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}';
-    let requests = 0;
-    const server = createServer((request, response) => {
-      request.resume();
-      requests += 1;
-      response.writeHead(requests === 1 ? 503 : 200, { "Content-Type": "application/json" });
-      response.end(requests === 1 ? failureBody : successBody);
-    });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    try {
-      const address = server.address();
-      assert(address && typeof address !== "string", "Missing probe server address");
-      const command = hermesApiCommand('{"model":"target-model"}').replace(
-        "http://localhost:8642",
-        `http://127.0.0.1:${address.port}`,
-      );
-      const results: ShellProbeResult[] = [];
-      const delay = vi.fn().mockResolvedValue(undefined);
-      const run = vi.fn(async () => {
-        let result: ShellProbeResult;
-        try {
-          const output = await promisify(execFile)("bash", ["-c", command], {
-            env: {
-              ...process.env,
-              NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
-              NO_PROXY: "127.0.0.1",
-            },
-          });
-          result = { ...output, exitCode: 0 } as ShellProbeResult;
-        } catch (error) {
-          const failed = error as { stdout: string; stderr: string; code: number };
-          result = {
-            stdout: failed.stdout,
-            stderr: failed.stderr,
-            exitCode: failed.code,
-          } as ShellProbeResult;
-        }
-        results.push(result);
-        return result;
+  it.each([
+    [408, "end", 22],
+    [429, "end", 22],
+    [503, "end", 22],
+    [200, "write", 28],
+  ] as const)(
+    "retries an HTTP %i failure while preserving its body",
+    async (status, firstResponseMethod, expectedExitCode) => {
+      const failureBody =
+        '{"message":"Service is not ready","type":"Service Unavailable","code":503}';
+      const successBody = '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}';
+      const replies = [
+        { status, body: failureBody, method: firstResponseMethod },
+        { status: 200, body: successBody, method: "end" as const },
+      ];
+      let requests = 0;
+      const server = createServer((request, response) => {
+        request.resume();
+        const reply = replies[requests++];
+        response.writeHead(reply.status, { "Content-Type": "application/json" });
+        response[reply.method](reply.body);
       });
-      const result = await runHermesPongWithRetry({ expectedModel: "target-model", run, delay });
-      expect(results[0].exitCode).toBe(22);
-      expect(results[0].stdout).toBe(failureBody);
-      expect(results[0].stderr).toContain("__NEMOCLAW_HTTP_STATUS__=503");
-      expect(result.stdout).toBe(successBody);
-      expect(requests).toBe(2);
-      expect(delay.mock.calls).toEqual([[5_000]]);
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  });
-
-  it("records the HTTP status for the Hermes gateway probe without dropping its body", () => {
-    const command = hermesApiCommand('{"model":"target-model"}');
-    expect(command).toContain("--fail-with-body");
-    expect(command).toContain("%{stderr}");
-    expect(command).toContain("__NEMOCLAW_HTTP_STATUS__=%{http_code}");
-  });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const address = server.address();
+        assert(address && typeof address !== "string", "Missing probe server address");
+        const command = hermesApiCommand('{"model":"target-model"}')
+          .replace("http://localhost:8642", `http://127.0.0.1:${address.port}`)
+          .replace("--max-time 120", "--max-time 0.5");
+        const results: ShellProbeResult[] = [];
+        const delay = vi.fn().mockResolvedValue(undefined);
+        const run = vi.fn(async () => {
+          let result: ShellProbeResult;
+          try {
+            const output = await promisify(execFile)("bash", ["-c", command], {
+              env: {
+                ...process.env,
+                NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
+                NO_PROXY: "127.0.0.1",
+              },
+            });
+            result = { ...output, exitCode: 0 } as ShellProbeResult;
+          } catch (error) {
+            const failed = error as { stdout: string; stderr: string; code: number };
+            result = {
+              stdout: failed.stdout,
+              stderr: failed.stderr,
+              exitCode: failed.code,
+            } as ShellProbeResult;
+          }
+          results.push(result);
+          return result;
+        });
+        const result = await runHermesPongWithRetry({ expectedModel: "target-model", run, delay });
+        expect(results[0].exitCode).toBe(expectedExitCode);
+        expect(results[0].stdout).toBe(failureBody);
+        expect(results[0].stderr).toContain(`__NEMOCLAW_HTTP_STATUS__=${status}`);
+        expect(result.stdout).toBe(successBody);
+        expect(requests).toBe(2);
+        expect(delay.mock.calls).toEqual([[5_000]]);
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
 
   it("fails after three transient HTTP failures and retains the last body", async () => {
     const run = vi.fn().mockResolvedValue({
@@ -589,6 +593,10 @@ describe("Hermes inference switch command shape", () => {
     [0, "200", '{"model":"wrong-model","choices":[{"message":{"content":"PONG"}}]}'],
     [0, "302", '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}'],
     [60, "000", "TLS certificate verification failed"],
+    [28, "401", "Operation timed out"],
+    [28, "403", "Operation timed out"],
+    [28, "400", "Operation timed out"],
+    [28, "200", "Unauthorized; operation timed out"],
   ])(
     "does not retry terminal HTTP evidence (exit %i, status %s)",
     async (exitCode, status, stdout) => {

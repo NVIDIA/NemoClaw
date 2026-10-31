@@ -160,7 +160,12 @@ const root = process.env.NEMOCLAW_TEST_HANDOFF_ROOT;
 const args = process.argv.slice(2);
 fs.appendFileSync(path.join(root, 'calls'), JSON.stringify(args)+'\\n');
 if (fs.existsSync(path.join(root, 'fail')) && args[1] === fs.readFileSync(path.join(root, 'fail'), 'utf8')) process.exit(42);
-if (args[0] === 'image' && args[1] === 'inspect') process.stdout.write(fs.readFileSync(path.join(root, 'image.json')));
+if (args[0] === 'image' && args[1] === 'inspect') {
+  if (args[2] === ${JSON.stringify(tag)} && !fs.existsSync(path.join(root, 'tagged'))) process.exit(1);
+  const filename = args[2] === ${JSON.stringify(tag)} && fs.existsSync(path.join(root, 'tag-image.json')) ? 'tag-image.json' : 'image.json';
+  process.stdout.write(fs.readFileSync(path.join(root, filename)));
+}
+else if (args[0] === 'image' && args[1] === 'tag') fs.writeFileSync(path.join(root, 'tagged'), args[2]);
 else if (args[0] === 'image' && args[1] === 'save') cp.execFileSync('tar', ['-cf', args[3], '-C', path.join(root, 'archive'), ...fs.readdirSync(path.join(root, 'archive'), {recursive:true}).filter(p => fs.statSync(path.join(root, 'archive', p)).isFile())]);
 else if (args[0] === 'buildx') process.stdout.write(fs.readFileSync(path.join(root, 'manifest.json')));
 else if (args[1] === 'ls' && fs.existsSync(path.join(root, 'occupied'))) process.stdout.write('occupied');
@@ -185,6 +190,7 @@ it("transfers the CPU image and pins the republished manifest without rebuilding
     path.join(directory, "image.tar"),
     tag,
   ]);
+  expect(fs.readFileSync(path.join(root, "tagged"), "utf8")).toBe(reference);
   clearCalls();
   expect(restoreOpenClawImage(directory, identity)).toBe(`sha256:${hash(manifest)}`);
   expect(calls()).toEqual([
@@ -200,6 +206,23 @@ it("transfers the CPU image and pins the republished manifest without rebuilding
       "--raw",
     ],
   ]);
+});
+
+it("refuses to replace a revision tag that points at another image", () => {
+  fs.writeFileSync(path.join(root, "occupied"), "yes");
+  fs.writeFileSync(path.join(root, "tagged"), "unrelated");
+  const entries = JSON.parse(fs.readFileSync(path.join(root, "image.json"), "utf8"));
+  entries[0].Id = `sha256:${"f".repeat(64)}`;
+  fs.writeFileSync(path.join(root, "tag-image.json"), JSON.stringify(entries));
+  expect(() => exportOpenClawImage(directory, identity, reference)).toThrow("revision tag changed");
+  expect(calls().some((args) => ["tag", "save"].includes(args[1]))).toBe(false);
+});
+
+it("stops without exporting when Docker cannot create the revision tag", () => {
+  fs.writeFileSync(path.join(root, "fail"), "tag");
+  expect(() => exportOpenClawImage(directory, identity, reference)).toThrow();
+  expect(calls().filter((args) => args[1] === "tag")).toHaveLength(1);
+  expect(calls().some((args) => args[1] === "save")).toBe(false);
 });
 
 it.each([

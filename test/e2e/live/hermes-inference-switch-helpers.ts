@@ -385,7 +385,7 @@ function hermesProbeFailureClass(result: ShellProbeResult): RetryFailureClass {
   }
   if (
     result.exitCode !== 0 &&
-    (!httpStatus || httpStatus === "000") &&
+    (!httpStatus || httpStatus === "000" || (httpStatus === "200" && result.exitCode === 28)) &&
     !TERMINAL_HERMES_PROBE_RE.test(output) &&
     TRANSIENT_HERMES_PROBE_RE.test(output)
   ) {

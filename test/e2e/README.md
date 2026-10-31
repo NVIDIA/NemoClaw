@@ -997,6 +997,7 @@ The baseline model expectation comes from the environment passed to installation
 The native NVIDIA variant then switches to the public endpoint with its public credential.
 Its sandbox inference and Hermes API probes retain response bodies and record curl's HTTP status separately in stderr.
 HTTP 408, 429, and 5xx responses can use the existing three-attempt limit with five seconds between attempts.
+A curl timeout after HTTP 200 headers can also retry when its diagnostic identifies a transient transport failure.
 Authentication, authorization, policy, and malformed-input diagnostics prevent retries even when the HTTP status would otherwise qualify.
 A successful probe still requires HTTP 200, the selected model, and a `PONG` response.
 Each attempt retains its command artifact, and the retry artifact distinguishes first-attempt success, recovery, and exhaustion.
@@ -2389,9 +2390,11 @@ The GPU job verifies the receipt, archive, config, Docker metadata, and any OCI 
 It rejects an existing destination tag, then checks the loaded image's labels, platform, and runtime user.
 It publishes the verified image to the isolated registry and pins the resulting manifest digest while requiring the same config digest.
 An invalid handoff fails qualification.
-An earlier-attempt handoff or the legacy `root` runtime user retains the offline OpenClaw build.
+A missing handoff from an older CPU producer, an earlier-attempt handoff, or the legacy `root` runtime user retains the offline OpenClaw build.
 Hermes and Deep Agents Code retain their existing offline builds.
 Runtime assertions, phase deadlines, and cleanup reserves remain unchanged; image reuse alone does not establish a passing runtime result.
+Manual PR qualification runs the GPU build helper from trusted `main`, so a premerge run cannot exercise candidate changes to that helper.
+Validate those changes separately through an explicitly authorized local run while retaining the trusted workflow boundary.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.

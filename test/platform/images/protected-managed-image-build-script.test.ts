@@ -218,6 +218,7 @@ function completeImportedAgentCaches(cacheRoot: string): void {
 
 function completeImportedCache(cacheRoot: string): void {
   completeImportedAgentCaches(cacheRoot);
+  mkdirSync(path.join(cacheRoot, "openclaw-runtime"));
   writeFileSync(path.join(cacheRoot, "prepared-inputs"), `${PREPARED_IDENTITY}\n`);
   mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
@@ -969,6 +970,28 @@ describe("protected managed-image build-cache boundary", () => {
     );
     expect(verification).toContain(`--audit-config ${REPO_ROOT}/ci/reviewed-npm-audit.json`);
     expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("rebuilds all agents offline when an older producer has no OpenClaw handoff", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    rmSync(path.join(cacheRoot, "openclaw-runtime"), { recursive: true });
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    const result = runBuild(
+      REPO_ROOT,
+      ["--cache-from", cacheRoot, "--audit-evidence-from", auditRoot],
+      "linux/amd64",
+      { NEMOCLAW_TEST_IMAGE_HANDOFF: "invalid" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(recordedBuildInvocations().every((line) => line.includes("--network none"))).toBe(true);
+    expect(recordedBuildInvocation("openclaw")).toContain("--no-cache");
+    expect(readFileSync(seedLog, "utf8")).not.toContain(
+      "protected-openclaw-image-handoff.mts restore",
+    );
   });
 
   it("loads the verified current OpenClaw image while retaining the other offline builds", () => {
