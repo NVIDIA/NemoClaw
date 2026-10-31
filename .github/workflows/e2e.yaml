@@ -115,6 +115,7 @@ env:
 
 jobs:
   package-openshell-sdk:
+    if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -132,6 +133,10 @@ jobs:
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
             scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
@@ -144,7 +149,7 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -249,7 +254,7 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -363,6 +368,8 @@ jobs:
         run: node --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
 
   generate-matrix:
+    needs: package-openshell-sdk
+    if: ${{ !cancelled() && (needs.package-openshell-sdk.result == 'success' || (needs.package-openshell-sdk.result == 'skipped' && inputs.checkout_sha != '' && (inputs.jobs == 'native-runtime-qualification-producer' || inputs.jobs == 'llama-cpp-dgx-spark-qualification') && inputs.targets == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -661,7 +668,7 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm for trusted E2E planning
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -847,6 +854,10 @@ jobs:
             ci/reviewed-npm-audit.json
             scripts/check-dist-sourcemaps.mts
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
@@ -857,9 +868,18 @@ jobs:
             scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
+      - name: Download reviewed OpenShell SDK archive
+        if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
         if: ${{ inputs.checkout_sha == '' || (inputs.jobs != 'native-runtime-qualification-producer' && inputs.jobs != 'llama-cpp-dgx-spark-qualification') || inputs.targets != '' }}
         uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
+        with:
+          package-mode: artifact
 
       - id: package_cli_artifact
         name: Package exact-commit CLI
@@ -939,7 +959,7 @@ jobs:
   llama-cpp-dgx-spark-plan:
     name: Authenticate and compile the DGX Spark qualification plan
     needs: generate-matrix
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}
+    if: ${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -997,7 +1017,7 @@ jobs:
       - name: Set up Node for Spark plan compilation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
       - name: Install trusted Spark compiler dependencies
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
       - name: Install trusted Spark plan dependencies
@@ -1009,7 +1029,7 @@ jobs:
   llama-cpp-dgx-spark-qualification:
     name: Protected llama.cpp DGX Spark qualification
     needs: llama-cpp-dgx-spark-plan
-    if: ${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}
+    if: ${{ !cancelled() && needs.llama-cpp-dgx-spark-plan.result == 'success' }}
     runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
     environment: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
     timeout-minutes: 180
@@ -1048,7 +1068,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
       - name: Set up the isolated Spark registry builder
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
@@ -1101,7 +1121,7 @@ jobs:
 
   native-runtime-qualification-producer-plan:
     needs: generate-matrix
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
+    if: ${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1138,7 +1158,7 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -1241,7 +1261,7 @@ jobs:
   native-runtime-qualification-podman-toolchain:
     name: Build pinned native Podman toolchain / ${{ matrix.architecture }}
     needs: [generate-matrix, native-runtime-qualification-producer-plan]
-    if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    if: ${{ !cancelled() && needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1619,7 +1639,7 @@ jobs:
       - generate-matrix
       - native-runtime-qualification-podman-toolchain
       - native-runtime-qualification-producer-plan
-    if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    if: ${{ !cancelled() && needs.native-runtime-qualification-podman-toolchain.result == 'success' && needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.native-runtime-qualification-producer-plan.outputs.matrix) }}
@@ -1673,7 +1693,7 @@ jobs:
       - name: Set up Node for candidate execution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-workflow/.github/actions/setup-reviewed-npm
@@ -2441,7 +2461,13 @@ jobs:
           set -euo pipefail
           install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
           sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$INSTALLER_RECEIPT_PARENT"
-          sudo -u "$ACCOUNT" env -i \
+          telemetry_env=()
+          for telemetry_name in CI GITHUB_ACTIONS GITHUB_RUN_ID GITHUB_RUN_ATTEMPT NEMOCLAW_TELEMETRY_TEST_LABEL NEMOCLAW_DISABLE_TELEMETRY; do
+            if [[ ${!telemetry_name+x} ]]; then
+              telemetry_env+=("$telemetry_name=${!telemetry_name}")
+            fi
+          done
+          sudo -u "$ACCOUNT" env -i "${telemetry_env[@]}" \
             CONTAINERS_CONF="$CONTAINERS_CONFIG" \
             CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             HOME="$QUALIFICATION_HOME" \
@@ -2932,7 +2958,7 @@ jobs:
       - name: Set up Node for qualification aggregation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.qualification-aggregate/.github/actions/setup-reviewed-npm
@@ -3186,19 +3212,20 @@ jobs:
 
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
-        with:
-          build-cli: "false"
-
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
 
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
+        with:
+          build-cli: "false"
+          install-dependencies: "false"
+
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Record immutable Deep Agents Code base evidence
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}
@@ -3235,7 +3262,7 @@ jobs:
             "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3411,7 +3438,7 @@ jobs:
   # the shared job's runner, setup, timeout, permissions, and artifact policy.
   shared-e2e:
     name: Shared E2E (${{ matrix.execution_id }})
-    needs: generate-matrix
+    needs: [generate-matrix, package-openshell-sdk]
     if: ${{ needs.generate-matrix.outputs.test_matrix != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -3437,13 +3464,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3715,7 +3752,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   openshell-gateway-auth-contract:
-    needs: generate-matrix
+    needs: [generate-matrix, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -3731,7 +3768,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_CANDIDATE_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
-      DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
+      DOCKER_GRPC_PROBE_IMAGE: "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3742,13 +3779,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3818,24 +3865,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
 
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
+        with:
+          build-cli: "false"
+          install-dependencies: "false"
+
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -4104,22 +4152,23 @@ jobs:
 
       - *dockerhub-auth
 
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
-        with:
-          build-cli: "false"
-
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
 
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
+        with:
+          build-cli: "false"
+          install-dependencies: "false"
+
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4239,7 +4288,7 @@ jobs:
 
   openshell-credential-generation-window:
     name: OpenShell credential generation window (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
     runs-on: ubuntu-latest
     permissions:
@@ -4280,13 +4329,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4420,7 +4479,7 @@ jobs:
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.trusted-openshell-dev-artifact/.github/actions/setup-reviewed-npm
@@ -4439,7 +4498,7 @@ jobs:
 
   mcp-bridge-dev:
     name: MCP bridge dev (${{ matrix.agent }}, ${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix, openshell-dev-artifact]
+    needs: [base-image-publication, generate-matrix, openshell-dev-artifact, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
     permissions:
@@ -4484,7 +4543,7 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
           package-manager-cache: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4572,15 +4631,23 @@ jobs:
       # Dependency preparation can read candidate project configuration. Keep
       # it after the trusted installer has consumed the verified OpenShell
       # assets and Docker credentials have been revoked.
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
 
-      # The restore action executes the candidate CLI for its final identity
-      # check. Candidate-controlled state starts with dependency preparation.
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
+
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4665,7 +4732,7 @@ jobs:
   # Manual PR qualification also requires the exact candidate activation contract.
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-multiarch-startup') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
@@ -4779,7 +4846,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           path: .trusted-hermes-resolver
-          sparse-checkout: .github/actions/resolve-reviewed-hermes-platform
+          sparse-checkout: |
+            .github/actions/resolve-reviewed-hermes-platform
+            scripts/checks/resolve-managed-pr-base.sh
+            scripts/lib/dockerfile-copy-sources.mts
           fetch-depth: 1
           persist-credentials: false
 
@@ -4809,23 +4879,51 @@ jobs:
             [registry."localhost:5000"]
               http = true
 
+      - id: openclaw-base
+        name: Reuse only an input-equivalent published OpenClaw base
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          AGENT: openclaw
+          BASE_ALIAS: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+          BASE_DOCKERFILE: Dockerfile.base
+          BASE_REPOSITORY: ghcr.io/nvidia/nemoclaw/sandbox-base
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          DISPLAY_NAME: OpenClaw
+          LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/openclaw-base:${{ inputs.checkout_sha }}
+          PLATFORM: ${{ matrix.platform }}
+          RESOLUTION_MODE: reference-or-candidate
+        shell: bash
+        run: .trusted-hermes-resolver/scripts/checks/resolve-managed-pr-base.sh
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
 
-      - name: Build shared policy boundary
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
+
+      - name: Build candidate CLI and shared policy boundary
         shell: bash
         run: |
           set -euo pipefail
-          [[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
-            echo "::error::Shared policy boundary output exists before the candidate build" >&2
+          [[ ! -e dist && ! -L dist && ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
+            echo "::error::CLI or shared policy boundary output exists before the candidate build" >&2
             exit 1
           }
-          npm run build:policy-boundary
+          npm run build:cli
           for artifact in \
             nemoclaw/dist/shared/openshell-policy-boundary.cjs \
-            nemoclaw/dist/shared/sandbox-name.cjs; do
+            nemoclaw/dist/shared/sandbox-name.cjs \
+            dist/lib/actions/sandbox/channel-status.js; do
             [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {
               echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2
               exit 1
@@ -4898,13 +4996,19 @@ jobs:
           CANDIDATE_BASES: ${{ inputs.checkout_sha != '' }}
           DCODE_BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           HERMES_BASE_REF: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}
+          OPENCLAW_BASE_REF: ${{ steps.openclaw-base.outputs.ref }}
           PLATFORM: ${{ matrix.platform }}
         shell: bash
         run: |
           set -euo pipefail
           case "$CANDIDATE_BASES" in
             true)
-              printf 'openclaw=candidate\nhermes=candidate\ndcode=candidate\n' >> "$GITHUB_OUTPUT"
+              [[ "$OPENCLAW_BASE_REF" == candidate ||
+                "$OPENCLAW_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+                echo "::error::Trusted OpenClaw base resolver returned an invalid reference" >&2
+                exit 1
+              }
+              printf 'openclaw=%s\nhermes=candidate\ndcode=candidate\n' "$OPENCLAW_BASE_REF" >> "$GITHUB_OUTPUT"
               exit 0
               ;;
             false) ;;
@@ -5039,6 +5143,10 @@ jobs:
               echo "::error::Protected managed-image contract changed platform" >&2
               exit 1
             }
+            if [[ "$agent" == "hermes" ]]; then
+              npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+                --image "$reference" --platform "$platform"
+            fi
             npx --no-install tsx scripts/checks/run-managed-image-direct-e2e.ts \
               --agent "$agent" \
               --image "$reference" \
@@ -5048,7 +5156,8 @@ jobs:
               --arg digest "$digest" \
               --arg platform "$platform" \
               --arg reference "$reference" \
-              '{agent: $agent, digest: $digest, platform: $platform, reference: $reference}' \
+              '{agent: $agent, digest: $digest, platform: $platform, reference: $reference} +
+                (if $agent == "hermes" then {hermesDiscordStatus: "passed"} else {} end)' \
               >> "$direct_runs"
           done < <(jq -c '.[]' "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT")
 
@@ -5253,6 +5362,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          printf 'NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS=%s000\n' "$(date +%s)" >> "$GITHUB_ENV"
           [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && ( ( "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ) || ( "$EVENT_NAME" == "workflow_dispatch" && "$REF" == refs/heads/* ) ) ]] || {
             echo "::error::Protected managed-image runtime must run from NVIDIA/NemoClaw" >&2
             exit 1
@@ -5311,7 +5421,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
 
@@ -5442,7 +5552,8 @@ jobs:
                 exit 1
               }
             else
-              [[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&
+              [[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&
+                 "$reference" == "${repository}@${digest}" &&
                  ( -z "$expected_published" || "$reference" == "$expected_published" ) ]] || {
                 echo "::error::prepared ${agent} base does not match the selected source" >&2
                 exit 1
@@ -5539,6 +5650,7 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-protected-runtime.test.ts
 
       - name: Remove isolated protected runtime registry
+        timeout-minutes: 2
         if: always()
         shell: bash
         run: |
@@ -5565,6 +5677,7 @@ jobs:
           fi
 
       - name: Restore trusted OpenShell sources
+        timeout-minutes: 1
         if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
         shell: bash
         env:
@@ -5575,6 +5688,7 @@ jobs:
           node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
 
       - name: Upload protected managed-image runtime artifacts
+        timeout-minutes: 4
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
@@ -5582,6 +5696,7 @@ jobs:
           path: e2e-artifacts/live/managed-image-protected-runtime/
 
       - name: Clean up Docker auth
+        timeout-minutes: 1
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
@@ -5662,22 +5777,23 @@ jobs:
 
       - *dockerhub-auth
 
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
-        with:
-          build-cli: "false"
-
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
           path: ${{ runner.temp }}/openshell-sdk
 
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
+        with:
+          build-cli: "false"
+          install-dependencies: "false"
+
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5725,7 +5841,7 @@ jobs:
 
   portable-hermes-finalization:
     name: Portable Hermes finalization (Podman 5.7, NVIDIA GPU)
-    needs: [generate-matrix, portable-podman-toolchain]
+    needs: [generate-matrix, portable-podman-toolchain, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'portable-hermes-finalization') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 90
@@ -5907,8 +6023,9 @@ jobs:
             exit 1
           fi
           [[ "$(grep -Fxc 'cgroups = "disabled"' "$config")" == 1 ]]
-          # The registry must inherit the finite API-service TasksMax boundary.
-          # A per-container systemd leaf failed before the registry could serve HTTP.
+          # Podman can place a rootless registry in a sibling scope even with
+          # container cgroups disabled. The live probe verifies its actual
+          # cgroup and every limiting ancestor after registry HTTP readiness.
           service=nemoclaw-native-podman-e2e.service
           service_pid="$(/usr/bin/systemctl --user show "$service" --property=MainPID --value)"
           [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
@@ -5969,7 +6086,7 @@ jobs:
           done
           if [[ "$group" != / ]]; then failure=cgroup_depth; fi
           jq -n --arg failure "$failure" --argjson minimum "$minimum" \
-            --arg containerCgroups inherited-service \
+            --arg containerCgroups observed-after-registry-launch \
             --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
             --arg limitNproc "$limit_nproc" \
             --arg nprocSoft "$nproc_soft" --arg userTasks "$user_tasks" \
@@ -6006,13 +6123,23 @@ jobs:
             docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 \
             -c ':'
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6180,7 +6307,7 @@ jobs:
 
   hermes-gpu-startup:
     name: Hermes GPU startup (${{ matrix.scenario }}, ${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 90
@@ -6305,13 +6432,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6323,7 +6460,7 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
 
       - name: Reinstall reviewed npm after Node reassertion
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6510,7 +6647,7 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6561,7 +6698,7 @@ jobs:
       - name: Set up Node for Station controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -6583,7 +6720,7 @@ jobs:
 
   cloud-onboard:
     name: Cloud onboard (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'cloud-onboard') }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
@@ -6644,13 +6781,23 @@ jobs:
         with:
           packages: expect
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6750,7 +6897,7 @@ jobs:
 
   messaging-providers:
     name: Messaging providers (${{ matrix.runtime_provider }})
-    needs: [base-image-publication, generate-matrix]
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'messaging-providers') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -6787,13 +6934,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351
         with:
           build-cli: "false"
+          install-dependencies: "false"
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 

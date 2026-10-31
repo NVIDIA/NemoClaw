@@ -44,6 +44,8 @@ export interface SandboxStatusTextContext extends Pick<
   | "servingProcessHealth"
 > {
   sandboxName: string;
+  unlockedStatusRead: boolean;
+  inferenceProbeSuppressed?: boolean;
   statusAgent: SandboxStatusAgentInfo;
   phase: string | null;
 }
@@ -93,7 +95,9 @@ export function sandboxGpuProofStatusSuffix(
 function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   const label = probe.probeLabel ? `Inference (${probe.probeLabel})` : "Inference";
   if (!probe.probed) {
-    console.log(`    ${label}: ${D}not probed${R} (${probe.detail})`);
+    console.log(
+      `    ${label}: ${D}${probe.degraded ? "degraded" : "not probed"}${R} (${probe.detail})`,
+    );
     return;
   }
   if (probe.ok) {
@@ -114,14 +118,15 @@ function printServingProcessHealth(
 }
 
 function printInferenceStatus(context: SandboxStatusTextContext): void {
-  if (context.inferenceHealth) {
+  if (context.lookup.state !== "present") {
+    console.log("    Inference: not verified (gateway/sandbox state not verified)");
+  } else if (context.inferenceProbeSuppressed) {
+    console.log("    Inference: not probed (another lifecycle operation is in progress)");
+  } else if (context.inferenceHealth) {
     printInferenceProbeLine(context.inferenceHealth);
     for (const subprobe of context.inferenceHealth.subprobes ?? []) {
       printInferenceProbeLine(subprobe);
     }
-  }
-  if (context.lookup.state !== "present") {
-    console.log("    Inference: not verified (gateway/sandbox state not verified)");
   }
   printServingProcessHealth(context.statusAgent, context.servingProcessHealth);
 }
@@ -235,12 +240,9 @@ async function printAgentVersion(
 ): Promise<void> {
   try {
     const { lookup, sandboxName, statusAgent } = context;
-    const shouldProbe = shouldProbeSandboxRuntimeVersion(
-      lookup,
-      context.phase,
-      sandbox,
-      statusAgent.agentRuntime,
-    );
+    const shouldProbe =
+      !context.unlockedStatusRead &&
+      shouldProbeSandboxRuntimeVersion(lookup, context.phase, sandbox, statusAgent.agentRuntime);
     const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName, {
       forceProbe: shouldProbe,
       skipProbe: !shouldProbe,

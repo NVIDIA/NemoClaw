@@ -9,7 +9,8 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { discoverHostAddress } from "../fixtures/host-address.ts";
+import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
+import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/state-validation.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -26,7 +27,7 @@ import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 // the ordered step markers appear in order, ending with `[8/8] Policy
 // presets`, before the wizard can report completion.
 //
-// This is a hermetic, mock-provider variant of the reporter's journey
+// This mock-provider variant follows the reporter's journey
 // (`nemoclaw onboard` with "Other OpenAI-compatible endpoint"). It selects
 // Personal so the same journey also proves the hosted custom endpoint remains
 // on inference.local without acquiring a native provider attachment.
@@ -70,29 +71,31 @@ test(
     });
 
     progress.phase("start the hosted custom compatible-endpoint fixture");
-    // Advertise a runner address instead of the OpenShell-managed host alias.
-    // That keeps this fixture in the hosted-custom classification while the
-    // explicit trust entry admits the private E2E address through SSRF checks.
-    const hostedEndpointAddress = (
-      await discoverHostAddress(host, "host-address-for-hosted-custom-personal")
-    ).address;
-    const onboardEnv = {
-      ...buildAvailabilityProbeEnv(),
-      NEMOCLAW_TRUSTED_PRIVATE_HOSTS: hostedEndpointAddress,
-    };
+    const onboardEnv = buildAvailabilityProbeEnv();
     const apiKey = `e2e-6042-${randomBytes(16).toString("hex")}`;
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "PONG",
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       model: MODEL,
       progress,
-      publicHost: hostedEndpointAddress,
       requireAuth: true,
       responseText: "PONG",
     });
     artifacts.addRedactionValues([apiKey]);
     cleanup.trackDisposable("close fake compatible-endpoint server", () => fake.close());
+    // Pasta copies the runner's primary address into its namespace. A public
+    // endpoint reaches the host fixture from both the CLI and the sandbox.
+    const tunnel = await startPublicMcpHttpsTunnel({
+      cloudflaredBin: await resolveVerifiedCloudflaredBinary(cleanup, host),
+      cleanup,
+      label: "policy preset inference",
+      progress,
+      server: { port: Number(new URL(fake.baseUrl).port), close: () => fake.close() },
+      originProtocol: "http",
+      readinessPath: "/v1/models",
+      readinessStatus: 200,
+    });
     cleanup.trackSandbox(host, SANDBOX_NAME, {
       artifactName: "cleanup-nemoclaw-destroy-onboard-policy-order",
       env: onboardEnv,
@@ -128,7 +131,7 @@ test(
         // src/lib/onboard/providers.ts's provider list for the openclaw agent.
         { trigger: "Select your inference provider:", response: "4\n" },
         { trigger: "Other OpenAI-compatible endpoint", response: "" },
-        { trigger: "OpenAI-compatible base URL", response: `${fake.baseUrl}\n` },
+        { trigger: "OpenAI-compatible base URL", response: `${tunnel.origin}/v1\n` },
         { trigger: "Other OpenAI-compatible endpoint API key:", response: `${apiKey}\n` },
         { trigger: "endpoint model", response: `${MODEL}\n` },
         { trigger: "Choose an action:", response: "1\n" },

@@ -25,7 +25,14 @@ const MACHINE_AUTHORITY_TABLES_TO_CLEAR = [
   "web_push_subscriptions",
 ] as const;
 
-const MACHINE_AUTHORITY_COLUMN_UPDATES = [
+const MACHINE_LOCAL_ROW_UPDATES = [
+  {
+    table: "diagnostic_events",
+    // These fingerprints belong to the source config and its local key.
+    // Discard the cache when sanitizing replacement configuration.
+    statement:
+      "DELETE FROM diagnostic_events WHERE scope = 'config-snapshot' AND event_key = 'latest'",
+  },
   {
     table: "channel_ingress_events",
     statement:
@@ -37,7 +44,7 @@ const MACHINE_AUTHORITY_COLUMN_UPDATES = [
   },
 ] as const;
 
-/** Remove local authority from an archive copy without changing its tar member size. */
+/** Clear machine-local state from an archive copy without changing its tar member size. */
 export function withoutOpenClawSqliteMachineAuthority(payload: Buffer): Buffer | string {
   if (!payload.subarray(0, 16).equals(Buffer.from("SQLite format 3\0", "latin1"))) {
     return "the OpenClaw state database is not a SQLite database";
@@ -60,7 +67,7 @@ export function withoutOpenClawSqliteMachineAuthority(payload: Buffer): Buffer |
     for (const table of MACHINE_AUTHORITY_TABLES_TO_CLEAR) {
       if (tables.has(table)) database.exec(`DELETE FROM ${table}`);
     }
-    for (const { table, statement } of MACHINE_AUTHORITY_COLUMN_UPDATES) {
+    for (const { table, statement } of MACHINE_LOCAL_ROW_UPDATES) {
       if (tables.has(table)) database.exec(statement);
     }
     database.exec("COMMIT;");

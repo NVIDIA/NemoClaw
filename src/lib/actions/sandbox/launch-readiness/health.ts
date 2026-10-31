@@ -16,6 +16,7 @@ import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../../inference/openrouter";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
+import { checkTerminalAgentVersion } from "../../../agent/terminal-version-drift";
 import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
@@ -38,7 +39,10 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
-import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
+import {
+  isTransientInferenceInvocationFailure,
+  runSandboxInferenceInvocationProbe,
+} from "../inference-route-health";
 import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
@@ -225,12 +229,19 @@ export function getNativeProviderAttachment(entry: SandboxEntry): NativeProvider
   return recordedNativeProviderAttachment(entry) ?? null;
 }
 
+export function hasRecordedNativeNvidiaAttachment(entry: SandboxEntry): boolean {
+  return (
+    normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) !== undefined
+  );
+}
+
 export async function requireNativeInferenceHealth(input: {
   sandboxName: string;
   gatewayName: string;
   agentName?: string;
   entry: SandboxEntry;
   deps: LaunchReadinessHealthDeps;
+  allowTransientNvidiaInvocation?: boolean;
 }): Promise<boolean> {
   if (input.entry.nativeLocalProviderAttachment !== undefined) {
     const expected = normalizeNativeLocalProviderAttachment(
@@ -310,6 +321,14 @@ export async function requireNativeInferenceHealth(input: {
     ...(expected.endpointUrl ? { nativeEndpointUrl: expected.endpointUrl } : {}),
   });
   if (!invocation.ok) {
+    if (
+      nvidia &&
+      input.allowTransientNvidiaInvocation === true &&
+      isTransientInferenceInvocationFailure(invocation)
+    ) {
+      console.error(`  Warning: NVIDIA inference is degraded (${invocation.detail}).`);
+      return true;
+    }
     throw new LaunchReadinessObservationError("health", "inference request");
   }
   return true;
@@ -363,6 +382,17 @@ export async function requireLaunchSemanticHealth(
       const trustedExit = smoke.output?.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
       if (!trustedExit) throw new LaunchReadinessEvidenceError();
       throw new LaunchReadinessObservationError("health");
+    }
+    if (agent.expectedVersion) {
+      if (!deps.commandExecutor) throw new LaunchReadinessEvidenceError();
+      const version = await checkTerminalAgentVersion(
+        sandboxName,
+        agent,
+        deps.commandExecutor,
+        gatewayName,
+      );
+      if (version.status === "unverified") throw new LaunchReadinessEvidenceError();
+      if (version.status === "stale") throw new LaunchReadinessObservationError("health");
     }
   } else {
     const gatewayStartedAt = performance.now();

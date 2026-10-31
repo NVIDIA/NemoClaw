@@ -272,7 +272,9 @@ Hermes sends the Tavily placeholder in the JSON `api_key` field, so the `tavily`
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Deep Agents uses the NemoClaw-managed Tavily opt-in path.
-The managed `dcode` launchers reject direct `TAVILY_API_KEY` injection, and the sandbox can reach `api.tavily.com` only after you apply the `tavily` preset and attach the `tavily-search` OpenShell provider.
+The managed `dcode` launchers reject direct `TAVILY_API_KEY` injection.
+The `tavily` preset and an attached Tavily provider can independently grant egress to `api.tavily.com`.
+Removing the preset also detaches this sandbox’s Tavily providers and verifies effective removal while preserving shared gateway credentials.
 Because OpenShell attributes these calls to the sandbox Python interpreter, the Tavily egress grant is process-wide for managed sandbox Python, not a `dcode`-only boundary.
 </AgentOnly>
 OpenShell replaces these placeholders only when the request reaches the matching egress policy path.
@@ -293,26 +295,29 @@ Broader binary access would let unrelated sandbox processes send data to Tavily 
 
 ## Operation Telemetry
 
-The installer and supported CLI commands attempt to send anonymous operation telemetry to NVIDIA's fixed TEST receiver by default.
-Ordinary runs send an empty `testLabel`.
-QA runs can set `NEMOCLAW_TELEMETRY_TEST_LABEL` to attach a valid label to the same receiver.
-Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
-`<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40 of the same characters.
-Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
-A missing label sends ordinary telemetry; an invalid value disables telemetry for that run.
-Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
-It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
-NemoClaw attempts to send one record when a covered operation finishes.
-`--force-station-install` stops after Station validation and does not emit an operation record.
-It limits telemetry collection and delivery to five seconds total.
-If either step fails or times out, the operation result stays the same.
-Help requests and other CLI commands do not emit a record.
-The record describes the operation result and approved configuration categories, such as model and policy choices.
+NemoClaw collects operation telemetry to help improve the project.
+The data shows usage of installation, sandbox, and configuration workflows.
+
+Records include operation outcomes, timestamps, software versions, platforms, environment and agent counts, and observed model, provider, and configuration choices.
+Observed model IDs and configuration names can include private or custom values.
+Observed names and versions are limited to 64 characters; longer values become `unknown` with a `collection_error` status.
+An oversized value does not discard the rest of the record.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
 Production delivery is not enabled.
 
-Set `NEMOCLAW_DISABLE_TELEMETRY=1` in the installer or CLI process environment to suppress collection and delivery.
-NemoClaw also suppresses telemetry for `CI=true`, `CI=1`, `GITHUB_ACTIONS=true`, `VITEST=true`, or `NODE_ENV=test`.
-This setting controls NemoClaw operation telemetry; an agent or third-party tool can have separate diagnostics settings.
+Telemetry payloads exclude user content, credentials, private endpoints, file paths, and persistent user, device, session, or sandbox identifiers.
+
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
+
+### CI Operation Labels
+
+NemoClaw recognizes continuous integration (CI) from `CI=true`, `CI=1`, or `GITHUB_ACTIONS=true`.
+CI records use `qa-ci:gh-<run-id>:attempt-<run-attempt>` when the GitHub Actions identity is valid.
+Other CI runs and invalid GitHub run identities use `qa-ci:generic:attempt-1`.
+These labels replace valid explicit QA labels in CI.
+Malformed explicit labels, `VITEST=true`, and `NODE_ENV=test` suppress telemetry.
+CI labels describe source runs and do not authenticate GitHub identity.
+Outside CI, `testLabel` is empty unless `NEMOCLAW_TELEMETRY_TEST_LABEL` supplies a valid QA label.
 
 ## Filesystem Controls
 

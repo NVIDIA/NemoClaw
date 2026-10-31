@@ -217,6 +217,26 @@ describe("sandbox inference invocation probe", () => {
     expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
   });
 
+  it("classifies only a curl-confirmed timeout as transient (#13616)", async () => {
+    const execute = vi.fn(async () => ({
+      status: 28,
+      stdout: "curl-error:28\n",
+      stderr: "secret-shaped diagnostic",
+    }));
+    const result = await probeSandboxInferenceInvocation(input, { execute });
+    expect(result).toMatchObject({ ok: false, httpStatus: null, timedOut: true });
+    expect(JSON.stringify(result)).not.toContain("secret-shaped diagnostic");
+
+    execute.mockResolvedValue({ status: 28, stdout: "", stderr: "" });
+    expect(await probeSandboxInferenceInvocation(input, { execute })).toMatchObject({
+      ok: false,
+      httpStatus: null,
+    });
+    expect(await probeSandboxInferenceInvocation(input, { execute })).not.toHaveProperty(
+      "timedOut",
+    );
+  });
+
   it("names the account entitlement cause behind an invocation 404 (#10879)", async () => {
     const execute = vi.fn(async () => ({
       status: 1,

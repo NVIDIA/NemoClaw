@@ -61,7 +61,10 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
+      - "test/package-contract/channels/hermes-discord-runtime.test.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
+      - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"
@@ -147,7 +150,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -193,6 +196,8 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            agents/langchain-deepagents-code/patch-dependency-compatibility.py \
+            agents/langchain-deepagents-code/dependency-overrides.in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
             src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
@@ -539,7 +544,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -933,9 +938,33 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install managed-image direct harness dependencies
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
         run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+          set -euo pipefail
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts prepare
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts check
+          fi
           npm run build:policy-boundary
+
+      - name: Build CLI for Hermes runtime contract
+        if: matrix.agent == 'hermes'
+        run: npm run build:cli
+
+      - name: Verify native Hermes Discord status before publication
+        if: matrix.agent == 'hermes'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
 
       - name: Exercise managed startup root stdin and hold
         shell: bash
@@ -949,6 +978,27 @@ jobs:
             --agent "$AGENT" \
             --image "$IMAGE_REFERENCE" \
             --platform "$PLATFORM"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.contract.outputs.reference }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-pr-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Log in to GHCR for exact same-repository PR digest
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -1002,6 +1052,25 @@ jobs:
         shell: bash
         run: docker logout ghcr.io
 
+      - name: Pull exact published PR managed image
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          scripts/checks/pull-public-exact-digest.sh "$IMAGE_REFERENCE" "$PLATFORM"
+
+      - name: Verify published PR Hermes Discord status
+        if: matrix.agent == 'hermes' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
+
       - name: Export exact published PR managed-image contract
         if: github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
@@ -1025,7 +1094,6 @@ jobs:
           }
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
-          scripts/checks/pull-public-exact-digest.sh "$reference" "$PLATFORM"
           if [ "$AGENT" = "hermes" ]; then
             published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
             if [ "$published_layer_count" -gt 125 ]; then
@@ -1127,7 +1195,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1259,7 +1327,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
@@ -1605,7 +1673,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
@@ -2143,7 +2211,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.18.1
+          node-version: 24.22.1
 
       - name: Install reviewed npm
         uses: ./.github/actions/setup-reviewed-npm
@@ -2380,9 +2448,23 @@ jobs:
           sbom: true
 
       - name: Install managed-image publication harness dependencies
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
         run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+          set -euo pipefail
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts prepare
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts check
+          fi
           npm run build:policy-boundary
+
+      - name: Build CLI for Hermes runtime contract
+        if: matrix.agent == 'hermes'
+        run: npm run build:cli
 
       - name: Validate exact managed image before promotion
         id: validate
@@ -2617,6 +2699,39 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Verify native Hermes Discord status before publication
+        if: matrix.agent == 'hermes'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.validate.outputs.reference }}
+          PLATFORM: ${{ matrix.platform }}
+          DOCKER_CONFIG: ${{ steps.build.outputs.docker-config }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
+
+      - name: Qualify Hermes root entrypoint and Switchyard package
+        if: matrix.agent == 'hermes'
+        timeout-minutes: 30
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
+          NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.validate.outputs.local_id }}
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: |
+          npx --no-install vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts
+
+      - name: Upload Hermes package qualification artifacts
+        if: always() && matrix.agent == 'hermes'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-publication-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Capture exact managed image publication evidence
         id: evidence

@@ -694,7 +694,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
     profile: "standard",
-    timeoutMinutes: 90,
+    timeoutMinutes: 150,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
@@ -718,15 +718,23 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("dashboard-remote-bind", {
-    displayName: "Dashboard: retains audit findings when bound remotely",
-    agentRuntime: "openclaw",
+    displayName: "Dashboard: retains OpenClaw audit findings and Hermes API isolation",
+    agentRuntime: "openclaw + hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 65,
+    timeoutMinutes: 115,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
+    owningPaths: [
+      ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
+      "src/lib/agent/hermes-api-forward.ts",
+      "src/lib/onboard/agent-dashboard-forward.ts",
+      "src/lib/onboard/dashboard.ts",
+      "src/lib/onboard/dashboard-runtime.ts",
+      "test/e2e/live/dashboard-remote-bind-env.ts",
+      "test/e2e/live/json-envelope.ts",
+    ],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
@@ -764,6 +772,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
         "src/lib/onboard/dashboard.ts",
         "src/lib/onboard/dashboard-forward-control.ts",
         "src/lib/onboard/dashboard-runtime.ts",
+        "src/lib/agent/hermes-api-forward.ts",
         "src/lib/onboard/agent-dashboard-forward.ts",
         "src/lib/onboard/sandbox-reuse.ts",
       ],
@@ -889,7 +898,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-discord", {
-    displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
+    displayName: "Messaging: Hermes isolates Discord credentials and verifies transport",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",
     profile: "nvidia-inference",
@@ -915,7 +924,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("hermes-inference-switch", {
-    displayName: "Inference: Hermes switches to native NVIDIA and remains responsive",
+    displayName: "Inference: Hermes switches to NVIDIA and preserves Discord across rebuild",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",
@@ -1014,7 +1023,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   dockerOnlyTarget("hosted-inference-openrouter", {
     displayName: "Inference: completes native OpenRouter agent requests",
-    agentRuntime: "openclaw + langchain-deepagents-code",
+    agentRuntime: "openclaw + hermes + langchain-deepagents-code",
     prAdvisorSelectable: true,
     owningPaths: [
       "test/e2e/live/inference-routing-credential-scan.ts",
@@ -1028,7 +1037,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     releaseRequired: false,
     testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
     selector: OPENROUTER_SMOKE.id,
-    timeoutMinutes: 90,
+    timeoutMinutes: 140,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
@@ -1119,6 +1128,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    // ubuntu-latest (26.04) ships only Python 3.14, which Model Router does not
+    // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
+    runner: "ubuntu-24.04",
     owningPaths: [
       "nemoclaw-blueprint/router/pool-config.yaml",
       "src/lib/actions/sandbox/destroy-preflight.ts",
@@ -1191,13 +1203,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   managedRuntimeTarget("onboard-policy-preset-sequencing", {
     displayName: "Onboarding: preserves policy preset step order",
     agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint: "Ubuntu; no inference endpoint",
+    environmentOrInferenceEndpoint: "Ubuntu; public HTTPS compatible inference fixture",
     profile: "standard",
     timeoutMinutes: 60,
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/onboard-interactive-pty.ts"],
+    owningPaths: [
+      "test/e2e/live/onboard-interactive-pty.ts",
+      "test/e2e/live/cloudflared-prerequisite.ts",
+      "test/e2e/live/mcp-bridge-servers.ts",
+    ],
     environment: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
   }),
   managedRuntimeTarget("onboard-resume", {
@@ -1316,6 +1332,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/native-provider/",
       "src/lib/onboard/setup-inference.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "test/e2e/live/openclaw-anthropic-provider.ts",
+      "test/e2e/live/cloudflared-prerequisite.ts",
+      "test/e2e/live/mcp-bridge-servers.ts",
     ],
     environment: {
       ...nonInteractive,

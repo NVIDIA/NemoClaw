@@ -3,6 +3,8 @@
 
 import { expect, it, vi } from "vitest";
 import { handleOnboardCommandError } from "./error-reporting";
+import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
+import { fixture } from "../../adapters/openshell/provider-policy.test-support";
 
 it("reports nested onboarding causes without replacing the failure", () => {
   const primary = new Error("Created sandbox identity changed");
@@ -64,4 +66,20 @@ it("keeps cancellation and ordinary failure output unchanged", () => {
   expect(error).not.toHaveBeenCalled();
   expect(handleOnboardCommandError(failure, { error }, "EOF")).toBe(1);
   expect(error).toHaveBeenCalledExactlyOnceWith("  Installation cancelled");
+});
+
+it("prints the providers_v2 refusal with the administrator command on its own line (#13811)", async () => {
+  const refusal = await requireNativeProviderPolicy("selected", fixture("false")).catch(
+    (e: unknown) => e,
+  );
+  const error = vi.fn();
+  expect(handleOnboardCommandError(refusal, { error }, null)).toBe(1);
+  const lines = (error.mock.calls.flat() as string[]).join("\n").split("\n");
+  expect(lines).toContain(
+    "    openshell settings set -g selected --global --key providers_v2_enabled --value true --yes",
+  );
+  expect(lines).toContain("  Then retry.");
+  expect(lines[0]).toBe(
+    "  Native local inference requires providers_v2_enabled=true on gateway 'selected'.",
+  );
 });

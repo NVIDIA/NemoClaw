@@ -264,9 +264,11 @@ The OpenShell CLI has no command that starts a gateway, and `openshell status` o
   instead of destroying and recreating.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-  If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled
-  Tavily Search, or want to pick up a new base image without losing the complete
-  native home, use `rebuild` instead of destroying and recreating.
+  If you changed the underlying Dockerfile, upgraded Deep Agents Code, or want
+  to pick up a new base image without losing the complete native home, use
+  `rebuild` instead of destroying and recreating.
+  To enable Tavily egress, follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
+  The procedure requires an explicit provider attachment. Repeat the attachment after rebuilding if the sandbox still needs Tavily.
 </AgentOnly>
 
 ```bash
@@ -413,7 +415,7 @@ nemohermes <sandbox-name> gateway-token --quiet
 ```
 
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
-For a native local selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
+For a native local or native NVIDIA selection, NemoClaw refreshes only the managed credential references after restore and before restart, preserving restored model and provider settings.
 The refresh validates the replacement sandbox identity and recorded route. An unsafe or changed configuration stops activation and preserves the backup and any acquired cron gate.
 A legacy local sandbox without a valid Hermes attachment must be backed up and recreated before native local resume or rebuild. Use `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` after preserving required data.
 Live qualification of the Hermes native local lifecycle is pending.
@@ -489,7 +491,16 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It continues deletion when the live sandbox still has the journaled source identity.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff.
-- It starts a new replacement when the journaled replacement provably never took effect.
+- It starts a new replacement when recovery proves that the recorded replacement is absent.
+
+On Linux, an interrupted create can leave a retained recovery record without a replacement identity.
+When that record matches the saved rebuild journal and source registry row, rerun `$$nemoclaw <sandbox-name> rebuild` with the same settings.
+NemoClaw checks that the recorded gateway and the default Docker daemon report the replacement absent, then clears the retained blocker and resumes the saved rebuild.
+It keeps the source registry row, journal, and backup.
+A successful reconciliation reports `Cleared absent replacement recovery for '<name>'; resuming its saved rebuild.`
+
+If the gateway or Docker daemon cannot confirm absence, the runtime binding changed, or the recovery records disagree, the command exits nonzero and keeps the recovery state.
+Correct the reported condition and rerun the same rebuild command; keep the recovery files and backup in place.
 
 An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
 NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.
@@ -579,7 +590,24 @@ This fail-closed behavior also applies to `rebuild --force`; NemoClaw never publ
 NemoClaw removes failed native-state captures when cleanup succeeds instead of retaining them as incomplete recovery archives.
 If that cleanup also fails, NemoClaw reports and retains the incomplete backup path.
 Preserve that path while investigating the reported failure, or remove it only after the failure is resolved and you have confirmed that the original sandbox remains intact.
-Repair source access, free backup-disk space, or remove credential-bearing content identified by the error, then rerun the rebuild while the original sandbox remains intact.
+While the original sandbox remains intact, correct the reported failure:
+
+- If the error reports a source-access failure, repair source access.
+- If the error reports insufficient space, free backup-disk space.
+- If the error reports `archive entry contains a line break`, rename the affected file or directory.
+  For a symbolic link or contained hard link with a line break in its target path, recreate the link with a target path that has no line break.
+  Native backup turns contained source hard links into separate regular files before restore.
+  The message shows the JSON-encoded first 240 characters of the affected path or link target.
+- If the error reports `archive header inspection timed out` or `archive listing timed out`, reduce the native-home size, entry count, or host disk-read load.
+  A tar listing is limited to 60 seconds. During native-state backup, header inspection must also finish before the backup deadline.
+- If any tar listing error reports `exceeded 268435456 bytes`, reduce the native-home entry count or path lengths.
+  NemoClaw limits each archive listing to 256 MiB.
+- If the error reports `archive header cannot be inspected for line breaks`, the archive has a malformed or truncated tar header or an extended-header, long-name, or long-link block larger than 1 MiB.
+  Preserve the error output and ask a NemoClaw maintainer to review it.
+- If the error identifies credential-bearing content, remove it from the native home.
+  Store any credential you still need in supported OpenShell credential storage or bindings.
+
+Then rerun the original rebuild or onboarding command with the same settings.
 
 <Warning title="Forced Rebuild Scope">
   `rebuild --force` skips the confirmation prompt. When the sandbox has MCP

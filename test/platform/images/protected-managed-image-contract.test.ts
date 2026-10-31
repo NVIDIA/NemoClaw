@@ -3,7 +3,15 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -209,6 +217,7 @@ printf '%s  %s\n' "$digest" "$1"
         DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
         HERMES_BASE_REF: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
+        OPENCLAW_BASE_REF: "candidate",
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: fixture,
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: WORKFLOW_SHA,
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: COHORT,
@@ -230,6 +239,64 @@ printf '%s  %s\n' "$digest" "$1"
   }
 }
 
+function runProtectedContracts(platform: ProtectedManagedImagePlatform, nativeStatus = 0) {
+  const fixture = mkdtempSync(path.join(tmpdir(), "protected-native-contract-"));
+  const contractFile = path.join(fixture, "contracts.json");
+  const evidenceFile = path.join(fixture, "evidence.json");
+  const calls = path.join(fixture, "calls");
+  const npx = path.join(fixture, "npx");
+  writeFileSync(contractFile, JSON.stringify(contracts(platform)));
+  writeFileSync(calls, "");
+  writeFileSync(
+    npx,
+    `#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_CALLS"
+case "$*" in
+  *run-hermes-discord-runtime-contract.mts*) exit "$NATIVE_STATUS" ;;
+esac
+`,
+  );
+  chmodSync(npx, 0o700);
+  try {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        workflowStep(
+          "managed-image-multiarch-startup",
+          "Run every exact managed-image contract directly",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          PATH: `${fixture}:${process.env.PATH ?? ""}`,
+          FIXTURE_CALLS: calls,
+          NATIVE_STATUS: String(nativeStatus),
+          BASE_SHA,
+          CHECKOUT_SHA: HEAD_SHA,
+          WORKFLOW_SHA,
+          GITHUB_RUN_ID: "42",
+          GITHUB_RUN_ATTEMPT: "1",
+          RUNNER_TEMP: fixture,
+          NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: contractFile,
+          NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE: evidenceFile,
+          NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: platform,
+          NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: COHORT,
+        },
+      },
+    );
+    const evidence: unknown = existsSync(evidenceFile)
+      ? JSON.parse(readFileSync(evidenceFile, "utf8"))
+      : undefined;
+    return { result, evidence, calls: readFileSync(calls, "utf8").trim().split("\n") };
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
 function evidence(platform: ProtectedManagedImagePlatform) {
   const built = contracts(platform);
   return {
@@ -242,6 +309,7 @@ function evidence(platform: ProtectedManagedImagePlatform) {
       digest,
       platform,
       reference,
+      ...(agent === "hermes" ? { hermesDiscordStatus: "passed" } : {}),
     })),
     headSha: HEAD_SHA,
     kind: "nemoclaw-protected-managed-image-multiarch-v1",
@@ -295,6 +363,32 @@ describe("protected managed-image build contract", () => {
     expect(dockerCalls).toBe("");
   });
 
+  it("selects an immutable published OpenClaw base for a candidate multiarch build", () => {
+    const publishedOpenClawBase = `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`;
+    const { result, output, dockerCalls } = runBaseResolution(
+      "managed-image-multiarch-startup",
+      "Resolve digest-pinned platform base images",
+      { candidate: "true", env: { OPENCLAW_BASE_REF: publishedOpenClawBase } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(`openclaw=${publishedOpenClawBase}\nhermes=candidate\ndcode=candidate\n`);
+    expect(dockerCalls).toBe("");
+  });
+
+  it.each([
+    { name: "empty", reference: "" },
+    { name: "mutable", reference: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest" },
+  ])("rejects a $name OpenClaw base reference for a candidate multiarch build", ({ reference }) => {
+    const { result, output, dockerCalls } = runBaseResolution(
+      "managed-image-multiarch-startup",
+      "Resolve digest-pinned platform base images",
+      { candidate: "true", env: { OPENCLAW_BASE_REF: reference } },
+    );
+    expect(result.status).not.toBe(0);
+    expect(output).toBe("");
+    expect(dockerCalls).toBe("");
+  });
+
   it.each(["managed-image-multiarch-startup", "managed-image-protected-runtime"])(
     "rejects an invalid candidate selection in %s",
     (jobId) => {
@@ -328,7 +422,42 @@ describe("protected managed-image build contract", () => {
     expect(dockerCalls).toBe("");
   });
 
-  it.each(PROTECTED_MANAGED_IMAGE_AGENTS)(
+  it("verifies the published OpenClaw base selected by the PR CPU cache on GPU", () => {
+    const { result, output, dockerCalls, references } = runBaseResolution(
+      "managed-image-protected-runtime",
+      "Resolve digest-pinned amd64 runtime base images",
+      { candidate: "true", localBases: true, publishedAgent: "openclaw" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(
+      `openclaw=${references[0]}\nhermes=${references[1]}\ndcode=${references[2]}\n`,
+    );
+    expect(dockerCalls).toContain(`imagetools inspect ${references[0]} --raw`);
+  });
+
+  it("rejects changed bytes for the published OpenClaw base in a PR cache", () => {
+    const { result, output, dockerCalls, references } = runBaseResolution(
+      "managed-image-protected-runtime",
+      "Resolve digest-pinned amd64 runtime base images",
+      {
+        candidate: "true",
+        localBases: true,
+        publishedAgent: "openclaw",
+        mutate(cache) {
+          writeFileSync(
+            path.join(cache, "bin", "sha256sum"),
+            `#!/bin/sh\nprintf '%s  %s\\n' '${"f".repeat(64)}' "$1"\n`,
+          );
+        },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("exact base bytes do not match the prepared digest");
+    expect(output).toBe("");
+    expect(dockerCalls).toContain(`imagetools inspect ${references[0]} --raw`);
+  });
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rejects a published %s base in a PR cache",
     (publishedAgent) => {
       const { result, dockerCalls } = runBaseResolution(
@@ -519,6 +648,37 @@ describe("protected managed-image build contract", () => {
   });
 
   it.each(PROTECTED_MANAGED_IMAGE_PLATFORMS)(
+    "qualifies native Hermes status before recording protected %s evidence (#13809)",
+    (platform) => {
+      const { result, evidence: output, calls } = runProtectedContracts(platform);
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toContain(
+        `--no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts --image localhost:5000/nemoclaw-managed-protected/hermes@sha256:${"2".repeat(64)} --platform ${platform}`,
+      );
+      expect(parseProtectedManagedImageEvidence(output, evidenceIdentity(platform))).toMatchObject({
+        directRuns: expect.arrayContaining([
+          {
+            agent: "hermes",
+            digest: `sha256:${"2".repeat(64)}`,
+            platform,
+            reference: `localhost:5000/nemoclaw-managed-protected/hermes@sha256:${"2".repeat(64)}`,
+            hermesDiscordStatus: "passed",
+          },
+        ]),
+      });
+    },
+  );
+
+  it.each(PROTECTED_MANAGED_IMAGE_PLATFORMS)(
+    "stops protected %s evidence after native Hermes status fails (#13809)",
+    (platform) => {
+      const { result, evidence: output } = runProtectedContracts(platform, 23);
+      expect(result.status, result.stderr).toBe(23);
+      expect(output).toBeUndefined();
+    },
+  );
+
+  it.each(PROTECTED_MANAGED_IMAGE_PLATFORMS)(
     "binds exact protected build and direct-start evidence on %s (#7744)",
     (platform) => {
       const value = evidence(platform);
@@ -549,6 +709,25 @@ describe("protected managed-image build contract", () => {
         evidenceIdentity("linux/arm64"),
       ),
     ).toThrow("does not match its exact contract");
+  });
+
+  it.each([undefined, "failed", "skipped"])(
+    "rejects protected evidence with Hermes Discord status %s (#13809)",
+    (hermesDiscordStatus) => {
+      const value = evidence("linux/arm64");
+      value.directRuns[1].hermesDiscordStatus = hermesDiscordStatus;
+      expect(() =>
+        parseProtectedManagedImageEvidence(value, evidenceIdentity("linux/arm64")),
+      ).toThrow("does not match its exact contract");
+    },
+  );
+
+  it("rejects protected evidence without the native Hermes result (#13809)", () => {
+    const value = evidence("linux/amd64");
+    delete value.directRuns[1].hermesDiscordStatus;
+    expect(() =>
+      parseProtectedManagedImageEvidence(value, evidenceIdentity("linux/amd64")),
+    ).toThrow("direct run has unexpected fields");
   });
 
   it.each(Array.from(CANDIDATE_MANAGED_IMAGE_AGENTS, (value) => [value]))(

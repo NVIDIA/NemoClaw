@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
 import * as receiptAuthority from "../../lib/onboard/experimental/hermes-portable-receipt";
+import { isUnlockedSandboxStatusRead } from "../../lib/actions/sandbox/status-snapshot";
 import { isMcpLifecycleLockHeld } from "../../lib/state/mcp-lifecycle-lock-acquisition";
+import { portableHostFencePath } from "../../lib/state/portable-uninstall-retirement";
+import { acquireProcessBoundLockAt, releaseProcessBoundLock } from "../../lib/state/registry/lock";
 
 const mocks = vi.hoisted(() => {
   class SandboxConfigError extends Error {
@@ -270,6 +273,49 @@ describe("sandbox oclif command adapters", () => {
     await SandboxStatusCommand.run(["alpha", "--json"], rootDir);
 
     expect(process.exitCode).toBe(1);
+  });
+
+  it("routes the text status command through the unlocked read during ordinary host contention (#11903)", async () => {
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+    mocks.showSandboxStatus.mockImplementationOnce(async (name: string) => {
+      expect(name).toBe("alpha");
+      expect(isUnlockedSandboxStatusRead()).toBe(true);
+      expect(isMcpLifecycleLockHeld(name)).toBe(false);
+    });
+    const fence = acquireProcessBoundLockAt(portableHostFencePath(stateDir));
+    try {
+      await SandboxStatusCommand.run(["alpha"], rootDir);
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+
+    expect(mocks.showSandboxStatus).toHaveBeenCalledWith("alpha");
+  });
+
+  it("routes the JSON status command through the unlocked read during ordinary host contention (#11903)", async () => {
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+    mocks.getSandboxStatusReport.mockImplementationOnce(async (name: string) => {
+      expect(name).toBe("alpha");
+      expect(isUnlockedSandboxStatusRead()).toBe(true);
+      expect(isMcpLifecycleLockHeld(name)).toBe(false);
+      return {
+        schemaVersion: 1,
+        name,
+        found: true,
+        gatewayState: "present",
+        inferenceProbeSuppressed: true,
+      };
+    });
+    const fence = acquireProcessBoundLockAt(portableHostFencePath(stateDir));
+    try {
+      await SandboxStatusCommand.run(["alpha", "--json"], rootDir);
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+
+    expect(mocks.getSandboxStatusReport).toHaveBeenCalledWith("alpha");
   });
 
   it("keeps policy list pending until the asynchronous action completes", async () => {

@@ -400,8 +400,9 @@ export function createDeps(options: {
       (): LocalValidationResult => options.localValidation ?? { ok: true },
     ),
     ensureLocalProviderReachable: vi.fn(() => options.localReachable ?? true),
-    resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
-      options.contextWindow === undefined ? null : options.contextWindow,
+    resolveContextWindowForModel: vi.fn(
+      (_provider: string, _model: string, _gatewayPort: number) =>
+        options.contextWindow === undefined ? null : options.contextWindow,
     ),
     prepareRunOpenshell: vi.fn(options.prepareRunOpenshell ?? (() => undefined)),
     rewriteConfigUrlsWithDnsPinning: vi.fn(
@@ -494,6 +495,12 @@ export function createDeps(options: {
     );
   return {
     requireNativeProviderPolicy: async () => {},
+    sandboxPolicyReader: {
+      readSandboxPolicy: async () => ({
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 1 },
+      }),
+    },
     readNativeLocalCredentialHandle: vi.fn(
       async () => "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
     ),

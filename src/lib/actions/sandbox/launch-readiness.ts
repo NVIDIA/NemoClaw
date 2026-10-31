@@ -90,6 +90,7 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 export {
   getNativeProviderAttachment,
+  hasRecordedNativeNvidiaAttachment,
   requireNativeInferenceHealth,
 } from "./launch-readiness/health";
 

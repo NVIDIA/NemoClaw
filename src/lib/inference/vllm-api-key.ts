@@ -107,25 +107,50 @@ export function ensureDualStationVllmApiKey(options: DualStationVllmApiKeyOption
   if (typeof noFollow !== "number") {
     throw new Error("Secure no-follow file opens are unavailable on this platform");
   }
+  const temporaryPath = path.join(
+    stateDir,
+    `.${DUAL_STATION_VLLM_API_KEY_FILE}.${crypto.randomUUID()}.tmp`,
+  );
   let fd: number | undefined;
+  let ownsTemporaryFile = false;
   try {
     fd = fs.openSync(
-      filePath,
+      temporaryPath,
       fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
       0o600,
     );
+    ownsTemporaryFile = true;
     const opened = fs.fstatSync(fd);
-    assertPrivateRegularFile(opened, filePath);
+    assertPrivateRegularFile(opened, temporaryPath);
     fs.writeFileSync(fd, `${value}\n`, "utf8");
     fs.fsyncSync(fd);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      const raced = loadDualStationVllmApiKey({ stateDir });
-      if (raced) return raced;
+    fs.closeSync(fd);
+    fd = undefined;
+
+    // Publish only a complete, synced key without replacing another creator's key.
+    try {
+      fs.linkSync(temporaryPath, filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        const raced = loadDualStationVllmApiKey({ stateDir });
+        if (raced) return raced;
+      }
+      throw error;
     }
-    throw error;
+    fs.unlinkSync(temporaryPath);
+    ownsTemporaryFile = false;
+    const directoryFd = fs.openSync(
+      stateDir,
+      fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0) | noFollow,
+    );
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
+    if (ownsTemporaryFile) fs.rmSync(temporaryPath, { force: true });
   }
 
   const persisted = loadDualStationVllmApiKey({ stateDir });

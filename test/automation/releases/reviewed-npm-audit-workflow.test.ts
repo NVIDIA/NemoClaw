@@ -201,6 +201,7 @@ if (args[0] === "ci") {
   }
 }
 if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  fs.mkdirSync("node_modules", { recursive: true });
   const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
 }
@@ -353,14 +354,13 @@ describe("trusted npm audit workflow (#5896)", () => {
   });
 
   it("records the selected replacement identity in locked-graph audit provenance", () => {
-    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
     const fixture = runConsolidatedAuditFixture(
       () => {},
       undefined,
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, graph),
+      openClawReplacementGraphFixture(REPO_ROOT),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
@@ -539,7 +539,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
+        lockSha256: "74856e20d229528ee7e2d107e6238e2204beea36c0deb733a7102082bcd4e5ea",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

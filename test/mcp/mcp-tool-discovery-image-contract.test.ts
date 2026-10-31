@@ -214,7 +214,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "23fc86eefdd37dcfce995c7f89ac9510abb792d95190aa53ca8ffdcc5e5e5591",
+      expectedHash: "3733d8b83b72a8a682dff95bb0dc3bd9f69fa0fc18769463e3b931268f048e21",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {
@@ -222,15 +222,15 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash: "ac66d8dd17bc3e9f52f7827edb65c81985acf204a721383bb5efbbab47bfbf8d",
+      expectedHash: "e639c9b532e145ffad3486d39f899a63fabcc845fbbd4a19294b2e5c2853e495",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash: "9062811af17af224d346f5884afb61b81b6a09e61c60d84cf75bf4ddfda4c4b7",
+      expectedHash: "3ac4c12b0946565b6f5e2066c77758b7e95f2a3e24c37e56bc82aca6e12feb4a",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "f12a1ae443f5bdf764ac96f6f82d5fe2bfbddafded9dd8d3fbc9c220b5c2b3d9",
+      expectedHash: "c5e79087da4479b2937cc17b78d9bb6f0844e6ef14e356c7b32523ce0530fde0",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {

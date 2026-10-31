@@ -78,6 +78,7 @@ function candidateFixture(
     dockerState?: string;
     installPreviousRevision?: boolean;
     replaceDockerGuard?: boolean;
+    telemetryEnvironment?: Record<string, string>;
   } = {},
 ): CandidateFixture {
   const fixtureRoot = temporaryDirectory("nemoclaw-native-candidate-");
@@ -107,6 +108,12 @@ function candidateFixture(
   printf '#!/usr/bin/env bash\\nexit 0\\n' >"$docker_guard_path"
   chmod 500 "$docker_guard_path"`
     : ":";
+  const telemetryChecks = Object.entries(options.telemetryEnvironment ?? {})
+    .map(
+      ([name, value]) =>
+        '[[ "${' + name + '+x}" == x && "$' + name + '" == ' + shellQuote(value) + " ]] || exit 72",
+    )
+    .join("\n  ");
   writeExecutable(
     installer,
     `#!/usr/bin/env bash
@@ -115,6 +122,7 @@ printf 'sourced\\n' >${shellQuote(sourceMarker)}
 
 install_nemoclaw_before_onboarding() {
   [[ -z "\${QUALIFICATION_TEST_CREDENTIAL:-}" ]] || exit 71
+  ${telemetryChecks}
   ${dockerMutation}
   ${guardMutation}
   installed_checkout="\${HOME}/.nemoclaw/source"
@@ -404,12 +412,20 @@ main --non-interactive --yes-i-accept-third-party-software
   });
 
   it("writes bounded receipts after both Docker checks and installed-source verification", () => {
-    const candidate = candidateFixture();
+    const telemetry = {
+      CI: "true",
+      GITHUB_ACTIONS: "true",
+      GITHUB_RUN_ID: "12345678901",
+      GITHUB_RUN_ATTEMPT: "2",
+      NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-handoff:client:attempt-1",
+      NEMOCLAW_DISABLE_TELEMETRY: "",
+    };
+    const candidate = candidateFixture({ telemetryEnvironment: telemetry });
     const artifactParent = temporaryDirectory("nemoclaw-native-artifacts-");
     const artifactDirectory = path.join(artifactParent, "qualification");
     const credentialValue = "native-qualification-credential-value";
     const result = runQualification(candidate, artifactDirectory, {
-      environment: { QUALIFICATION_TEST_CREDENTIAL: credentialValue },
+      environment: { ...telemetry, QUALIFICATION_TEST_CREDENTIAL: credentialValue },
     });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);

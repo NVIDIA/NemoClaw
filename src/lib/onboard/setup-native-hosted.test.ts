@@ -259,6 +259,12 @@ describe.each(providers)("native $label onboarding with a stale registry record"
         provider: provider.logicalProvider,
         nativeHostedProviderAttachment: receipt,
       }),
+      sandboxPolicyReader: {
+        readSandboxPolicy: async () => ({
+          ok: true,
+          value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: 1 },
+        }),
+      },
       resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
       upsertProvider: vi.fn(),
       verifyInferenceRoute: vi.fn(),

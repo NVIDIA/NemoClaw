@@ -144,6 +144,33 @@ it("checks sandbox-owned Hermes ports instead of manifest defaults", async () =>
   ]);
 });
 
+it("requires the migrated Hermes API to be loopback before accepting launch readiness", async () => {
+  mockLaunchForwardAuthority();
+  vi.mocked(agentRuntime.getSessionAgent).mockReturnValue({
+    name: "hermes",
+    runtime: { kind: "gateway" },
+    forwardPort: 18_789,
+    forward_ports: [18_789, 8_642],
+  } as never);
+  vi.mocked(registry.getSandbox).mockReturnValue({
+    name: "beta",
+    agent: "hermes",
+    dashboardPort: 18_789,
+    hermesApiPort: 8_643,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8_080,
+  });
+  const wildcard = createFakeAdapter((port) => (port === 8_643 ? "foreign" : "owned"));
+  await expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw", wildcard)).resolves.toBe(false);
+  expect(wildcard.startForward).not.toHaveBeenCalled();
+  const migrated = createFakeAdapter();
+  await expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw", migrated)).resolves.toBe(true);
+  expect(migrated.observeForwards.mock.calls[0]?.[0].forwards).toContainEqual(
+    expect.objectContaining({ port: 8_643, localHost: "127.0.0.1" }),
+  );
+  expect(migrated.startForward).not.toHaveBeenCalled();
+});
+
 it.each([
   ["a remote dashboard", () => vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0")],
   ["WSL", () => vi.mocked(platform.isWsl).mockReturnValue(true)],

@@ -53,8 +53,6 @@ function isStrictChildPath(root: string, candidate: string): boolean {
   );
 }
 
-const managedBuilder = managedPublisher;
-
 function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
@@ -355,7 +353,7 @@ describe("complete managed-image publication workflow", () => {
     const setupNode = step(builder, "Set up Node.js", "base-image platform workflow");
     expect(setupNode).toMatchObject({
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-      with: { "node-version": "24.18.1" },
+      with: { "node-version": "24.22.1" },
     });
     const platformBuild = step(
       builder,
@@ -727,6 +725,7 @@ describe("complete managed-image publication workflow", () => {
     const login = step(prBuilder, "Log in to GHCR for exact same-repository PR digest");
     const publish = step(prBuilder, "Publish exact same-repository PR managed image by digest");
     const logout = step(prBuilder, "Remove PR publication credentials");
+    const pull = step(prBuilder, "Pull exact published PR managed image");
     const exportContract = step(prBuilder, "Export exact published PR managed-image contract");
     const uploadContract = step(prBuilder, "Upload exact published PR managed-image contract");
     const sameRepository = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -750,14 +749,18 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(publish.with?.tags).toBeUndefined();
     expect(logout.if).toContain(sameRepository);
+    expect(pull.if).toBe(sameRepository);
+    expect(pull.env?.IMAGE_REFERENCE).toBe(
+      "${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}",
+    );
+    expect(pull.run).toContain(
+      'scripts/checks/pull-public-exact-digest.sh "$IMAGE_REFERENCE" "$PLATFORM"',
+    );
     expect(exportContract.if).toBe(sameRepository);
     expect(uploadContract.if).toBe(sameRepository);
-    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
+    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(pull));
+    expect(steps.indexOf(pull)).toBeLessThan(steps.indexOf(exportContract));
     const exportContractRun = exportContract.run ?? "";
-    expect(exportContractRun).toContain("scripts/checks/pull-public-exact-digest.sh");
-    expect(exportContractRun.indexOf("scripts/checks/pull-public-exact-digest.sh")).toBeLessThan(
-      exportContractRun.indexOf('docker buildx imagetools inspect "$reference" --raw'),
-    );
     expect(exportContract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     expect(exportContractRun).toContain("org.opencontainers.image.version");
     expect(exportContractRun).toContain('--arg release "$RELEASE"');
@@ -860,9 +863,95 @@ describe("complete managed-image publication workflow", () => {
     );
   });
 
+  it.each(
+    [
+      {
+        job: "pr-build-and-entrypoint",
+        reference: "${{ steps.contract.outputs.reference }}",
+        barrier: "Log in to GHCR for exact same-repository PR digest",
+      },
+      {
+        job: "build-and-validate",
+        reference: "${{ steps.validate.outputs.local_id }}",
+        barrier: "Capture exact managed image publication evidence",
+      },
+    ].flatMap((lane) => [0, 23].map((exitCode) => ({ ...lane, exitCode }))),
+  )(
+    "propagates Hermes package qualification status $exitCode before $job publication",
+    ({ job, reference, barrier, exitCode }) => {
+      const workflow = readWorkflow("managed-images.yaml");
+      expect(workflow.on?.pull_request?.paths).toEqual(
+        expect.arrayContaining([
+          "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+          "test/e2e/fixtures/hermes-switchyard-package.ts",
+        ]),
+      );
+      const builder = required(workflow.jobs?.[job], `missing ${job}`);
+      const qualification = step(builder, "Qualify Hermes root entrypoint and Switchyard package");
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-qualification-"));
+      const image = `sha256:${"a".repeat(64)}`;
+      try {
+        const environment = Object.fromEntries(
+          Object.entries(qualification.env ?? {}).map(([key, value]) => [
+            key,
+            String(value)
+              .replaceAll(reference, image)
+              .replaceAll("${{ github.workspace }}", directory),
+          ]),
+        );
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `
+npx() {
+  "$NODE" -e 'console.log(JSON.stringify({args: process.argv.slice(1), image: process.env.NEMOCLAW_HERMES_TEST_IMAGE, live: process.env.NEMOCLAW_RUN_LIVE_E2E, artifacts: process.env.E2E_ARTIFACT_DIR})); process.exit(Number(process.env.PROBE_EXIT));' -- "$@"
+}
+${required(qualification.run, "missing qualification command")}`,
+          ],
+          {
+            cwd: directory,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              ...environment,
+              NODE: process.execPath,
+              PROBE_EXIT: String(exitCode),
+            },
+          },
+        );
+        expect(result.status, result.stderr).toBe(exitCode);
+        expect(JSON.parse(result.stdout)).toEqual({
+          args: [
+            "--no-install",
+            "vitest",
+            "run",
+            "--project",
+            "e2e-live",
+            "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+          ],
+          image,
+          live: "1",
+          artifacts: `${directory}/e2e-artifacts/live/hermes-root-entrypoint-smoke`,
+        });
+        expect(qualification.if).toBe("matrix.agent == 'hermes'");
+        expect(qualification).not.toHaveProperty("continue-on-error");
+        expect(builder.steps!.indexOf(qualification)).toBeLessThan(
+          builder.steps!.indexOf(step(builder, barrier)),
+        );
+        const artifacts = step(builder, "Upload Hermes package qualification artifacts");
+        expect(artifacts.if).toBe("always() && matrix.agent == 'hermes'");
+        expect(artifacts.with?.path).toBe("e2e-artifacts/live/hermes-root-entrypoint-smoke/");
+        expect(artifacts.with?.name).toContain("${{ matrix.arch }}");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const builder = managedBuilder(workflow);
+    const builder = managedPublisher(workflow);
 
     expect(Object.keys(workflow.on ?? {}).sort()).toEqual(["pull_request", "workflow_call"]);
     expect(workflow.permissions).toEqual({

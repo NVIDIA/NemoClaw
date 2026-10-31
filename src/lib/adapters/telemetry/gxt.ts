@@ -51,7 +51,7 @@ export function operationEnvelope(
     deviceType: "undefined",
     eventProtocol: "1.6",
     eventSchemaVer: TELEMETRY_SCHEMA_VERSION,
-    eventSysVer: "nemoclaw-telemetry/3.0",
+    eventSysVer: `nemoclaw-telemetry/${TELEMETRY_SCHEMA_VERSION}`,
     externalUserId: "undefined",
     gdprBehOptIn: "None",
     gdprFuncOptIn: "None",

@@ -306,4 +306,28 @@ describe("OpenClaw native local live selection", () => {
     );
     expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
   });
+
+  it("rejects a conflicting gateway identity before retiring pending local authority", async () => {
+    const pendingBinding = { ...attachment, gatewayName: "nemoclaw-18080" };
+    const pending = { ...pendingBinding, ...nativeLocalIdentity(pendingBinding) };
+    const deps = fixture(pending);
+    const entry = deps.getSandbox("alpha")!;
+    entry.gatewayName = "nemoclaw-18081";
+    entry.gatewayPort = 18080;
+    entry.nativeLocalProviderAttachment = undefined;
+    deps.listNativeLocalProviderAuthorities = () => [pending];
+    const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+    const deletion = vi.spyOn(deps.providerAdapter, "deleteProvider");
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toThrow(/conflicting gateway identity/);
+    expect(detach).not.toHaveBeenCalled();
+    expect(deletion).not.toHaveBeenCalled();
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
 });

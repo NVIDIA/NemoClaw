@@ -8,8 +8,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   prepareWorkspace: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c",
-    contentSha256: "4458b3491e5e01097db99a212c4a7bf5ae0cc62cdeda7fef8e3862ed572d2c2b",
+      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351",
+    contentSha256: "9356afd1acf2038ade28c693a52194445d002115ea676f08f413f1a1530a92e6",
   },
   nativePodmanRuntime: {
     reference:
@@ -28,12 +28,12 @@ export const E2E_ACTION_PROVENANCE = {
   },
   restoreCliArtifact: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b1494a0828a80a8d5dc862effc9e85ac987f8b4a",
+      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@3c6d991640414a2d78f95f629d67194d44829554",
     contentSha256: "4a6a6b21993e579855916dfb897995a3f35dc4461d04666094af7eddb8676077",
   },
   reviewedSdkInstall: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@2584abf0a4f739fa5f2e3fd92821ff78175b4115",
+      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589",
     contentSha256: "09f77858c4025bdef9c3ffb184a53041c9be8cc87f7853c403f22ea70391228b",
   },
   uploadArtifacts: {

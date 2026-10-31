@@ -20,6 +20,7 @@ import {
   type SandboxRuntimeSnapshot,
 } from "../../state/registry/runtime-snapshot";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { registryEntryGatewayPort } from "../gateway-binding/identity";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { SandboxMessagingState } from "../../state/registry-messaging";
 import type { SnapshotRestoreAuthority } from "../../state/sandbox";
@@ -372,6 +373,7 @@ export function prepareManagedWorkloadCloneHandoff(
   try {
     rebound = rebindManagedStartupProfileForClone({
       sourceSandboxName,
+      sourceGatewayPort: registryEntryGatewayPort(input.source),
       destinationSandboxName,
       expectedAgent: snapshotAuthority.agent,
       destinationDashboardPort: input.destinationDashboardPort,

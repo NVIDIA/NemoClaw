@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 
 const { testHome, originalHome } = vi.hoisted(() => {
   const fs = process.getBuiltinModule("node:fs");
@@ -23,9 +24,12 @@ import {
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
   beginSandboxRecreateTransaction,
+  fingerprintSandboxRegistryEntry,
   fingerprintSandboxRecreateValue,
 } from "../../onboard/sandbox-recreate-transaction";
 import {
+  destroyPresence,
+  dockerRuntime,
   onboardSession as sessionDependency,
   rebuildPreflightPhase,
   registerHarnessRebuildBackup,
@@ -36,6 +40,7 @@ const onboardSession = sessionDependency as typeof import("../../state/onboard-s
 function useRealSessions(): void {
   vi.mocked(onboardSession.loadSession).mockRestore();
   vi.mocked(onboardSession.loadRebuildSession).mockRestore();
+  vi.mocked(onboardSession.listRetainedSandboxRecoveryRecords).mockRestore();
   vi.mocked(onboardSession.selectRebuildSession).mockRestore();
   vi.mocked(onboardSession.updateSession).mockRestore();
   vi.mocked(onboardSession.compareAndSwapSession).mockRestore();
@@ -116,7 +121,7 @@ describe("rebuild with independent recovery sessions", () => {
     }
   });
 
-  it("passes alpha's retained recovery backup into preflight while beta is active", async () => {
+  it("resumes an identity-free retained replacement through rebuild while beta is active (#7475)", async () => {
     const onboard = vi
       .fn()
       .mockRejectedValueOnce(new Error("interrupted replacement"))
@@ -133,6 +138,38 @@ describe("rebuild with independent recovery sessions", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Recreate failed");
     const interrupted = onboardSession.loadSession();
+    const journal = interrupted?.checkpoint?.sandboxRecreate;
+    expect(journal?.phase).toBe("deleted");
+    const savedSource = harness.getSandboxEntry();
+    expect(fingerprintSandboxRegistryEntry(savedSource)).toBe(journal?.sourceRegistryFingerprint);
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const { resolveGatewayStateDirForPort } = await import("../../onboard/gateway-binding");
+    const { writeDockerDriverGatewayRuntimeMarkerForStateDir } =
+      await import("../../onboard/docker-driver-gateway-runtime-marker");
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(
+      resolveGatewayStateDirForPort({ home: testHome, port: journal!.gatewayPort }),
+      {
+        pid: 4242,
+        desiredEnv: {},
+        endpoint: `https://127.0.0.1:${journal!.gatewayPort}`,
+        dockerHost: null,
+        createdAt: new Date(Date.now() - 1_000).toISOString(),
+        runtimeProviderId: "docker",
+      },
+    );
+    onboardSession.markRetainedSandboxRecovery(
+      "alpha",
+      "replacement identity unavailable",
+      undefined,
+      {
+        gatewayName: journal!.gatewayName,
+        gatewayPort: journal!.gatewayPort,
+        lifecycleGeneration: journal!.targetGeneration,
+        createAttemptNonce: "a".repeat(62),
+      },
+    );
+    expect(onboardSession.listRetainedSandboxRecoveryRecords()).toHaveLength(1);
     const manifest = JSON.parse(
       fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
     );
@@ -143,20 +180,39 @@ describe("rebuild with independent recovery sessions", () => {
       onboardSession.releaseOnboardLock();
     }
     expect(onboardSession.loadSession()?.sandboxName).toBe("beta");
-    expect(onboardSession.loadRebuildSession("alpha")).toEqual(interrupted);
+    expect(onboardSession.loadRebuildSession("alpha")?.checkpoint?.sandboxRecreate?.id).toBe(
+      journal?.id,
+    );
     const resumed = createRebuildFlowHarness({
       staleRecovery: true,
-      captureOpenshell: () => ({
-        status: 1,
-        output: "",
-        stdout: "",
-        stderr: "Error: sandbox alpha not found",
-      }),
+      sandboxEntry: { ...savedSource },
+      captureOpenshell: (args) =>
+        args.includes("list")
+          ? { status: 0, output: "[]", stdout: "[]", stderr: "" }
+          : {
+              status: 1,
+              output: "",
+              stdout: "",
+              stderr: "Error: sandbox alpha not found",
+            },
       onboard,
     });
     useRealSessions();
+    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.spyOn(dockerRuntime, "dockerRun").mockImplementation((args) => {
+      expect(args).toContain("volume");
+      return { status: 0, stdout: "", stderr: "", pid: 0, output: [null, "", ""], signal: null };
+    });
+    vi.spyOn(destroyPresence, "observeDestroyContainerIdentity").mockReturnValue({
+      status: "observed",
+      rows: [],
+      malformedRows: 0,
+    });
     // Production discovery rereads the persisted manifest, including later handoff writes.
     registerHarnessRebuildBackup(manifest);
+    resumed.backupSandboxStateSpy.mockClear();
+    resumed.runOpenshellSpy.mockClear();
     const runPreflight = rebuildPreflightPhase.runRebuildPreflightPhase;
     const preflight = vi
       .spyOn(rebuildPreflightPhase, "runRebuildPreflightPhase")
@@ -176,7 +232,9 @@ describe("rebuild with independent recovery sessions", () => {
 
     expect(preflight).toHaveBeenCalledOnce();
     expect(onboard).toHaveBeenCalledTimes(2);
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(onboardSession.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expectNoSandboxDelete(resumed.runOpenshellSpy);
     expect(onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.id).toBe(
       interrupted?.checkpoint?.sandboxRecreate?.id,
     );
