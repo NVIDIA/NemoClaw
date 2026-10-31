@@ -960,7 +960,9 @@ function verifyCommittedRoutingFile(target: string, expected: Buffer): void {
         "To start a fresh Hermes sandbox, run on the host:\n" +
         "  nemoclaw onboard --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
         "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
-        "This creates a fresh workspace; it does not restore your previous data. Keep the failed sandbox until you have recovered any needed data.",
+        "This creates a fresh workspace; it does not recover data from the failed sandbox.\n" +
+        "Restoring your previous data requires an independently maintained backup.\n" +
+        "Do not delete the failed sandbox while data recovery is unresolved.",
     );
   }
 }

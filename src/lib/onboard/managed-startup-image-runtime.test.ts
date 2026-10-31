@@ -762,7 +762,7 @@ describe("managed startup image runtime", () => {
     ["Relay state", "relayPluginStateTarget", "private state contents"],
     ["legacy deployment", "switchyardDeploymentTarget", null],
   ] as const)(
-    "explains fresh-sandbox recovery without changing rejected %s (#13865)",
+    "requires an independent backup for data recovery without changing rejected %s (#13865)",
     (_label, targetKey, replacement) => {
       const { environment, paths, serialized } = switchyardRoutingFixture();
       const filesystem = mockRootReplayFilesystem(
@@ -813,7 +813,9 @@ describe("managed startup image runtime", () => {
             "To start a fresh Hermes sandbox, run on the host:\n" +
             "  nemoclaw onboard --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
             "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
-            "This creates a fresh workspace; it does not restore your previous data. Keep the failed sandbox until you have recovered any needed data.",
+            "This creates a fresh workspace; it does not recover data from the failed sandbox.\n" +
+            "Restoring your previous data requires an independently maintained backup.\n" +
+            "Do not delete the failed sandbox while data recovery is unresolved.",
         }),
       );
       expect(readRoutingState()).toEqual(before);
