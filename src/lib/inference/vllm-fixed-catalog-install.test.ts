@@ -288,7 +288,6 @@ describe("fixed catalog vLLM installs", () => {
         nonInteractive: true,
         promptFn: vi.fn(),
         readinessReports,
-        resolveManagedBridgeHost: () => "172.18.0.1",
       });
 
       expect(spies.errSpy).not.toHaveBeenCalledWith(
@@ -322,7 +321,6 @@ describe("fixed catalog vLLM installs", () => {
       nonInteractive: true,
       promptFn: vi.fn(),
       readinessReports,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });
@@ -362,7 +360,6 @@ describe("fixed catalog vLLM installs", () => {
         promptFn: vi.fn(),
         modelIntent: checkpointModel,
         readinessReports,
-        resolveManagedBridgeHost: () => "172.18.0.1",
       });
       expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
       const [args, options] = mocks.dockerRunDetached.mock.calls[0]!;
@@ -460,7 +457,6 @@ describe("fixed catalog vLLM installs", () => {
       modelIntent,
       readinessReports,
       beforeInstall,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(spies.errSpy).not.toHaveBeenCalledWith(
@@ -618,7 +614,6 @@ describe("fixed catalog vLLM installs", () => {
       nonInteractive: false,
       promptFn,
       readinessReports,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });
@@ -656,7 +651,6 @@ describe("fixed catalog vLLM installs", () => {
       nonInteractive: true,
       promptFn: vi.fn(),
       readinessReports: vllmInstallTestReadiness(profile, modelIntent),
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });

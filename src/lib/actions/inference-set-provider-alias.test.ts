@@ -12,6 +12,7 @@
 //     actionable error pointing at re-onboard.
 
 import { describe, expect, it, vi } from "vitest";
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import { shellQuote } from "../core/shell-quote";
 // onboard's provider config is the source of truth the local alias map must
 // stay in sync with. Imported here (test only — not into the inference-set hot
@@ -42,7 +43,6 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
   expect(calls.updateSandbox).not.toHaveBeenCalled();
   expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
   expect(calls.updateSession).not.toHaveBeenCalled();
-  expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
 }
 
@@ -92,7 +92,7 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
 
   it("normalizes underscore spellings of installer alias keys", () => {
     expect(normalizeInferenceSetProvider("open_router")).toBe("openrouter-api");
-    expect(normalizeInferenceSetProvider("nim_local")).toBe("nvidia-nim");
+    expect(normalizeInferenceSetProvider("nim_local")).toBe("vllm-local");
     expect(normalizeInferenceSetProvider("llama_cpp")).toBe("llama-cpp-local");
     expect(normalizeInferenceSetProvider("nous_portal")).toBe("hermes-provider");
   });
@@ -199,93 +199,98 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSession).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
-  it("accepts an additional registered provider without replacing its native config", async () => {
-    const provider = "native-extra";
-    const nativeProviderConfig = {
-      api: "openai-completions",
-      apiKey: "native-owned-reference",
-      baseUrl: "https://native.example/v1",
-      models: [{ id: "vendor/model-a", name: "vendor/model-a" }],
-    };
-    const output = `nvidia-prod\n${provider}\n`;
-    const captureOpenshell = vi.fn(() => ({ status: 0, output, stdout: output, stderr: "" }));
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: {
-        providers: {
-          inference: { api: "openai-completions", models: [] },
-          [provider]: nativeProviderConfig,
+  it.each([false, true])(
+    "selects an operator provider through its native configuration (already attached: %s)",
+    async (attached) => {
+      const f = registeredInferenceFixture(attached);
+      const provider = "native-extra";
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: {
+          providers: {
+            inference: { api: "openai-completions", models: [] },
+            [provider]: {
+              api: "openai-completions",
+              apiKey: "${VENDOR_API_KEY}",
+              baseUrl: f.binding.endpointUrl,
+              headers: { "X-Operator-Header": "retained" },
+              models: [{ id: "vendor/model-a", name: "vendor/model-a" }],
+            },
+          },
         },
-      },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        gatewayName: "nemoclaw-18080",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      captureOpenshell,
-    });
-
-    await expect(
-      runInferenceSet({ provider, model: "vendor/model-b", noVerify: true }, deps),
-    ).resolves.toMatchObject({ provider, model: "vendor/model-b" });
-
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["provider", "list", "-g", "nemoclaw-18080", "--names"],
-      expect.objectContaining({ ignoreError: true, timeout: 5_000 }),
-    );
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      2,
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw-18080",
-        "--no-verify",
-        "--provider",
-        provider,
-        "--model",
-        "vendor/model-b",
-      ],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(captureOpenshell).toHaveBeenCalledTimes(2);
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledOnce();
-    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
-      "alpha",
-      expect.arrayContaining([
+      };
+      const deps = createDeps({
+        config,
+        providerAdapter: f.adapter,
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          gatewayName: f.binding.gatewayName,
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+      });
+      deps.readRegisteredInferenceCredentialHandle = vi.fn(async () => f.handle);
+      await expect(
+        runInferenceSet({ provider, model: "vendor/model-b", noVerify: true }, deps),
+      ).resolves.toMatchObject({ provider, model: "vendor/model-b", providerKey: provider });
+      expect(f.adapter.listProviders).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ target: { kind: "named", gatewayName: f.binding.gatewayName } }),
+      );
+      expect(f.adapter.attachProvider).toHaveBeenCalledTimes(attached ? 0 : 1);
+      expect(f.adapter.createProvider).not.toHaveBeenCalled();
+      expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        expect.arrayContaining([
+          { dotpath: "agents.defaults.model.primary", value: "native-extra/vendor/model-b" },
+          expect.objectContaining({
+            dotpath: "models.providers.native-extra",
+            value: expect.objectContaining({
+              baseUrl: f.binding.endpointUrl,
+              api: "openai-completions",
+              apiKey: f.handle,
+              headers: expect.objectContaining({ "X-Operator-Header": "retained" }),
+              models: expect.arrayContaining([
+                expect.objectContaining({ id: "vendor/model-b" }),
+                expect.objectContaining({ id: "vendor/model-a" }),
+              ]),
+            }),
+          }),
+        ]),
+        f.binding.gatewayName,
+      );
+      expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
         expect.objectContaining({
-          dotpath: "models.providers.inference",
-          value: expect.objectContaining({
-            models: expect.arrayContaining([expect.objectContaining({ id: "vendor/model-b" })]),
+          registeredInferenceProviderAttachment: expect.objectContaining({
+            providerId: f.binding.providerId,
           }),
         }),
-      ]),
-      "nemoclaw-18080",
-    );
-    expect(
-      deps.calls.updateSandbox.mock.calls
-        .filter(([, fields]) => fields.provider !== undefined)
-        .at(-1),
-    ).toEqual([
-      "alpha",
-      expect.objectContaining({
-        provider,
-        endpointUrl: null,
-        credentialEnv: null,
-      }),
-    ]);
-  });
+      );
+      expect(
+        deps.calls.updateSandbox.mock.calls
+          .filter(([, fields]) => fields.provider !== undefined)
+          .at(-1),
+      ).toEqual([
+        "alpha",
+        expect.objectContaining({
+          provider,
+          endpointUrl: f.binding.endpointUrl,
+          credentialEnv: "VENDOR_API_KEY",
+          registeredInferenceProviderAttachment: expect.objectContaining({
+            attachedBySelection: !attached,
+          }),
+        }),
+      ]);
+      expect(deps.calls.setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+    },
+  );
 
   it("hands OpenShell the exact `compatible-anthropic-endpoint` name, never the `anthropicCompatible` alias (#6321)", async () => {
     // The alias must be normalized on the host before any gateway call — the

@@ -4,6 +4,65 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { type SetupPolicySelectionDeps, setupPoliciesWithSelection } from "./policy-selection";
+import { hasNativeCustomProviderWebConflict } from "./policy-selection";
+import { customNativeProvider } from "../inference/native-provider/custom";
+import * as registry from "../state/registry";
+
+function customAttachment(endpointUrl: string) {
+  const definition = customNativeProvider({
+    provider: "compatible-endpoint",
+    endpointUrl,
+    api: "openai-completions",
+    credentialEnv: "CUSTOM_API_KEY",
+    allowedIps: ["10.1.0.219"],
+  });
+  return {
+    schemaVersion: 1 as const,
+    providerId: "provider-id",
+    profileId: definition.profileId,
+    providerName: definition.providerName,
+    endpointUrl: definition.endpointUrl,
+    allowedIps: definition.allowedIps,
+    custom: definition.custom,
+  };
+}
+
+describe("Personal custom provider ports", () => {
+  it.each([
+    ["http://10.1.0.219/v1", true],
+    ["https://10.1.0.219/v1", true],
+    ["http://10.1.0.219:443/v1", true],
+    ["https://10.1.0.219:80/v1", true],
+    ["http://10.1.0.219:33573/v1", false],
+    ["https://10.1.0.219:8443/v1", false],
+  ] as const)("checks the attached endpoint %s for web overlap", (endpointUrl, conflict) => {
+    const attachment = customAttachment(endpointUrl);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      nativeHostedProviderAttachment: attachment,
+    } as never);
+    expect(hasNativeCustomProviderWebConflict("alpha")).toBe(conflict);
+  });
+
+  it("refuses unverified endpoints and leaves the attachment unchanged", () => {
+    const attachment = customAttachment("http://10.1.0.219:33573/v1");
+    const original = structuredClone(attachment);
+    attachment.endpointUrl = "https://10.1.0.219/v1";
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      nativeHostedProviderAttachment: attachment,
+    } as never);
+    expect(hasNativeCustomProviderWebConflict("alpha")).toBe(true);
+    attachment.custom = { ...attachment.custom, endpointUrl: "invalid-url" };
+    expect(hasNativeCustomProviderWebConflict("alpha")).toBe(true);
+    getSandbox.mockReturnValue({
+      name: "alpha",
+      nativeHostedProviderAttachment: original,
+    } as never);
+    expect(hasNativeCustomProviderWebConflict("alpha")).toBe(false);
+    expect(original).toEqual(customAttachment("http://10.1.0.219:33573/v1"));
+  });
+});
 
 function createHarness() {
   const syncPresetSelection = vi.fn();
@@ -60,7 +119,7 @@ describe("Personal selection with a native custom provider", () => {
     const { deps, syncPresetSelection } = createHarness();
     deps.isNonInteractive.mockReturnValue(false);
     deps.selectPolicyTier.mockResolvedValue("personal");
-    const hasNativeCustomProvider = vi.fn(() => true);
+    const hasNativeCustomProviderWebConflict = vi.fn(() => true);
     const errors: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation((message: unknown) => {
       errors.push(String(message));
@@ -70,7 +129,7 @@ describe("Personal selection with a native custom provider", () => {
     });
     try {
       await expect(
-        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProviderWebConflict }, "alpha", {
           selectedPresets: null,
         }),
       ).rejects.toThrow("process.exit");
@@ -80,22 +139,22 @@ describe("Personal selection with a native custom provider", () => {
       exitSpy.mockRestore();
     }
 
-    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
-    expect(errors.join("\n")).toContain("NEMOCLAW_POLICY_TIER=personal");
+    expect(hasNativeCustomProviderWebConflict).toHaveBeenCalledWith("alpha");
+    expect(errors.join("\n")).toContain("Choose another tier.");
     expect(deps.selectTierPresetsAndAccess).not.toHaveBeenCalled();
     expect(syncPresetSelection).not.toHaveBeenCalled();
   });
 
   it("refuses a resumed Personal selection before readiness or policy mutation", async () => {
     const { deps, syncPresetSelection } = createHarness();
-    const hasNativeCustomProvider = vi.fn(() => true);
+    const hasNativeCustomProviderWebConflict = vi.fn(() => true);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
     try {
       await expect(
-        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProviderWebConflict }, "alpha", {
           selectedPresets: ["personal-open-internet"],
         }),
       ).rejects.toThrow("process.exit");
@@ -105,7 +164,7 @@ describe("Personal selection with a native custom provider", () => {
       exitSpy.mockRestore();
     }
 
-    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(hasNativeCustomProviderWebConflict).toHaveBeenCalledWith("alpha");
     expect(deps.waitForSandboxReady).not.toHaveBeenCalled();
     expect(deps.recordPendingSelection).not.toHaveBeenCalled();
     expect(syncPresetSelection).not.toHaveBeenCalled();
@@ -118,14 +177,14 @@ describe("Personal selection with a native custom provider", () => {
       NEMOCLAW_POLICY_PRESETS: "personal-open-internet",
     };
     deps.parsePolicyPresetEnv.mockReturnValue(["personal-open-internet"]);
-    const hasNativeCustomProvider = vi.fn(() => true);
+    const hasNativeCustomProviderWebConflict = vi.fn(() => true);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit");
     });
     try {
       await expect(
-        setupPoliciesWithSelection({ ...deps, hasNativeCustomProvider }, "alpha", {
+        setupPoliciesWithSelection({ ...deps, hasNativeCustomProviderWebConflict }, "alpha", {
           selectedPresets: null,
         }),
       ).rejects.toThrow("process.exit");
@@ -135,7 +194,7 @@ describe("Personal selection with a native custom provider", () => {
       exitSpy.mockRestore();
     }
 
-    expect(hasNativeCustomProvider).toHaveBeenCalledWith("alpha");
+    expect(hasNativeCustomProviderWebConflict).toHaveBeenCalledWith("alpha");
     expect(deps.recordPendingSelection).not.toHaveBeenCalled();
     expect(syncPresetSelection).not.toHaveBeenCalled();
   });

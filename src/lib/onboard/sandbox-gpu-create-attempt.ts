@@ -22,6 +22,44 @@ import {
   STABLE_ABSENCE_CHECKS,
 } from "./sandbox-gpu-fallback-constants";
 
+import { redactOnboardCommandDiagnosticText } from "./diagnostics/redaction";
+import {
+  DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+  DOCKER_GPU_PATCH_TIMEOUT_MS,
+} from "./docker-gpu-patch-constants";
+import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
+
+export function requireCompatibilityLifecycleCommand(
+  action: "start" | "stop",
+  sandboxName: string,
+  gatewayName: string,
+  deps: { runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]> },
+): void {
+  const result = deps.runOpenshell(["sandbox", action, "-g", gatewayName, sandboxName], {
+    ignoreError: true,
+    killProcessTreeOnTimeout: true,
+    killSignal: "SIGKILL",
+    suppressOutput: true,
+    // Lifecycle commands wait for a state transition, unlike readiness reads.
+    timeout: action === "stop" ? DOCKER_GPU_PATCH_STOP_TIMEOUT_MS : DOCKER_GPU_PATCH_TIMEOUT_MS,
+  });
+  if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
+    const detail = redactOnboardCommandDiagnosticText(
+      [
+        `status=${String(result.status)}, signal=${String("signal" in result ? result.signal : null)}`,
+        result.error?.message,
+        result.stderr,
+        result.stdout,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ).slice(0, 2_000);
+    throw new Error(
+      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.\n${detail}`,
+    );
+  }
+}
+
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
 export { getSandboxFailurePhase, hasSandboxListEntry, isSandboxReady };

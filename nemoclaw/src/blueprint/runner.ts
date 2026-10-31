@@ -58,7 +58,6 @@ import {
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
   mintRuntimeIdentityCredential,
-  parseRuntimeIdentityProviderMetadata,
   prepareRuntimeIdentity,
   type RuntimeIdentityCommandDeps,
   type RuntimeIdentityCommandOptions,
@@ -122,6 +121,7 @@ type Action = "plan" | "apply" | "status" | "reconcile" | "rollback";
 type ExternalOpenShellTargetStatus = ExternalOpenShellGatewayStatus & Readonly<{ run_id: string }>;
 
 type RollbackPlanSource = {
+  native_inference?: unknown;
   sandbox_name?: unknown;
   sandbox_created_by_apply?: unknown;
   inference_provider_created_by_apply?: unknown;
@@ -187,8 +187,6 @@ const BLUEPRINT_KEYS = new Set([
   "openshell_target",
   "components",
 ]);
-const MISSING_PROVIDER_INSPECTION_PATTERN =
-  /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const MISSING_SANDBOX_INSPECTION_PATTERN =
   /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b|\bunknown sandbox\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
@@ -196,49 +194,6 @@ const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
 const POLICY_INSPECTION_DETAIL_MAX_CHARS = 240;
 const BLUEPRINT_POLICY_REBASE_ATTEMPTS = 3;
 const UNRESTRICTED_POLICY_HOSTS = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
-
-interface InferenceRouteBinding {
-  provider: string;
-  model: string;
-  timeoutSeconds?: number;
-}
-
-function parseInferenceRouteBinding(output: string): InferenceRouteBinding | null {
-  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
-  let inGatewayInference = false;
-  let provider = "";
-  let model = "";
-  let timeoutSeconds: number | undefined;
-  for (const line of lines) {
-    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
-      inGatewayInference = true;
-      continue;
-    }
-    if (inGatewayInference && /^\S.*:$/.test(line)) break;
-    if (!inGatewayInference) continue;
-    const trimmed = line.trim();
-    const providerMatch = /^Provider:\s*(.+)$/i.exec(trimmed);
-    const modelMatch = /^Model:\s*(.+)$/i.exec(trimmed);
-    const timeoutMatch = /^Timeout:\s*(\d+)s?$/i.exec(trimmed);
-    if (providerMatch) provider = providerMatch[1].trim();
-    if (modelMatch) model = modelMatch[1].trim();
-    if (timeoutMatch) timeoutSeconds = Number(timeoutMatch[1]);
-  }
-  return provider && model ? { provider, model, timeoutSeconds } : null;
-}
-
-function isUnconfiguredInferenceRoute(output: string): boolean {
-  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => /^(?:Gateway )?Inference:\s*$/i.test(line));
-  if (headingIndex < 0) return false;
-  const routeLines: string[] = [];
-  for (const line of lines.slice(headingIndex + 1)) {
-    if (/^\S.*:$/.test(line)) break;
-    const trimmed = line.trim();
-    if (trimmed) routeLines.push(trimmed);
-  }
-  return routeLines.length === 1 && routeLines[0]?.toLowerCase() === "not configured";
-}
 
 function isAction(value: string | undefined): value is Action {
   return (
@@ -599,33 +554,6 @@ function readRollbackInferenceProviderBinding(value: RollbackPlanSource): {
   };
 }
 
-function assertReusableInferenceProvider(
-  output: string,
-  expected: {
-    name: string;
-    type: string;
-    requiresEndpointConfig: boolean;
-    requiresCredential: boolean;
-  },
-): void {
-  const metadata = parseRuntimeIdentityProviderMetadata(output);
-  const hasExpectedConfigShape =
-    !expected.requiresEndpointConfig || metadata?.configKeys.includes("OPENAI_BASE_URL") === true;
-  const hasExpectedCredentialShape =
-    !expected.requiresCredential || metadata?.credentialKeys.includes("OPENAI_API_KEY") === true;
-  if (
-    !metadata ||
-    metadata.name !== expected.name ||
-    metadata.type !== expected.type ||
-    !hasExpectedConfigShape ||
-    !hasExpectedCredentialShape
-  ) {
-    throw new Error(
-      `Inference provider '${expected.name}' does not match the requested non-secret binding; refusing runtime identity apply`,
-    );
-  }
-}
-
 // ── Utilities ───────────────────────────────────────────────────
 
 export function emitRunId(): string {
@@ -951,7 +879,18 @@ async function inspectBlueprintPolicy(
     }
   }
   const history = await runBlueprintInspectionCommand(
-    ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
+    [
+      "openshell",
+      "policy",
+      "list",
+      "-g",
+      gateway,
+      "--global",
+      "--page-size",
+      "1",
+      "--output",
+      "json",
+    ],
     gateway,
     { kind: "policy", subject: "global" },
   );
@@ -1364,6 +1303,7 @@ interface PersistedRunPlan {
   gateway: GatewayBinding;
   inference: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
+  native_inference?: unknown;
   timestamp: string;
 }
 
@@ -1458,6 +1398,7 @@ function buildPersistedRunPlan(args: {
   gateway: GatewayBinding;
   inferenceCfg: InferenceProfile;
   runtimeIdentityReceipt?: RuntimeIdentityReceipt;
+  nativeInferenceReceipt?: unknown;
   timestamp: string;
 }): PersistedRunPlan {
   const plan: PersistedRunPlan = {
@@ -1473,6 +1414,7 @@ function buildPersistedRunPlan(args: {
   if (args.runtimeIdentityReceipt) {
     plan.identity = args.runtimeIdentityReceipt;
   }
+  if (args.nativeInferenceReceipt) plan.native_inference = args.nativeInferenceReceipt;
   return plan;
 }
 
@@ -1700,6 +1642,29 @@ export async function actionExternalOpenShellTargetStatus(
   return observation;
 }
 
+export type BlueprintNativeInferenceObserver = (
+  requested: Readonly<{
+    gatewayName: string;
+    sandboxName: string;
+    provider: string;
+    model: string;
+    api: string;
+    endpointUrl?: string;
+    requiresCredential?: boolean;
+  }>,
+) => Promise<string>;
+
+export type BlueprintNativeInferenceCreator = (
+  input: Parameters<BlueprintNativeInferenceObserver>[0] &
+    Readonly<{
+      credentialValue: string;
+      timeoutSeconds?: number;
+      persist: (receipt: unknown) => void;
+      createSandbox: (providerName: string, createAttemptNonce: string) => Promise<void>;
+      prepareSandboxPolicy: () => Promise<void>;
+    }>,
+) => Promise<{ identity: string; observe: () => Promise<string> }>;
+
 export async function actionApply(
   profile: string,
   blueprint: Blueprint,
@@ -1708,6 +1673,12 @@ export async function actionApply(
     endpointUrl?: string;
     /** Code-only conformance-test seam. No CLI flag or environment input populates this policy. */
     runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
+    nativeInferenceObserver?: BlueprintNativeInferenceObserver;
+    nativeInferenceCreator?: BlueprintNativeInferenceCreator;
+    nativeInferencePreparer?: (
+      requested: Parameters<BlueprintNativeInferenceObserver>[0] &
+        Readonly<{ timeoutSeconds: number }>,
+    ) => Promise<void>;
   },
 ): Promise<void> {
   if (options?.planPath) {
@@ -1752,6 +1723,38 @@ export async function actionApply(
   mkdirSync(stateDir, { recursive: true });
 
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
+  let nativeInferenceIdentity: string | undefined;
+  let nativeInferenceReceipt: unknown;
+  let observeCreatedInference: (() => Promise<string>) | undefined;
+  const observeNativeInference = async (): Promise<string> => {
+    if (observeCreatedInference) return observeCreatedInference();
+    if (!options?.nativeInferenceObserver)
+      throw new Error(
+        "Existing runtime identity apply requires the host native inference observer.",
+      );
+    if (!["openai", "nvidia", "anthropic"].includes(providerType))
+      throw new Error("Runtime identity apply cannot verify the requested native inference API.");
+    const identity = await options.nativeInferenceObserver({
+      gatewayName: policyGateway.name,
+      sandboxName,
+      provider: providerName,
+      model,
+      api: providerType === "anthropic" ? "anthropic-messages" : "openai-completions",
+      ...(endpoint ? { endpointUrl: endpoint } : {}),
+      ...(credential ? { requiresCredential: true } : {}),
+    });
+    if (typeof identity !== "string" || identity.length === 0)
+      throw new Error("Native inference authority could not be verified.");
+    return identity;
+  };
+  const revalidateNativeInference = async (): Promise<void> => {
+    if (
+      nativeInferenceIdentity !== undefined &&
+      nativeInferenceIdentity !== (await observeNativeInference())
+    )
+      throw new Error("Native inference identity changed during runtime identity apply.");
+  };
+
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
   const persistRunPlan = (): void => {
@@ -1766,6 +1769,7 @@ export async function actionApply(
         gateway: policyGateway,
         inferenceCfg,
         runtimeIdentityReceipt,
+        nativeInferenceReceipt,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -1787,6 +1791,13 @@ export async function actionApply(
       throw new Error("The OpenShell gateway binding changed before sandbox creation.");
     }
   };
+  const prepareSandboxPolicy = async (): Promise<void> => {
+    if (Object.keys(policyAdditions).length > 0) {
+      progress(30, "Applying policy additions");
+      await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
+    }
+    assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
+  };
   const identityDeps = runtimeIdentityDeps(
     (receipt) => {
       const previousReceipt = runtimeIdentityReceipt;
@@ -1803,8 +1814,6 @@ export async function actionApply(
   );
 
   try {
-    let reuseExistingInferenceProvider = false;
-    let reuseExistingInferenceRoute = false;
     let reuseExistingSandbox = false;
     progress(20, "Creating OpenClaw sandbox");
     const createArgs = [
@@ -1821,12 +1830,9 @@ export async function actionApply(
     if (configuredSandboxPolicy) {
       createArgs.push("--policy", configuredSandboxPolicy.path);
     }
-    for (const port of forwardPorts) {
-      createArgs.push("--forward", String(port));
-    }
 
     await requireCreatePolicyBoundary();
-    if (runtimeIdentityConfig) {
+    {
       const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
         gateway: policyGateway.name,
         reject: false,
@@ -1834,6 +1840,7 @@ export async function actionApply(
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
         reuseExistingSandbox = true;
+        nativeInferenceIdentity = await observeNativeInference();
         log(`Sandbox '${sandboxName}' already exists; using its current OpenShell policy.`);
       } else if (!MISSING_SANDBOX_INSPECTION_PATTERN.test(sandboxOutput)) {
         throw new Error(
@@ -1842,184 +1849,117 @@ export async function actionApply(
       }
     }
     if (!reuseExistingSandbox) {
-      const createResult = await runCmd(createArgs, {
-        gateway: policyGateway.name,
-        omitSandboxPolicy: true,
-        reject: false,
-      });
-      if (createResult.exitCode !== 0) {
-        if (createResult.stderr.includes("already exists")) {
-          log(`Sandbox '${sandboxName}' already exists; using its current OpenShell policy.`);
-        } else {
-          throw new Error(`Failed to create sandbox: ${boundedCommandError(createResult.stderr)}`);
-        }
-      } else {
-        sandboxCreatedByApply = true;
-        persistRunPlan();
+      if (!options?.nativeInferenceCreator)
+        throw new Error("Fresh blueprint apply requires the host native inference creator.");
+      const created = await options
+        .nativeInferenceCreator({
+          gatewayName: policyGateway.name,
+          sandboxName,
+          provider: providerName,
+          model,
+          api: providerType === "anthropic" ? "anthropic-messages" : "openai-completions",
+          endpointUrl: endpoint,
+          credentialValue: credential,
+          timeoutSeconds: inferenceCfg.timeout_secs,
+          persist: (receipt) => {
+            nativeInferenceReceipt = receipt;
+            inferenceProviderCreatedByApply =
+              isPlainObject(receipt) && isPlainObject(receipt.providerAttachment);
+            sandboxCreatedByApply = isPlainObject(receipt) && typeof receipt.sandboxId === "string";
+            persistRunPlan();
+          },
+          prepareSandboxPolicy,
+          createSandbox: async (_nativeProviderName, createAttemptNonce) => {
+            await requireCreatePolicyBoundary();
+            const result = await runCmd(
+              [
+                ...createArgs,
+                "--no-auto-providers",
+                "--label",
+                `ai.nvidia.nemoclaw.create-attempt=${createAttemptNonce}`,
+                "--detach",
+              ],
+              { gateway: policyGateway.name, omitSandboxPolicy: true, reject: false },
+            );
+            if (result.exitCode !== 0)
+              throw new Error(
+                `Failed to create sandbox: ${boundedCommandError(result.stderr, [credential])}`,
+              );
+          },
+        })
+        .catch((error: unknown) => {
+          throw new Error(
+            boundedCommandError(error instanceof Error ? error.message : String(error), [
+              credential,
+            ]),
+          );
+        });
+      nativeInferenceIdentity = created.identity;
+      observeCreatedInference = created.observe;
+      for (const port of forwardPorts) {
+        await revalidateNativeInference();
+        const forwarded = await runCmd(
+          ["openshell", "forward", "start", String(port), sandboxName],
+          {
+            gateway: policyGateway.name,
+            reject: false,
+          },
+        );
+        if (forwarded.exitCode !== 0)
+          throw new Error(
+            `Failed to forward sandbox port ${port}: ${boundedCommandError(forwarded.stderr)}`,
+          );
+        await revalidateNativeInference();
       }
     }
 
     persistRunPlan();
 
-    if (Object.keys(policyAdditions).length > 0) {
-      progress(30, "Applying policy additions");
-      await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
+    if (reuseExistingSandbox) {
+      await prepareSandboxPolicy();
+      if (inferenceCfg.timeout_secs !== undefined) {
+        if (!options?.nativeInferencePreparer)
+          throw new Error(
+            "Native inference timeout updates require the host configuration boundary.",
+          );
+        await revalidateNativeInference();
+        await options.nativeInferencePreparer({
+          gatewayName: policyGateway.name,
+          sandboxName,
+          provider: providerName,
+          model,
+          api: providerType === "anthropic" ? "anthropic-messages" : "openai-completions",
+          ...(endpoint ? { endpointUrl: endpoint } : {}),
+          ...(credential ? { requiresCredential: true } : {}),
+          timeoutSeconds: inferenceCfg.timeout_secs,
+        });
+        await revalidateNativeInference();
+      }
     }
-    assertBlueprintPolicyRequirements(await requireLivePolicy(), policyAdditions);
 
     if (runtimeIdentityConfig) {
-      const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
-        gateway: policyGateway.name,
-        reject: false,
-      });
-      const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
-      if (providerResult.exitCode === 0) {
-        assertReusableInferenceProvider(providerResult.stdout, {
-          name: providerName,
-          type: providerType,
-          requiresEndpointConfig: endpoint !== "",
-          requiresCredential: credential !== "",
-        });
-        reuseExistingInferenceProvider = true;
-      } else if (!MISSING_PROVIDER_INSPECTION_PATTERN.test(providerOutput)) {
-        throw new Error(
-          `Failed to inspect inference provider '${providerName}' before runtime identity apply: ${boundedCommandError(providerOutput)}`,
-        );
-      }
-      if (reuseExistingInferenceProvider) {
-        const routeResult = await runCmd(["openshell", "inference", "get"], {
-          gateway: policyGateway.name,
-          reject: false,
-        });
-        if (routeResult.exitCode !== 0) {
-          throw new Error(
-            `Failed to inspect the active inference route before runtime identity apply: ${boundedCommandError(`${routeResult.stderr}\n${routeResult.stdout}`)}`,
-          );
-        }
-        const activeRoute = parseInferenceRouteBinding(routeResult.stdout);
-        if (!activeRoute && !isUnconfiguredInferenceRoute(routeResult.stdout)) {
-          throw new Error(
-            "Failed to parse the active inference route before runtime identity apply",
-          );
-        }
-        reuseExistingInferenceRoute =
-          activeRoute?.provider === providerName &&
-          activeRoute.model === model &&
-          (inferenceCfg.timeout_secs === undefined ||
-            activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
-      }
+      await revalidateNativeInference();
       progress(40, "Configuring runtime identity");
+      log(`Runtime identity configure started at ${new Date().toISOString()}`);
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
+      log(`Runtime identity configure completed at ${new Date().toISOString()}`);
       persistRunPlan();
     }
 
-    // Keep runtime credentials unattached until OpenShell accepts the
-    // sandbox's requested inference route.
-    progress(50, "Configuring inference provider");
-    if (reuseExistingInferenceProvider) {
-      log(`Provider '${providerName}' already exists, reusing.`);
-    } else {
-      const providerArgs = [
-        "openshell",
-        "provider",
-        "create",
-        "--name",
-        providerName,
-        "--type",
-        providerType,
-      ];
-      // Pass the env-var NAME (not the value) to --credential; openshell reads the value from the env.
-      // Scope the credential to the subprocess to avoid leaking into later commands.
-      const credEnv: Record<string, string> = {};
-      if (credential) {
-        credEnv.OPENAI_API_KEY = credential;
-        providerArgs.push("--credential", "OPENAI_API_KEY");
-      }
-      if (endpoint) {
-        providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
-      }
-      const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
-        reject: false,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: buildBlueprintOpenShellEnv(policyGateway.name, credEnv),
-        extendEnv: false,
-      });
-      // A required mutation: a silently-ignored failure would persist plan.json and
-      // report a ready sandbox that cannot perform inference. Mirror the
-      // sandbox-create contract above — tolerate an already-existing provider as a
-      // reuse (keeps re-apply idempotent) and fail on any other non-zero result.
-      // The credential is passed via env (never argv); redact it from stderr before
-      // surfacing bounded diagnostic context. (#6703)
-      if (providerResult.exitCode !== 0) {
-        if (providerResult.stderr.includes("already exists")) {
-          if (runtimeIdentityConfig) {
-            const racedProvider = await runCmd(["openshell", "provider", "get", providerName], {
-              gateway: policyGateway.name,
-              reject: false,
-            });
-            if (racedProvider.exitCode !== 0) {
-              throw new Error(
-                `Failed to inspect inference provider '${providerName}' after concurrent creation: ${boundedCommandError(`${racedProvider.stderr}\n${racedProvider.stdout}`)}`,
-              );
-            }
-            assertReusableInferenceProvider(racedProvider.stdout, {
-              name: providerName,
-              type: providerType,
-              requiresEndpointConfig: endpoint !== "",
-              requiresCredential: credential !== "",
-            });
-          }
-          log(`Provider '${providerName}' already exists, reusing.`);
-        } else {
-          throw new Error(
-            `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr, [credential])}`,
-          );
-        }
-      } else {
-        inferenceProviderCreatedByApply = true;
-        // Persist inference-provider ownership before a later route or policy mutation can fail.
-        try {
-          persistRunPlan();
-        } catch (error) {
-          inferenceProviderCreatedByApply = false;
-          throw error;
-        }
-      }
-    }
-
-    progress(70, "Setting inference route");
-    if (reuseExistingInferenceRoute) {
-      log(`Inference route '${providerName} / ${model}' is already active, reusing.`);
-    } else {
-      const inferenceArgs = [
-        "openshell",
-        "inference",
-        "set",
-        "--provider",
-        providerName,
-        "--model",
-        model,
-      ];
-      if (inferenceCfg.timeout_secs !== undefined) {
-        inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
-      }
-      const inferenceResult = await runCmd(inferenceArgs, {
-        gateway: policyGateway.name,
-        reject: false,
-      });
-      // Another required mutation: without a routed provider the sandbox cannot
-      // perform inference, so a non-zero result must abort the apply. (#6703)
-      if (inferenceResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
-        );
-      }
-    }
+    progress(70, "Verifying native inference route");
+    await revalidateNativeInference();
+    log("Preserving the verified sandbox-attached inference route.");
 
     if (runtimeIdentityReceipt) {
+      await revalidateNativeInference();
+      log(`Runtime identity attach started at ${new Date().toISOString()}`);
       await attachRuntimeIdentity(runtimeIdentityReceipt, sandboxName, identityDeps);
+      log(`Runtime identity attach completed at ${new Date().toISOString()}`);
+      await revalidateNativeInference();
+      log(`Runtime identity rotate started at ${new Date().toISOString()}`);
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
+      log(`Runtime identity rotate completed at ${new Date().toISOString()}`);
+      await revalidateNativeInference();
     }
 
     progress(85, "Saving run state");
@@ -2032,6 +1972,7 @@ export async function actionApply(
     const message = error instanceof Error ? error.message : String(error);
     if (
       runtimeIdentityReceipt !== undefined ||
+      nativeInferenceReceipt !== undefined ||
       inferenceProviderCreatedByApply ||
       sandboxCreatedByApply
     ) {
@@ -2192,6 +2133,7 @@ export async function actionRollback(rid: string): Promise<void> {
 
   const planFile = join(stateDir, "plan.json");
   let sandboxName: string;
+  let nativeInferenceReceiptPresent = false;
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
@@ -2203,6 +2145,7 @@ export async function actionRollback(rid: string): Promise<void> {
         ? parsedPlan
         : null;
     sandboxName = readRollbackSandboxName(rollbackPlan);
+    nativeInferenceReceiptPresent = rollbackPlan?.native_inference !== undefined;
     sandboxCreatedByApply = rollbackPlan?.sandbox_created_by_apply === true;
     inferenceProviderCreatedByApply = rollbackPlan?.inference_provider_created_by_apply === true;
     if (inferenceProviderCreatedByApply) {
@@ -2220,6 +2163,7 @@ export async function actionRollback(rid: string): Promise<void> {
   }
 
   if (
+    nativeInferenceReceiptPresent ||
     runtimeIdentityReceipt !== undefined ||
     sandboxCreatedByApply ||
     inferenceProviderCreatedByApply
@@ -2246,6 +2190,12 @@ export async function main(
     snapshotCommand?: SnapshotCommandOptions;
     /** Code-only conformance-test seam. No CLI flag or environment input populates this policy. */
     runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
+    nativeInferenceObserver?: BlueprintNativeInferenceObserver;
+    nativeInferenceCreator?: BlueprintNativeInferenceCreator;
+    nativeInferencePreparer?: (
+      requested: Parameters<BlueprintNativeInferenceObserver>[0] &
+        Readonly<{ timeoutSeconds: number }>,
+    ) => Promise<void>;
   } = {},
 ): Promise<void> {
   const rawAction = argv.at(0);
@@ -2325,6 +2275,9 @@ export async function main(
         planPath,
         endpointUrl,
         runtimeIdentityProfilePolicy: options.runtimeIdentityProfilePolicy,
+        nativeInferenceObserver: options.nativeInferenceObserver,
+        nativeInferenceCreator: options.nativeInferenceCreator,
+        nativeInferencePreparer: options.nativeInferencePreparer,
       });
       break;
     }

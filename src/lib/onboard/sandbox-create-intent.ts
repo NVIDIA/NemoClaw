@@ -140,6 +140,7 @@ export function resolveSandboxCreateIntent({
   basePolicyPath,
   sandboxName,
   inferenceProvider,
+  registeredInferenceProviderAttachment,
   nativeLocalProviderAttachment,
   nativeNvidiaProviderAttachment,
   nativeHostedProviderAttachment,
@@ -190,6 +191,7 @@ export function resolveSandboxCreateIntent({
   return {
     sandboxName,
     inferenceProvider: normalizedInferenceProvider,
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),

@@ -9,9 +9,11 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import type { SandboxEntry } from "../../state/registry/types";
 import type { NativeProviderAttachment } from "./contract";
 import { nativeProviderLifecycle } from "./index";
-import { hostedNativeProvider } from "./hosted";
+import { hostedNativeProvider, canonicalHermesNativeEndpoint } from "./hosted";
 import { requireHermesPublicPins } from "./hermes-pins";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
+import { isProtectedLocalInferencePort } from "../gateway/local-endpoint-ports";
 
 /** Prepare gateway ownership; attachment remains the selected sandbox transaction's job. */
 export async function prepareHostedNativeProvider(input: {
@@ -20,6 +22,8 @@ export async function prepareHostedNativeProvider(input: {
   gatewayName: string;
   credentialValue: string | null;
   endpointUrl?: string | null;
+  /** Only callers restoring an existing endpoint may retain its HTTP or host-alias route. */
+  retainedHermesEndpoint?: boolean;
   lookup?: EndpointDnsLookupFn;
   reuseExistingCredential?: boolean;
   recordedSandbox?: SandboxEntry | null;
@@ -34,7 +38,10 @@ export async function prepareHostedNativeProvider(input: {
     input.recordedSandbox?.provider === input.provider
       ? input.recordedSandbox.nativeHostedProviderAttachment?.endpointUrl
       : undefined;
-  let definition = hostedNativeProvider(input.provider, input.endpointUrl ?? recordedEndpoint);
+  const endpointUrl = input.endpointUrl ?? recordedEndpoint;
+  if (input.provider === "hermes-provider" && endpointUrl && !input.retainedHermesEndpoint)
+    canonicalHermesNativeEndpoint(endpointUrl);
+  let definition = hostedNativeProvider(input.provider, endpointUrl);
   if (!definition) throw new Error("Unsupported fixed hosted provider");
   const recorded = input.recordedSandbox;
   const recordedAttachment =
@@ -47,7 +54,11 @@ export async function prepareHostedNativeProvider(input: {
     definition.endpointUrl ??
       (input.provider === "hermes-provider" ? definition.endpoint : undefined),
   );
-  if (definition.endpointUrl) {
+  const bridge =
+    definition.endpointUrl && isAllowedOpenShellSandboxBridgeUrl(new URL(definition.endpointUrl));
+  if (bridge && isProtectedLocalInferencePort(Number(new URL(definition.endpointUrl!).port)))
+    throw new Error("The recorded Hermes endpoint uses a protected host port");
+  if (definition.endpointUrl && !bridge) {
     const prior =
       gatewayAuthority ??
       (recordedAttachment?.providerName === definition.providerName
@@ -100,7 +111,7 @@ export async function prepareHostedNativeProvider(input: {
 }
 
 export {
-  isHostedCustomEndpoint,
+  isCustomNativeEndpoint,
   prepareCustomNativeProvider,
   readCustomNativeSandboxPolicy,
   usesCustomNativeOnboarding,

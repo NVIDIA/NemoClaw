@@ -12,13 +12,17 @@ content:
 NemoClaw supports operator-run servers and NemoClaw-managed runtime profiles for local inference.
 Choose the option that matches your host, model, and operational needs.
 
-New Deep Agents Code, Hermes, OpenClaw, and Pi sandboxes use sandbox-attached OpenShell providers for Ollama, standalone vLLM, and llama.cpp.
-Deep Agents Code, Hermes, and Pi also use native providers for qualifying host-local compatible endpoints.
-Local NVIDIA NIM continues to use `inference.local`.
-Unchanged published Pi shared local selections retain their recorded route during resume and rebuild.
-Existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported shared-route model switches, but cannot resume or rebuild.
+New Deep Agents Code, Hermes, OpenClaw, and Pi sandboxes use sandbox-attached OpenShell providers for Ollama, standalone vLLM, Local NVIDIA NIM, and llama.cpp.
+Deep Agents Code, Hermes, OpenClaw, and Pi also use attachments for qualifying host-local compatible endpoints.
+Other retained shared routes use `inference.local` on OpenShell `0.0.x`.
+Unchanged published Pi shared local selections retain their recorded route during resume and rebuild on `0.0.x`.
+OpenShell `0.1.5` removes `inference.local`; migration of those selections is incomplete.
+Native local onboarding on `0.1.5` remains unqualified for this upgrade.
+
+On OpenShell `0.0.x`, existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported shared-route model switches.
+They cannot resume or rebuild.
 Back them up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
-Owned Local NVIDIA NIM sandboxes can resume or rebuild on their shared route.
+New Local NVIDIA NIM sandboxes use their recorded native attachment for resume and rebuild. Back up and recreate older NIM sandboxes before upgrading OpenShell.
 Hermes live qualification for the new local lifecycle remains pending.
 
 <Warning>
@@ -132,17 +136,20 @@ The profile rejects a model that does not resolve to that recipe and all `NEMOCL
 It also rejects `NEMOCLAW_MANAGED_CLUSTER_PEERS`.
 If you set `NEMOCLAW_SERVING_PRESET`, it must match the profile's catalog preset.
 Set `NEMOCLAW_VLLM_PORT` before installation to use another host listener port.
-Before installation, ensure no other process or container owns `${NEMOCLAW_VLLM_PORT:-8000}` on `127.0.0.1` or on the private IPv4 gateway of `openshell-docker`.
+Before installation, ensure no other process or container owns `${NEMOCLAW_VLLM_PORT:-8000}` on `127.0.0.1`.
 
 The profile performs these actions:
 
 - Uses the pinned runtime image and fixed serving command from the catalog.
 - Stores model files in the host Hugging Face cache.
-- Publishes the authenticated server on `127.0.0.1:<port>` and the same port on the private IPv4 gateway of the `openshell-docker` bridge, such as `172.18.0.1:<port>`. The default is `8000`.
+- Publishes the authenticated server only on `127.0.0.1:<port>`.
+  The default port is `8000`.
 - Never publishes the Docker host port on `0.0.0.0` or `::`.
 - Reuses the owner-only host-global managed-vLLM API key.
 
-After the runtime passes its readiness check, Deep Agents Code, Hermes, and OpenClaw onboarding attach a provider for the qualified host-local endpoint. OpenShell reaches the authenticated server through the private bridge binding, while host-side readiness and recovery use the loopback binding.
+After the runtime passes its readiness check, Deep Agents Code, Hermes, and OpenClaw onboarding attach a provider for the qualified host-local endpoint.
+The native OpenShell supervisor, host readiness checks, and recovery use the same loopback listener.
+OpenShell supplies the sandbox route through `host.openshell.internal`; the runtime does not require an `openshell-docker` bridge.
 
 Verify the sandbox route:
 
@@ -158,17 +165,13 @@ Verify the bounded host publication:
 
 ```bash
 VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
-docker network inspect \
-  --format '{{json .IPAM.Config}}' \
-  openshell-docker
 docker container inspect \
   --format '{{json (index .NetworkSettings.Ports "8000/tcp")}}' \
   nemoclaw-vllm
 ```
 
-The bridge result must contain exactly one private IPv4 `Gateway` value.
 Docker indexes these bindings under the recipe-owned container port, `8000/tcp`, even when `VLLM_HOST_PORT` selects another host port.
-The container result must contain exactly two bindings with `HostPort` equal to `VLLM_HOST_PORT`: one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway.
+The container result must contain exactly one binding with `HostIp` equal to `127.0.0.1` and `HostPort` equal to `VLLM_HOST_PORT`.
 Reject the runtime if a binding uses `0.0.0.0`, `::`, an empty address, another host address, or an additional entry.
 
 If installation stops after a model download, rerun the same installer command.

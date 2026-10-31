@@ -138,6 +138,7 @@ describe("initial sandbox policy real preset merge", () => {
         { path: "/usr/bin/node" },
         { path: "/opt/hermes/.venv/bin/python" },
         { path: "/opt/hermes/.venv/bin/python3" },
+        { path: "/usr/bin/python3.13" },
         { path: "/opt/venv/bin/python3" },
         { path: "/usr/local/bin/curl" },
         { path: "/usr/bin/curl" },
@@ -407,6 +408,19 @@ describe("initial sandbox policy real preset merge", () => {
 
     expect(endpoints.length).toBeGreaterThan(0);
     expect(endpoints.every((endpoint) => endpoint.credential_binding === undefined)).toBe(true);
+  });
+
+  it("grants Hermes DRM name discovery without GPU device access", () => {
+    const policy = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(repoPath("agents", "hermes", "policy-additions.yaml"), [], {
+        agentName: "hermes",
+      }),
+    );
+    const readOnly = policy.filesystem_policy?.read_only ?? [];
+    const readWrite = policy.filesystem_policy?.read_write ?? [];
+    expect(readOnly).toContain("/sys/class/drm");
+    expect([...readOnly, ...readWrite]).not.toEqual(expect.arrayContaining(["/dev/dri"]));
+    expect(readWrite).not.toContain("/sys/class/drm");
   });
 
   it.each(shippingPolicyCases)(

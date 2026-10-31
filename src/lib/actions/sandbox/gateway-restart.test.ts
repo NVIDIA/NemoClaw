@@ -76,6 +76,221 @@ describe("restartSandboxGateway native lifecycle", () => {
     };
   }
 
+  function readinessDiagnostic() {
+    const prefix = "  OpenClaw restart readiness: ";
+    const line = vi
+      .mocked(console.error)
+      .mock.calls.map(([value]) => String(value))
+      .find((value) => value.startsWith(prefix));
+    return line ? JSON.parse(line.slice(prefix.length)) : null;
+  }
+
+  it.each([
+    {
+      stdout: '{"ready":true}\n302',
+      status: 0,
+      httpStatus: 302,
+      jsonParsed: true,
+      ready: true,
+      decision: false,
+    },
+    {
+      stdout: '{"ready":true}\n401',
+      status: 0,
+      httpStatus: 401,
+      jsonParsed: true,
+      ready: true,
+      decision: false,
+    },
+    {
+      stdout: '{"ready":false}\n503',
+      status: 0,
+      httpStatus: 503,
+      jsonParsed: true,
+      ready: false,
+      decision: false,
+    },
+    {
+      stdout: '{"ready":false}\n200',
+      status: 0,
+      httpStatus: 200,
+      jsonParsed: true,
+      ready: false,
+      decision: false,
+    },
+    {
+      stdout: '{"ready":"true"}\n200',
+      status: 0,
+      httpStatus: 200,
+      jsonParsed: true,
+      ready: null,
+      decision: false,
+    },
+    {
+      stdout: '{"ok":true}\n200',
+      status: 0,
+      httpStatus: 200,
+      jsonParsed: true,
+      ready: null,
+      decision: false,
+    },
+    {
+      stdout: "not-json\n200",
+      status: 0,
+      httpStatus: 200,
+      jsonParsed: false,
+      ready: null,
+      decision: false,
+    },
+    {
+      stdout: '{"ready":true}',
+      status: 0,
+      httpStatus: null,
+      jsonParsed: false,
+      ready: null,
+      decision: false,
+    },
+    {
+      stdout: '{"ready":true}\n200',
+      status: 28,
+      httpStatus: 200,
+      jsonParsed: true,
+      ready: true,
+      decision: false,
+    },
+    {
+      stdout: "\n000",
+      status: 7,
+      httpStatus: null,
+      jsonParsed: false,
+      ready: null,
+      decision: false,
+    },
+  ])(
+    "reports readiness evidence without changing HTTP $httpStatus command $status outcome ($stdout)",
+    async (sample) => {
+      silenceConsole();
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+        .mockResolvedValue({
+          status: sample.status,
+          stdout: sample.stdout,
+          stderr: "secret-stderr",
+        });
+      const deps = baseDeps({
+        executeSandboxExecCommand: execute,
+        waitForRecoveredSandboxGateway: async (
+          name: string,
+          options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+        ) => {
+          expect(await options!.probeImpl!(name)).toBe(sample.decision);
+          return sample.decision;
+        },
+      });
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
+      expect(result.ok).toBe(sample.decision);
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[0]?.[2]).toBe(210000);
+      expect(execute.mock.calls[1]?.[2]).toBe(10000);
+      expect(readinessDiagnostic()).toEqual({
+        nativeRestartStatus: 0,
+        totalProbes: 1,
+        droppedSamples: 0,
+        samples: [
+          {
+            ordinal: 1,
+            commandStatus: sample.status,
+            transportErrorKind: null,
+            httpStatus: sample.httpStatus,
+            jsonParsed: sample.jsonParsed,
+            ready: sample.ready,
+            probeResult: false,
+          },
+        ],
+      });
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+      expect(vi.mocked(console.error).mock.calls.join("\n")).not.toContain("secret-stderr");
+    },
+  );
+
+  it("retains the last 32 readiness observations without response bodies or extra probes", async () => {
+    silenceConsole();
+    const secret = "private-token-".repeat(10000);
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: secret, stderr: secret })
+      .mockResolvedValue({
+        status: 0,
+        stdout: `${JSON.stringify({ ready: false, token: secret, url: "https://user:password@example.com" })}\n503`,
+        stderr: secret,
+      });
+    const deps = baseDeps({
+      executeSandboxExecCommand: execute,
+      waitForRecoveredSandboxGateway: async (
+        name: string,
+        options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+      ) =>
+        waitForRecoveredSandboxGateway(name, {
+          ...options,
+          timeoutSeconds: 102,
+          sleepImpl: () => undefined,
+        }),
+    });
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+      ok: false,
+      failureLayer: "health timeout",
+    });
+    const diagnostic = readinessDiagnostic();
+    expect(diagnostic).toMatchObject({
+      nativeRestartStatus: 0,
+      totalProbes: 35,
+      droppedSamples: 3,
+    });
+    expect(diagnostic.samples.map((sample: { ordinal: number }) => sample.ordinal)).toEqual(
+      Array.from({ length: 32 }, (_, index) => index + 4),
+    );
+    expect(execute).toHaveBeenCalledTimes(36);
+    const printed = vi.mocked(console.error).mock.calls.join("\n");
+    expect(printed.length).toBeLessThan(6000);
+    expect(printed).not.toMatch(/private-token|password|https:\/\/|example\.com/);
+  });
+
+  it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
+    "records unavailable readiness evidence for %s without retrying the command",
+    async (kind) => {
+      silenceConsole();
+      const execute = vi.fn().mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+      execute.mockRejectedValue(new SandboxCommandTransportError(kind));
+      const deps = baseDeps({
+        executeSandboxExecCommand: execute,
+        waitForRecoveredSandboxGateway: async (
+          name: string,
+          options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+        ) => {
+          expect(await options!.probeImpl!(name)).toBeNull();
+          return false;
+        },
+      });
+      await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+        ok: false,
+        failureLayer: "health timeout",
+      });
+      expect(readinessDiagnostic().samples).toEqual([
+        {
+          ordinal: 1,
+          commandStatus: null,
+          transportErrorKind: kind,
+          httpStatus: null,
+          jsonParsed: false,
+          ready: null,
+          probeResult: null,
+        },
+      ]);
+      expect(execute).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
     "reports %s transport failure without retrying restart",
     async (kind) => {
@@ -195,6 +410,77 @@ describe("restartSandboxGateway native lifecycle", () => {
       }
     },
   );
+
+  it.each([
+    { settled: true, observations: null },
+    { settled: false, observations: [true, false] },
+  ])(
+    "preserves the readiness settle result $settled and its probe count",
+    async ({ settled, observations }) => {
+      silenceConsole();
+      vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "25");
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ status: 0, stdout: '{"ready":true}\n200', stderr: "" })
+        .mockResolvedValueOnce({
+          status: 0,
+          stdout: `${JSON.stringify({ ready: settled })}\n200`,
+          stderr: "",
+        });
+      const sleep = vi.fn();
+      const deps = baseDeps({
+        executeSandboxExecCommand: execute,
+        waitForRecoveredSandboxGateway: (
+          name: string,
+          options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+        ) =>
+          waitForRecoveredSandboxGateway(name, { ...options, timeoutSeconds: 0, sleepImpl: sleep }),
+      });
+      expect((await restartSandboxGateway("alpha", { quiet: true, deps })).ok).toBe(settled);
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(sleep).toHaveBeenCalledExactlyOnceWith(25);
+      expect(
+        readinessDiagnostic()?.samples.map(
+          (sample: { probeResult: boolean }) => sample.probeResult,
+        ) ?? null,
+      ).toEqual(observations);
+    },
+  );
+
+  it("records a missing readiness command result without inventing a transport cause", async () => {
+    silenceConsole();
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValue(null);
+    const deps = baseDeps({
+      executeSandboxExecCommand: execute,
+      waitForRecoveredSandboxGateway: async (
+        name: string,
+        options: Parameters<typeof waitForRecoveredSandboxGateway>[1],
+      ) => {
+        expect(await options!.probeImpl!(name)).toBeNull();
+        return false;
+      },
+    });
+    await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+      ok: false,
+      failureLayer: "health timeout",
+    });
+    expect(readinessDiagnostic().samples).toEqual([
+      {
+        ordinal: 1,
+        commandStatus: null,
+        transportErrorKind: null,
+        httpStatus: null,
+        jsonParsed: false,
+        ready: null,
+        probeResult: null,
+      },
+    ]);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
 
   it("treats lost OpenClaw readiness transport as unavailable evidence", async () => {
     silenceConsole();

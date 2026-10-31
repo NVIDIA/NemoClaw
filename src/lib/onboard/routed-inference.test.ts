@@ -210,6 +210,16 @@ describe("setupRoutedInference route mutation", () => {
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   };
 
+  it("registers an attached native provider without mutating the retired shared route", async () => {
+    const deps = { ...makeRoutedSetupDeps(), nativeLocalInference: true };
+    await expect(setupRoutedInference(args, deps as unknown as RoutedDeps)).resolves.toEqual({
+      done: false,
+    });
+    expect(deps.reconcileModelRouter).toHaveBeenCalledOnce();
+    expect(deps.routedInference.upsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+  });
+
   it("sends the exact route to the named gateway", async () => {
     const deps = makeRoutedSetupDeps();
 

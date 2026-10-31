@@ -59,6 +59,8 @@ import {
   HermesNvidiaCredentialVerifierMissingError,
   verifyHermesNvidiaCredential,
   readNativeStatusSelection,
+  verifyRegisteredStatusAttachment,
+  type VerifyRegisteredStatusAttachment,
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
@@ -361,6 +363,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
   getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
+  verifyRegisteredProviderAttachmentImpl?: VerifyRegisteredStatusAttachment;
   verifyNativeNvidiaProviderAttachmentImpl?: VerifyNativeNvidiaStatusAttachment;
   verifyNativeLocalProviderAttachmentImpl?: VerifyNativeLocalStatusAttachment;
   verifyNativeHostedProviderAttachmentImpl?: VerifyNativeHostedStatusAttachment;
@@ -595,9 +598,15 @@ export async function collectSandboxStatusSnapshot(
     ((postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
       opts.suppressInferenceProbe === true);
   const nativeSelection = readNativeStatusSelection(sb);
-  const { attachment: nativeAttachment, label: nativeLabel } = nativeSelection;
+  const {
+    attachment: nativeAttachment,
+    registeredAttachment,
+    label: nativeLabel,
+  } = nativeSelection;
   let nativeAttachmentFailure = nativeSelection.failure;
-  const nativeProvider = Boolean(nativeAttachment || nativeAttachmentFailure);
+  const nativeProvider = Boolean(
+    nativeAttachment || registeredAttachment || nativeAttachmentFailure,
+  );
   let liveResult: OpenShellInferenceRouteResult | null = null;
   let gatewayName: string | null = null;
   if (lookup.state === "present") {
@@ -657,8 +666,8 @@ export async function collectSandboxStatusSnapshot(
     sb
   ) {
     const expected = nativeAttachment;
-    if (!gatewayName || !expected) {
-      nativeAttachmentFailure =
+    if (!gatewayName || (!expected && !registeredAttachment)) {
+      nativeAttachmentFailure ??=
         `Native ${nativeLabel} provider attachment is unavailable for sandbox '${sandboxName}'. ` +
         `Recreate the sandbox to restore native ${nativeLabel} inference.`;
     } else {
@@ -668,7 +677,15 @@ export async function collectSandboxStatusSnapshot(
           sb.nativeLocalProviderAttachment === undefined
             ? undefined
             : normalizeNativeLocalProviderAttachment(sb.nativeLocalProviderAttachment);
-        if (local) {
+        if (registeredAttachment) {
+          await (
+            opts.deps?.verifyRegisteredProviderAttachmentImpl ?? verifyRegisteredStatusAttachment
+          )({
+            gatewayName,
+            sandboxName,
+            expected: registeredAttachment,
+          });
+        } else if (local) {
           await (
             opts.deps?.verifyNativeLocalProviderAttachmentImpl ?? verifyNativeLocalStatusAttachment
           )({
@@ -685,7 +702,7 @@ export async function collectSandboxStatusSnapshot(
               ? { verify: opts.deps.verifyNativeNvidiaProviderAttachmentImpl }
               : {}),
           });
-        } else {
+        } else if (expected) {
           await verifyNativeHostedStatusAttachment({
             gatewayName,
             sandboxName,
@@ -698,8 +715,11 @@ export async function collectSandboxStatusSnapshot(
       } catch (error) {
         const detail = sanitizedStatusDetail(error);
         nativeAttachmentFailure =
-          `Native ${nativeLabel} provider '${nativeAttachment.providerName}' is unavailable for sandbox '${sandboxName}'` +
-          `${detail ? `: ${detail}` : "."} Recreate the sandbox to restore native ${nativeLabel} inference.`;
+          `Native ${nativeLabel} provider '${(registeredAttachment ?? nativeAttachment)?.providerName}' is unavailable for sandbox '${sandboxName}'` +
+          `${detail ? `: ${detail}` : "."} ` +
+          (registeredAttachment
+            ? "Restore the operator provider and select it again for this sandbox."
+            : `Recreate the sandbox to restore native ${nativeLabel} inference.`);
       }
     }
   }
@@ -802,11 +822,16 @@ export async function collectSandboxStatusSnapshot(
                   {
                     sandboxName,
                     gatewayName: gatewayName ?? undefined,
-                    ...(sb?.agent === "langchain-deepagents-code" ? { agentName: sb.agent } : {}),
+                    ...(sb?.agent === "langchain-deepagents-code" || registeredAttachment
+                      ? { agentName: sb?.agent }
+                      : {}),
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
                     ...(nativeProvider ? { nativeProvider: true } : {}),
+                    ...(registeredAttachment
+                      ? { registeredInferenceProviderAttachment: registeredAttachment }
+                      : {}),
                     ...(sb?.nativeLocalProviderAttachment
                       ? { nativeLocalProviderAttachment: sb.nativeLocalProviderAttachment }
                       : {}),
@@ -873,7 +898,8 @@ export async function collectSandboxStatusSnapshot(
       : buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
           provider: invocationRoute.provider ?? null,
           nativeProvider,
-          nativeEndpointUrl: nativeAttachment?.endpointUrl,
+          nativeEndpointUrl: registeredAttachment?.endpointUrl ?? nativeAttachment?.endpointUrl,
+          registeredInferenceProviderAttachment: registeredAttachment,
           nativeLocalEndpoint:
             sb?.nativeLocalProviderAttachment === undefined
               ? undefined

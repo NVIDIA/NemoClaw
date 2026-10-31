@@ -49,22 +49,16 @@ function validateLoginProxyContract(
   allProxy: string | null = null,
 ): string {
   const loginHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-login-"));
-  const hostFile = path.join(loginHome, "trusted-proxy-host");
-  const portFile = path.join(loginHome, "trusted-proxy-port");
   const runtimeEnvFile = path.join(loginHome, "proxy-env.sh");
   const checkFixture = path.join(loginHome, "headless-check.sh");
-  fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
-  fs.writeFileSync(portFile, "3128\n", "utf8");
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
   const runtimeEnvText = [
     "export HOME=/sandbox",
-    `export HTTP_PROXY=${JSON.stringify(proxyUrl)}`,
-    `export HTTPS_PROXY=${JSON.stringify(proxyUrl)}`,
-    `export http_proxy=${JSON.stringify(lowerProxy)}`,
-    `export https_proxy=${JSON.stringify(lowerProxy)}`,
-    `export NO_PROXY=${JSON.stringify(noProxy)}`,
-    `export no_proxy=${JSON.stringify(noProxy)}`,
+    proxyUrl ? `export HTTP_PROXY=${JSON.stringify(proxyUrl)}` : "unset HTTP_PROXY",
+    proxyUrl ? `export HTTPS_PROXY=${JSON.stringify(proxyUrl)}` : "unset HTTPS_PROXY",
+    lowerProxy ? `export http_proxy=${JSON.stringify(lowerProxy)}` : "unset http_proxy",
+    lowerProxy ? `export https_proxy=${JSON.stringify(lowerProxy)}` : "unset https_proxy",
+    noProxy ? `export NO_PROXY=${JSON.stringify(noProxy)}` : "unset NO_PROXY",
+    noProxy ? `export no_proxy=${JSON.stringify(noProxy)}` : "unset no_proxy",
     ...(allProxy === null
       ? ["unset ALL_PROXY all_proxy"]
       : [
@@ -86,10 +80,7 @@ function validateLoginProxyContract(
       fs.chmodSync(runtimeEnvFile, runtimeEnvMetadata === "writable" ? 0o644 : 0o444);
   }
   let checkSource = fs.readFileSync(headlessCheckPath, "utf8");
-  checkSource = mustReplace(checkSource, "/usr/local/share/nemoclaw/dcode-proxy-host", hostFile);
-  checkSource = mustReplace(checkSource, "/usr/local/share/nemoclaw/dcode-proxy-port", portFile);
   checkSource = mustReplace(checkSource, "/tmp/nemoclaw-proxy-env.sh", runtimeEnvFile);
-  checkSource = mustReplace(checkSource, '= "0:444"', `= "${process.getuid?.() ?? 0}:444"`);
   checkSource = mustReplace(
     checkSource,
     'sandbox_uid="$(id -u sandbox)"',
@@ -137,10 +128,10 @@ function validateLoginProxyContract(
 
 describe("Deep Agents Code login-shell proxy contract", () => {
   it.each(["symlink", "writable", "wrong-user", "wrong-owner", "root-user"] as const)(
-    "sources normalized proxy values and rejects runtime metadata drift [%s] (#6191)",
+    "rejects ambient proxies and unsafe runtime environment files [%s] (#6191)",
     (runtimeEnvMetadata) => {
-      const managedProxy = "http://10.200.0.1:3128";
-      const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
+      const managedProxy = "";
+      const managedNoProxy = "";
       expect(validateLoginProxyContract(managedProxy, managedNoProxy)).toBe("pass");
 
       expect(

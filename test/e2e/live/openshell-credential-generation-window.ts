@@ -22,7 +22,7 @@ export const CREDENTIAL_WINDOW_STEPS = {
   allowedBeforeExpiry: "allowed-before-expiry",
   deniedAfterExpiry: "denied-after-expiry",
   fallbackAfterEviction: "fallback-after-eviction",
-  deniedAfterKeyRemoval: "denied-after-key-removal",
+  deniedAfterCurrentExpiry: "denied-after-current-expiry",
   deniedAfterDetach: "denied-after-detach",
   deniedAfterReadd: "denied-after-readd",
   stop: "stop",
@@ -32,7 +32,7 @@ export type CredentialWindowRequestStep =
   | (typeof CREDENTIAL_WINDOW_STEPS)["allowedBeforeExpiry"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterExpiry"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterEviction"]
-  | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterKeyRemoval"]
+  | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterCurrentExpiry"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterDetach"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterReadd"];
 
@@ -53,14 +53,13 @@ export function credentialWindowRequestId(step: CredentialWindowRequestStep): st
 export function buildCredentialWindowProviderUpdateArgs(
   providerName: string,
   expiresAtMs: number,
-  removeCredential = false,
 ): string[] {
   return [
     "provider",
     "update",
     providerName,
     "--credential",
-    removeCredential ? `${CREDENTIAL_WINDOW_ENV_NAME}=` : CREDENTIAL_WINDOW_ENV_NAME,
+    CREDENTIAL_WINDOW_ENV_NAME,
     "--credential-expires-at",
     `${CREDENTIAL_WINDOW_ENV_NAME}=${expiresAtMs}`,
   ];
@@ -70,6 +69,62 @@ export interface CredentialWindowChildOptions {
   readonly mcpUrl: string;
   readonly maxRuntimeMs?: number;
 }
+
+// Both probes retain one credential handle and use the same bounded MCP transport.
+const MCP_SESSION_SCRIPT = `
+const https = require("node:https");
+const credentialPlaceholder = process.env[config.envName] || "";
+const revisionPattern = new RegExp(
+  "^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$",
+);
+const revisionMatch = revisionPattern.exec(credentialPlaceholder);
+if (!revisionMatch) throw new Error("child did not receive a revision-scoped credential");
+const revision = revisionMatch[1];
+const finish = (exitCode, summary = "", diagnostic = "") => {
+  process.stdout.write(summary);
+  process.stderr.write(diagnostic);
+  process.exitCode = exitCode;
+};
+const sendMcp = (message, sessionId) => new Promise((resolve, reject) => {
+  const body = JSON.stringify(message);
+  const request = https.request({
+    hostname: target.hostname, port: target.port, path: target.pathname, method: "POST",
+    headers: {
+      "content-type": "application/json", "content-length": Buffer.byteLength(body),
+      authorization: "Bearer " + credentialPlaceholder,
+      ...(sessionId ? { "mcp-session-id": sessionId, "mcp-protocol-version": "2025-11-25" } : {}),
+    },
+  }, (response) => {
+    let text = "";
+    response.setEncoding("utf8");
+    response.on("data", (chunk) => {
+      text += chunk;
+      if (text.length > 65536) request.destroy(new Error("MCP response exceeded its limit"));
+    });
+    response.on("error", () => reject(new Error("MCP response failed")));
+    response.on("end", () => resolve({ status: response.statusCode, headers: response.headers, text }));
+  });
+  request.on("error", (error) => reject(Object.assign(new Error("MCP request failed"), { code: error.code })));
+  request.setTimeout(30_000, () => request.destroy(new Error("MCP request timed out")));
+  request.end(body);
+});
+const negotiateSession = async () => {
+  const initialized = await sendMcp({
+    jsonrpc: "2.0", id: "credential-window-initialize", method: "initialize",
+    params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "credential-window", version: "1" } },
+  });
+  const sessionId = initialized.headers["mcp-session-id"];
+  let version;
+  try { version = JSON.parse(initialized.text).result?.protocolVersion; } catch {}
+  if (initialized.status !== 200 || version !== "2025-11-25" ||
+      typeof sessionId !== "string" || !/^[\\x21-\\x7e]{1,256}$/.test(sessionId)) {
+    throw new Error("MCP session negotiation failed");
+  }
+  const ready = await sendMcp({ jsonrpc: "2.0", method: "notifications/initialized" }, sessionId);
+  if (ready.status !== 202) throw new Error("MCP session initialization failed");
+  return sessionId;
+};
+`;
 
 /**
  * Build the process held open across provider mutations. It snapshots the
@@ -92,21 +147,15 @@ export function buildCredentialWindowChildScript(options: CredentialWindowChildO
 
   return `
 const fs = require("node:fs");
-const https = require("node:https");
 const config = ${config};
-const credentialPlaceholder = process.env[config.envName] || "";
-const revisionPattern = new RegExp(
-  "^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$",
-);
-const revisionMatch = revisionPattern.exec(credentialPlaceholder);
-if (!revisionMatch) throw new Error("old child did not receive a revision-scoped credential");
-const revision = revisionMatch[1];
 const target = new URL(config.mcpUrl);
+${MCP_SESSION_SCRIPT}
+let sessionId;
 const requestSteps = new Set([
   config.steps.allowedBeforeExpiry,
   config.steps.deniedAfterExpiry,
   config.steps.fallbackAfterEviction,
-  config.steps.deniedAfterKeyRemoval,
+  config.steps.deniedAfterCurrentExpiry,
   config.steps.deniedAfterDetach,
   config.steps.deniedAfterReadd,
 ]);
@@ -116,40 +165,25 @@ const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 const writePrivateJson = (file, value) => {
   fs.writeFileSync(file, JSON.stringify(value) + "\\n", { encoding: "utf8", mode: 0o600 });
 };
-const request = (step) => new Promise((resolve) => {
-  const body = JSON.stringify({
-    jsonrpc: "2.0",
-    id: config.requestPrefix + ":" + step,
-    method: "tools/list",
-  });
-  const outbound = https.request({
-    hostname: target.hostname,
-    port: target.port,
-    path: target.pathname,
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "content-length": Buffer.byteLength(body),
-      authorization: "Bearer " + credentialPlaceholder,
-    },
-  }, (response) => {
-    response.resume();
-    response.on("end", () => resolve({
-      outcome: response.statusCode === 200 ? "allowed" : "denied",
-      httpStatus: response.statusCode,
-    }));
-  });
-  outbound.on("error", (error) => {
+const request = async (step) => {
+  try {
+    const response = await sendMcp({
+      jsonrpc: "2.0", id: config.requestPrefix + ":" + step, method: "tools/list",
+    }, sessionId);
+    return {
+      outcome: response.status === 200 ? "allowed" : "denied",
+      httpStatus: response.status,
+    };
+  } catch (error) {
     const knownCodes = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "SELF_SIGNED_CERT_IN_CHAIN"]);
-    resolve({ outcome: "denied", transportCode: knownCodes.has(error.code) ? error.code : "OTHER" });
-  });
-  outbound.setTimeout(30_000, () => outbound.destroy());
-  outbound.end(body);
-});
+    return { outcome: "denied", transportCode: knownCodes.has(error.code) ? error.code : "OTHER" };
+  }
+};
 
-writePrivateJson(config.readyPath, { revision });
 const deadline = Date.now() + config.maxRuntimeMs;
 (async () => {
+  sessionId = await negotiateSession();
+  writePrivateJson(config.readyPath, { revision });
   let stopped = false;
   while (Date.now() < deadline && !stopped) {
     const step = fs.existsSync(config.controlPath)
@@ -165,13 +199,12 @@ const deadline = Date.now() + config.maxRuntimeMs;
       outcomes.push({ step, outcome });
       writePrivateJson(config.acknowledgementPath, { step, outcome });
     }
-    if (!stopped) await delay(200);
+    await delay(200);
   }
   if (!stopped) throw new Error("credential generation window child exceeded its deadline");
   process.stdout.write(JSON.stringify({ revision, outcomes }) + "\\n");
 })().catch((error) => {
-  process.stderr.write(String(error && error.message ? error.message : error) + "\\n");
-  process.exitCode = 1;
+  finish(1, "", String(error && error.message ? error.message : error) + "\\n");
 });
 `.trim();
 }
@@ -181,38 +214,13 @@ export function buildCredentialWindowOneShotScript(): string {
     envName: CREDENTIAL_WINDOW_ENV_NAME,
   });
   return `
-const https = require("node:https");
 const config = ${config};
-const credentialPlaceholder = process.env[config.envName] || "";
-const revisionPattern = new RegExp(
-  "^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$",
-);
-const revisionMatch = revisionPattern.exec(credentialPlaceholder);
-if (!revisionMatch) throw new Error("fresh child did not receive a revision-scoped credential");
 const target = new URL(process.argv[1]);
-const body = JSON.stringify({ jsonrpc: "2.0", id: process.argv[2], method: "tools/list" });
-const request = https.request({
-  hostname: target.hostname,
-  port: target.port,
-  path: target.pathname,
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(body),
-    authorization: "Bearer " + credentialPlaceholder,
-  },
-}, (response) => {
-  response.resume();
-  response.on("end", () => {
-    process.stdout.write(JSON.stringify({ revision: revisionMatch[1], status: response.statusCode }) + "\\n");
-    process.exitCode = response.statusCode === 200 ? 0 : 1;
-  });
-});
-request.on("error", (error) => {
-  process.stderr.write(error.name + "\\n");
-  process.exitCode = 1;
-});
-request.setTimeout(30_000, () => request.destroy());
-request.end(body);
+${MCP_SESSION_SCRIPT}
+(async () => {
+  const sessionId = await negotiateSession();
+  const response = await sendMcp({ jsonrpc: "2.0", id: process.argv[2], method: "tools/list" }, sessionId);
+  finish(response.status === 200 ? 0 : 1, JSON.stringify({ revision, status: response.status }) + "\\n");
+})().catch(() => finish(1, "", "MCP credential request failed\\n"));
 `.trim();
 }

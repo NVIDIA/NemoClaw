@@ -26,6 +26,13 @@ NemoClaw detects Ollama on the host and can install, start, or upgrade it on sup
 
 Fresh Hermes Portable onboarding does not use the host Ollama setup described in the remaining sections.
 It creates a receipt-owned Ollama runner through the current user's rootless Podman authority.
+On OpenShell `0.1.5`, fresh onboarding attaches a native provider for `http://host.openshell.internal:11434/v1` to the Hermes sandbox.
+The supervisor supplies a credential reference through `NEMOCLAW_LOCAL_INFERENCE_TOKEN`; its stored value is the nonsecret Ollama sentinel.
+The private publication journal binds the transaction to the provider name, endpoint profile, immutable provider ID, and resource version.
+Recovery and cleanup stop when that authority changes.
+Existing shared-route journals are preserved for their recorded cleanup and are not adopted as native providers.
+Back up an existing sandbox before retiring its old runtime and creating a native replacement.
+The OpenShell `0.1.5` upgrade remains unqualified until the complete runtime E2E suite passes.
 Run the fresh Portable command in the [Hermes quickstart](../../get-started/quickstart#use-portable-ollama) with `NEMOCLAW_PROVIDER=ollama` and an explicit `NEMOCLAW_MODEL`.
 
 This experimental profile requires exactly Podman `5.7.0` for both the client and the local rootless engine.
@@ -156,8 +163,10 @@ The menu identifies a reachable daemon as running and labels an installed but st
 NemoClaw lists installed models or offers starter models when none are installed.
 
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
-The menu shows currently available GPU memory when the host reports it, including `0`, or total GPU memory when available memory is unknown.
-A `0` reading means no GPU memory is currently free, so each known starter model is shown as exceeding available memory.
+The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
+A reported value of `0 MiB` means no available GPU memory; NemoClaw does not substitute total memory for that reading.
+Each known starter model then appears as exceeding available memory.
+Free GPU memory before retrying a model that does not fit.
 
 Among installed models that fit, NemoClaw selects the registry-known model with the highest approximate VRAM requirement.
 Unregistered tags follow registry-known tags and retain Ollama's list order.

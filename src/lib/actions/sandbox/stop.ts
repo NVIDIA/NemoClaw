@@ -51,7 +51,7 @@ async function teardownDashboardForwardBestEffort(
   try {
     if ((await teardown(sandboxName)) === false) {
       warn(
-        `  Warning: a ForwardTcp port for '${sandboxName}' did not release. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+        `  Warning: ForwardTcp port release for '${sandboxName}' could not be proved. Retry '${CLI_NAME} ${sandboxName} stop'.`,
       );
       return false;
     }

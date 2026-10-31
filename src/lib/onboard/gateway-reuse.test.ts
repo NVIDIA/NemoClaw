@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import * as gatewayEnv from "./docker-driver-gateway-env";
@@ -177,6 +177,42 @@ function createDockerDriverReuseApplication(
 }
 
 describe("Docker-driver gateway reuse application", () => {
+  beforeEach(() => {
+    const runtime = gatewayEnv.observeConfiguredGatewayHostRuntime({
+      platform: "linux",
+      architecture: "x64",
+      environment: {},
+    });
+    vi.spyOn(gatewayEnv, "observeConfiguredGatewayHostRuntime").mockReturnValue({
+      ...runtime,
+      gatewayConfig: { ...runtime.gatewayConfig, driverConfigLayout: "inline-supervisor" },
+    });
+  });
+
+  it.each([false, true])(
+    "checks split-supervisor process drift without requiring a bridge (drift=%s)",
+    async (drift) => {
+      const runtime = gatewayEnv.observeConfiguredGatewayHostRuntime();
+      vi.mocked(gatewayEnv.observeConfiguredGatewayHostRuntime).mockReturnValue({
+        ...runtime,
+        gatewayConfig: { ...runtime.gatewayConfig, driverConfigLayout: "split-supervisor" },
+      });
+      const inspectDockerDriverNetwork = vi.fn(() => ({ kind: "absent" as const }));
+      const getDockerDriverGatewayReuseDrift = vi.fn(() =>
+        drift ? { reason: "runtime environment changed" } : null,
+      );
+      const application = createDockerDriverReuseApplication({
+        inspectDockerDriverNetwork,
+        getDockerDriverGatewayReuseDrift,
+      });
+      await expect(application.refreshDockerDriverGatewayReuseState("healthy")).resolves.toBe(
+        drift ? "stale" : "healthy",
+      );
+      expect(getDockerDriverGatewayReuseDrift).toHaveBeenCalledOnce();
+      expect(inspectDockerDriverNetwork).not.toHaveBeenCalled();
+    },
+  );
+
   it("preserves provider-owned readiness without inspecting Docker", async () => {
     vi.spyOn(gatewayEnv, "configuredRuntimeProviderOwnsHostReadiness").mockReturnValue(true);
     const resolveOpenShellGatewayBinary = vi.fn(() => "/opt/openshell-gateway");

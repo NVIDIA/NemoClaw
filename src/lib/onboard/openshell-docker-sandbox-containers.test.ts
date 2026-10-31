@@ -148,10 +148,14 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   };
 }
 
-// OpenShell 0.0.116 sends supervisor startup failures only to the sandbox
-// container's stderr (#13178). Remove once the OpenShell pin reaches 0.1.0.
+// Preserve startup output when create fails before sandbox status is readable
+// and rollback removes the container (#13178).
 describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
   const CONTAINER_ID = "f".repeat(64);
+  const identity = (id: string, role = "") =>
+    [id, "openshell", role === "supervisor" ? "" : "default", "sandbox-id", "namespace", role].join(
+      "\t",
+    );
   const STARTUP_FAILURE =
     "Error:   × Failed to prepare sandbox: Landlock path unavailable in hard_requirement mode";
   const dockerResult = (stdout: string, status = 0, stderr = "") =>
@@ -161,7 +165,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
   it("reads redacted output from the one OpenShell container labeled with the sandbox name", () => {
     const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
     const dockerRun = vi.fn((_args: readonly string[], _options?: { timeout?: number }) =>
-      dockerResult(`${CONTAINER_ID}\n`),
+      dockerResult(`${identity(CONTAINER_ID)}\n`),
     );
     const dockerCapture = vi.fn((args: readonly string[]) =>
       args.includes("--format") ? "" : inspectWithEnv([`PROVIDER_TOKEN=${opaqueSecret}`]),
@@ -172,13 +176,11 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
       dockerRun,
       dockerCapture,
       dockerLogs,
+      expectedSandboxId: "sandbox-id",
     });
 
     expect(dockerRun.mock.calls[0][0]).toEqual(
-      expect.arrayContaining([
-        "label=openshell.ai/managed-by=openshell",
-        "label=openshell.ai/sandbox-name=my-assistant",
-      ]),
+      expect.arrayContaining(["label=openshell.ai/sandbox-name=my-assistant"]),
     );
     expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
     // A stalled lookup must not hold the failed sandbox before rollback.
@@ -187,11 +189,30 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(output).not.toContain(opaqueSecret);
   });
 
+  it.each([null, CONTAINER_ID])(
+    "refuses logs from a changed sandbox identity with runtime %s",
+    (expectedContainerId) => {
+      const dockerRun = vi.fn(() => dockerResult(`${identity(CONTAINER_ID)}\n`));
+      const dockerCapture = vi.fn();
+      const dockerLogs = vi.fn();
+      expect(
+        captureOpenShellDockerSandboxFailureOutput("my-assistant", expectedContainerId, {
+          dockerRun,
+          dockerCapture,
+          dockerLogs,
+          expectedSandboxId: "different-sandbox-id",
+        }),
+      ).toBeNull();
+      expect(dockerCapture).not.toHaveBeenCalled();
+      expect(dockerLogs).not.toHaveBeenCalled();
+    },
+  );
+
   it("starts no Docker call after the shared capture deadline before rollback", () => {
     let clock = 1_000;
     const dockerRun = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
       clock += options?.timeout ?? 0;
-      return dockerResult(`${CONTAINER_ID}\n`);
+      return dockerResult(`${identity(CONTAINER_ID)}\n`);
     });
     const dockerCapture = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
       clock += options?.timeout ?? 0;
@@ -212,6 +233,145 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(dockerCapture.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
     expect(dockerLogs).not.toHaveBeenCalled();
     expect(clock - 1_000).toBeLessThanOrEqual(4_000);
+  });
+
+  it.each(["opaque-private-token", "opaque-" + "z".repeat(1600) + "-secret"])(
+    "learns both role inventories before truncating any log",
+    (secret) => {
+      const supervisor = "e".repeat(64);
+      const dockerLogs = vi.fn((id: string) => `${id}: ${secret}\n${STARTUP_FAILURE}`);
+      const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: vi.fn(() =>
+          dockerResult(
+            [identity(CONTAINER_ID, "sandbox"), identity(supervisor, "supervisor")].join("\n"),
+          ),
+        ),
+        dockerCapture: () =>
+          JSON.stringify([
+            { Id: CONTAINER_ID, Config: { Env: [] }, State: {} },
+            {
+              Id: supervisor,
+              Config: {
+                Env: [
+                  `OPENSHELL_MAIN_PROCESS_SPEC=${JSON.stringify({ version: 1, command: ["env", `TOKEN=${secret}`, "nemoclaw-start"], tty: false, await_main_process_attachment: false })}`,
+                ],
+              },
+              State: {},
+            },
+          ]),
+        dockerLogs,
+      });
+      expect(dockerLogs.mock.calls.map(([id]) => id)).toEqual([CONTAINER_ID, supervisor]);
+      expect(output).toContain("== supervisor");
+      expect(output).toContain("== sandbox");
+      expect(output).toContain(STARTUP_FAILURE);
+      expect(output).not.toContain(secret);
+      expect(output).not.toContain("z".repeat(20));
+    },
+  );
+
+  it.each([
+    ["incomplete inventory", []],
+    ["foreign ID", [{ Id: "b".repeat(64), Config: { Env: [] } }]],
+    ["missing environment", [{ Id: "e".repeat(64), Config: {} }]],
+    ["duplicate ID", [{ Id: CONTAINER_ID, Config: { Env: [] } }]],
+  ])("reads no role logs with %s", (_reason, remainder) => {
+    const dockerLogs = vi.fn();
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: () =>
+          dockerResult(
+            [identity(CONTAINER_ID, "sandbox"), identity("e".repeat(64), "supervisor")].join("\n"),
+          ),
+        dockerCapture: () =>
+          JSON.stringify([{ Id: CONTAINER_ID, Config: { Env: [] } }, ...remainder]),
+        dockerLogs,
+      }),
+    ).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
+  });
+
+  it("retains bounded role state with empty logs without copying inspect secrets", () => {
+    const supervisor = "e".repeat(64);
+    const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+      dockerRun: () =>
+        dockerResult(
+          [identity(CONTAINER_ID, "sandbox"), identity(supervisor, "supervisor")].join("\n"),
+        ),
+      dockerCapture: () =>
+        JSON.stringify([
+          {
+            Id: CONTAINER_ID,
+            Config: { Env: ["TOKEN=private-inspect-secret"] },
+            State: {
+              Running: false,
+              ExitCode: 7,
+              OOMKilled: true,
+              Error: "private-inspect-secret",
+            },
+          },
+          {
+            Id: supervisor,
+            Config: { Env: [] },
+            State: { Running: true, ExitCode: "private-inspect-secret", OOMKilled: false },
+          },
+        ]),
+      dockerLogs: () => "",
+    });
+    expect(output).toBe(
+      `== sandbox ${CONTAINER_ID} ==\nrunning=false exit_code=7 oom_killed=true\n` +
+        `== supervisor ${supervisor} ==\nrunning=true oom_killed=false`,
+    );
+  });
+
+  it("reads no role logs when the complete inspect inventory exceeds the shared deadline", () => {
+    let clock = 0;
+    const dockerLogs = vi.fn();
+    const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+      now: () => clock,
+      dockerRun: vi.fn((_args, options) => {
+        clock += options?.timeout ?? 0;
+        return dockerResult(
+          [identity(CONTAINER_ID, "sandbox"), identity("e".repeat(64), "supervisor")].join("\n"),
+        );
+      }),
+      dockerCapture: vi.fn((_args, options) => {
+        clock += options?.timeout ?? 0;
+        return JSON.stringify([
+          { Id: CONTAINER_ID, Config: { Env: [] } },
+          { Id: "e".repeat(64), Config: { Env: [] } },
+        ]);
+      }),
+      dockerLogs,
+    });
+    expect(output).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
+    expect(clock).toBe(4000);
+  });
+
+  it.each([
+    ["different sandbox", identity("e".repeat(64), "supervisor").replace("sandbox-id", "other")],
+    ["different namespace", identity("e".repeat(64), "supervisor").replace("namespace", "other")],
+    [
+      "different workspace",
+      identity("e".repeat(64), "supervisor").replace("\t\tsandbox-id", "\tother\tsandbox-id"),
+    ],
+    ["foreign owner", identity("e".repeat(64), "supervisor").replace("openshell", "foreign")],
+    ["duplicate role", identity("e".repeat(64), "sandbox")],
+    ["duplicate identity", identity(CONTAINER_ID, "supervisor")],
+    ["missing namespace", identity("e".repeat(64), "supervisor").replace("namespace", "")],
+    ["malformed identity", "malformed"],
+  ])("refuses native diagnostics with %s", (_name, second) => {
+    const dockerLogs = vi.fn();
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: vi.fn(() =>
+          dockerResult([identity(CONTAINER_ID, "sandbox"), second].join("\n")),
+        ),
+        dockerLogs,
+      }),
+    ).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
   });
 
   it("reads the exact failed replacement without a label lookup", () => {
@@ -282,6 +442,51 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
 });
 
 describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
+  it.each([
+    {
+      label: "one workload and its supervisor",
+      roles: ["sandbox", "supervisor"],
+      expected: { ok: true, containerId: "1".repeat(64) },
+      calls: 2,
+    },
+    {
+      label: "only a supervisor",
+      roles: ["supervisor"],
+      expected: { ok: false, error: "expected one labeled sandbox container, found 0" },
+      calls: 1,
+    },
+    {
+      label: "two workloads and a supervisor",
+      roles: ["sandbox", "sandbox", "supervisor"],
+      expected: { ok: false, error: "expected one labeled sandbox container, found 2" },
+      calls: 1,
+    },
+  ])("requires one workload when Docker contains $label", ({ roles, expected, calls }) => {
+    const containers = roles.map((role, index) => ({
+      id: String(index + 1).repeat(64),
+      labels: [
+        "openshell.ai/managed-by=openshell",
+        "openshell.ai/sandbox-name=alpha",
+        `openshell.ai/isolation-role=${role}`,
+      ],
+    }));
+    const dockerRun = vi
+      .fn()
+      .mockImplementationOnce((args: readonly string[]) => {
+        const labels = args.filter((arg) => arg.startsWith("label=")).map((arg) => arg.slice(6));
+        const ids = containers
+          .filter((container) => labels.every((label) => container.labels.includes(label)))
+          .map((container) => container.id);
+        return { status: 0, stdout: ids.join("\n"), stderr: "" };
+      })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(EMPTY_RUNTIME_FIELDS), stderr: "" });
+
+    expect(queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun })).toMatchObject(
+      expected,
+    );
+    expect(dockerRun).toHaveBeenCalledTimes(calls);
+  });
+
   it("does not start container discovery after the shared deadline expires", () => {
     const dockerRun = vi.fn();
     const now = vi.fn().mockReturnValueOnce(1_000).mockReturnValue(1_001);

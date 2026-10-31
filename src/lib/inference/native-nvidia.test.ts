@@ -398,7 +398,9 @@ describe("native NVIDIA OpenShell provider", () => {
           providerId: "recorded-id",
         },
       }),
-    ).rejects.toThrow(/is missing.*No provider was changed/u);
+    ).rejects.toThrow(
+      /is missing.*no sandboxes after a reinstall, complete uninstall without --keep-openshell.*No provider was changed/u,
+    );
     expect(createProvider).not.toHaveBeenCalled();
   });
 

@@ -31,7 +31,11 @@ Use `$$nemoclaw <name> rebuild` after adding or changing the CA for an existing 
 NemoClaw validates the selected bundle and bakes it into the sandbox image as `NEMOCLAW_CORPORATE_CA_B64`.
 The managed Dockerfile decodes it to the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`.
 It also installs each validated certificate as a separate operating-system trust anchor and refreshes the OS trust bundle.
-This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream connection to an HTTPS inference, MCP, or custom-policy endpoint signed by that CA.
+Sandbox TLS clients can use these anchors.
+With OpenShell `0.1.5` and Docker, upstream TLS verification runs in a separate supervisor container.
+Installing the CA in the workload image does not add it to that supervisor's trust.
+Private-CA MCP connections remain unqualified until OpenShell supports direct-egress CA delivery to the Docker supervisor.
+The upstream repair is tracked in [OpenShell #3295](https://github.com/NVIDIA/OpenShell/issues/3295).
 
 <AgentOnly variant="openclaw">
 
@@ -39,7 +43,7 @@ When onboarding supplies a corporate CA, the Dockerfile sets `NODE_EXTRA_CA_CERT
 This includes registry-backed npm remediation and runtime dependency installation that cross a TLS-inspecting proxy.
 The build does not retain either variable in the image configuration.
 
-NemoClaw keeps `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` for OpenShell 0.0.116.
+NemoClaw keeps `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` when it imports a corporate CA into the managed OpenClaw image.
 The OpenClaw managed startup runtime creates `/tmp/nemoclaw-managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it releases the sandbox-user startup command.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
 Sandboxes still using the staged legacy direct-start path create `/tmp/nemoclaw-ca-bundle.pem` with mode `0444` as the same `sandbox` identity that runs the entrypoint and agent, so that compatibility path is read-only by mode but is not a privilege boundary.
@@ -100,7 +104,8 @@ If no selection message appears, no source passed validation.
 
 Managed NemoClaw Dockerfiles implement the corporate CA build contract automatically.
 A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64`, validate and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem`, install each certificate as an individual OS trust anchor, and refresh the OS trust bundle.
-Decoding only the application bundle is insufficient for OpenShell-inspected HTTPS because the proxy verifies the upstream TLS connection itself.
+Decoding only the application bundle does not establish trust for OpenShell-inspected HTTPS because the supervisor verifies the upstream TLS connection.
+The Docker supervisor limitation above also applies to custom images.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
 <AgentOnly variant="openclaw">

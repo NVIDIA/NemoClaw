@@ -69,11 +69,17 @@ if sys.argv[2] == 'cron-run':
             reason=run.get('errorReason')
             reason=reason if isinstance(reason, str) and reason in reasons else 'unavailable'
             print(f'ADMIN_CRON_ERROR_REASON={reason}', file=sys.stderr)
+            duration=run.get('durationMs')
+            # Bound the terminal runtime only; exclude booleans and arbitrary metadata.
+            if type(duration) is int and 0 <= duration <= 86400000:
+                print(f'ADMIN_CRON_DURATION_MS={duration}', file=sys.stderr)
             diagnostics=run.get('diagnostics')
             entries=diagnostics.get('entries') if isinstance(diagnostics, dict) else None
             sources=('cron-preflight', 'cron-setup', 'model-preflight', 'agent-run', 'tool', 'exec', 'delivery')
             # Observe fixed error-text signatures, not provider or tool causality.
             messages={
+                'cron isolated agent run aborted': 'message-agent-aborted',
+                'cron: job execution timed out': 'message-cron-deadline',
                 # Pinned incomplete-turn texts: the reply budget ended without visible output.
                 "Agent couldn't generate a response.": 'message-agent-incomplete-turn',
                 "\u26a0\ufe0f Agent couldn't generate a response. Please try again.": 'message-agent-incomplete-turn',
@@ -87,6 +93,7 @@ if sys.argv[2] == 'cron-run':
             http_signatures={str(code): f'error-text-http-{code}' for code in range(400, 600)}
             # Anchored subset of the pinned assistant-error-format HTTP grammar.
             http_patterns=(
+                r'\u26a0\ufe0f [A-Za-z0-9_./:-]+ request failed \(provider internal error, HTTP ([45][0-9]{2})\)\. This is usually temporary \u2014 try again shortly\.',
                 r'(?:http\s*)?([45][0-9]{2})(?:(?:\s*:\s*|\s+)[\s\S]+)?',
                 r'api\s*error\s*\(([45][0-9]{2})\)(?:\s*:\s*[\s\S]*)?',
                 r'(?:status code|unexpected status|http status)\s*[:=]?\s*([45][0-9]{2})\b(?:\s*[:,]?\s*(?:message\s*:\s*)?[\s\S]*)?',
@@ -118,6 +125,14 @@ if sys.argv[2] == 'cron-run':
             print('ADMIN_CRON_ERROR_SIGNATURES=' + (','.join(signatures) or 'unavailable'), file=sys.stderr)
             raise SystemExit(0)
 selection_checks=(
+    ('selection-state-busy', r'OpenClawPairingStateRetryableError: canonical pairing-state database is busy'),
+    ('selection-state-changed', r'OpenClawPairingStateRetryableError: canonical pairing-state .*changed'),
+    ('selection-state-wal-incomplete', r'OpenClawPairingStateRetryableError: canonical pairing-state WAL is missing its shared-memory sidecar'),
+    ('selection-state-unvalidated', r'OpenClawPairingStateRetryableError: SQLite reopened an unvalidated pairing-state file identity'),
+    ('selection-state-unsafe', r'OSError: unsafe canonical pairing-state'),
+    ('selection-state-missing', r'FileNotFoundError:'),
+    ('selection-state-permission', r'PermissionError:'),
+    ('selection-state-schema', r'ValueError: unsupported canonical device state schema'),
     ('selection-state-read', r'canonical pairing-state|canonical device state|canonical primary device identity|FileNotFoundError|PermissionError|sqlite3\.'),
     ('selection-local-identity', r'local CLI identity'),
     ('selection-pending-count', r'expected exactly one pending request, found [0-9]+'),

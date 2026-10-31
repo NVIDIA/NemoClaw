@@ -217,9 +217,21 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-On a normal read, `$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified, except for a degraded native NVIDIA result. When gateway and sandbox state are verified and probes are not suppressed, its main `Inference` line checks an available selected provider path from inside the sandbox. Shared providers use `https://inference.local/v1/models`, then send an inference request over the same route when that probe reports the route reachable. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections verify the recorded sandbox-attached OpenShell provider with an inference request. A fresh Personal-tier hosted compatible selection verifies the shared route and has no native attachment. Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after other final failures. A verified native NVIDIA route instead reports `degraded` and exits `0` after a final HTTP `429`, `500`, `502`, `503`, or `504` response or a confirmed request timeout. The model response remains unverified.
+On a normal read, `$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified, except for a degraded native NVIDIA result.
+When gateway and sandbox state are verified and probes are not suppressed, its main `Inference` line checks an available selected provider path from inside the sandbox.
+Shared providers use `https://inference.local/v1/models`, then send an inference request over the same route when that probe reports the route reachable.
+NVIDIA Endpoints, supported fixed hosted providers, qualifying hosted compatible selections, and qualified local selections verify the recorded sandbox-attached OpenShell provider with an inference request.
+Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost.
+The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after other final failures.
+A verified native NVIDIA route instead reports `degraded` and exits `0` after a final HTTP `429`, `500`, `502`, `503`, or `504` response or a confirmed request timeout.
+The model response remains unverified.
 
-During an ordinary lifecycle operation, status can return a read-only snapshot only when receipt and registry checks confirm that no conflicting lifecycle authority exists before and after the read. The snapshot shows `Inference: not probed (another lifecycle operation is in progress)`; JSON output sets `inferenceProbeSuppressed: true`. The exit status still reflects the observed sandbox and gateway state and may be nonzero. If a conflicting lifecycle authority exists, cannot be checked, or appears during the read, status rejects the snapshot and reports lifecycle contention. A snapshot is not inference or readiness evidence. Wait for the lifecycle operation to finish and rerun status before requiring an unsuppressed `healthy` inference result.
+During an ordinary lifecycle operation, status can return a read-only snapshot only when receipt and registry checks confirm that no Portable lifecycle authority exists before and after the read.
+The snapshot shows `Inference: not probed (another lifecycle operation is in progress)`; JSON output sets `inferenceProbeSuppressed: true`.
+The exit status still reflects the observed sandbox and gateway state and may be nonzero.
+If Portable lifecycle authority exists, cannot be checked, or appears during the read, status rejects the snapshot and reports lifecycle contention.
+A snapshot is not inference or readiness evidence.
+Wait for the lifecycle operation to finish and rerun status before requiring an unsuppressed `healthy` inference result.
 
 <AgentOnly variant="hermes">
 
@@ -298,13 +310,19 @@ unset TOKEN
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code does not expose a dashboard URL or gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, hosted compatible outside the Personal tier, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. A fresh Personal-tier hosted compatible selection uses the OpenShell-managed `inference.local` route without creating a native attachment. Owned Local NVIDIA NIM, retained legacy routes, and other custom routes without an attachment also use that shared route.
+Deep Agents Code does not expose a dashboard URL or gateway token.
+NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached OpenShell providers.
+Supported new custom hosted selections also use native providers bound to the selected endpoint and API.
+On OpenShell `0.0.x`, retained legacy shared routes use `inference.local` until the sandbox is safely recreated.
 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
 
-New OpenClaw Ollama, standalone vLLM, llama.cpp, and hosted compatible selections outside the Personal tier use a sandbox-attached provider. Local NVIDIA NIM, a fresh Personal-tier hosted compatible selection, and custom endpoints without an attachment use `inference.local`; an older local selection without an attachment may retain it until a safe fresh recreation.
+New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use a sandbox-attached native provider.
+Supported new OpenAI-compatible and Anthropic-compatible selections also use a native provider bound to the selected endpoint and API.
+On OpenShell `0.0.x`, existing shared routes retain `inference.local` until the sandbox is safely recreated.
+For endpoint requirements, refer to [Switch Inference Providers](../inference/manage-inference/switch-providers).
 
 OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
 Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.

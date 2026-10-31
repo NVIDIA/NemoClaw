@@ -130,9 +130,9 @@ function omitLocalIdentity(root: string, _identity: Record<string, unknown>): st
   return path.join(root, "state");
 }
 
-function writePairingStateHelper(root: string): string {
+function writePairingStateHelper(root: string, body = PAIRING_STATE_HELPER_PY): string {
   const helperPath = path.join(root, "openclaw_pairing_state.py");
-  fs.writeFileSync(helperPath, PAIRING_STATE_HELPER_PY);
+  fs.writeFileSync(helperPath, body);
   return helperPath;
 }
 
@@ -185,6 +185,7 @@ function runAdminApprovalScript(
     omitPreparedWrapper?: boolean;
     pendingRequestIds?: readonly string[];
     selectExpectedRequest?: boolean;
+    pairingHelper?: string;
   } = {},
 ): {
   commands: string[];
@@ -215,7 +216,7 @@ exec "$FAKE_REAL_PYTHON" "$@"
     { mode: 0o755 },
   );
   const stateRoot = writeLocalIdentity(root);
-  const helperPath = writePairingStateHelper(root);
+  const helperPath = writePairingStateHelper(root, options.pairingHelper);
   const terminalProbe = path.join(root, "terminal-probe.py");
   fs.writeFileSync(terminalProbe, ADMIN_APPROVAL_TEST_PTY_PY);
   const terminalRc = path.join(root, "connect.bashrc");
@@ -817,6 +818,10 @@ describe("prepared connect-shell administrative approval", () => {
 
   it.each([
     ["LLM request timed out.", "message-llm-timeout"],
+    ["cron isolated agent run aborted", "message-agent-aborted"],
+    ["cron: job execution timed out", "message-cron-deadline"],
+    ["cron isolated agent run aborted PRIVATE_SUFFIX", "unavailable"],
+    ["PRIVATE_PREFIX cron: job execution timed out", "unavailable"],
     ["LLM request failed.", "message-llm-failed"],
     ["LLM request failed with an unknown error.", "message-llm-unknown"],
     ["LLM request failed: provider returned an internal error.", "message-llm-provider-internal"],
@@ -844,6 +849,18 @@ describe("prepared connect-shell administrative approval", () => {
     ["HTTP 599: PRIVATE_BODY", "error-text-http-599"],
     ["HTTP 408: PRIVATE_BODY", "error-text-http-408"],
     ["HTTP 429: PRIVATE_BODY", "error-text-http-429"],
+    [
+      "\u26a0\ufe0f inference/PRIVATE_MODEL request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly.",
+      "error-text-http-500",
+    ],
+    [
+      "PRIVATE_PREFIX \u26a0\ufe0f inference/PRIVATE_MODEL request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly.",
+      "unavailable",
+    ],
+    [
+      "\u26a0\ufe0f inference/PRIVATE_MODEL request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly. PRIVATE_SUFFIX",
+      "unavailable",
+    ],
     ["PRIVATE_PREFIX LLM request timed out.", "unavailable"],
     ["LLM request timed out. PRIVATE_SUFFIX", "unavailable"],
     ["PRIVATE_BODY contains 503", "unavailable"],
@@ -886,6 +903,38 @@ describe("prepared connect-shell administrative approval", () => {
       /PRIVATE_|test-gateway-token|cron-1|run-1/,
     );
     expect(privateCaptureCount).toBe(8);
+    expect(privateCapturesRemaining).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it.each([
+    [0, "ADMIN_CRON_DURATION_MS=0\n"],
+    [120001, "ADMIN_CRON_DURATION_MS=120001\n"],
+    [86400000, "ADMIN_CRON_DURATION_MS=86400000\n"],
+    [-1, ""],
+    [86400001, ""],
+    [1.5, ""],
+    [true, ""],
+    [null, ""],
+    ["PRIVATE_DURATION test-gateway-token", ""],
+    [{ value: 120001 }, ""],
+  ])("retains only bounded terminal cron duration %j", (durationMs, expected) => {
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: { ...FAILED_CRON_RUN.run, durationMs, error: "PRIVATE_ERROR test-gateway-token" },
+    };
+    const { result, commands, privateCapturesRemaining, stagedScriptRetained } =
+      runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+        cronRunOutput: JSON.stringify(response),
+        cronRunExitCode: 1,
+        removeCaptures: true,
+      });
+    expect(result.status).toBe(29);
+    expect(result.stderr.match(/^ADMIN_CRON_DURATION_MS=.*\n/gm)?.join("") ?? "").toBe(expected);
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
+      /PRIVATE_|test-gateway-token|cron-1|run-1/,
+    );
+    expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
     expect(privateCapturesRemaining).toEqual([]);
     expect(stagedScriptRetained).toBe(false);
   });
@@ -1062,6 +1111,93 @@ describe("prepared connect-shell administrative approval", () => {
       );
       expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
       expect(stagedScriptRetained).toBe(false);
+    },
+  );
+
+  it.each([true, false])(
+    "rechecks the local identity after a pairing-state read settles (identity matches: %s)",
+    (identityMatches) => {
+      const identity = identityMatches
+        ? EXPECTED_IDENTITY
+        : {
+            deviceId: OTHER_DEVICE_ID,
+            publicKey: OTHER_PUBLIC_KEY,
+          };
+      const pairingHelper = `${PAIRING_STATE_HELPER_PY}
+class OpenClawPairingStateRetryableError(OSError):
+    pass
+read_stable_state = read_openclaw_pairing_state
+attempts = 0
+def read_openclaw_pairing_state(*args, **kwargs):
+    global attempts
+    attempts += 1
+    if attempts < 3:
+        raise OpenClawPairingStateRetryableError("canonical pairing-state WAL changed while reading")
+    records, metadata = read_stable_state(*args, **kwargs)
+    records["identity"] = ${JSON.stringify(identity)}
+    return records, metadata
+`;
+      const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
+        undefined,
+        0,
+        EXPECTED_REQUEST_ID,
+        {
+          verifyCronConsumer: false,
+          selectExpectedRequest: true,
+          expectedRequestId: EXPECTED_REQUEST_ID,
+          pairingHelper,
+        },
+      );
+      expect(result.status).toBe(identityMatches ? 0 : 26);
+      expect(commands.some((command) => command.startsWith("devices approve "))).toBe(
+        identityMatches,
+      );
+      expect(result.stdout.includes("ISSUE_5324_ADMIN_APPROVAL_OK")).toBe(identityMatches);
+      expect(stagedScriptRetained).toBe(false);
+    },
+  );
+
+  it.each([
+    ["OpenClawPairingStateRetryableError", "canonical pairing-state database is busy", "busy"],
+    [
+      "OpenClawPairingStateRetryableError",
+      "canonical pairing-state WAL changed while reading",
+      "changed",
+    ],
+    [
+      "OpenClawPairingStateRetryableError",
+      "canonical pairing-state WAL is missing its shared-memory sidecar",
+      "wal-incomplete",
+    ],
+    [
+      "OpenClawPairingStateRetryableError",
+      "SQLite reopened an unvalidated pairing-state file identity",
+      "unvalidated",
+    ],
+    ["OSError", "unsafe canonical pairing-state SQLite entry", "unsafe"],
+    ["FileNotFoundError", "missing database", "missing"],
+    ["PermissionError", "cannot read database", "permission"],
+    ["ValueError", "unsupported canonical device state schema", "schema"],
+    ["ValueError", "canonical primary device identity is unavailable", "read"],
+  ])(
+    "preserves refusal and redacts the %s pairing-state failure (%s)",
+    (errorType, message, category) => {
+      const { commands, result, stagedScriptRetained, privateCapturesRemaining } =
+        runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+          verifyCronConsumer: false,
+          selectExpectedRequest: true,
+          expectedRequestId: EXPECTED_REQUEST_ID,
+          removeCaptures: true,
+          pairingHelper: `class OpenClawPairingStateRetryableError(OSError):\n    pass\ndef read_openclaw_pairing_state(*args, **kwargs):\n    raise ${errorType}(${JSON.stringify(message + " PRIVATE_PAIRING_DATA")})\n`,
+        });
+      expect(result.status).toBe(26);
+      expect(commands).toEqual(["devices list --json"]);
+      expect(result.stderr).toContain(`ADMIN_DIAGNOSTIC=selection-state-${category}`);
+      expect(result.stdout + result.stderr).not.toMatch(
+        /PRIVATE_PAIRING_DATA|test-gateway-token|Traceback/,
+      );
+      expect(stagedScriptRetained).toBe(false);
+      expect(privateCapturesRemaining).toEqual([]);
     },
   );
 

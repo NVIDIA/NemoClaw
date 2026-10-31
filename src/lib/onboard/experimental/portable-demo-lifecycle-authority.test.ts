@@ -345,6 +345,8 @@ describe("portable demo lifecycle authority", () => {
         "label=openshell.ai/sandbox-name=alpha",
         "--filter",
         "label=openshell.ai/sandbox-workspace=default",
+        "--filter",
+        "label!=openshell.ai/isolation-role=supervisor",
         "--format",
         "{{.ID}}",
       ],

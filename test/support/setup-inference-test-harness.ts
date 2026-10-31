@@ -197,8 +197,8 @@ if (nativeProfile) {
   if (argv[0] === "provider" && argv[1] === "profile" && argv.includes("export")) {
     process.stdout.write(JSON.stringify(nativeProfile)); process.exit(0);
   }
-  if (argv[0] === "settings" && argv[1] === "get") {
-    process.stdout.write(JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "true" } })); process.exit(0);
+  if (argv[0] === "policy" && argv[1] === "list") {
+    process.stdout.write(JSON.stringify({ revisions: [], next_page_token: "" })); process.exit(0);
   }
   if (argv[0] === "provider" && argv[1] === "create") {
     fs.writeFileSync(created, "created"); process.exit(0);

@@ -16,11 +16,18 @@ import {
   snapshotEnv,
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import {
+  customProviderRebuildEntry,
+  makePreparedRecoveryManifest,
+} from "./rebuild-flow-test-fixtures";
 import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "../../onboard/hermes-api-port";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
-import { registry } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  registry,
+  rebuildOnboardDependencies,
+  openClawLifecycle,
+} from "../../../../test/helpers/rebuild-flow-harness";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
@@ -42,6 +49,43 @@ function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSn
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
+
+  it.each(["verified", "denied"])(
+    "rebinds outer restored inference before final start: %s",
+    async (state) => {
+      const harness = createRebuildFlowHarness();
+      const refresh = vi
+        .spyOn(rebuildOnboardDependencies, "refreshRestoredRegisteredOpenclawInferenceRoute")
+        .mockImplementation(async () => {
+          await (state === "denied"
+            ? Promise.reject(new Error("binding changed"))
+            : Promise.resolve());
+        });
+      const result = await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }).then(
+        () => "ready",
+        () => "refused",
+      );
+      expect(result).toBe(state === "verified" ? "ready" : "refused");
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(refresh).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "alpha", gatewayName: "nemoclaw" }),
+        undefined,
+        registry.getSandbox,
+      );
+      expect(harness.restoreSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        refresh.mock.invocationCallOrder[0]!,
+      );
+      expect(harness.finishOpenClawMaintenanceWindowSpy).toHaveBeenCalledTimes(
+        state === "verified" ? 1 : 0,
+      );
+      expect(
+        vi.mocked(openClawLifecycle.abortUnregisteredOpenClawPostRestoreDoctor),
+      ).toHaveBeenCalledTimes(state === "denied" ? 1 : 0);
+      expect(refresh.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.finishOpenClawMaintenanceWindowSpy.mock.invocationCallOrder[0] ?? Infinity,
+      );
+    },
+  );
 
   it.each([undefined, "/srv/nemoclaw/recreated-gateway"])(
     "uses the recorded gateway directory during rebuild unless explicitly overridden (%s)",
@@ -971,9 +1015,8 @@ describe("rebuildSandbox flow: lifecycle", () => {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
         sandboxEntry: {
-          provider: "compatible-endpoint",
+          ...customProviderRebuildEntry("https://compatible.example.test/v1"),
           model: "reasoning-model",
-          endpointUrl: "https://compatible.example.test/v1",
           compatibleEndpointReasoning: "true",
           compatibleEndpointReasoningEffort: "high",
           mcp: { bridges: { github: mcpEntry } },

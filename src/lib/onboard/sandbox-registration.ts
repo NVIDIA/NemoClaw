@@ -12,6 +12,7 @@ import type {
   InferenceSelectionInput,
 } from "../inference/selection";
 import {
+  recordedRegisteredInferenceProviderAttachment,
   inferenceSelectionRegistryFields,
   normalizeNativeLocalProviderAttachment,
   normalizeInferenceSelection,
@@ -91,6 +92,7 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
@@ -249,11 +251,23 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const registeredInferenceProviderAttachment = recordedRegisteredInferenceProviderAttachment({
+    ...input,
+    ...input.inferenceSelection,
+    name: input.sandboxName,
+  });
   const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
     input.nativeLocalProviderAttachment,
   );
   if (input.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment)
     throw new Error("Invalid native local provider attachment.");
+  if (
+    input.inferenceSelection.provider === "vllm-local" &&
+    input.inferenceSelection.nimContainer &&
+    nativeLocalProviderAttachment &&
+    nativeLocalProviderAttachment.authMode !== "sentinel"
+  )
+    throw new Error("Local NIM cannot reuse authenticated managed vLLM provider authority.");
   if (
     nativeLocalProviderAttachment &&
     (requestedAgent === "hermes" || nativeLocalProviderAttachment.agent === "hermes") &&
@@ -334,10 +348,8 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-    ...(nativeLocalProviderAttachment &&
-    !(input.inferenceSelection.provider === "vllm-local" && input.inferenceSelection.nimContainer)
-      ? { nativeLocalProviderAttachment }
-      : {}),
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
@@ -433,6 +445,8 @@ export function prepareCreatedSandboxRegistration(
     input.nativeHostedProviderAttachment ?? pending?.nativeHostedProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    registeredInferenceProviderAttachment:
+      input.registeredInferenceProviderAttachment ?? pending?.registeredInferenceProviderAttachment,
     nativeHostedProviderAttachment: pendingNativeHostedProviderAttachment,
     inferenceSelection: pendingRoute
       ? { ...input.inferenceSelection, ...pendingRoute }
@@ -532,6 +546,15 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
   return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
 }
 
+/** Compare staged authority with the validated attachment in its source registry entry. */
+export function retainsNativeLocalProviderAttachment(
+  entry: SandboxEntry,
+  attachment: unknown,
+): boolean {
+  const recorded = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  return recorded !== undefined && isDeepStrictEqual(recorded, attachment);
+}
+
 /** The sandbox phase may bypass a shared route only for its exact native local reservation. */
 export function nativeLocalReservationStatus(input: {
   entry: SandboxEntry;
@@ -581,15 +604,29 @@ export function nativeInferenceCreateIntentFields(
   localNimSelected = false,
 ): {
   inferenceProvider: string | null;
+  registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 } {
-  // Local NIM keeps its shared route even if a stale vLLM attachment exists.
-  const nativeLocalProviderAttachment =
-    provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
-      ? undefined
-      : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+  const registeredInferenceProviderAttachment = entry
+    ? recordedRegisteredInferenceProviderAttachment(entry)
+    : undefined;
+  if (
+    registeredInferenceProviderAttachment &&
+    provider !== registeredInferenceProviderAttachment.providerName
+  )
+    throw new Error("Registered provider binding does not match the selected provider.");
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    entry?.nativeLocalProviderAttachment,
+  );
+  if (
+    provider === "vllm-local" &&
+    (localNimSelected || entry?.nimContainer) &&
+    nativeLocalProviderAttachment &&
+    nativeLocalProviderAttachment.authMode !== "sentinel"
+  )
+    throw new Error("Local NIM cannot reuse authenticated managed vLLM provider authority.");
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
@@ -599,9 +636,11 @@ export function nativeInferenceCreateIntentFields(
   );
   return {
     inferenceProvider:
+      registeredInferenceProviderAttachment?.providerName ??
       nativeLocalProviderAttachment?.providerName ??
       hostedAttachment?.providerName ??
       nativeInferenceProviderForSandbox(provider),
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     nativeHostedProviderAttachment: hostedAttachment,
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),

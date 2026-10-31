@@ -3,7 +3,15 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -25,7 +33,7 @@ import {
 } from "../../tools/candidate-compat.mts";
 
 const SHA = "a".repeat(40);
-const VERSION = "0.0.116";
+const VERSION = "0.1.5";
 const E2E_SOURCES = readFileSync(resolve(".github/workflows/e2e.yaml"), "utf8");
 const ASSETS = [
   { name: "openshell-x86_64-unknown-linux-musl.tar.gz", role: "cli" as const },
@@ -383,8 +391,15 @@ describe("OpenShell candidate compatibility contract", () => {
         async (url) => new Response(archives.get(url)),
       );
       const log = join(directory, "invocations.log");
+      const tools = join(directory, "tools");
+      mkdirSync(tools);
+      symlinkSync(process.execPath, join(tools, "node"));
       const env = {
         ...process.env,
+        HOME: join(directory, "home"),
+        XDG_CONFIG_HOME: join(directory, "config"),
+        XDG_BIN_HOME: join(directory, "install-bin"),
+        OPENSHELL_SYSTEM_GATEWAY_DIR: join(directory, "system-gateways"),
         NEMOCLAW_CANDIDATE_INVOCATION_CONTEXT: `installer:${candidateReceipt.resolutionId}`,
         NEMOCLAW_CANDIDATE_INVOCATION_LOG: log,
         NEMOCLAW_OPENSHELL_CHANNEL: "stable",
@@ -393,7 +408,7 @@ describe("OpenShell candidate compatibility contract", () => {
         NEMOCLAW_OPENSHELL_MIN_VERSION: VERSION,
         NEMOCLAW_OPENSHELL_PIN_VERSION: VERSION,
         NEMOCLAW_OPENSHELL_SANDBOX_BIN: join(observed.binDirectory, "openshell-sandbox"),
-        PATH: `${observed.binDirectory}:/usr/bin:/bin`,
+        PATH: `${observed.binDirectory}:${tools}:/usr/bin:/bin`,
       };
       const installer = spawnSync("bash", [resolve("scripts/install-openshell.sh")], {
         encoding: "utf8",

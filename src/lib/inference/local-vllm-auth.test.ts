@@ -20,9 +20,6 @@ const managedClusterRecovery = vi.hoisted(() => ({
 const hostLocalRecovery = vi.hoisted(() => ({
   endpoint: vi.fn(),
 }));
-const managedBridge = vi.hoisted(() => ({
-  host: vi.fn(() => "172.18.0.1"),
-}));
 const managedKey = vi.hoisted(() => ({
   load: vi.fn(),
 }));
@@ -36,7 +33,6 @@ vi.mock("./serving/managed-cluster-runtime-receipt", () => ({
 vi.mock("./serving/vllm-host-local-lifecycle", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./serving/vllm-host-local-lifecycle")>()),
   recoverHostLocalManagedVllmEndpoint: hostLocalRecovery.endpoint,
-  resolveManagedVllmBridgeHost: managedBridge.host,
 }));
 vi.mock("./vllm-api-key", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./vllm-api-key")>()),
@@ -106,7 +102,7 @@ function hostLocalDiagnosticCapture(argv: readonly string[]): string {
   return argv[0] === "curl"
     ? "200"
     : argv.at(-1) === "/etc/hosts"
-      ? "172.18.0.1\thost.openshell.internal"
+      ? "127.0.0.1\thost.openshell.internal"
       : argv.includes("-o")
         ? "503"
         : "";
@@ -118,8 +114,6 @@ beforeEach(() => {
   managedClusterRecovery.endpoint.mockReturnValue(null);
   hostLocalRecovery.endpoint.mockReset();
   hostLocalRecovery.endpoint.mockReturnValue(null);
-  managedBridge.host.mockReset();
-  managedBridge.host.mockReturnValue("172.18.0.1");
   managedKey.load.mockReset();
   managedKey.load.mockReturnValue(API_KEY);
   lifecycle.baseUrl.mockReset();
@@ -314,7 +308,7 @@ describe("managed vLLM authentication", () => {
     ).toThrow("Managed host-local vLLM returned an invalid loopback endpoint");
   });
 
-  it("pins host-local reachability to the exact OpenShell bridge (#8379)", () => {
+  it("pins host-local reachability to the native supervisor network (#8379)", () => {
     lifecycle.baseUrl.mockReturnValue(null);
     hostLocalRecovery.endpoint.mockReturnValue({
       baseUrl: "http://127.0.0.1:8000",
@@ -323,13 +317,13 @@ describe("managed vLLM authentication", () => {
 
     const command = getLocalProviderContainerReachabilityCheck("vllm-local");
 
-    expect(command).toContain("host.openshell.internal:172.18.0.1");
+    expect(command).toContain("host.openshell.internal:127.0.0.1");
     expect(command).not.toContain("host.openshell.internal:host-gateway");
     expect(command?.at(-1)).toBe("http://host.openshell.internal:8000/health");
-    expect(managedBridge.host).toHaveBeenCalledOnce();
+    expect(command).toEqual(expect.arrayContaining(["--network", "host"]));
   });
 
-  it("pins host-local diagnostics to the exact OpenShell bridge (#8379)", () => {
+  it("pins host-local diagnostics to the native supervisor network (#8379)", () => {
     lifecycle.baseUrl.mockReturnValue(null);
     hostLocalRecovery.endpoint.mockReturnValue({
       baseUrl: "http://127.0.0.1:8000",
@@ -344,15 +338,15 @@ describe("managed vLLM authentication", () => {
 
     expect(result.ok).toBe(false);
     expect(result.diagnostic).toContain("Container curl returned HTTP 503");
-    expect(result.diagnostic).toContain("host.openshell.internal resolved to: 172.18.0.1");
+    expect(result.diagnostic).toContain("host.openshell.internal resolved to: 127.0.0.1");
     expect(dockerCommands).toHaveLength(5);
-    expect(
-      dockerCommands.every((argv) => argv.includes("host.openshell.internal:172.18.0.1")),
-    ).toBe(true);
+    expect(dockerCommands.every((argv) => argv.includes("host.openshell.internal:127.0.0.1"))).toBe(
+      true,
+    );
     expect(
       dockerCommands.every((argv) => !argv.includes("host.openshell.internal:host-gateway")),
     ).toBe(true);
-    expect(managedBridge.host).toHaveBeenCalledOnce();
+    expect(dockerCommands.every((argv) => argv.includes("host"))).toBe(true);
   });
 
   it("uses /health only for unauthenticated availability checks", () => {

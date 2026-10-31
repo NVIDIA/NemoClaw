@@ -31,6 +31,8 @@ export function fixture() {
   ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
   const current = validateInstallerSources(sources);
   const release = structuredClone(current.installerReleases[0]!);
+  // The registry stores revocations globally; resolved releases carry a derived copy.
+  delete release.revokedTemplateSha256;
   const prior = release.version;
   release.version = version;
   release.formula.url = `https://github.com/NVIDIA/OpenShell/releases/download/v${version}/openshell.rb`;
@@ -154,7 +156,11 @@ export function runCoveredRegistry(
     JSON.stringify({
       ...oldRegistry,
       releases: scenario === "absent-untrusted" ? [] : [...oldRegistry.releases, nextRelease],
-      revokedTemplateSha256: scenario.endsWith("revoked") ? f.release.installerTemplateSha256 : [],
+      revokedTemplateSha256: scenario.endsWith("revoked")
+        ? [...new Set([...oldRegistry.revokedTemplateSha256, ...f.release.installerTemplateSha256])]
+        : scenario === "absent-untrusted"
+          ? []
+          : oldRegistry.revokedTemplateSha256,
     }),
   );
   const candidateRegistry = structuredClone(oldRegistry);

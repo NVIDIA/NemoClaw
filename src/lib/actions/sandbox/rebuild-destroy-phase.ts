@@ -563,10 +563,10 @@ export async function runRebuildDestroyPhase(
   }
   if (!(await teardownSandboxDashboardForward(sandboxName))) {
     console.error(
-      "  Sandbox deletion succeeded, but one or more ForwardTcp host ports did not release.",
+      "  Sandbox deletion succeeded, but release of its ForwardTcp host ports could not be proved.",
     );
     input.onDeleteStateAmbiguous?.();
-    bail("Sandbox host ports did not release after deletion.");
+    bail("Sandbox host port release could not be proved after deletion.");
     return null;
   }
   try {

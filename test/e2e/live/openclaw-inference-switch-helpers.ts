@@ -4,6 +4,7 @@
 // Fixture and response helpers shared by the openclaw-inference-switch live
 // target and fast e2e-support tests without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
+import fs from "node:fs";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -13,6 +14,46 @@ import {
   startFakeOpenAiCompatibleServer,
   type FakeOpenAiCompatibleServerOptions,
 } from "../fixtures/fake-openai-compatible.ts";
+
+// PID/start time survives execve. Native RPC status includes the authenticated hello boot ID.
+export async function readOpenClawBootId(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  options: { env: NodeJS.ProcessEnv; artifactName: string },
+): Promise<string | null> {
+  const result = await sandbox.exec(
+    sandboxName,
+    [
+      "openclaw",
+      "gateway",
+      "status",
+      "--port",
+      "18789",
+      "--require-rpc",
+      "--json",
+      "--timeout",
+      "10000",
+    ],
+    { ...options, timeoutMs: 20_000 },
+  );
+  // Launcher diagnostics use stderr even when the authenticated RPC succeeds.
+  if (result.exitCode !== 0 || result.timedOut || result.signal !== null) return null;
+  try {
+    const document = JSON.parse(result.stdout) as {
+      rpc?: { ok?: unknown; kind?: unknown; server?: { bootId?: unknown } };
+    } | null;
+    const rpc = document?.rpc;
+    const bootId = rpc?.server?.bootId;
+    return rpc?.ok === true &&
+      rpc.kind === "read" &&
+      typeof bootId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(bootId)
+      ? bootId
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;
@@ -159,9 +200,10 @@ export const MOCK_BASELINE_MODEL = "openclaw-switch-baseline-model";
 export function startMockOpenClawBaselineProvider(
   progress: FakeOpenAiCompatibleServerOptions["progress"],
   publicHost = "host.openshell.internal",
+  apiKey = MOCK_BASELINE_API_KEY,
 ) {
   return startFakeOpenAiCompatibleServer({
-    apiKey: MOCK_BASELINE_API_KEY,
+    apiKey,
     chatContent: "PONG",
     host: "0.0.0.0",
     model: MOCK_BASELINE_MODEL,
@@ -215,24 +257,29 @@ export async function readOpenClawConfig(
     artifactName: string;
     nativeNvidia?: boolean;
     nativeCustomApi?: string;
+    registeredProvider?: string;
+    credentialEnv?: string;
   },
 ): Promise<ShellProbeResult> {
   return sandbox.exec(
     sandboxName,
-    options.nativeNvidia || options.nativeCustomApi
+    options.nativeNvidia || options.nativeCustomApi || options.registeredProvider
       ? [
           "node",
           "-e",
           [
             'const fs = require("node:fs");',
             'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
-            `const provider = config.models?.providers?.${options.nativeCustomApi === "anthropic-messages" ? "anthropic" : "inference"};`,
-            // A fresh exec receives the newly attached provider handle. Keep
-            // both values inside the sandbox because ShellProbe redacts the
-            // credential-shaped config field before returning stdout.
-            `const credentialEnv = ${JSON.stringify(options.nativeCustomApi ? (options.nativeCustomApi === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY") : "NVIDIA_INFERENCE_API_KEY")};`,
+            `const provider = config.models?.providers?.[${JSON.stringify(options.registeredProvider ?? (options.nativeCustomApi === "anthropic-messages" ? "anthropic" : "inference"))}];`,
+            // OpenShell retains scoped handles across same-provider revisions.
+            // Check their form here; the caller also proves provider attachment
+            // and authenticated inference through the actual OpenClaw gateway.
+            // Keep both values inside the sandbox before artifact redaction.
+            `const credentialEnv = ${JSON.stringify(options.credentialEnv ?? (options.nativeCustomApi ? (options.nativeCustomApi === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY") : "NVIDIA_INFERENCE_API_KEY"))};`,
             "const handle = process.env[credentialEnv];",
-            'require("node:assert/strict").ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
+            'const scoped = new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$");',
+            'require("node:assert/strict").ok(typeof handle === "string" && scoped.test(handle), "native exec credential is not scoped");',
+            'require("node:assert/strict").ok(typeof provider?.apiKey === "string" && scoped.test(provider.apiKey), "native config credential is not scoped");',
             "delete provider.apiKey;",
             "process.stdout.write(JSON.stringify(config));",
           ].join(" "),
@@ -240,4 +287,89 @@ export async function readOpenClawConfig(
       : ["cat", "/sandbox/.openclaw/openclaw.json"],
     { artifactName: options.artifactName, env: options.env, timeoutMs: options.timeoutMs },
   );
+}
+
+export function httpStatusFromResponse(response: string): string {
+  return (
+    response
+      .split("\n")
+      .filter((line) => line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
+      .at(-1)
+      ?.replace("__NEMOCLAW_HTTP_STATUS__=", "")
+      .trim() ?? ""
+  );
+}
+
+export function httpBodyFromResponse(response: string): string {
+  return response
+    .split("\n")
+    .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
+    .join("\n");
+}
+
+// Keep ownership records until the CLI teardown and its runtime absence check finish.
+// Cache failure as well as success: cleanup registration must not repeat a failed destroy.
+export function createOpenClawInferenceSwitchCleanup(input: {
+  host: HostCliClient;
+  verifyGatewayRemoved: () => Promise<void>;
+  sandboxName: string;
+  home: string;
+  env: NodeJS.ProcessEnv;
+  retain: boolean;
+}): () => Promise<void> {
+  let cleanup: Promise<void> | undefined;
+  return () => {
+    cleanup ??= input.retain
+      ? Promise.resolve()
+      : (async () => {
+          await input.host.cleanupSandbox(input.sandboxName, {
+            cleanupGateway: true,
+            artifactName: "cleanup-inference-switch-sandbox-and-gateway",
+            env: input.env,
+            timeoutMs: 120_000,
+          });
+          await input.verifyGatewayRemoved();
+          fs.rmSync(input.home, { recursive: true, force: true });
+        })();
+    return cleanup;
+  };
+}
+
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: unknown;
+      reasoning_content?: unknown;
+      reasoning?: unknown;
+    };
+    text?: unknown;
+  }>;
+}
+
+interface AnthropicResponse {
+  content?: Array<{ text?: unknown }>;
+}
+
+export function parseChatContent(raw: string): string {
+  const response = JSON.parse(raw) as ChatCompletionResponse;
+  return (response.choices ?? [])
+    .map((choice) => {
+      const message = choice.message ?? {};
+      if (typeof message.content === "string") return message.content;
+      if (typeof message.reasoning_content === "string") return message.reasoning_content;
+      if (typeof message.reasoning === "string") return message.reasoning;
+      if (typeof choice.text === "string") return choice.text;
+      return "";
+    })
+    .join("\n")
+    .trim();
+}
+
+export function parseAnthropicContent(raw: string): string {
+  const response = JSON.parse(raw) as AnthropicResponse;
+  return (response.content ?? [])
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 }

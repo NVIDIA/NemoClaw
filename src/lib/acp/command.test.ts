@@ -74,6 +74,8 @@ function commandHarness(
   overrides: {
     entries?: HostGatewayRegistryEntry[];
     fingerprint?: string;
+    inspectIdentity?: NonNullable<HermesAcpCommandDeps["inspectIdentity"]>;
+    listRegistry?: NonNullable<HermesAcpCommandDeps["listRegistry"]>;
     observer?: OpenShellSandboxObserver;
     recovered?: boolean;
     transport?: HermesAcpSshTransport;
@@ -120,8 +122,10 @@ function commandHarness(
         {
           currentVersion: () => VERSION,
           home: () => "/home/operator",
-          inspectIdentity: vi.fn(() => overrides.fingerprint ?? FINGERPRINT),
-          listRegistry: vi.fn(() => overrides.entries ?? [registryEntry("alpha")]),
+          inspectIdentity:
+            overrides.inspectIdentity ?? vi.fn(() => overrides.fingerprint ?? FINGERPRINT),
+          listRegistry:
+            overrides.listRegistry ?? vi.fn(() => overrides.entries ?? [registryEntry("alpha")]),
           observer: overrides.observer ?? readyObserver(),
           recoverGateway: recoverGateway as never,
           transport,
@@ -134,6 +138,7 @@ function commandHarness(
 
 describe("Hermes ACP command", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -385,6 +390,94 @@ describe("Hermes ACP command", () => {
 
     expect(fixture.diagnostics.text()).toContain(message);
     expect(fixture.transport.run).not.toHaveBeenCalled();
+  });
+
+  it("waits for the same provisioning sandbox after gateway recovery within the session deadline", async () => {
+    vi.useFakeTimers();
+    const observer = readyObserver();
+    observer.listSandboxes.mockResolvedValueOnce({
+      ok: true,
+      value: { sandboxes: [{ name: "alpha", phase: "Provisioning", readiness: "not_ready" }] },
+    });
+    const inspectIdentity = vi.fn(() => FINGERPRINT);
+    const fixture = commandHarness({ observer, inspectIdentity });
+    const completion = fixture.run(["--sandbox", "alpha", "--timeout", "1"]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await completion).toBe(0);
+    expect(observer.listSandboxes).toHaveBeenCalledTimes(2);
+    expect(observer.listSandboxes.mock.calls).toEqual([
+      [{ target: { kind: "named", gatewayName: "nemoclaw" }, timeoutMs: 1000 }],
+      [{ target: { kind: "named", gatewayName: "nemoclaw" }, timeoutMs: 750 }],
+    ]);
+    expect(inspectIdentity).toHaveBeenCalledTimes(2);
+    expect(fixture.transport.run).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 750 }));
+  });
+
+  it("refuses a replacement identity during provisioning recovery", async () => {
+    vi.useFakeTimers();
+    const observer = readyObserver();
+    observer.listSandboxes.mockResolvedValueOnce({
+      ok: true,
+      value: { sandboxes: [{ name: "alpha", phase: "Provisioning", readiness: "not_ready" }] },
+    });
+    const inspectIdentity = vi
+      .fn()
+      .mockReturnValueOnce(FINGERPRINT)
+      .mockReturnValue("b".repeat(64));
+    const fixture = commandHarness({ observer, inspectIdentity });
+    const completion = fixture.run(["--sandbox", "alpha"]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await completion).toBe(1);
+    expect(fixture.diagnostics.text()).toContain("identity does not match");
+    expect(fixture.transport.run).not.toHaveBeenCalled();
+  });
+
+  it("does not wait through provisioning without an actual gateway recovery", async () => {
+    const observer = readyObserver();
+    observer.listSandboxes.mockResolvedValue({
+      ok: true,
+      value: { sandboxes: [{ name: "alpha", phase: "Provisioning", readiness: "not_ready" }] },
+    });
+    const fixture = commandHarness({ observer });
+    fixture.recoverGateway.mockResolvedValueOnce({
+      recovered: true,
+      attempted: false,
+      before: { state: "healthy_named" },
+      after: { state: "healthy_named" },
+    });
+    expect(await fixture.run(["--sandbox", "alpha"])).toBe(1);
+    expect(observer.listSandboxes).toHaveBeenCalledTimes(1);
+    expect(fixture.transport.run).not.toHaveBeenCalled();
+  });
+
+  it("ends provisioning observation at the requested session deadline", async () => {
+    vi.useFakeTimers();
+    const observer = readyObserver();
+    observer.listSandboxes.mockResolvedValue({
+      ok: true,
+      value: { sandboxes: [{ name: "alpha", phase: "Provisioning", readiness: "not_ready" }] },
+    });
+    const fixture = commandHarness({ observer });
+    const completion = fixture.run(["--sandbox", "alpha", "--timeout", "1"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await completion).toBe(1);
+    expect(fixture.transport.run).not.toHaveBeenCalled();
+    expect(fixture.diagnostics.text()).toContain("stopped or not ready");
+    expect(observer.listSandboxes.mock.calls.at(-1)).toEqual([
+      { target: { kind: "named", gatewayName: "nemoclaw" }, timeoutMs: 375 },
+    ]);
+  });
+
+  it("revalidates the recorded generation after readiness before starting transport", async () => {
+    const listRegistry = vi
+      .fn()
+      .mockReturnValueOnce([registryEntry("alpha")])
+      .mockReturnValueOnce([registryEntry("alpha")])
+      .mockReturnValue([registryEntry("alpha", 8080, { lifecycleGeneration: "replacement" })]);
+    const fixture = commandHarness({ listRegistry });
+    expect(await fixture.run(["--sandbox", "alpha"])).toBe(1);
+    expect(fixture.transport.run).not.toHaveBeenCalled();
+    expect(fixture.diagnostics.text()).toContain("changed or its deadline expired");
   });
 
   it("rejects a gateway that recovery cannot make ready", async () => {

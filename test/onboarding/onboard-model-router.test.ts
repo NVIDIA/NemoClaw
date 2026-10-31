@@ -6,9 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getSandboxInferenceConfig } from "../../src/lib/inference/config";
 import {
   createProductionModelRouterCommandProvisioner,
   isManagedModelRouterCurrent,
@@ -29,7 +28,6 @@ import {
 } from "../support/model-router-process-test-helpers.js";
 import {
   createDirectSetupInferenceHarnessFactory,
-  type DirectCommandEntry,
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
@@ -165,55 +163,31 @@ function createCommandHarness(options: CommandHarnessOptions = {}) {
   };
 }
 
-function findCommand(commands: DirectCommandEntry[], pattern: RegExp): DirectCommandEntry {
-  const command = commands.find((entry) => pattern.test(entry.command));
-  assert.ok(command, JSON.stringify(commands));
-  return command;
-}
-
 describe("onboard Model Router setup", () => {
-  it("configures Model Router as a host provider while sandboxes keep inference.local", async () => {
+  it("rejects an unowned Model Router endpoint before provider or shared-route mutation", async () => {
     await withProcessEnv({ NVIDIA_INFERENCE_API_KEY: NVIDIA_TEST_CREDENTIAL }, async () => {
       const reconcileModelRouter = vi.fn(async () => undefined);
       const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args[0] === "provider" && args[1] === "get" ? { status: 1 } : undefined,
         overrides: {
           isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
           reconcileModelRouter,
         },
       });
       const routerPort = 44000 + (process.pid % 10000);
-
-      await harness.setupInference(
-        "router-box",
-        "nvidia-routed",
-        "nvidia-router",
-        `http://host.openshell.internal:${routerPort}/v1`,
-        "NVIDIA_INFERENCE_API_KEY",
+      await expect(
+        harness.setupInference(
+          "router-box",
+          "nvidia-routed",
+          "nvidia-router",
+          `http://host.openshell.internal:${routerPort}/v1`,
+          "NVIDIA_INFERENCE_API_KEY",
+        ),
+      ).rejects.toThrow(
+        "Model Router requires a native provider for the selected agent and configured endpoint",
       );
-
-      assert.equal(reconcileModelRouter.mock.calls.length, 1);
-      const providerCommand = findCommand(harness.commands, /provider create/);
-      assert.match(providerCommand.command, /--name nvidia-router/);
-      assert.match(providerCommand.command, /--credential NVIDIA_INFERENCE_API_KEY/);
-      assert.match(
-        providerCommand.command,
-        new RegExp(`OPENAI_BASE_URL=http:\\/\\/host\\.openshell\\.internal:${routerPort}\\/v1`),
-      );
-      assert.doesNotMatch(providerCommand.command, new RegExp(NVIDIA_TEST_CREDENTIAL));
-      assert.equal(providerCommand.env?.NVIDIA_INFERENCE_API_KEY, NVIDIA_TEST_CREDENTIAL);
-
-      const inferenceCommand = findCommand(harness.commands, /inference set/);
-      assert.match(inferenceCommand.command, /--provider nvidia-router/);
-      assert.match(inferenceCommand.command, /--model nvidia-routed/);
-      assert.deepEqual(getSandboxInferenceConfig("nvidia-routed", "nvidia-router"), {
-        providerKey: "inference",
-        primaryModelRef: "inference/nvidia-routed",
-        inferenceBaseUrl: "https://inference.local/v1",
-        inferenceApi: "openai-completions",
-        inferenceCompat: null,
-      });
+      expect(reconcileModelRouter).not.toHaveBeenCalled();
+      expect(harness.commands).toEqual([]);
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
     });
   });
 

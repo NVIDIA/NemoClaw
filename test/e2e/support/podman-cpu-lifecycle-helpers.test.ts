@@ -10,7 +10,11 @@ import { describe, expect, test, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
-import { runCommand, startPinnedGateway } from "../live/podman-cpu-lifecycle-helpers.ts";
+import {
+  inspectContainer,
+  runCommand,
+  startPinnedGateway,
+} from "../live/podman-cpu-lifecycle-helpers.ts";
 
 const PHASES = ["exercise the Podman lifecycle helper", "verify helper cleanup"] as const;
 
@@ -56,6 +60,89 @@ function killProcessIfAlive(pid: number | null): void {
 }
 
 describe("Podman CPU lifecycle helper", () => {
+  function inspectedContainer(identity = "a".repeat(64), namespace = "") {
+    return {
+      Id: identity,
+      Name: "openshell-default--candidate-sandbox-id",
+      Config: {
+        Labels: {
+          "openshell.ai/sandbox-id": "sandbox-id",
+          "openshell.ai/sandbox-namespace": namespace,
+        },
+        User: "1000:1000",
+        Cmd: ["--bootstrap", "/.openshell/channel/sandbox/bootstrap.json"],
+        Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+      },
+    };
+  }
+
+  test("binds inspection to the scoped discovery result", () => {
+    const container = inspectedContainer();
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: container.Id + "\n" })
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: JSON.stringify([container]) });
+    expect(inspectContainer({ capture } as never, "candidate", container.Id)).toEqual(container);
+    expect(capture.mock.calls).toEqual([
+      [
+        [
+          "ps",
+          "--all",
+          "--quiet",
+          "--no-trunc",
+          "--filter",
+          "label=openshell.managed=true",
+          "--filter",
+          "label=openshell.ai/sandbox-name=candidate",
+          "--filter",
+          "label=openshell.ai/sandbox-workspace=default",
+          "--filter",
+          "label=openshell.ai/isolation-role=sandbox",
+        ],
+      ],
+      [["container", "inspect", container.Id]],
+    ]);
+  });
+
+  test.each([
+    ["root identity", { User: "0:0" }],
+    ["another group", { User: "1000:0" }],
+    [
+      "legacy launcher",
+      {
+        Cmd: [
+          "launch-capability-free",
+          "1000",
+          "1000",
+          "/.openshell/channel/sandbox/bootstrap.json",
+          "/sandbox",
+        ],
+      },
+    ],
+  ])("rejects a workload with %s", (_reason, config) => {
+    const container = inspectedContainer();
+    Object.assign(container.Config, config);
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: container.Id + "\n" })
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: JSON.stringify([container]) });
+    expect(() => inspectContainer({ capture } as never, "candidate")).toThrow();
+  });
+
+  test.each([
+    ["another container", "b".repeat(64), ""],
+    ["another namespace", "a".repeat(64), "foreign"],
+  ])("rejects inspection of %s", (_reason, identity, namespace) => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stderr: "", stdout: "a".repeat(64) + "\n" })
+      .mockReturnValueOnce({
+        status: 0,
+        stderr: "",
+        stdout: JSON.stringify([inspectedContainer(identity, namespace)]),
+      });
+    expect(() => inspectContainer({ capture } as never, "candidate")).toThrow();
+  });
   test("reports CLI child lifecycle through the canonical ShellProbe boundary (#8497)", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-podman-command-test-"));
     const logLines: string[] = [];
@@ -120,6 +207,51 @@ describe("Podman CPU lifecycle helper", () => {
       ) as { exitCode: number | null; signal: NodeJS.Signals | null; timedOut: boolean };
       expect(result).toMatchObject({ exitCode: 0, signal: null, timedOut: true });
       progress.phase(PHASES[1]);
+    } finally {
+      progress.stop();
+      await fs.rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("retains redacted gateway errors after successful RPC logs replace the tail", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-podman-gateway-log-test-"));
+    const bootstrapPath = path.join(root, "gateway-bootstrap.cjs");
+    const artifactDir = path.join(root, "artifacts");
+    const progress = testProgress([]);
+    await fs.writeFile(
+      bootstrapPath,
+      [
+        'process.stdout.write(("WARN earlier warning " + ".".repeat(1_024) + "\\n").repeat(40));',
+        'process.stdout.write("2026-10-15T00:00:00Z ERROR restart failed OPENAI_API_KEY=nvapi-");',
+        'setTimeout(() => process.stdout.write("gateway-secret\\n" + "INFO successful RPC\\n".repeat(8_000)), 20);',
+      ].join("\n"),
+      "utf8",
+    );
+    try {
+      await expect(
+        startPinnedGateway(
+          process.execPath,
+          { NODE_OPTIONS: `--require=${bootstrapPath}` },
+          progress,
+          artifactDir,
+        ),
+      ).rejects.toThrow("gateway exited");
+      const tail = await fs.readFile(
+        path.join(artifactDir, "openshell-podman-gateway.log"),
+        "utf8",
+      );
+      const errors = await fs.readFile(
+        path.join(artifactDir, "openshell-podman-gateway-errors.log"),
+        "utf8",
+      );
+      expect(tail).not.toContain("restart failed");
+      expect(errors).toContain("ERROR restart failed OPENAI_API_KEY=<REDACTED>");
+      expect(errors).not.toContain("gateway-secret");
+      expect(errors).not.toContain("INFO successful RPC");
+      expect(errors.length).toBeLessThanOrEqual(32 * 1024);
+      expect(
+        (await fs.stat(path.join(artifactDir, "openshell-podman-gateway-errors.log"))).mode & 0o777,
+      ).toBe(0o600);
     } finally {
       progress.stop();
       await fs.rm(root, { force: true, recursive: true });

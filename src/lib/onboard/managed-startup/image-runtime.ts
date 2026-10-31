@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { PEM_CERTIFICATE_RE_GLOBAL } from "../corporate-ca-policy";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import { prepareManagedStartupApplication } from "./application";
 import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
@@ -37,11 +38,16 @@ import {
 } from "./root-apply";
 import {
   beginManagedStartupSharedStateTransaction,
+  captureManagedStartupSharedState,
   clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
+  exportManagedStartupSharedStateRestoration,
+  finishManagedStartupSharedStateRestoration,
   getManagedStartupSharedStateTransactionStatus,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES,
   rollbackManagedStartupSharedStateTransaction,
+  restoreManagedStartupCapturedSharedState,
 } from "./shared-state-transaction";
 import { managedStartupWorkspaceRoot } from "./state-roots";
 import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
@@ -187,8 +193,16 @@ export function normalizeManagedStartupWorkspaceRoot(
     agentIdentity: managedImageRuntimeIdentity(agent),
   });
   try {
-    deps.chown(target, expected.uid, expected.gid);
-    deps.chmod(target, expected.mode);
+    // Capability-free root cannot rewrite metadata owned by the sandbox user,
+    // even when the requested ownership and mode already match.
+    if (
+      before.uid !== expected.uid ||
+      before.gid !== expected.gid ||
+      (before.mode & 0o7777) !== expected.mode
+    ) {
+      deps.chown(target, expected.uid, expected.gid);
+      deps.chmod(target, expected.mode);
+    }
   } catch {
     fail("managed startup workspace-root normalization failed");
   }
@@ -521,6 +535,11 @@ function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
 export function managedStartupSandboxPrefix(): readonly string[] {
   if (trustedExecutable("/usr/bin/setpriv")) {
     const identity = readSandboxIdentity();
+    if (
+      process.geteuid?.() === Number(identity.uid) &&
+      process.getegid?.() === Number(identity.gid)
+    )
+      return [];
     return [
       "/usr/bin/setpriv",
       `--reuid=${identity.uid}`,
@@ -560,7 +579,7 @@ function execute(
   runAs: ManagedStartupImageIdentity,
   configurationEnvironment: Readonly<Record<string, string>>,
   applicationRuntime: ManagedStartupApplicationRuntimePlan,
-  capture = false,
+  capture: boolean | "private" = false,
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
   const command = runAs === "sandbox" ? [...managedStartupSandboxPrefix(), ...argv] : [...argv];
@@ -573,7 +592,7 @@ function execute(
     fail(`could not execute ${argv[0]}: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    const detail = capture ? `: ${(result.stderr || result.stdout).trim()}` : "";
+    const detail = capture === true ? `: ${(result.stderr || result.stdout).trim()}` : "";
     fail(`${argv[0]} exited with status ${String(result.status ?? "unknown")}${detail}`);
   }
   return {
@@ -784,6 +803,7 @@ function runInternalSandboxAction(
 function validateOpenClawConfiguration(
   configurationEnvironment: Readonly<Record<string, string>>,
   applicationRuntime: ManagedStartupApplicationRuntimePlan,
+  privateOutput = false,
 ): void {
   const validation = execute(
     ["/usr/local/bin/openclaw", "config", "validate", "--json"],
@@ -793,7 +813,7 @@ function validateOpenClawConfiguration(
       OPENCLAW_CONFIG_PATH: "/sandbox/.openclaw/openclaw.json",
     },
     applicationRuntime,
-    true,
+    privateOutput ? "private" : true,
   );
   let parsed: unknown;
   try {
@@ -996,15 +1016,7 @@ function sealHermesConfiguration(
   configurationEnvironment: Readonly<Record<string, string>>,
   applicationRuntime: ManagedStartupApplicationRuntimePlan,
 ): void {
-  const configPath = "/sandbox/.hermes/config.yaml";
-  const envPath = "/sandbox/.hermes/.env";
-  const config = readStableRegularFile(configPath, 4 * 1024 * 1024);
-  const env = readStableRegularFile(envPath, 512 * 1024);
-  const hashText = [
-    `${createHash("sha256").update(config).digest("hex")}  ${configPath}`,
-    `${createHash("sha256").update(env).digest("hex")}  ${envPath}`,
-    "",
-  ].join("\n");
+  const hashText = hermesConfigurationHash();
   atomicWriteRootFile("/etc/nemoclaw/hermes.config-hash", hashText, 0o444);
   runInternalSandboxAction(
     "write-hermes-compat-hash",
@@ -1014,6 +1026,18 @@ function sealHermesConfiguration(
       NEMOCLAW_MANAGED_HERMES_HASH_B64: Buffer.from(hashText, "utf8").toString("base64"),
     },
   );
+}
+
+function hermesConfigurationHash(): string {
+  const configPath = "/sandbox/.hermes/config.yaml";
+  const envPath = "/sandbox/.hermes/.env";
+  const config = readStableRegularFile(configPath, 4 * 1024 * 1024);
+  const env = readStableRegularFile(envPath, 512 * 1024);
+  return [
+    `${createHash("sha256").update(config).digest("hex")}  ${configPath}`,
+    `${createHash("sha256").update(env).digest("hex")}  ${envPath}`,
+    "",
+  ].join("\n");
 }
 
 function installRootOwnedMaterials(materials: readonly ManagedStartupAgentMaterial[]): void {
@@ -1499,13 +1523,10 @@ export function publishManagedStartupCompletionAfterCommit(
   );
 }
 
-function applyAdapter(
-  context: ManagedStartupAdapterContext,
+function applyAdapterCommands(
   mapped: ManagedStartupAgentEnvironment,
+  identity?: ManagedStartupImageIdentity,
 ): void {
-  if (mapped.agent !== context.agent) {
-    fail(`mapped ${mapped.agent} environment for ${context.agent}`);
-  }
   const commandPlan = buildManagedStartupImageActionPlan({
     agent: mapped.agent,
     actions: mapped.actions,
@@ -1516,6 +1537,7 @@ function applyAdapter(
     const command = commandPlan[commandIndex];
     if (!command) fail(`missing image command for ${action.kind}`);
     commandIndex += 1;
+    if (identity !== undefined && command.runAs !== identity) continue;
     if (action.kind === "apply-messaging-plan") {
       if (action.phase === "runtime-setup") {
         prepareMessagingRuntimeTarget(action.mode);
@@ -1525,6 +1547,7 @@ function applyAdapter(
         command.runAs,
         mapped.configurationEnvironment,
         mapped.applicationRuntime,
+        identity === undefined ? false : "private",
       );
       if (action.phase === "runtime-setup") {
         verifyMessagingRuntimeTarget(action.mode);
@@ -1536,26 +1559,52 @@ function applyAdapter(
       command.runAs,
       mapped.configurationEnvironment,
       mapped.applicationRuntime,
+      identity === undefined ? false : "private",
     );
   }
   if (commandIndex !== commandPlan.length) {
     fail("image action plan contains an unmatched command");
   }
+}
 
-  switch (context.agent) {
-    case "openclaw":
-      validateOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
-      break;
-    case "hermes":
-      installHermesManagedPolicy();
-      sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
-      // Normalize before the coordinator commits a newly applied profile so
-      // the durable transaction never records generator-created 0600 files as
-      // a completed mutable image contract.
-      normalizeHermesManagedConfiguration();
-      break;
-    case "langchain-deepagents-code":
-      break;
+function applyAdapter(
+  context: ManagedStartupAdapterContext,
+  mapped: ManagedStartupAgentEnvironment,
+  ownerResult?: ManagedStartupOwnerResult,
+): void {
+  if (mapped.agent !== context.agent)
+    fail(`mapped ${mapped.agent} environment for ${context.agent}`);
+  if (ownerResult) {
+    for (const action of mapped.actions) {
+      if (action.kind === "apply-messaging-plan" && action.phase === "runtime-setup") {
+        verifyMessagingRuntimeTarget(action.mode);
+      }
+    }
+    if (context.agent === "hermes") {
+      atomicWriteRootFile(
+        HERMES_INSTALLED_MANAGED_POLICY_FILE,
+        Buffer.from(ownerResult.hermesPolicyB64!, "base64"),
+        0o444,
+      );
+      atomicWriteRootFile("/etc/nemoclaw/hermes.config-hash", ownerResult.hermesConfigHash!, 0o444);
+    }
+  } else {
+    applyAdapterCommands(mapped);
+    switch (context.agent) {
+      case "openclaw":
+        validateOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
+        break;
+      case "hermes":
+        installHermesManagedPolicy();
+        sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
+        // Normalize before the coordinator commits a newly applied profile so
+        // the durable transaction never records generator-created 0600 files as
+        // a completed mutable image contract.
+        normalizeHermesManagedConfiguration();
+        break;
+      case "langchain-deepagents-code":
+        break;
+    }
   }
   installRootOwnedMaterials(mapped.materials);
   installCorporateCa(context.corporateCaPath);
@@ -1563,17 +1612,23 @@ function applyAdapter(
   mergeCorporateCa(context.corporateCaPath);
 }
 
-function adapters(mapped: ManagedStartupAgentEnvironment): readonly ManagedStartupAgentAdapter[] {
+function adapters(
+  mapped: ManagedStartupAgentEnvironment,
+  ownerResult?: ManagedStartupOwnerResult,
+): readonly ManagedStartupAgentAdapter[] {
   return MANAGED_STARTUP_AGENTS.map((agent) => ({
     agent,
-    apply: (context: ManagedStartupAdapterContext) => applyAdapter(context, mapped),
+    apply: (context: ManagedStartupAdapterContext) => applyAdapter(context, mapped, ownerResult),
   }));
 }
 
 export async function applyManagedStartupImageProfile(
   expectedAgentInput: string,
   env: Environment = process.env,
-  options: { readonly publishCompletion?: boolean } = {},
+  options: {
+    readonly publishCompletion?: boolean;
+    readonly ownerResult?: ManagedStartupOwnerResult;
+  } = {},
 ): Promise<ManagedStartupImageApplyResult> {
   requireRoot();
   const expectedAgent = exactAgent(expectedAgentInput);
@@ -1605,12 +1660,12 @@ export async function applyManagedStartupImageProfile(
         ? {}
         : { corporateCaB64: env[MANAGED_STARTUP_CA_ENV] }),
     },
-    adapters(mapped),
+    adapters(mapped, options.ownerResult),
   );
   if (mapped.agent !== result.application.profile.agent) {
     fail(`mapped ${mapped.agent} environment for ${result.application.profile.agent}`);
   }
-  if (expectedAgent === "hermes" && !result.adapterApplied) {
+  if (expectedAgent === "hermes" && !result.adapterApplied && !options.ownerResult) {
     // Committed startup replays still repair generator-created 0600 files.
     normalizeHermesManagedConfiguration();
   }
@@ -1658,6 +1713,183 @@ export async function applyManagedStartupImageProfile(
     fingerprint: result.application.fingerprint,
     runtimeEnvironmentFile: MANAGED_STARTUP_RUNTIME_ENV_FILE,
   };
+}
+
+interface ManagedStartupOwnerResult {
+  readonly agent: ManagedStartupAgent;
+  readonly profileFingerprint: string;
+  readonly bootstrapIdentity: string;
+  readonly applied: boolean;
+  readonly hermesPolicyB64: string | null;
+  readonly hermesConfigHash: string | null;
+}
+
+function requestImageEnvironment(
+  request: ManagedStartupRootApplyRequest,
+  env: Environment,
+): Environment {
+  return {
+    NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+    ...selectManagedStartupApplicationRuntimeEnvironment(env),
+    [MANAGED_STARTUP_PROFILE_ENV]: request.encodedProfile,
+    ...(request.corporateCaB64 === null
+      ? {}
+      : { [MANAGED_STARTUP_CA_ENV]: request.corporateCaB64 }),
+  };
+}
+
+function prepareDelegatedApplication(
+  request: ManagedStartupRootApplyRequest,
+  bootstrapIdentity: string,
+) {
+  requireRoot();
+  if (
+    !SHA256_RE.test(bootstrapIdentity) ||
+    getManagedStartupSharedStateTransactionStatus({
+      agent: request.agent,
+      profileFingerprint: request.profileFingerprint,
+      bootstrapIdentity,
+    }) === "none"
+  )
+    fail("delegated startup requires its protected shared-state transaction");
+  requireManagedStartupExchangeDirectory();
+  ensureRootOwnedDirectory(ROOT_STATE_PARENT);
+  ensureRootOwnedDirectory(ROOT_RUNTIME_DIRECTORY);
+  return prepareManagedStartupApplication({
+    encodedProfile: request.encodedProfile,
+    expectedAgent: request.agent,
+    ...(request.corporateCaB64 === null ? {} : { corporateCaB64: request.corporateCaB64 }),
+  });
+}
+
+/** Run root setup before the provider starts generation as the native account. */
+export function prepareManagedStartupDelegatedRequest(
+  request: ManagedStartupRootApplyRequest,
+  bootstrapIdentity: string,
+  env: Environment = process.env,
+): "prepared" | "already-committed" {
+  requireRoot();
+  const profile = decodeManagedStartupProfile(request.encodedProfile);
+  const mapped = mapManagedStartupProfileToAgentEnvironment(
+    profile,
+    requestImageEnvironment(request, env),
+  );
+  validateManagedStartupApplicationRuntimePlan(mapped.applicationRuntime);
+  const prepared = prepareDelegatedApplication(request, bootstrapIdentity);
+  if (prepared.status === "prepared") applyAdapterCommands(mapped, "root");
+  return prepared.status;
+}
+
+/** Provider-selected native execution; stdout is reserved for the bounded private result. */
+export function applyManagedStartupOwnerRequest(
+  request: ManagedStartupRootApplyRequest,
+  bootstrapIdentity: string,
+  replay = false,
+  env: Environment = process.env,
+): ManagedStartupOwnerResult {
+  requireNativeStateOwner(request.agent);
+  if (!SHA256_RE.test(bootstrapIdentity)) fail("invalid owner bootstrap identity");
+  const profile = decodeManagedStartupProfile(request.encodedProfile);
+  const mapped = mapManagedStartupProfileToAgentEnvironment(
+    profile,
+    requestImageEnvironment(request, env),
+  );
+  validateManagedStartupApplicationRuntimePlan(mapped.applicationRuntime);
+  if (!replay) applyAdapterCommands(mapped, "sandbox");
+  let hermesPolicyB64: string | null = null;
+  let hermesConfigHash: string | null = null;
+  if (request.agent === "openclaw" && !replay)
+    validateOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime, true);
+  if (request.agent === "hermes") {
+    if (!replay) {
+      const policy = readStableRegularFileSnapshot(
+        HERMES_GENERATED_MANAGED_POLICY_FILE,
+        MAX_HERMES_MANAGED_POLICY_BYTES,
+      );
+      hermesPolicyB64 = policy.bytes.toString("base64");
+      hermesConfigHash = hermesConfigurationHash();
+      writeSandboxFileAtomically("/sandbox/.hermes/.config-hash", hermesConfigHash, 0o640);
+      if (
+        !sameStableFileMetadata(
+          policy.stat,
+          fs.lstatSync(HERMES_GENERATED_MANAGED_POLICY_FILE, { bigint: true }),
+        )
+      )
+        fail("Hermes policy changed before owner cleanup");
+      fs.unlinkSync(HERMES_GENERATED_MANAGED_POLICY_FILE);
+    }
+    normalizeHermesManagedConfiguration();
+  }
+  return {
+    agent: request.agent,
+    profileFingerprint: request.profileFingerprint,
+    bootstrapIdentity,
+    applied: !replay,
+    hermesPolicyB64,
+    hermesConfigHash,
+  };
+}
+
+function parseOwnerResult(
+  text: string,
+  request: ManagedStartupRootApplyRequest,
+  bootstrapIdentity: string,
+  applied: boolean,
+): ManagedStartupOwnerResult {
+  if (Buffer.byteLength(text) > MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES)
+    fail("owner result exceeds its bounded transport");
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    fail("owner result is not valid JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail("invalid owner result");
+  const result = value as Record<string, unknown>;
+  if (
+    Object.keys(result).sort().join(",") !==
+      "agent,applied,bootstrapIdentity,hermesConfigHash,hermesPolicyB64,profileFingerprint" ||
+    result.agent !== request.agent ||
+    result.profileFingerprint !== request.profileFingerprint ||
+    result.bootstrapIdentity !== bootstrapIdentity ||
+    result.applied !== applied
+  )
+    fail("owner result does not match prepared startup");
+  if (request.agent === "hermes" && applied) {
+    if (
+      typeof result.hermesPolicyB64 !== "string" ||
+      result.hermesPolicyB64.length === 0 ||
+      result.hermesPolicyB64.length > 4 * Math.ceil(MAX_HERMES_MANAGED_POLICY_BYTES / 3) ||
+      Buffer.from(result.hermesPolicyB64, "base64").toString("base64") !== result.hermesPolicyB64 ||
+      typeof result.hermesConfigHash !== "string" ||
+      !/^[a-f0-9]{64}  \/sandbox\/\.hermes\/config\.yaml\n[a-f0-9]{64}  \/sandbox\/\.hermes\/\.env\n$/u.test(
+        result.hermesConfigHash,
+      )
+    )
+      fail("invalid Hermes owner materials");
+  } else if (result.hermesPolicyB64 !== null || result.hermesConfigHash !== null)
+    fail("unexpected owner materials");
+  return result as unknown as ManagedStartupOwnerResult;
+}
+
+/** Accept only the result transported from the provider's pinned owner process. */
+export async function finishManagedStartupDelegatedRequest(
+  request: ManagedStartupRootApplyRequest,
+  bootstrapIdentity: string,
+  ownerResultText: string,
+  env: Environment = process.env,
+): Promise<ManagedStartupImageApplyResult> {
+  const prepared = prepareDelegatedApplication(request, bootstrapIdentity);
+  const ownerResult = parseOwnerResult(
+    ownerResultText,
+    request,
+    bootstrapIdentity,
+    prepared.status === "prepared",
+  );
+  return applyManagedStartupImageProfile(request.agent, requestImageEnvironment(request, env), {
+    publishCompletion: false,
+    ownerResult,
+  });
 }
 
 function completionAlreadyPublished(request: ManagedStartupRootApplyRequest): boolean {
@@ -1724,7 +1956,7 @@ export async function applyManagedStartupRootRequest(
   };
 }
 
-function readBoundedRootApplyStdin(): string {
+function readBoundedRootApplyStdin(maxBytes = MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES): string {
   const chunks: Buffer[] = [];
   let total = 0;
   while (true) {
@@ -1732,7 +1964,7 @@ function readBoundedRootApplyStdin(): string {
     const read = fs.readSync(0, chunk, 0, chunk.length, null);
     if (read === 0) break;
     total += read;
-    if (total > MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES) {
+    if (total > maxBytes) {
       fail("root application stdin exceeds its bounded transport");
     }
     chunks.push(chunk.subarray(0, read));
@@ -1827,7 +2059,179 @@ function readCliBootstrapIdentity(argv: readonly string[]): string {
   return argv[index + 1] as string;
 }
 
+function requireNativeStateOwner(agent: ManagedStartupAgent): void {
+  const identity = managedImageRuntimeIdentity(agent);
+  if (process.geteuid?.() !== identity.uid || process.getegid?.() !== identity.gid) {
+    fail("shared-state capture requires the exact native state owner");
+  }
+}
+
+function readSharedStateEnvelope(agent: ManagedStartupAgent) {
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      readBoundedRootApplyStdin(
+        MANAGED_STARTUP_SHARED_CAPTURE_MAX_BYTES + MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES,
+      ),
+    );
+  } catch {
+    fail("shared-state capture envelope is unreadable");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    fail("invalid shared-state capture envelope");
+  const envelope = value as Record<string, unknown>;
+  if (
+    Object.keys(envelope).sort().join(",") !== "capturedState,encodedProfile" ||
+    typeof envelope.capturedState !== "string" ||
+    typeof envelope.encodedProfile !== "string"
+  ) {
+    fail("invalid shared-state capture envelope fields");
+  }
+  const profile = decodeManagedStartupProfile(envelope.encodedProfile);
+  if (profile.agent !== agent) fail("shared-state capture envelope targets another agent");
+  return { profile, capturedState: envelope.capturedState };
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  if (argv.length === 1 && argv[0] === "--startup-protocol") {
+    requireRoot();
+    process.stdout.write("delegated-owner-v1\n");
+    return;
+  }
+  if (argv.length === 5 && argv[0] === "--prepare-delegated-transaction-stdin") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    const request = parseManagedStartupRootApplyRequest(readBoundedRootApplyStdin());
+    if (request.agent !== agent) fail("transaction preparation targets another agent");
+    ensureRootOwnedDirectory(ROOT_STATE_PARENT);
+    process.stdout.write(
+      `${getManagedStartupSharedStateTransactionStatus({
+        agent,
+        profileFingerprint: request.profileFingerprint,
+        bootstrapIdentity,
+      })}\n`,
+    );
+    return;
+  }
+  if (argv.length === 5 && argv[0] === "--export-shared-restoration-profile-stdin") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const profile = decodeManagedStartupProfile(readBoundedRootApplyStdin().trim());
+    if (profile.agent !== agent) fail("shared-state restoration profile targets another agent");
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    process.stdout.write(
+      exportManagedStartupSharedStateRestoration(profile, { bootstrapIdentity }) ?? "absent\n",
+    );
+    return;
+  }
+  if (
+    (argv.length === 5 || (argv.length === 6 && argv[5] === "--replay")) &&
+    ["--prepare-delegated-startup-stdin", "--apply-owner-startup-stdin"].includes(argv[0] ?? "")
+  ) {
+    const agent = exactAgent(readCliAgent(argv, argv.length));
+    const owner = argv[0] === "--apply-owner-startup-stdin";
+    if (owner) requireNativeStateOwner(agent);
+    else {
+      requireRoot();
+      if (argv.length !== 5) fail("root preparation cannot request owner replay");
+    }
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    const request = parseManagedStartupRootApplyRequest(readBoundedRootApplyStdin());
+    if (request.agent !== agent) fail("delegated startup request targets another agent");
+    if (owner)
+      process.stdout.write(
+        `${JSON.stringify(applyManagedStartupOwnerRequest(request, bootstrapIdentity, argv.length === 6))}\n`,
+      );
+    else
+      process.stdout.write(
+        `${prepareManagedStartupDelegatedRequest(request, bootstrapIdentity)}\n`,
+      );
+    return;
+  }
+  if (argv.length === 5 && argv[0] === "--finish-delegated-startup-stdin") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    let value: unknown;
+    try {
+      value = JSON.parse(
+        readBoundedRootApplyStdin(
+          MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES + MANAGED_STARTUP_OWNER_RESULT_MAX_BYTES,
+        ),
+      );
+    } catch {
+      fail("delegated completion envelope is unreadable");
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      fail("invalid delegated completion envelope");
+    const envelope = value as Record<string, unknown>;
+    if (
+      Object.keys(envelope).sort().join(",") !== "ownerResult,request" ||
+      typeof envelope.request !== "string" ||
+      typeof envelope.ownerResult !== "string"
+    )
+      fail("invalid delegated completion fields");
+    const request = parseManagedStartupRootApplyRequest(envelope.request);
+    if (request.agent !== agent) fail("delegated completion targets another agent");
+    await finishManagedStartupDelegatedRequest(request, bootstrapIdentity, envelope.ownerResult);
+    process.stdout.write("applied\n");
+    return;
+  }
+  if (
+    argv.length === 5 &&
+    (argv[0] === "--capture-shared-state-stdin" || argv[0] === "--export-shared-restoration-stdin")
+  ) {
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const exporting = argv[0] === "--export-shared-restoration-stdin";
+    if (exporting) requireRoot();
+    else requireNativeStateOwner(agent);
+    const request = parseManagedStartupRootApplyRequest(readBoundedRootApplyStdin());
+    if (request.agent !== agent) fail("shared-state capture request targets another agent");
+    const profile = decodeManagedStartupProfile(request.encodedProfile);
+    const options = { bootstrapIdentity: readCliBootstrapIdentity(argv) };
+    process.stdout.write(
+      exporting
+        ? (exportManagedStartupSharedStateRestoration(profile, options) ?? "absent\n")
+        : captureManagedStartupSharedState(profile, options),
+    );
+    return;
+  }
+  if (
+    argv.length === 5 &&
+    [
+      "--begin-shared-state-from-capture-stdin",
+      "--restore-shared-state-stdin",
+      "--finish-shared-restoration-stdin",
+    ].includes(argv[0] ?? "")
+  ) {
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const restoring = argv[0] === "--restore-shared-state-stdin";
+    if (restoring) requireNativeStateOwner(agent);
+    else requireRoot();
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    const { profile, capturedState } = readSharedStateEnvelope(agent);
+    if (restoring) {
+      process.stdout.write(
+        restoreManagedStartupCapturedSharedState(profile, capturedState, { bootstrapIdentity }),
+      );
+      return;
+    }
+    if (argv[0] === "--finish-shared-restoration-stdin") {
+      const restored = finishManagedStartupSharedStateRestoration(profile, capturedState, {
+        bootstrapIdentity,
+      });
+      process.stdout.write(restored ? "restored\n" : "absent\n");
+      return;
+    }
+    ensureRootOwnedDirectory(ROOT_STATE_PARENT);
+    const created = beginManagedStartupSharedStateTransaction(profile, {
+      bootstrapIdentity,
+      capturedState,
+    });
+    process.stdout.write(created ? "created\n" : "pending\n");
+    return;
+  }
   if (argv.length === 1 && argv[0] === "--internal-write-hermes-compat-hash") {
     internalWriteHermesCompatHash();
     return;

@@ -145,3 +145,19 @@ export function listNativeHostedProviderAttachmentSandboxNames(
     .map((sandbox) => sandbox.name)
     .sort();
 }
+
+/** Recorded selections prevent reset from deleting an operator provider still in use. */
+export function listRegisteredInferenceProviderAttachmentSandboxNames(
+  gatewayName: string,
+  providerName: string,
+): readonly string[] {
+  // Registry loading rejects malformed or mismatched external bindings.
+  return Object.values(load().sandboxes)
+    .filter(
+      (sandbox) =>
+        sandbox.gatewayName === gatewayName &&
+        sandbox.registeredInferenceProviderAttachment?.providerName === providerName,
+    )
+    .map((sandbox) => sandbox.name)
+    .sort();
+}

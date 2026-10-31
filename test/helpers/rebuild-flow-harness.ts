@@ -68,6 +68,9 @@ export const onboardSession = requireDist("../../state/onboard-session.js");
 export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
 );
+export const { cliOpenShellInstalledVersionObserver } = requireDist(
+  "../../adapters/openshell/installed-version-cli.js",
+) as typeof import("../../src/lib/adapters/openshell/installed-version-cli");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 export const providerCommand = requireDist("../../adapters/openshell/provider-command.js");
 export const policies = requireDist("../../policy/index.js");
@@ -99,6 +102,7 @@ export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildProviderPreflight = requireDist("./rebuild-provider-preflight.js");
+export const rebuildHostCredentialPreflight = requireDist("./rebuild/host-credential-preflight.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");

@@ -161,13 +161,13 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-telegram-bridge",
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
           },
           {
             name: "my-sandbox-slack-bridge",
             envKey: "SLACK_BOT_TOKEN",
             token: "slack-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
           },
         ];
         const warnings: string[] = [];
@@ -181,7 +181,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-telegram-bridge",
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
             additionalCredentials: [
               { envKey: "TELEGRAM_BOT_TOKEN_AGENT_A", token: "telegram-token-A" },
             ],
@@ -190,7 +190,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-slack-bridge",
             envKey: "SLACK_BOT_TOKEN",
             token: "slack-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
             additionalCredentials: [{ envKey: "SLACK_BOT_TOKEN_AGENT_B", token: "slack-token-B" }],
           },
         ]);
@@ -210,7 +210,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-telegram-bridge",
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
           },
         ];
         const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs);
@@ -220,7 +220,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-telegram-bridge",
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
             additionalCredentials: [{ envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", token: null }],
           },
         ]);
@@ -241,7 +241,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-telegram-bridge",
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
           },
         ];
         const warnings: string[] = [];
@@ -254,7 +254,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-telegram-bridge",
             envKey: "TELEGRAM_BOT_TOKEN",
             token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "nemoclaw-messaging-v1",
             additionalCredentials: [
               { envKey: "TELEGRAM_BOT_TOKEN_AGENT_A", token: "telegram-token-A" },
             ],

@@ -5,9 +5,10 @@
 // Extracted verbatim from onboard.setupInference (#767).
 
 import type { SetupInferenceResult, VllmDeps } from "./types";
+import { getNimInferenceEndpoints, getServedModelId } from "../../inference/nim";
 
 export async function setupVllmLocalInference(
-  args: { model: string; provider: string },
+  args: { model: string; provider: string; localNimSelected?: boolean },
   deps: VllmDeps,
 ): Promise<{ done: true; result: SetupInferenceResult } | { done: false }> {
   const { model, provider } = args;
@@ -24,7 +25,13 @@ export async function setupVllmLocalInference(
     error,
   } = deps;
 
-  const validation = validateLocalProvider(provider);
+  if (args.localNimSelected && getServedModelId() !== model) {
+    error("  Local NVIDIA NIM does not serve the selected model. Onboarding stopped.");
+    return exitProcess(1);
+  }
+  const validation = args.localNimSelected
+    ? { ok: true as const }
+    : validateLocalProvider(provider);
   if (!validation.ok) {
     const hostCheck = getLocalProviderHealthCheck(provider);
     // Use run() and check exit status rather than coercing runCapture() output
@@ -52,12 +59,14 @@ export async function setupVllmLocalInference(
   }
   let managedBinding: ReturnType<typeof getManagedVllmProviderBinding>;
   try {
-    managedBinding = getManagedVllmProviderBinding();
+    managedBinding = args.localNimSelected ? null : getManagedVllmProviderBinding();
   } catch {
     error("  Managed vLLM authentication state is unsafe or unreadable.");
     return exitProcess(1);
   }
-  const baseUrl = managedBinding?.baseUrl ?? getLocalProviderBaseUrl(provider);
+  const baseUrl = args.localNimSelected
+    ? getNimInferenceEndpoints().baseUrl
+    : (managedBinding?.baseUrl ?? getLocalProviderBaseUrl(provider));
   const providerToken = managedBinding?.apiKey ?? "dummy";
   // Use a dedicated internal credential env so the gateway does not pick
   // up the user's host OPENAI_API_KEY for local vLLM. vLLM does not enforce

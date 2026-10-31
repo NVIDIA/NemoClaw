@@ -324,12 +324,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         'export OPENCLAW_OAUTH_DIR="/sandbox/.openclaw/credentials"',
         `PUBLIC_PORT=${JSON.stringify(port)}`,
         'CHAT_UI_URL="https://remote.example.test/ui"',
-        'PROXY_HOST="10.200.0.1"',
-        'PROXY_PORT="3128"',
-        '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-        '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
         '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
-        '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
         '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         "_TOOL_REDIRECTS=()",
@@ -365,14 +360,16 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     };
   }
 
-  it("reads, exports, prints, and shell-escapes the gateway token without touching rc files", () => {
+  it("exports gateway and state settings while redacting logs and preserving rc files", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "tok'en" } } }),
+      "stale-token",
+      "18790",
     );
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("TOKEN=tok'en");
-    expect(result.stderr).toContain("http://127.0.0.1:18789/");
+    expect(result.stderr).toContain("http://127.0.0.1:18790/");
     expect(result.stderr).toContain("https://remote.example.test/ui/");
     expect(result.stderr).toContain("Dashboard auth token redacted from startup logs.");
     expect(result.stderr).not.toContain("#token=");
@@ -382,28 +379,6 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("nemoclaw-configure-guard begin");
     expect(envFile).not.toContain(".bashrc");
     expect(envFile).not.toContain(".profile");
-  });
-
-  it("writes the gateway port and URL into the runtime shell env (#3256)", () => {
-    const { result, envFile } = runGatewayTokenHarness(
-      JSON.stringify({ gateway: { auth: { token: "token" } } }),
-      "stale-token",
-      "18790",
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("http://127.0.0.1:18790/");
-    expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).not.toContain("NEMOCLAW_OPENCLAW_GATEWAY_URL");
-    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
-    expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='token'");
-  });
-  it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
-    const { result, envFile } = runGatewayTokenHarness(
-      JSON.stringify({ gateway: { auth: { token: "token" } } }),
-    );
-
-    expect(result.status).toBe(0);
     expect(envFile).toContain("export OPENCLAW_HOME='/sandbox'");
     expect(envFile).toContain("export OPENCLAW_STATE_DIR='/sandbox/.openclaw'");
     expect(envFile).toContain("export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'");
@@ -411,6 +386,9 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile.indexOf("export OPENCLAW_STATE_DIR=")).toBeLessThan(
       envFile.indexOf("OPENCLAW_GATEWAY_TOKEN='"),
     );
+    expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
+    expect(envFile).not.toContain("NEMOCLAW_OPENCLAW_GATEWAY_URL");
+    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
   });
 
   it("generates a gateway token and scrubs rejected legacy metadata (#3256)", () => {
@@ -430,6 +408,37 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain(`OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain("stale-token");
   });
+  it("clears obsolete proxy config from restored state while preserving channel authorization", () => {
+    const account = {
+      enabled: true,
+      botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      allowFrom: ["123"],
+      proxy: "http://10.200.0.1:3128",
+    };
+    const { result, configAfter } = runGatewayTokenHarness(
+      JSON.stringify({
+        gateway: { auth: {} },
+        proxy: { enabled: true, proxyUrl: "http://10.200.0.1:3128" },
+        tools: { web: { fetch: { enabled: true, useTrustedEnvProxy: true } } },
+        channels: {
+          telegram: {
+            proxy: "http://10.200.0.1:3128",
+            accounts: { default: account, second: account },
+          },
+        },
+      }),
+      "stale-token",
+      "18790",
+      true,
+    );
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(configAfter.proxy).toBeUndefined();
+    expect(configAfter.tools.web.fetch).toEqual({ enabled: true, useTrustedEnvProxy: false });
+    expect(configAfter.channels.telegram.proxy).toBeUndefined();
+    const { proxy: _proxy, ...retained } = account;
+    expect(configAfter.channels.telegram.accounts).toEqual({ default: retained, second: retained });
+  });
+
   it("rotates an existing gateway token before writing the runtime shell env (#4517)", () => {
     const oldToken = "old-token-before-rebuild";
     const { result, envFile, configAfter } = runGatewayTokenHarness(
@@ -569,12 +578,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-      'PROXY_HOST="10.200.0.1"',
-      'PROXY_PORT="3128"',
-      '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-      '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
-      '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
@@ -2968,7 +2972,6 @@ describe("Telegram diagnostics (#2766)", () => {
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
         "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
-        `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
@@ -3193,12 +3196,7 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        'PROXY_HOST="10.200.0.1"',
-        'PROXY_PORT="3128"',
-        '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-        '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
-        `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
         `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(connectPreloadsPath)}`,
         extractShellFunctionFromSource(src, "emit_messaging_connect_runtime_preload_exports"),
@@ -3309,14 +3307,11 @@ describe("native configuration during simulated root startup", () => {
         'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
         "NEMOCLAW_CMD=()",
         "_DASHBOARD_PORT=18791",
-        '_PROXY_URL=""',
-        '_NO_PROXY_VAL=""',
         "STEP_DOWN_PREFIX_SANDBOX=(env)",
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "write_auth_profile() { :; }",
         "harden_auth_profiles() { :; }",
         '_SANDBOX_SAFETY_NET=""',
-        '_PROXY_FIX_SCRIPT=""',
         '_NEMOTRON_FIX_SCRIPT=""',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',

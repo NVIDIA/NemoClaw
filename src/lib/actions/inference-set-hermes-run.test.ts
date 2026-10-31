@@ -237,7 +237,10 @@ describe("runInferenceSet Hermes routing", () => {
       terminal: { backend: "local" },
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledTimes(1);
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes", HERMES_TARGET, config);
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes", HERMES_TARGET, config, {
+      gatewayName: "nemoclaw",
+      deferReload: true,
+    });
     expect(deps.calls.writeSandboxConfig.mock.calls[0][1].configPath).toBe(
       "/sandbox/.hermes/config.yaml",
     );
@@ -370,7 +373,7 @@ describe("runInferenceSet Hermes routing", () => {
     ).toBe(false);
   });
 
-  it("fails after commit when the config hash refresh fails (#7083)", async () => {
+  it("fails after route commit when the native config transaction cannot refresh hashes (#7083)", async () => {
     const config: ConfigObject = {
       model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
     };
@@ -386,7 +389,7 @@ describe("runInferenceSet Hermes routing", () => {
       target: HERMES_TARGET,
       session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
     });
-    deps.calls.recomputeSandboxConfigHash.mockImplementation(() => {
+    deps.calls.writeSandboxConfig.mockImplementation(() => {
       throw new Error("hash refresh failed");
     });
 
@@ -415,7 +418,9 @@ describe("runInferenceSet Hermes routing", () => {
       }),
     );
     const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
-    expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
+    expect(
+      logs.some((line) => line.includes("in-sandbox config failed: hash refresh failed")),
+    ).toBe(true);
     expect(logs.some((line) => line.includes("Run 'nemoclaw hermes rebuild'"))).toBe(false);
     expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
   });
@@ -662,7 +667,12 @@ describe("runInferenceSet Hermes routing", () => {
 
     await runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps);
 
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes-one", HERMES_TARGET, config);
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith(
+      "hermes-one",
+      HERMES_TARGET,
+      config,
+      { gatewayName: "nemoclaw", deferReload: true },
+    );
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes-one",
       expect.objectContaining({

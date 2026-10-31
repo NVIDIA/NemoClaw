@@ -7,13 +7,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
   type FakeMcpRequest,
   HERMES_DEFERRED_TOOL_SEARCH_MISS,
   type StartedHttpServer,
   startCompatibleMock,
+  withCompatibleMockFailureDiagnostics,
 } from "../live/mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscovery,
@@ -312,6 +312,130 @@ afterEach(async () => {
   await Promise.all(
     artifactRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
   );
+});
+
+describe("compatible endpoint failure diagnostics", () => {
+  it("does not collect diagnostics after successful approval", async () => {
+    const diagnostics = vi.fn();
+    const writeJson = vi.fn();
+    const operation = vi.fn().mockResolvedValue(undefined);
+    await withCompatibleMockFailureDiagnostics({ diagnostics }, { writeJson }, operation);
+    expect(operation).toHaveBeenCalledOnce();
+    expect(diagnostics).not.toHaveBeenCalled();
+    expect(writeJson).not.toHaveBeenCalled();
+  });
+
+  it.each(["success", "failure"] as const)(
+    "preserves the original failed approval after diagnostic publication %s",
+    async (publicationResult) => {
+      const failure = new Error("original approval failure");
+      const evidence = { receivedCount: 0, retainedLimit: 64, requests: [] };
+      const diagnostics = vi.fn().mockReturnValue(evidence);
+      const publishers = {
+        success: () => Promise.resolve("evidence.json"),
+        failure: () => Promise.reject(new Error("diagnostic publication failed")),
+      };
+      const writeJson = vi.fn(publishers[publicationResult]);
+      const operation = vi.fn().mockRejectedValue(failure);
+      await expect(
+        withCompatibleMockFailureDiagnostics({ diagnostics }, { writeJson }, operation),
+      ).rejects.toBe(failure);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(diagnostics).toHaveBeenCalledOnce();
+      expect(writeJson).toHaveBeenCalledWith("admin-approval-compatible-requests.json", {
+        adminApprovalStartedAtMs: expect.any(Number),
+        capturedAtMs: expect.any(Number),
+        ...evidence,
+      });
+    },
+  );
+
+  it.each([
+    ["/v1/chat/completions", "chat-completions", true, true, 200],
+    ["/chat/completions", "chat-completions", true, false, 200],
+    ["/v1/responses", "responses", true, null, 200],
+    ["/private-path?token=PRIVATE_QUERY", "other", false, null, 401],
+  ] as const)(
+    "records only transport facts for %s",
+    async (route, category, authenticated, stream, status) => {
+      const server = await startCompatibleMock({
+        apiKey: COMPATIBLE_API_KEY,
+        model: COMPATIBLE_MODEL,
+      });
+      compatibleMock = server;
+      const response = await fetch(`http://127.0.0.1:${server.port}${route}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authenticated ? COMPATIBLE_API_KEY : "PRIVATE_BAD_TOKEN"}`,
+          "Content-Type": "application/json",
+          "X-Private-Header": "PRIVATE_HEADER",
+        },
+        body: JSON.stringify({
+          stream,
+          messages: [{ role: "user", content: "PRIVATE_PROMPT" }],
+        }),
+      });
+      await response.text();
+      expect(response.status).toBe(status);
+      const evidence = server.diagnostics();
+      expect(evidence).toEqual({
+        receivedCount: 1,
+        retainedLimit: 64,
+        requests: [
+          {
+            receivedAtMs: expect.any(Number),
+            method: "POST",
+            route: category,
+            authenticated,
+            bodyComplete: expect.any(Boolean),
+            stream,
+            responseStatus: status,
+            responseFinished: true,
+            responseClosed: true,
+          },
+        ],
+      });
+      expect(JSON.stringify(evidence)).not.toMatch(
+        new RegExp(`PRIVATE_|${COMPATIBLE_API_KEY}|${COMPATIBLE_MODEL}|private-path|token=`),
+      );
+    },
+  );
+
+  it("bounds retained requests and returns independent snapshots", async () => {
+    const server = await startCompatibleMock({
+      apiKey: COMPATIBLE_API_KEY,
+      model: COMPATIBLE_MODEL,
+    });
+    compatibleMock = server;
+    await Promise.all(
+      Array.from({ length: 70 }, async () => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`, {
+          headers: { Authorization: `Bearer ${COMPATIBLE_API_KEY}` },
+        });
+        await response.text();
+      }),
+    );
+    const evidence = server.diagnostics();
+    expect(evidence.receivedCount).toBe(70);
+    expect(evidence.requests).toHaveLength(64);
+    expect(evidence.requests).toEqual(
+      Array.from({ length: 64 }, () => ({
+        receivedAtMs: expect.any(Number),
+        method: "GET",
+        route: "models",
+        authenticated: true,
+        bodyComplete: true,
+        stream: null,
+        responseStatus: 200,
+        responseFinished: true,
+        responseClosed: true,
+      })),
+    );
+    evidence.requests[0]!.responseStatus = 599;
+    evidence.requests.length = 0;
+    expect(server.diagnostics().requests).toHaveLength(64);
+    expect(server.diagnostics().requests[0]!.responseStatus).toBe(200);
+  });
 });
 
 async function startDeferredCompatibleMock(): Promise<StartedHttpServer> {
@@ -1366,23 +1490,5 @@ describe("Hermes deferred MCP tool discovery", () => {
       content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
     });
     expect(terminalMessage.tool_calls).toBeUndefined();
-  });
-});
-
-describe("MCP mutation concurrency retry", () => {
-  it("retries the explicit OpenShell optimistic-concurrency response", () => {
-    expect(
-      shouldRetryMcpMutationAfterConcurrencyConflict(
-        "Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.",
-      ),
-    ).toBe(true);
-  });
-
-  it.each([
-    "Failed to detach provider: permission denied",
-    "sandbox was modified by another operation.",
-    "Please retry the command.",
-  ])("does not retry another failure: %s", (output) => {
-    expect(shouldRetryMcpMutationAfterConcurrencyConflict(output)).toBe(false);
   });
 });

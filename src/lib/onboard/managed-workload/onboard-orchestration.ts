@@ -84,6 +84,7 @@ import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import type { ExternalImageWorkloadSource } from "../workload/source";
 import {
   prepareManagedStateVolumes,
+  preflightManagedStateVolumes,
   removeManagedStateVolumes,
   type ManagedStateVolumeDeps,
 } from "./managed-state-volumes";
@@ -152,23 +153,27 @@ export function createManagedStateVolumeOnboardLifecycle(
   },
   deps: ManagedStateVolumeDeps = {},
 ): ManagedStateVolumeOnboardLifecycle {
-  const scope = prepareManagedStateVolumes(
-    { roots: input.roots },
-    {
-      ...deps,
-      workspace: input.workspace,
-      ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
-    },
-  );
-  const managedStateMountDriverId = scope
-    ? input.runtimeProvider?.workload.managedStateMountDriverId
-    : undefined;
-  if (scope && !managedStateMountDriverId) {
+  const volumeDeps = {
+    ...deps,
+    workspace: input.workspace,
+    ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
+  };
+  const roots = input.roots;
+  const mountDriverId = volumeDeps.runtimeProvider?.workload.managedStateMountDriverId;
+  if (
+    roots.length > 0 &&
+    volumeDeps.runtimeProvider?.containerEngine.supported !== false &&
+    !mountDriverId
+  )
     throw new Error("Managed state volumes require provider-owned mount projection.");
-  }
+  preflightManagedStateVolumes({ roots: input.roots }, volumeDeps);
+  let scope: ReturnType<typeof prepareManagedStateVolumes> | undefined;
   return {
     roots: input.roots,
     materializeSandboxCreatePlan(input, materialize) {
+      // Recheck attachment approval after source deletion and before selecting mounts.
+      scope ??= prepareManagedStateVolumes({ roots }, volumeDeps);
+      const managedStateMountDriverId = scope ? mountDriverId : undefined;
       return materialize({
         ...input,
         managedStateMounts: scope?.mounts,
@@ -204,6 +209,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly localNimSelected?: boolean;
   readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeProvider?: boolean;
+  readonly registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
   readonly fallbackBuildEstimate: () => string | null;
@@ -428,6 +434,7 @@ export function createManagedWorkloadOnboardRuntime(
         : (input.nativeProvider ?? true),
       endpointUrl,
       input.agentName,
+      input.registeredInferenceProviderAttachment,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
@@ -604,6 +611,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       log,
       reverifyBridgeReachability: () =>
         verifySandboxBridgeGatewayReachableOrExit(true, {
+          gatewayRuntime,
           skip: false,
           port: input.gpu.gatewayPort,
           reachabilityImpl: (options) =>

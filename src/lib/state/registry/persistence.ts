@@ -7,6 +7,7 @@ import {
 } from "../../inference/native-local/contract";
 
 import path from "node:path";
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 import { requireHostedProviderAttachment } from "../../inference/native-provider/hosted-attachment";
 import { normalizeNativeHostedProviderAuthorities } from "./native-provider-authority-state";
 import { isObjectRecord } from "../../core/json-types";
@@ -263,6 +264,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(entry, "load");
   const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const nativeLocalProviderAttachment = requireNativeLocalProviderAttachment(policyEntry, "load");
+  const registeredInferenceProviderAttachment =
+    recordedRegisteredInferenceProviderAttachment(policyEntry);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -272,6 +275,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     nativeLocalProviderAttachment: _nativeLocalProviderAttachment,
+    registeredInferenceProviderAttachment: _registeredInferenceProviderAttachment,
     nativeHostedProviderAttachment: hostedAttachment,
     nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
@@ -288,6 +292,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
@@ -336,6 +341,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(durable, "save");
   const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const nativeLocalProviderAttachment = requireNativeLocalProviderAttachment(policyEntry, "save");
+  const registeredInferenceProviderAttachment =
+    recordedRegisteredInferenceProviderAttachment(policyEntry);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -345,6 +352,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     nativeLocalProviderAttachment: _nativeLocalProviderAttachment,
+    registeredInferenceProviderAttachment: _registeredInferenceProviderAttachment,
     nativeHostedProviderAttachment: hostedAttachment,
     nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
     mcp: _legacyMcp,
@@ -361,6 +369,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),

@@ -62,6 +62,10 @@ import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import {
+  nativeWeatherPluginWriteScript,
+  type NativePluginVersion,
+} from "../fixtures/native-plugin-fixture.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
   cleanupAcquiredResource,
@@ -217,72 +221,6 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
     accept: (result) => result.exitCode === 0,
   });
   return status.value;
-}
-
-type NativePluginVersion = "v1" | "v2";
-
-function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
-  const packageJson = JSON.stringify({
-    name: "@nemoclaw/e2e-native-weather",
-    version: version === "v1" ? "1.0.0" : "2.0.0",
-    type: "module",
-    main: "index.js",
-    files: ["index.js", "openclaw.plugin.json"],
-    openclaw: { extensions: ["./index.js"] },
-    peerDependencies: { openclaw: ">=2026.7.1" },
-  });
-  const manifest = JSON.stringify({
-    id: "weather",
-    name: "NemoClaw Native Weather",
-    version: version === "v1" ? "1.0.0" : "2.0.0",
-    description: "Dependency-free native plugin lifecycle fixture",
-    activation: { onStartup: true },
-    contracts: { tools: ["get_weather"] },
-    configSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-  });
-  const entrypoint = `const plugin = {
-  id: "weather",
-  name: "NemoClaw Native Weather",
-  version: ${JSON.stringify(version === "v1" ? "1.0.0" : "2.0.0")},
-  description: "Dependency-free native plugin lifecycle fixture",
-  register(api) {
-    api.registerTool({
-      name: "get_weather",
-      label: "Get Weather",
-      description: "Return deterministic weather data.",
-      parameters: {
-        type: "object",
-        properties: { location: { type: "string" } },
-        required: ["location"],
-        additionalProperties: false,
-      },
-      async execute(_toolCallId, params) {
-        const details = {
-          location: String(params.location),
-          condition: "clear",
-          fixtureVersion: ${JSON.stringify(version)},
-        };
-        return { content: [{ type: "text", text: JSON.stringify(details) }], details };
-      },
-    });
-  },
-};
-export default plugin;
-`;
-  return [
-    "set -eu",
-    "source_dir=/sandbox/e2e-native-weather",
-    'rm -rf -- "$source_dir"',
-    'mkdir -p -- "$source_dir"',
-    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
-    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
-    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
-  ].join("\n");
 }
 
 /** Invoke the installed native weather plugin and verify its versioned response. */
@@ -644,6 +582,13 @@ sha256sum /sandbox/.bashrc /sandbox/.profile > /tmp/nemoclaw-e2e-profiles.sha256
         input.host,
         [SANDBOX_NAME, "gateway", "restart"],
         "phase-4-restart-after-native-model-restore",
+      );
+      await captureNativePluginFailureReadiness(
+        input.sandbox,
+        restartAfterNativeModelRestore,
+        SANDBOX_NAME,
+        "phase-4-restart-after-native-model-restore",
+        env(),
       );
     },
   );
@@ -1212,11 +1157,14 @@ test(
       },
     );
 
-    const nativeEndpointUrl = getSandbox(SANDBOX_NAME)?.nativeHostedProviderAttachment?.endpointUrl;
+    const selectedEntry = getSandbox(SANDBOX_NAME);
+    const nativeEndpointUrl =
+      selectedEntry?.nativeLocalProviderAttachment?.endpointUrl ??
+      selectedEntry?.nativeHostedProviderAttachment?.endpointUrl;
     const inferenceRoute = await readFullE2eInferenceRoute({
       sandbox,
       sandboxName: SANDBOX_NAME,
-      entry: getSandbox(SANDBOX_NAME),
+      entry: selectedEntry,
       logicalProvider: hosted.providerName,
       model: hosted.model,
       env: env(),

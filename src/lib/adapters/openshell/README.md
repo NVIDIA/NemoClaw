@@ -87,7 +87,7 @@ detachment, deletion, replacement cleanup, and other lifecycle operations keep t
 adapters until the remaining #9806 migration slices land. This does not claim SDK qualification for
 those operations.
 
-Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.0.116 does not expose a transport receive-size option.
+Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.1.5 does not expose a transport receive-size option.
 
 ## User file transfers
 
@@ -108,13 +108,12 @@ success, since interruption can arrive during post-transfer verification or lock
 retry an interrupted or indeterminate transfer. Session exports, onboarding downloads, and plugin
 copy remain assigned to later #9810 deliveries.
 
-Native NVIDIA setup uses `provider-adapter-cli.ts` to read the named gateway's
-`providers_v2_enabled` setting before publishing credentials. OpenShell 0.0.116
-leaves provider-derived policy disabled when that setting is unset. Setup enables
-that default and confirms the result, preserves an explicit `false`, and stops on
-unknown or failed responses without retrying a settings write. A successfully
-enabled setting remains enabled if later provider setup fails; it is gateway state,
-not a sandbox-owned resource.
+Native NVIDIA and local inference setup verify the named gateway's global policy
+history before publishing credentials. OpenShell 0.1.5 composes attached provider
+policies automatically when no global policy override is active. Setup accepts
+verified empty history or a superseded current global revision. It rejects an
+active override, an unreadable response, or malformed policy data without changing
+gateway settings.
 
 Native NVIDIA policy preparation and invocation probes are shared across agent
 integrations. When NVIDIA is selected, policy preparation adds the mandatory

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   installerReleaseTsv,
+  readOpenShellTrustRegistry,
   resolveOpenShellTrustRegistry,
   validateInstallerSources,
 } from "../../../scripts/checks/extract-installer-pins.mts";
@@ -35,6 +36,32 @@ afterEach(() =>
 );
 
 describe("reviewed candidate OpenShell trust", () => {
+  it.each([
+    "0b9c65bcc255d97d2fbfef638fbb4b374d7617fb2aaaf6cb76b898ded74e498f",
+    "65da7bf3c9a930e11f4028b808d34cdbebc63d1a30672e98e1f2650f9d9a269d",
+  ])("retains previous installer identity %s while revoking its execution", (previousTemplate) => {
+    const registry = readOpenShellTrustRegistry();
+    const previous = structuredClone(registry);
+    previous.revokedTemplateSha256 = [];
+    const previousRelease = previous.releases.find((release) => release.version === "0.1.3")!;
+    previousRelease.installerTemplateSha256 = previousRelease.installerTemplateSha256.slice(
+      0,
+      previousRelease.installerTemplateSha256.indexOf(previousTemplate) + 1,
+    );
+    const releases = resolveOpenShellTrustRegistry(registry, previous);
+    expect(
+      releases.find((release) => release.version === "0.1.3")?.revokedTemplateSha256,
+    ).toContain(previousTemplate);
+    const root = new URL("../../../", import.meta.url).pathname;
+    const sources = Object.fromEntries(
+      Object.entries(CANDIDATE_OPENSHELL_SOURCES).map(([key, path]) => [
+        key,
+        readFileSync(join(root, path), "utf8"),
+      ]),
+    ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
+    expect(validateInstallerSources(sources, releases).releaseVersion).toBe("0.1.5");
+  });
+
   it.each(
     (["installer", "version"] as const).flatMap((consumer) =>
       (["older", "empty", "absent"] as const).map((scenario) => ({ consumer, scenario })),

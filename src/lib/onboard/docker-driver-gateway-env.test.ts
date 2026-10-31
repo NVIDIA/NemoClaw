@@ -191,7 +191,7 @@ describe("buildDockerDriverGatewayEnv", () => {
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       });
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
-      expect(toml).toContain('compute_drivers = ["podman"]');
+      expect(toml).toContain('compute_driver = "podman"');
       expect(toml).toContain("[openshell.drivers.podman]");
       expect(toml).toContain(`host_gateway_ip = "${PORTABLE_HOST_GATEWAY_IP}"`);
       expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
@@ -223,7 +223,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       expect(env.CONTAINERS_CONF).toBeUndefined();
       expect(env.NETAVARK_FW).toBeUndefined();
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
-      expect(toml).toContain('compute_drivers = ["podman"]');
+      expect(toml).toContain('compute_driver = "podman"');
       expect(toml).toContain(`socket_path = "${env.OPENSHELL_PODMAN_SOCKET}"`);
       expect(toml).not.toContain("supervisor_bin");
     } finally {

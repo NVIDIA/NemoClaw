@@ -2900,8 +2900,9 @@ function backupNativeSandboxState(
         // owned by that user before reading the complete native tree. Materialize
         // any OpenClaw database plus committed WAL state into a private standalone
         // copy, then stream that copy with the other process-quiescent files.
-        // Keep the SSH ancestry live so the archive can stream, and always resume
-        // processes through the EXIT trap, including tar failures and signals.
+        // Keep the SSH ancestry, including the native PID 1 launcher, live so
+        // the archive can stream. Always resume processes through the EXIT trap,
+        // including tar failures and signals.
         const command = [
           "set -eu",
           `root=${shellQuote(rootResult.root)}`,
@@ -2911,7 +2912,7 @@ function backupNativeSandboxState(
           "self=$$",
           'ancestors=" $self "',
           "cursor=$PPID",
-          'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
+          'while [ "$cursor" -gt 0 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
           'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; rm -rf -- "$db_stage"; }',
@@ -3376,6 +3377,13 @@ export async function restoreRecreatedSandboxState(
   });
 }
 
+export function nativeRestoreTransportError(): string | null {
+  const result = spawnSync("sftp", ["-h"], { stdio: "ignore", timeout: 10_000 });
+  return result.error || result.signal
+    ? "Native state restore requires the OpenSSH sftp client. Install the OpenSSH client tools on this host, then retry."
+    : null;
+}
+
 async function restoreNativeSandboxState(
   sandboxName: string,
   backupPath: string,
@@ -3404,6 +3412,8 @@ async function restoreNativeSandboxState(
       `Backup agent '${manifest.agentType}' does not match target agent '${options.targetAgentType}'`,
     );
   }
+  const transportError = nativeRestoreTransportError();
+  if (transportError) return failure(transportError);
   if (!options.authority || !options.validateBeforeMutation) {
     if (manifest.workload?.kind === "managed-image") {
       return failure(MANAGED_REBUILD_RESTORE_AUTHORITY_ERROR);
@@ -3440,89 +3450,186 @@ async function restoreNativeSandboxState(
       const mutationError = await validateSnapshotRestoreMutation(backupPath, options);
       if (mutationError) return failure(mutationError);
 
-      const restoreScript = [
-        "root=$1",
-        '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
-        'stage="$(mktemp -d "$root/.nemoclaw-native-restore.XXXXXX")"',
-        "trap 'rm -rf -- \"$stage\"' EXIT HUP INT TERM",
-        'tar --no-same-owner -xf - -C "$stage"',
-        'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
-        'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
-        'uid="$(id -u)"',
-        "preserve_replacement_path() {",
-        '  case "$1" in',
-        "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
-        "  esac",
-        "  return 1",
-        "}",
-        "restore_dir() {",
-        '  local source_dir="$1" target_dir="$2" target_item source_item name owner relative',
-        '  for target_item in "$target_dir"/* "$target_dir"/.[!.]* "$target_dir"/..?*; do',
-        '    { [ -e "$target_item" ] || [ -L "$target_item" ]; } || continue',
-        '    [ "$target_item" = "$stage" ] && continue',
-        '    name="${target_item##*/}"',
-        '    source_item="$source_dir/$name"',
-        '    relative="${target_item#"$root"/}"',
-        '    if { [ ! -e "$source_item" ] && [ ! -L "$source_item" ]; }; then',
-        '      preserve_replacement_path "$relative" && continue',
-        '      owner="$(stat -c %u -- "$target_item")"',
-        '      if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then rm -rf -- "$target_item"; continue; fi',
-        '      echo "native restore could not remove replacement-only state at: $target_item" >&2',
-        "      exit 22",
-        "    fi",
-        '    owner="$(stat -c %u -- "$target_item")"',
-        '    if [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
-        '      restore_dir "$source_item" "$target_item"',
-        '      rmdir -- "$source_item"',
-        '    elif [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
-        '      rm -rf -- "$target_item"',
-        '    elif [ -f "$target_item" ] && [ ! -L "$target_item" ] && [ -f "$source_item" ] && [ ! -L "$source_item" ] && cmp -s -- "$source_item" "$target_item"; then',
-        '      rm -f -- "$source_item"',
-        '    elif [ -L "$target_item" ] && [ -L "$source_item" ] && [ "$(readlink -- "$source_item")" = "$(readlink -- "$target_item")" ]; then',
-        '      rm -f -- "$source_item"',
-        "    else",
-        '      echo "native restore could not preserve archived state at: $target_item" >&2',
-        "      exit 22",
-        "    fi",
-        "  done",
-        '  for source_item in "$source_dir"/* "$source_dir"/.[!.]* "$source_dir"/..?*; do',
-        '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
-        '    if [ -w "$target_dir" ]; then',
-        '      mv -- "$source_item" "$target_dir"/',
-        "    else",
-        '      echo "native restore could not preserve archived state below: $target_dir" >&2',
-        "      exit 22",
-        "    fi",
-        "  done",
-        "}",
-        'restore_dir "$stage" "$root"',
-      ].join("\n");
-      // Restore the archive as the single agent-state source of truth. Keep
-      // only the control-plane and generation-local paths excluded at capture;
-      // replacement-only agent state is removed, while unsafe ownership or
-      // writability conflicts fail instead of producing a mixed state tree.
-      const command = `bash -ceu ${shellQuote(restoreScript)} -- ${shellQuote(rootResult.root)}`;
-      const result = spawnSync("ssh", [...sshArgs(temporary.file, sandboxName), command], {
-        ...(selectedEnv ? { env: selectedEnv } : {}),
-        stdio: [archiveFd, "pipe", "pipe"],
-        timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      });
-      if (result.status !== 0 || result.error || result.signal) {
-        const detail =
-          result.error?.message ??
-          (result.signal
-            ? `signal ${result.signal}`
-            : result.stderr?.toString().trim() || `exit ${String(result.status)}`);
-        return failure(`Native home/workspace restore failed: ${detail.substring(0, 240)}`);
+      const connection = sshArgs(temporary.file, sandboxName);
+      const transfer = path.posix.join(
+        rootResult.root,
+        `.nemoclaw-native-restore-${path.basename(temporary.dir)}`,
+      );
+      const runRemote = (script: string, args: string[]) =>
+        spawnSync(
+          "ssh",
+          [...connection, `bash -ceu ${shellQuote(script)} -- ${args.map(shellQuote).join(" ")}`],
+          {
+            ...(selectedEnv ? { env: selectedEnv } : {}),
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024,
+          },
+        );
+      const commandError = (result: ReturnType<typeof runRemote>): string | null =>
+        result.status === 0 && !result.error && !result.signal
+          ? null
+          : (
+              result.error?.message ??
+              (result.signal
+                ? `signal ${result.signal}`
+                : result.stderr?.toString().trim() || `exit ${String(result.status)}`)
+            ).substring(0, 240);
+      const created = runRemote(
+        'root=$1; transfer=$2; { [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20; mkdir -m 700 -- "$transfer"; stat -c %d:%i -- "$transfer"',
+        [rootResult.root, transfer],
+      );
+      const transferIdentity = created.stdout?.toString().trim() ?? "";
+      const createError = commandError(created);
+      if (createError || !/^\d+:\d+$/.test(transferIdentity)) {
+        return failure(
+          `Native restore staging failed: ${createError ?? "invalid directory identity"}. Inspect ${JSON.stringify(transfer)} before retrying.`,
+        );
       }
-      return {
-        success: true,
-        restoredDirs: ["."],
-        failedDirs: [],
-        restoredFiles: [],
-        failedFiles: [],
+      const verifyTransfer = [
+        "transfer=$1; identity=$2",
+        '[ -d "$transfer" ] && [ ! -L "$transfer" ]',
+        '[ "$(stat -c %d:%i -- "$transfer")" = "$identity" ]',
+        '[ "$(stat -c %u -- "$transfer")" = "$(id -u)" ]',
+      ].join("\n");
+      const performRestore = async (): Promise<RestoreResult> => {
+        const batch = path.join(temporary.dir, "upload.batch");
+        const remoteArchive = `${transfer}/archive.tar`;
+        writeFileSync(batch, `put /dev/stdin "${remoteArchive.replace(/[\\"]/g, "\\$&")}"\n`, {
+          mode: 0o600,
+          flag: "wx",
+        });
+        // SFTP acknowledges bounded requests before accepting more archive bytes.
+        // The input is the unlinked, validated copy, never the original pathname.
+        const uploaded = spawnSync(
+          "sftp",
+          ["-b", batch, "-R", "16", "-B", "32768", ...connection],
+          {
+            ...(selectedEnv ? { env: selectedEnv } : {}),
+            stdio: [archiveFd, "pipe", "pipe"],
+            timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024,
+          },
+        );
+        const uploadError = commandError(uploaded);
+        if (uploadError) return failure(`Native home/workspace upload failed: ${uploadError}`);
+        const authorityError = await validateSnapshotRestoreMutation(backupPath, options);
+        if (authorityError) return failure(authorityError);
+        const restoreScript = [
+          verifyTransfer,
+          "root=$3",
+          '{ [ -d "$root" ] && [ ! -L "$root" ]; } || exit 20',
+          'archive="$transfer/archive.tar"',
+          '[ -f "$archive" ] && [ ! -L "$archive" ]',
+          'exec 3< "$archive"',
+          '[ "$(stat -Lc %u:%h -- /proc/self/fd/3)" = "$(id -u):1" ]',
+          '[ "$(stat -c %d:%i -- "$archive")" = "$(stat -Lc %d:%i -- /proc/self/fd/3)" ]',
+          'rm -- "$archive"',
+          '[ "$(stat -Lc %h -- /proc/self/fd/3)" = 0 ]',
+          'digest="$(sha256sum /proc/self/fd/3)"',
+          '[ "${digest%% *}" = "$4" ] || { echo "native restore archive checksum mismatch" >&2; exit 21; }',
+          'stage="$transfer/state"; mkdir -m 700 -- "$stage"',
+          'tar --no-same-owner -xf /proc/self/fd/3 -C "$stage"',
+          "exec 3<&-",
+          'if find "$stage" -type f -links +1 -print -quit | grep -q .; then echo "native restore archive contains a hard link" >&2; exit 21; fi',
+          'mkdir -p -- "$stage/.nemoclaw" "$stage/.openclaw/agents/main/sessions" "$stage/.hermes/runtime"',
+          'uid="$(id -u)"',
+          "preserve_replacement_path() {",
+          '  case "$1" in',
+          "    .nemoclaw/config.json|.nemoclaw/blueprints|.openclaw/.nemoclaw-post-upgrade-doctor|.openclaw/agents/main/sessions/nemoclaw-onboard-warmup-*|.hermes/gateway.pid|.hermes/runtime/gateway.pid|.hermes/runtime/gateway.lock) return 0 ;;",
+          "  esac",
+          "  return 1",
+          "}",
+          "restore_dir() {",
+          '  local source_dir="$1" target_dir="$2" target_item source_item name owner relative',
+          '  for target_item in "$target_dir"/* "$target_dir"/.[!.]* "$target_dir"/..?*; do',
+          '    { [ -e "$target_item" ] || [ -L "$target_item" ]; } || continue',
+          '    [ "$target_item" = "$transfer" ] && continue',
+          '    name="${target_item##*/}"',
+          '    source_item="$source_dir/$name"',
+          '    relative="${target_item#"$root"/}"',
+          '    if { [ ! -e "$source_item" ] && [ ! -L "$source_item" ]; }; then',
+          '      preserve_replacement_path "$relative" && continue',
+          '      owner="$(stat -c %u -- "$target_item")"',
+          '      if [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then rm -rf -- "$target_item"; continue; fi',
+          '      echo "native restore could not remove replacement-only state at: $target_item" >&2',
+          "      exit 22",
+          "    fi",
+          '    owner="$(stat -c %u -- "$target_item")"',
+          '    if [ -d "$target_item" ] && [ ! -L "$target_item" ] && [ -d "$source_item" ] && [ ! -L "$source_item" ]; then',
+          '      restore_dir "$source_item" "$target_item"',
+          '      rmdir -- "$source_item"',
+          '    elif [ "$owner" = "$uid" ] && [ -w "$target_dir" ]; then',
+          '      rm -rf -- "$target_item"',
+          '    elif [ -f "$target_item" ] && [ ! -L "$target_item" ] && [ -f "$source_item" ] && [ ! -L "$source_item" ] && cmp -s -- "$source_item" "$target_item"; then',
+          '      rm -f -- "$source_item"',
+          '    elif [ -L "$target_item" ] && [ -L "$source_item" ] && [ "$(readlink -- "$source_item")" = "$(readlink -- "$target_item")" ]; then',
+          '      rm -f -- "$source_item"',
+          "    else",
+          '      echo "native restore could not preserve archived state at: $target_item" >&2',
+          "      exit 22",
+          "    fi",
+          "  done",
+          '  for source_item in "$source_dir"/* "$source_dir"/.[!.]* "$source_dir"/..?*; do',
+          '    { [ -e "$source_item" ] || [ -L "$source_item" ]; } || continue',
+          '    if [ -w "$target_dir" ]; then',
+          '      mv -- "$source_item" "$target_dir"/',
+          "    else",
+          '      echo "native restore could not preserve archived state below: $target_dir" >&2',
+          "      exit 22",
+          "    fi",
+          "  done",
+          "}",
+          'restore_dir "$stage" "$root"',
+        ].join("\n");
+        // Restore the archive as the single agent-state source of truth. Keep
+        // only the control-plane and generation-local paths excluded at capture;
+        // replacement-only agent state is removed, while unsafe ownership or
+        // writability conflicts fail instead of producing a mixed state tree.
+        const result = runRemote(restoreScript, [
+          transfer,
+          transferIdentity,
+          rootResult.root,
+          manifest.nativeState!.sha256,
+        ]);
+        const restoreError = commandError(result);
+        return restoreError
+          ? failure(`Native home/workspace restore failed: ${restoreError}`)
+          : {
+              success: true,
+              restoredDirs: ["."],
+              failedDirs: [],
+              restoredFiles: [],
+              failedFiles: [],
+            };
       };
+      let outcome = failure("Native home/workspace restore did not complete");
+      try {
+        outcome = await performRestore();
+      } catch (error) {
+        outcome = failure(
+          `Native home/workspace restore failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        const removed = runRemote(verifyTransfer + '\nrm -rf -- "$transfer"', [
+          transfer,
+          transferIdentity,
+        ]);
+        const cleanupError = commandError(removed);
+        if (cleanupError) {
+          outcome = {
+            ...outcome,
+            success: false,
+            error: [
+              outcome.error,
+              `Native restore cleanup failed for ${JSON.stringify(transfer)}: ${cleanupError}`,
+            ]
+              .filter(Boolean)
+              .join("; "),
+          };
+        }
+      }
+      return outcome;
     };
     return withSshCleanupResult(await runWithTempSshConfigCleanupAsync(temporary, restore));
   } finally {

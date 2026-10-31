@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createPrivateKey, sign as signPayload } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 
 import { getDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
 
-const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 export const DOCKER_GRPC_PROBE_IMAGE =
   "node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea";
 const CONTAINER_PROBE_CA_PATH = "/tmp/nemoclaw-probe-ca.crt";
@@ -24,6 +21,7 @@ export type GatewayAuthProbeResult = {
 export type SandboxTokenContainerProbeOptions = {
   authorization?: string;
   dockerBin: string;
+  grpcPath?: "/openshell.v1.OpenShell/Health";
   hostGatewayIp?: string;
   networkName: string;
   payload: Buffer;
@@ -52,38 +50,6 @@ function varint(value: number): Buffer {
 export function getSandboxConfigRequest(sandboxId: string): Buffer {
   const bytes = Buffer.from(sandboxId, "utf-8");
   return Buffer.concat([Buffer.from([(1 << 3) | 2]), varint(bytes.length), bytes]);
-}
-
-function parseTomlString(toml: string, key: string): string {
-  const match = toml.match(new RegExp(`^${key} = "([^"]+)"$`, "m"));
-  if (!match?.[1]) throw new Error(`missing TOML key ${key}`);
-  return match[1];
-}
-
-function base64UrlJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), "utf-8").toString("base64url");
-}
-
-export function mintSandboxJwt(options: { configPath: string; sandboxId: string }): string {
-  const toml = fs.readFileSync(options.configPath, "utf-8");
-  const signingKeyPath = parseTomlString(toml, "signing_key_path");
-  const kid = fs.readFileSync(parseTomlString(toml, "kid_path"), "utf-8").trim();
-  const gatewayId = parseTomlString(toml, "gateway_id");
-  const now = Math.floor(Date.now() / 1000);
-  const identity = `openshell-gateway:${gatewayId}`;
-  const header = base64UrlJson({ alg: "EdDSA", kid, typ: "JWT" });
-  const payload = base64UrlJson({
-    aud: identity,
-    exp: now + 3600,
-    iat: now,
-    iss: identity,
-    sandbox_id: options.sandboxId,
-    sub: `${SANDBOX_JWT_SUBJECT_PREFIX}${options.sandboxId}`,
-  });
-  const signingInput = `${header}.${payload}`;
-  const privateKey = createPrivateKey(fs.readFileSync(signingKeyPath, "utf-8"));
-  const signature = signPayload(null, Buffer.from(signingInput), privateKey).toString("base64url");
-  return `${signingInput}.${signature}`;
 }
 
 function containerProbeNetworkArgs(
@@ -189,7 +155,7 @@ export function buildSandboxTokenContainerProbeInvocation(
       "--volume",
       `${path.resolve(bundle.clientKeyPath)}:${CONTAINER_PROBE_CLIENT_KEY_PATH}:ro`,
       "--env",
-      "PROBE_GRPC_PATH=/openshell.v1.OpenShell/GetSandboxConfig",
+      `PROBE_GRPC_PATH=${options.grpcPath ?? "/openshell.v1.OpenShell/GetSandboxConfig"}`,
       "--env",
       `PROBE_GATEWAY_PORT=${String(options.port)}`,
       "--env",

@@ -10,12 +10,13 @@ content:
   type: "how_to"
 ---
 Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
-Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
+Runtime switching accepts catalog providers and qualifying providers already registered on the selected sandbox's OpenShell gateway.
+Use onboarding to configure a provider that is supported by onboarding but unavailable for runtime switching.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
 <AgentOnly variant="openclaw,hermes">
 
-## Find a Registered Provider
+## Choose a Supported Provider
 
 List the configured provider credentials when you need the provider ID.
 
@@ -27,12 +28,50 @@ $$nemoclaw credentials list
 It accepts recognized underscore spellings of canonical provider IDs and hyphenated aliases, such as `ollama_local`, `nvidia_prod`, and `open_router`.
 NemoClaw normalizes an accepted alias or underscore spelling to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
 
-If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
-If it cannot read the gateway list, it lists every supported provider ID instead.
+The legacy hosted alias `nvidia-nim`, including `nvidia_nim`, selects NVIDIA Endpoints and normalizes to `nvidia-prod`.
+The installer names `nim`, `nim-local`, and `nim_local` select Local NVIDIA NIM through `vllm-local`.
+This local selection requires the NIM container and endpoint recorded for the sandbox or a matching onboarding session.
+The endpoint must match the NIM runtime, and that runtime must serve the requested model.
+Missing or inconsistent NIM state stops the switch before mutation; it does not select hosted NVIDIA Endpoints or standalone vLLM.
+Rerun onboarding for the affected sandbox with `NEMOCLAW_PROVIDER=nim-local` to repair its recorded selection, then retry the switch.
+Endpoint, API-family, and credential overrides do not apply to this local selection.
 
-If OpenShell cannot find a requested provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
+If a provider is outside the catalog, NemoClaw checks for its exact name on the selected sandbox's verified gateway.
+An unavailable inventory or an absent provider stops the switch before mutation.
+Messaging providers cannot be selected for inference.
+
+If OpenShell cannot find a requested catalog provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
 Run `$$nemoclaw onboard` to register the provider, then retry the switch.
 For a compatible custom endpoint, pass the complete route metadata described below so NemoClaw can register the provider.
+
+### Select an Existing Registered Provider
+
+Use the existing provider's name with the runtime switch command below.
+Provide its endpoint, API family, and credential environment variable through the native agent configuration or the corresponding command options.
+Use `--endpoint-url`, `--inference-api`, and `--credential-env` only for metadata that agrees with the existing configuration.
+The endpoint must use HTTPS, including operator-managed private endpoints.
+NemoClaw rejects HTTP before attaching the provider or reading its credential handle.
+Retained HTTP records remain readable for inspection and removal of NemoClaw-created attachments, but NemoClaw refuses to resume credential use through those endpoints.
+Every profile endpoint matching the selected host and port must use `protocol: rest` and explicit `enforcement: enforce`.
+Each matching endpoint's `tls` field must be omitted or an empty string to retain automatic TLS inspection.
+Its `allow_uninspected_credentials` field must be omitted or `false`.
+NemoClaw refuses selection and credential use when these checks fail.
+Identity inspection and removal of NemoClaw-created attachments remain available, subject to identity and ownership checks.
+The profile's existing rules, access mode, and IP restrictions remain operator-controlled.
+NemoClaw verifies the provider identity and its declared profile against the selected endpoint and authentication method before attaching it to the sandbox.
+Missing or conflicting metadata stops the switch.
+
+The credential value remains with OpenShell.
+NemoClaw reads the selected sandbox's OpenShell credential handle, verifies the attachment again, and writes that handle into the agent configuration.
+It does not import raw credentials or accept authentication-header overrides from the native configuration.
+The existing provider and its credentials remain operator-owned; switching does not update or delete them.
+
+The switch uses the native endpoint without changing the shared inference route.
+After switching, confirm the provider and endpoint with `$$nemoclaw <name> inference get`.
+Run `$$nemoclaw <name> status` to verify inference health.
+If verification fails before the selection is committed, NemoClaw attempts to remove only its newly created attachment and restore the previous selection.
+A target attachment that existed before the switch is retained.
+If cleanup or restoration cannot be confirmed, resolve the reported failure before retrying.
 
 </AgentOnly>
 
@@ -48,7 +87,7 @@ Target a non-default sandbox by name.
 $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
 ```
 
-For native NVIDIA and fixed hosted providers, NemoClaw updates only the selected sandbox attachment and verifies a request through its native endpoint. A hosted compatible endpoint uses a native provider during a runtime switch only when the sandbox already records a valid native attachment; a shared-route sandbox keeps its shared route. OpenClaw also keeps model switches on a recorded native Ollama, standalone vLLM, or llama.cpp attachment within that sandbox.
+For native NVIDIA and fixed hosted providers, NemoClaw updates only the selected sandbox attachment and verifies a request through its native endpoint. A hosted compatible endpoint uses a native provider during a runtime switch only when the sandbox already records a valid native attachment; a retained shared-route sandbox keeps its route only on OpenShell `0.0.x`. OpenClaw also keeps model switches on a recorded native Ollama, standalone vLLM, or llama.cpp attachment within that sandbox.
 OpenRouter requests include its attribution headers.
 If sandbox verification fails, NemoClaw tries to restore the previous inference selection and does not commit the agent configuration.
 
@@ -60,13 +99,19 @@ For OpenClaw, NemoClaw updates the provider namespace and selected model in the 
 It adds or updates the requested model entry without removing other model entries in that provider.
 For NVIDIA Endpoints, native hosted providers, and native local providers, it writes the attached provider's scoped OpenShell credential reference into the native configuration.
 This reference is not a raw provider credential.
-A switch to a local provider without a matching sandbox-owned attachment stops before changing the shared route. Back up the sandbox and create a fresh one with the local selection. Existing shared-route local sandboxes can still change models through their recorded shared route where its owner supports that operation.
+When switching to a different Ollama, standalone vLLM, or llama.cpp provider, NemoClaw prepares and attaches a provider for the selected local runtime.
+The switch verifies existing attachment ownership and leaves the shared route unchanged.
+Existing shared-route local sandboxes that keep the same provider can still use supported model switches on OpenShell `0.0.x`.
+Older Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment cannot resume or rebuild.
+Back them up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
 After any changed configuration sync, NemoClaw restarts only the OpenClaw gateway and verifies its health.
 The sandbox remains running, but agent requests are briefly interrupted.
 After every changed synchronized route, NemoClaw verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
 If the restart fails, the route and configuration remain committed.
 Run `$$nemoclaw <name> gateway restart` to apply the committed configuration.
 If pairing does not converge, the route and configuration remain committed.
+For `initial-state-unavailable` or `final-state-unavailable`, use the observation failure category in the error and audit entry to diagnose the failed check.
+The category does not include raw observer output, pairing state, or credentials.
 Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
@@ -74,8 +119,9 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 <AgentOnly variant="hermes">
 
 For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and managed API-key value.
-A hosted compatible selection outside the Personal tier uses an attached provider during a runtime switch only when this sandbox already records a valid native attachment. Qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible selections use sandbox-attached providers without changing the shared route.
-Owned Local NVIDIA NIM and nonqualifying custom endpoints retain the shared route.
+Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers without changing the shared route.
+Qualifying custom hosted endpoints also use sandbox-attached providers.
+Remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
 A legacy local sandbox without a valid Hermes attachment must be recreated before a native local switch: back up required state, then run `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 Live qualification of the Hermes native local lifecycle is pending.
 `inference.local` uses the OpenShell proxy rewrite sentinel.
@@ -100,18 +146,21 @@ A rebuild restores the previous native `openclaw.json`, so it does not repair th
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
-Run the rebuild before relying on the running agent.
+If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned.
+For an existing registered provider, retry the same `inference set` command to finish configuration sync.
+For other providers, follow the printed rebuild hint before relying on the running agent.
 
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
 
 Use `--no-verify` only when OpenShell cannot verify the target provider at switch time and you have already confirmed its provider and credential.
 This flag does not bypass shared-gateway compatibility checks.
-When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
-It then sends a validation request from the target sandbox before persisting the route in NemoClaw state.
+NemoClaw rejects an unverified custom route that uses `host.openshell.internal` because the alias and port do not prove which host process owns the destination.
+Qualified OpenAI-compatible native-local routes and managed adapter routes retain their recorded host bridge endpoint.
+Use a public endpoint or an explicitly trusted private hostname or IP address.
 The output limit is 16 tokens for ordinary providers and 256 tokens for Google Gemini.
-For sandbox-only custom endpoints, NemoClaw waits 6 seconds for OpenShell's route cache after changing the provider or model, then verifies the new route from inside the sandbox.
+Before sandbox verification, NemoClaw waits 6 seconds when the provider, model, or provider attachment changes.
+This wait also applies when a custom endpoint change replaces the attachment but keeps the provider and model names.
 When the switch also changes the API family and that request returns HTTP `400` or `404`, NemoClaw retries up to two times after delays of 2 and 4 seconds.
 NemoClaw uses the same retry schedule when validation fails before it receives an HTTP status, such as while the gateway route is reloading.
 Each retry uses the same output limit for the selected provider.

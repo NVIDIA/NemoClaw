@@ -29,7 +29,7 @@ Sandbox agent -> provider API hostname -> sandbox-attached OpenShell provider ->
 | Anthropic | `https://api.anthropic.com` |
 | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` |
 | OpenRouter | `https://openrouter.ai/api/v1` |
-| Hermes Provider | `https://inference-api.nousresearch.com/v1`, or the endpoint returned by authenticated login |
+| Hermes Provider | `https://inference-api.nousresearch.com/v1`, the endpoint returned by authenticated login, or a validated endpoint retained from an existing selection |
 
 Each sandbox records its selected provider attachment. Changing one sandbox's native selection does not change another sandbox's route.
 OpenRouter attribution headers remain in the managed agent configuration.
@@ -38,13 +38,22 @@ A different destination cannot gain access through a later DNS change.
 
 Existing sandboxes without a native attachment retain their recorded shared route.
 Legacy local routes have the recovery restrictions described under [Credential Boundary](#credential-boundary).
-New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, and llama.cpp use a sandbox-attached provider for the qualified host-local endpoint.
-New hosted OpenAI-compatible and Anthropic-compatible selections for OpenClaw, Deep Agents Code, Hermes, and Pi use an endpoint-bound attached provider outside the Personal policy tier.
-For a direct custom endpoint, the agent uses the recorded endpoint and a scoped credential reference.
+New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, Local NVIDIA NIM, and llama.cpp use sandbox-attached providers for qualified host-local endpoints.
+Deep Agents Code, Hermes, OpenClaw, and Pi also use attached providers for qualifying host-local compatible endpoints.
+OpenClaw and Hermes compatible attachments preserve the selected Chat Completions or Responses API.
+Qualifying custom hosted endpoints use sandbox-attached providers.
+For a direct endpoint, the agent uses the recorded endpoint and a scoped credential reference.
 Bedrock uses the host-local adapter endpoint and an OpenShell adapter token.
-A fresh Personal-tier hosted compatible selection instead stays on the shared `inference.local` route and creates no native attachment.
-Deep Agents Code, Hermes, and Pi use attached providers for qualified host-local compatible endpoints.
-Custom endpoints without an attachment, Local NVIDIA NIM, Model Router, and unchanged published shared selections retain the shared route.
+New Model Router selections use sandbox-attached providers for the configured router endpoint, normally `http://host.openshell.internal:4000/v1`.
+OpenShell authorizes model-list and Chat Completions requests and supplies the provider credential; the sandbox receives only an endpoint-bound credential reference.
+NemoClaw verifies the recorded router process, port, and credential identity before publishing the selection.
+Remaining shared custom selections and unchanged published Pi shared local selections retain the shared route.
+Shared `inference.local` routes require OpenShell `0.0.x`.
+Fresh installations without retained legacy state can install OpenShell `0.1.5` and use sandbox-attached native providers.
+The installer refuses to migrate registered OpenShell `0.0.x` sandboxes, including shared `inference.local` routes, and preserves their state.
+OpenShell `0.1.5` removes the shared route.
+GPU compatibility and native local lifecycle qualification remain incomplete.
+Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
 Hermes live qualification for the new local lifecycle remains pending.
 
 ```text
@@ -55,6 +64,14 @@ Use `$$nemoclaw inference get` to inspect the selected sandbox's recorded route.
 `status`, `doctor`, and startup checks verify its recorded native provider identity before using a native attachment.
 Missing or conflicting ownership stops the operation instead of falling back to the shared route.
 
+<AgentOnly variant="openclaw,hermes">
+Native local provider profiles include the pinned image's resolved Python interpreter, `/usr/bin/python3.13`.
+An older imported profile that lacks this executable can conflict with the current profile definition.
+NemoClaw stops and leaves an incompatible existing profile unchanged.
+Preserve the profile and provider while a NemoClaw maintainer reviews their ownership and attached sandboxes and chooses an explicit replacement plan.
+Retry only after the profile conflict is resolved.
+</AgentOnly>
+
 ## Credential Boundary
 
 Provider credentials stay on the host in OpenShell provider state or, for AWS Bedrock Runtime, in its host-local adapter.
@@ -63,13 +80,27 @@ For attached direct custom endpoints, OpenShell binds the credential environment
 The Bedrock adapter uses a host-local endpoint and supplies OpenShell an adapter token instead of direct endpoint IP pins.
 Removing a private host from the ambient allowlist does not revoke an already verified direct endpoint binding.
 
+Legacy NVIDIA Endpoints sandboxes recorded as `nvidia-nim` use a shared route.
+Resume requires a confirmed OpenShell `0.0.x` runtime; otherwise, NemoClaw stops before changing the provider or route.
+Back up the sandbox before re-onboarding with `--fresh --name <sandbox-name> --recreate-sandbox` to attach a native provider.
+
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
 For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
-Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation. Existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported model switches on their shared route, but cannot resume or rebuild. Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NVIDIA NIM sandboxes retain the shared route and can resume or rebuild.
+Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation.
+On OpenShell `0.0.x`, existing OpenClaw Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible sandboxes without an attachment retain supported shared-route model switches.
+They cannot resume or rebuild.
+Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
+Legacy Model Router sandboxes without a native attachment require a backup and fresh recreation with `--fresh --name <sandbox-name> --recreate-sandbox`.
+NemoClaw preserves their legacy volumes and does not automatically copy the data.
+Native Model Router resume and model changes verify the existing provider and router ownership; uncertain ownership stops the operation and preserves recovery state.
+See [Set Up Model Router](hosted-inference/set-up-model-router) for its model pool and process lifecycle.
+New Local NVIDIA NIM sandboxes use their recorded native attachment for resume and rebuild.
+For older NIM sandboxes without a native attachment, preserve backups, the existing installation, and sandbox data.
+Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
 Legacy Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible routes without a native attachment cannot resume or rebuild.
 Back up required sandbox state before running `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` to replace the sandbox with a native attachment.
-Owned Local NVIDIA NIM and nonqualifying custom routes retain their shared route.
+Remaining custom shared selections retain their shared route on OpenShell `0.0.x`.
 For an attached Hermes route, startup refreshes the credential reference before starting the gateway.
 Rebuild refreshes only the restored credential references, preserving the selected model and provider settings.
 When a rebuild reuses an automatically bridged compatible-endpoint route without a host API key, NemoClaw reapplies the config-only bridge rewrite without reading or passing the credential stored in OpenShell.
@@ -78,12 +109,9 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`.
-Supported fixed native hosted selections use the endpoints above.
-Direct hosted compatible selections use their recorded endpoint, while Bedrock selections use the host-local adapter endpoint.
-A fresh Personal-tier hosted compatible selection uses `https://inference.local/v1` without a native attachment.
-New Ollama, standalone vLLM, llama.cpp, and qualifying local compatible selections use their qualified host-local endpoint through an attached provider.
-Owned Local NVIDIA NIM and retained shared-route selections use `https://inference.local/v1`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above.
+Direct hosted compatible selections use their recorded endpoint; Bedrock selections use the host-local adapter endpoint.
+New Ollama, vLLM, Local NVIDIA NIM, llama.cpp, Model Router, and qualifying local compatible selections use their qualified host-local endpoint through an attached provider. Other shared-route selections retain `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

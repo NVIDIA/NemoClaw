@@ -2,26 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  gatewayReachableCompatibleEndpointUrl,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
   isPersistedPiSharedLocalInferenceRoute,
 } from "./eligibility";
+import { nativeModelRouterEndpoint } from "./model-router";
 import { createHash } from "node:crypto";
 import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
+import { usesNativeLocalInference } from "./eligibility";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import type { NativeProviderAttachment } from "../native-provider/lifecycle";
 
-export {
-  NATIVE_LOCAL_CREDENTIAL_ENV,
-  isLocalInferenceProvider,
-  nativeLocalCredentialReference,
-} from "./agent-config";
+export { NATIVE_LOCAL_CREDENTIAL_ENV, isLocalInferenceProvider } from "./agent-config";
+
+export { nativeLocalCredentialReference } from "./model-router";
 
 export type NativeLocalProvider =
   | "ollama-local"
   | "vllm-local"
   | "llama-cpp-local"
-  | "compatible-endpoint";
+  | "compatible-endpoint"
+  | (string & {});
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
   /** Tagged agents retain distinct immutable profile identities. */
@@ -29,6 +31,8 @@ export type NativeLocalBinding = Readonly<{
   endpointUrl: string;
   credentialEnv: string;
   authMode: "authenticated" | "sentinel";
+  /** Compatible OpenClaw and Hermes endpoints can select the Responses API. */
+  api?: "openai-responses";
   gatewayName: string;
   sandboxName: string;
   /** Existing runtime publication transaction, when that owner requires one. */
@@ -42,12 +46,18 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   const input = value as Record<string, unknown>;
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
-      input.provider !== "compatible-endpoint") ||
+      input.provider !== "compatible-endpoint" &&
+      !nativeModelRouterEndpoint(input.provider as string, input.endpointUrl as string)) ||
     (input.agent !== undefined &&
       input.agent !== "openclaw" &&
       input.agent !== "pi" &&
       input.agent !== "hermes") ||
-    (input.agent === "openclaw" && !isLocalInferenceProvider(input.provider as string)) ||
+    (input.agent === "openclaw" &&
+      !usesNativeLocalInference(input.provider as string, input.endpointUrl as string)) ||
+    (input.api !== undefined &&
+      (input.api !== "openai-responses" ||
+        (input.agent !== "openclaw" && input.agent !== "hermes") ||
+        input.provider !== "compatible-endpoint")) ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
     !/^[A-Z][A-Z0-9_]*$/.test(input.credentialEnv) ||
@@ -68,6 +78,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
     endpointUrl,
     credentialEnv: input.credentialEnv,
     authMode: input.authMode,
+    ...(input.api === "openai-responses" ? { api: input.api } : {}),
     gatewayName: input.gatewayName,
     sandboxName: input.sandboxName,
     ...(input.agent === "hermes" ? { agent: "hermes" as const } : {}),
@@ -87,7 +98,7 @@ export function nativeLocalIdentity(binding: NativeLocalBinding, policyVersion: 
         normalized.endpointUrl,
         normalized.credentialEnv,
         normalized.authMode,
-        // Literal private IPv4 endpoints retain their existing immutable boundary.
+        ...(normalized.api ? [normalized.api] : []),
         ...(policyVersion === 2 && new URL(normalized.endpointUrl).hostname.startsWith("host.")
           ? ["private-dual-stack-v1"]
           : []),

@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeModelRouterEndpoint } from "../../inference/native-local/model-router";
+import {
+  assertNativeModelRouterOwner,
+  prepareNativeModelRouterSelection,
+} from "../../onboard/routed-inference";
+import type { NimSwitchSelection } from "./local-runtime";
 import type { InferenceSetDeps } from "../inference-set";
 import { InferenceSetError } from "../inference-set-error";
-import { isLocalInferenceProvider } from "../../inference/native-local/agent-config";
+import {
+  usesNativeLocalInferenceForAgent,
+  gatewayReachableCompatibleEndpointUrl,
+} from "../../inference/native-local/eligibility";
 import {
   detachNativeLocalProvider,
   ensureNativeLocalProviderAttached,
@@ -15,6 +24,8 @@ import {
 } from "../../inference/native-local/profile";
 import { prepareNativeLocalSelection } from "../../inference/native-local/selection";
 import type { SandboxEntry } from "../../state/registry";
+import { usesLoopbackNoAuthProxyRoute } from "../inference-set-route-containment";
+import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 
 export type OpenClawLocalSwitch = {
   selected?: NativeLocalProviderAttachment;
@@ -27,6 +38,9 @@ export async function resolveOpenClawLocalSwitch(input: {
   agentName: string;
   entry: SandboxEntry;
   provider: string;
+  endpointUrl?: string | null;
+  inferenceApi?: string | null;
+  customRouteChanged?: boolean;
   sandboxName: string;
   gatewayName: string;
   deps: InferenceSetDeps;
@@ -58,22 +72,86 @@ export async function resolveOpenClawLocalSwitch(input: {
       expected: previous,
     });
   }
-  if (!isLocalInferenceProvider(provider) || (provider === "vllm-local" && entry.nimContainer))
+  const router = Boolean(nativeModelRouterEndpoint(provider));
+  if (
+    previous &&
+    input.endpointUrl &&
+    usesLoopbackNoAuthProxyRoute(entry, provider) &&
+    new URL(input.endpointUrl).href.replace(/\/+$/, "") !==
+      new URL(entry.endpointUrl!).href.replace(/\/+$/, "")
+  ) {
+    throw new InferenceSetError(
+      "The no-auth proxy is bound to the recorded backend. Reuse that endpoint; inference set cannot change its host, port, or path.",
+      2,
+    );
+  }
+  const endpointUrl = input.endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : null);
+  if (
+    !usesNativeLocalInferenceForAgent(
+      "openclaw",
+      provider,
+      endpointUrl,
+      Boolean(entry.nimContainer),
+    )
+  )
+    return { previous };
+  // Only onboarding establishes loopback rewrites. New live selections keep
+  // the existing reserved-alias admission rule; recorded proxy reuse is separate.
+  if (
+    provider === "compatible-endpoint" &&
+    input.endpointUrl &&
+    new URL(input.endpointUrl).hostname !== "host.openshell.internal" &&
+    !usesLoopbackNoAuthProxyRoute(entry, provider) &&
+    (!previous ||
+      gatewayReachableCompatibleEndpointUrl(provider, input.endpointUrl) !== previous.endpointUrl)
+  )
     return { previous };
   // A retained OpenClaw row may still own the historical shared route.
-  if (!previous && entry.provider === provider) return {};
+  if (!previous && entry.provider === provider) {
+    if (router)
+      throw new InferenceSetError(
+        "Recreate this legacy Model Router sandbox before changing inference.",
+        2,
+      );
+    return {};
+  }
+  if (!previous || entry.provider !== provider) return { previous, prepare: true };
+  const expectedEndpoint = usesLoopbackNoAuthProxyRoute(entry, provider)
+    ? `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${new URL(entry.endpointUrl!).pathname.replace(/\/+$/, "")}`
+    : gatewayReachableCompatibleEndpointUrl(provider, endpointUrl);
   if (
-    !previous ||
-    entry.provider !== provider ||
-    previous.profileId !== nativeLocalIdentity(previous).profileId
-  )
+    provider === "compatible-endpoint" &&
+    (previous.endpointUrl !== expectedEndpoint ||
+      (previous.api ?? "openai-completions") !== (input.inferenceApi ?? "openai-completions"))
+  ) {
+    if (input.customRouteChanged) return { previous, prepare: true };
+    throw new InferenceSetError(
+      "Recorded compatible provider API or endpoint does not match its native attachment.",
+    );
+  }
+  if (router) {
+    const runtime = deps.resolveLocalSwitchRuntime?.(provider, deps.resolveCredentialValue);
+    if (
+      !runtime?.endpointUrl ||
+      !runtime.credentialValue ||
+      runtime.endpointUrl !== previous.endpointUrl
+    )
+      throw new InferenceSetError("Model Router ownership requires its configured credential.", 2);
+    assertNativeModelRouterOwner(runtime.endpointUrl, runtime.credentialValue);
+  }
+  if (previous.profileId !== nativeLocalIdentity(previous).profileId)
     return { previous, prepare: true };
   return { selected: previous, previous };
 }
 
 export async function prepareOpenClawLocalSwitch(input: {
   selection: OpenClawLocalSwitch;
+  entry: SandboxEntry;
   provider: string;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  inferenceApi?: string | null;
+  nimSelection?: NimSwitchSelection;
   sandboxName: string;
   gatewayName: string;
   deps: InferenceSetDeps;
@@ -87,16 +165,38 @@ export async function prepareOpenClawLocalSwitch(input: {
     !deps.setNativeLocalProviderAuthority
   )
     throw new InferenceSetError("Native local provider ownership storage is unavailable.");
-  const runtime = deps.resolveLocalSwitchRuntime(input.provider, deps.resolveCredentialValue);
+  const ownedProxy = usesLoopbackNoAuthProxyRoute(input.entry, input.provider);
+  const runtime =
+    input.provider === "compatible-endpoint"
+      ? {
+          endpointUrl: ownedProxy
+            ? input.selection.previous?.endpointUrl
+            : gatewayReachableCompatibleEndpointUrl(input.provider, input.endpointUrl),
+          credentialValue: deps.resolveCredentialValue(input.credentialEnv || "COMPATIBLE_API_KEY"),
+          authMode: "authenticated" as const,
+          ownedProxy,
+        }
+      : deps.resolveLocalSwitchRuntime(
+          input.provider,
+          deps.resolveCredentialValue,
+          input.nimSelection,
+        );
   if (!runtime.endpointUrl)
     throw new InferenceSetError("The local runtime endpoint is unavailable.");
-  input.selection.selected = await prepareNativeLocalSelection({
+  input.selection.selected = await (
+    nativeModelRouterEndpoint(input.provider)
+      ? prepareNativeModelRouterSelection
+      : prepareNativeLocalSelection
+  )({
     adapter: deps.providerAdapter,
     binding: {
       agent: "openclaw",
       provider: input.provider as NativeLocalProviderAttachment["provider"],
       endpointUrl: runtime.endpointUrl,
       authMode: runtime.authMode,
+      ...(input.provider === "compatible-endpoint" && input.inferenceApi === "openai-responses"
+        ? { api: "openai-responses" as const }
+        : {}),
       gatewayName: input.gatewayName,
       sandboxName: input.sandboxName,
     },

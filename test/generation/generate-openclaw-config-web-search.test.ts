@@ -66,7 +66,7 @@ describe("generate-openclaw-config.mts: web search", () => {
     expect(config.plugins?.entries?.brave).toBeUndefined();
     expect(config.plugins?.allow).toBeUndefined();
     expect(config.tools?.web?.search?.apiKey).toBeUndefined();
-    expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
+    expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: false });
   });
 
   it("allows the enabled Brave plugin (#8975)", () => {

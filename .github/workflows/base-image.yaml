@@ -59,6 +59,7 @@ on:
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
+      - "src/lib/inference/native-provider/catalog.ts"
       - "src/lib/messaging/**"
       - "src/lib/onboard/**"
       - "src/lib/security/credential-hash.ts"

@@ -39,6 +39,7 @@ import {
   addV00106OperationalTrust,
   alterRequiredReleaseValue,
   brevMutationFixtures,
+  npmReplacementFixtureVersion,
   copyTrustedInstallerVerifier,
   prepareTrustedFormulaMismatchFixture,
   preparedReleaseArgs,
@@ -46,8 +47,8 @@ import {
   installerReleaseTemplate,
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
-
 import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
+import { prepareInstallerBin } from "../support/openshell-installed-version";
 import { registerV012TemplateCases } from "./installer-hash-v012-suite";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
@@ -398,7 +399,6 @@ const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>>
   "trusted-formula-mismatch": (source) => source.replace(FORMULA_DIGEST, "0".repeat(64)),
 };
 const tempDirs: string[] = [];
-
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -535,8 +535,8 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
   const template = BREV_TEMPLATE.replaceAll(
-    /0\.0\.116|0\.1\.2/g,
-    openshellVersion === "0.1.2" ? "0.1.2" : "0.0.116",
+    /0\.0\.116|0\.1\.2|0\.1\.3|0\.1\.5/g,
+    ["0.1.2", "0.1.3", "0.1.5"].includes(openshellVersion) ? openshellVersion : "0.0.116",
   );
   const selected = template.replace(
     /^(\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION=")v[0-9]+\.[0-9]+\.[0-9]+("\s*;;\s*)$/m,
@@ -554,6 +554,7 @@ function renderSupervisorRuntime(openshellVersion: string): string {
   assert(INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS.has(openshellVersion));
   const pins = [...INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS]
     .filter(([version]) => version !== "9.9.9" || openshellVersion === version)
+    .filter(([version]) => !["0.1.3", "0.1.5"].includes(version) || openshellVersion === version)
     .map(([version, digest]) => `  "${version}": "${digest}",`)
     .join("\n");
   return `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
@@ -599,7 +600,7 @@ function createFixture(
   const binDir = path.join(fixtureRoot, "bin");
   tempDirs.push(fixtureRoot);
   copyTrustedInstallerVerifier(REPO_ROOT, fixtureRoot);
-  fs.mkdirSync(binDir, { recursive: true });
+  prepareInstallerBin(binDir);
   fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), {
     recursive: true,
   });
@@ -750,7 +751,9 @@ function runFixture(
 ) {
   const fixtureRoot = createFixture(openshellVersion, formatting);
   const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
-  const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
+  const trustedRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-")),
+  );
   const trustedCheckerPath = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
   const trustedParserPath = path.join(
     trustedRoot,
@@ -816,7 +819,7 @@ function expectTrustedRelease(
   manifests: ReadonlyMap<string, string>,
   assets: ReadonlyMap<string, string>,
 ): void {
-  expect(result.status, result.stdout).toBe(0);
+  expect(result.status, result.stdout + result.stderr).toBe(0);
   expect(result.stdout).toContain(`Checking OpenShell v${version} release assets`);
   manifests.forEach((contents, manifest) => {
     const digest = createHash("sha256").update(contents).digest("hex");
@@ -827,7 +830,7 @@ function expectTrustedRelease(
 }
 
 function parseNpmReplacement(source: string, digest: string, trustedDigest = digest) {
-  const root = createFixture();
+  const root = createFixture(npmReplacementFixtureVersion(source));
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
@@ -869,7 +872,8 @@ describe("installer hash verification", () => {
     );
     expect(parserSource).not.toContain(`"${OBSOLETE_NPM_REPLACEMENT_DIGEST}"`);
 
-    const untrustedTemplate = `${BREV_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
+    const fixture = createFixture("0.1.2");
+    const untrustedTemplate = `${fs.readFileSync(path.join(fixture, "scripts/brev-launchable-ci-cpu.sh"), "utf8")}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
     const result = parseNpmReplacement(untrustedTemplate, OBSOLETE_NPM_REPLACEMENT_DIGEST);
 
     expect(result.status, result.stderr).toBe(1);
@@ -1056,7 +1060,6 @@ describe("installer hash verification", () => {
       ),
     ]);
   });
-
   registerV012TemplateCases(REPO_ROOT, createFixture);
   it.each(V012_TRUST_MUTATIONS)(
     "rejects an altered OpenShell 0.1.2 %s",
@@ -1088,7 +1091,7 @@ describe("installer hash verification", () => {
     const source = fs
       .readFileSync(path.join(REPO_ROOT, runtimePath), "utf8")
       .replace(
-        'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
+        /const QUALIFIED_STABLE_OPENSHELL_VERSION = "[0-9.]+";/,
         'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
       );
     const prepared = selectPreparedGatewayRuntime(source).replace(
@@ -1158,10 +1161,8 @@ describe("installer hash verification", () => {
   });
 
   it("requires the trusted release-record prerequisite before a newer pin PR", () => {
-    // The first invocation keeps the base trust records unchanged while the
-    // separate target tree selects 9.9.9. The target cannot authorize itself.
-    // The second models the complete trust prerequisite already present in
-    // base code; only then may the otherwise identical pin tree pass.
+    // The candidate cannot authorize itself. Accept the same pins only after
+    // their trust records exist in the separate base checkout.
     const beforePrerequisite = runFixture("complete", "9.9.9", true);
     expect(beforePrerequisite.status).toBe(1);
     expect(beforePrerequisite.stdout).toContain(

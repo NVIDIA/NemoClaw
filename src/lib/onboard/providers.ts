@@ -25,6 +25,10 @@ const {
   setNativeNvidiaProviderAuthority,
 } = require("../state/registry/native-provider-authority");
 const {
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
+} = require("../state/registry/native-local-provider-authority");
+const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
@@ -241,7 +245,7 @@ function getEffectiveProviderName(providerKey) {
   }
   switch (providerKey) {
     case "nim-local":
-      return "nvidia-nim";
+      return "vllm-local";
     case "ollama":
       return "ollama-local";
     case "vllm":
@@ -400,6 +404,8 @@ function setupInferenceProviderDeps(runOpenshell) {
   return {
     providerExistsInGateway,
     providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeLocalProviderAuthority,
+    setNativeLocalProviderAuthority,
     getNativeNvidiaProviderAuthority,
     getNativeHostedProviderAuthority,
     setNativeHostedProviderAuthority,
@@ -436,7 +442,7 @@ function identityCheckedRunner(runOpenshell, revalidateSandboxIdentity, operatio
  * the provider is detached from any live sandbox before opting in: OpenShell
  * rejects `provider delete` on attached providers.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type (for example, "openai", "brave", or "nemoclaw-mcp-v1").
+ * @param {string} type - Provider type (for example, "openai", "brave", or "nemoclaw-messaging-v1").
  * @param {string} credentialEnv - Environment variable name for the credential.
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.

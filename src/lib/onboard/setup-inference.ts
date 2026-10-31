@@ -23,7 +23,7 @@ import {
 } from "../inference/native-provider/hosted";
 import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
 import {
-  isHostedCustomEndpoint,
+  isCustomNativeEndpoint,
   prepareHostedNativeProvider,
   prepareCustomNativeProvider,
   readCustomNativeSandboxPolicy,
@@ -85,6 +85,8 @@ import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import {
+  isModelRouterProvider,
+  prepareNativeModelRouterSelection,
   withRoutedInferencePortLock,
   type RoutedProviderDeps,
   upsertRoutedProvider as upsertRoutedInferenceProvider,
@@ -258,6 +260,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   withSandboxMutationLock: typeof withSandboxMutationLock;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
+  getInstalledOpenshellVersion?: () => string | null;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
   inferenceRouteMutator: OpenShellInferenceRouteMutator;
   inferenceRouteObserver: OpenShellInferenceRouteObserver;
@@ -769,19 +772,13 @@ async function resolveHostedSelection(input: {
   const recordedSandbox = sandboxName ? deps.getSandbox?.(sandboxName) : null;
   const freshCustomSelection = Boolean(
     sandboxName &&
-    isHostedCustomEndpoint(provider, endpointUrl) &&
+    isCustomNativeEndpoint(provider, endpointUrl) &&
     !recordedSandbox?.nativeHostedProviderAttachment?.custom &&
     (!recordedSandbox || recordedSandbox.pendingRouteReservation),
   );
   const resolvePolicyTier = options.resolvePolicyTier ?? deps.resolvePolicyTier;
-  const policyTier = freshCustomSelection ? await resolvePolicyTier?.() : undefined;
-  const custom = usesCustomNativeOnboarding(
-    provider,
-    endpointUrl,
-    sandboxName,
-    recordedSandbox,
-    policyTier,
-  );
+  if (freshCustomSelection) await resolvePolicyTier?.();
+  const custom = usesCustomNativeOnboarding(provider, endpointUrl, sandboxName, recordedSandbox);
   const authority =
     provider === "hermes-provider"
       ? ((recordedSandbox?.provider === provider
@@ -1111,7 +1108,7 @@ export function createSetupInference(
       ? () => (policyTierResolution ??= policyTierResolver())
       : undefined;
     const hostedSelectionOptions = resolvePolicyTier ? { ...options, resolvePolicyTier } : options;
-    if (sandboxName && isHostedCustomEndpoint(provider, endpointUrl)) {
+    if (sandboxName && isCustomNativeEndpoint(provider, endpointUrl)) {
       await resolvePolicyTier?.();
     }
     let selectingNativeLocal = false;
@@ -1120,6 +1117,7 @@ export function createSetupInference(
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
     let shouldLogSuccessfulRoute = false;
+    let selectedLocalNim = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () =>
         withRoutedInferencePortLock(routedProvider, operation, deps),
@@ -1344,6 +1342,9 @@ export function createSetupInference(
               throw new Error("Native local inference requires a provider adapter.");
             const [name, , sourceCredentialEnv, selectedEndpoint, env] = args;
             const recorded = deps.getSandbox?.(sandboxName);
+            const recordedAttachment = normalizeNativeLocalProviderAttachment(
+              recorded?.nativeLocalProviderAttachment,
+            );
             if (
               recorded &&
               recorded.pendingRouteReservation !== true &&
@@ -1353,7 +1354,7 @@ export function createSetupInference(
                   recorded.provider,
                   recorded.endpointUrl,
                 )) &&
-              !normalizeNativeLocalProviderAttachment(recorded.nativeLocalProviderAttachment)
+              !recordedAttachment
             ) {
               if (
                 !options.recreatePublishedSandbox ||
@@ -1374,7 +1375,43 @@ export function createSetupInference(
               gatewayReachableCompatibleEndpointUrl(name, selectedEndpoint);
             if (typeof hostReachableEndpoint !== "string")
               throw new Error("Native local inference endpoint is missing.");
-            nativeLocalProviderAttachment = await prepareNativeLocalSelection({
+            const authMode =
+              (name === "ollama-local" && value === "ollama") ||
+              (name === "vllm-local" && value === "dummy")
+                ? "sentinel"
+                : "authenticated";
+            if (
+              recorded &&
+              recorded.pendingRouteReservation !== true &&
+              recordedAttachment &&
+              options.deferPublishedRouteReservation
+            ) {
+              if (
+                recorded.name !== sandboxName ||
+                recorded.provider !== name ||
+                recorded.gatewayName !== gatewayName ||
+                (recorded.credentialEnv ?? null) !== credentialEnv ||
+                recordedAttachment.sandboxName !== sandboxName ||
+                recordedAttachment.gatewayName !== gatewayName ||
+                recordedAttachment.provider !== name ||
+                recordedAttachment.authMode !== authMode ||
+                deps.getNativeLocalProviderAuthority?.(recordedAttachment.providerName)
+                  ?.providerId !== recordedAttachment.providerId ||
+                (recordedAttachment.agent ?? "langchain-deepagents-code") !== nativeLocalAgent ||
+                recordedAttachment.endpointUrl !== hostReachableEndpoint ||
+                (recordedAttachment.api ?? "openai-completions") !==
+                  (selectedInferenceApi ?? "openai-completions")
+              )
+                throw new Error(
+                  "Cannot change the published native provider binding before sandbox backup. Re-run the model change with the recorded provider configuration.",
+                );
+              // Keep the source row and gateway credential usable if backup fails.
+              // The sandbox phase reserves the replacement after backup succeeds.
+              nativeLocalRecreationSource = structuredClone(recorded);
+            }
+            nativeLocalProviderAttachment = await (
+              routedProvider ? prepareNativeModelRouterSelection : prepareNativeLocalSelection
+            )({
               adapter: deps.providerAdapter,
               binding: {
                 provider: name as NativeLocalProvider,
@@ -1384,15 +1421,20 @@ export function createSetupInference(
                   ? { agent: nativeLocalAgent }
                   : {}),
                 endpointUrl: hostReachableEndpoint,
-                authMode:
-                  (name === "ollama-local" && value === "ollama") ||
-                  (name === "vllm-local" && value === "dummy")
-                    ? "sentinel"
-                    : "authenticated",
+                ...((nativeLocalAgent === "openclaw" || nativeLocalAgent === "hermes") &&
+                name === "compatible-endpoint" &&
+                selectedInferenceApi === "openai-responses"
+                  ? { api: "openai-responses" as const }
+                  : {}),
+                authMode,
                 gatewayName,
                 sandboxName,
               },
-              credentialValue: value,
+              credentialValue:
+                recordedAttachment && nativeLocalRecreationSource && !routedProvider ? null : value,
+              ...(recordedAttachment && nativeLocalRecreationSource && routedProvider
+                ? { preserveProviderCredential: true }
+                : {}),
               ownedProxy:
                 (name === "ollama-local" && !hostLocalRoute && deps.shouldFrontOllamaWithProxy()) ||
                 (name === "compatible-endpoint" &&
@@ -1400,6 +1442,13 @@ export function createSetupInference(
               readAuthority: deps.getNativeLocalProviderAuthority,
               writeAuthority: deps.setNativeLocalProviderAuthority,
             });
+            if (
+              recordedAttachment &&
+              nativeLocalRecreationSource &&
+              (nativeLocalProviderAttachment.providerId !== recordedAttachment.providerId ||
+                nativeLocalProviderAttachment.providerName !== recordedAttachment.providerName)
+            )
+              throw new Error("Published native provider ownership changed before sandbox backup.");
             return { ok: true };
           }
           const reused = routeStager.reusePublishedProvider(args[0]);
@@ -1591,7 +1640,7 @@ export function createSetupInference(
               {
                 ...commonDeps,
                 getNativeProviderAuthority: () => hermesAuthority,
-                prepareNativeProvider: async (apiKey, returnedEndpoint) => {
+                prepareNativeProvider: async (apiKey, returnedEndpoint, retainedHermesEndpoint) => {
                   if (
                     !deps.providerAdapter ||
                     !deps.getNativeHostedProviderAuthority ||
@@ -1607,6 +1656,7 @@ export function createSetupInference(
                     adapter: deps.providerAdapter,
                     credentialValue: apiKey,
                     endpointUrl: returnedEndpoint,
+                    retainedHermesEndpoint,
                     lookup: deps.resolveEndpointHost,
                     recordedSandbox: sandboxName ? deps.getSandbox?.(sandboxName) : null,
                     reuseExistingCredential: apiKey === null,
@@ -1732,7 +1782,7 @@ export function createSetupInference(
             if (outcome.done) return outcome.result;
           } else if (provider === "vllm-local") {
             const outcome = await inferenceProviders.setupVllmLocalInference(
-              { model, provider },
+              { model, provider, localNimSelected: selectedLocalNim },
               {
                 ...commonDeps,
                 validateLocalProvider: hostLocalRoute
@@ -1979,7 +2029,13 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
-          if (nativeLocalRecreationSource && nativeLocalProviderAttachment) {
+          if (
+            nativeLocalRecreationSource &&
+            nativeLocalProviderAttachment &&
+            (!nativeLocalRecreationSource.nativeLocalProviderAttachment ||
+              nativeLocalRecreationSource.model !== model ||
+              options.recreatePublishedSandbox)
+          ) {
             return {
               ok: true,
               stagedNativeLocalRecreation: {
@@ -2001,7 +2057,9 @@ export function createSetupInference(
             });
           }
           await cleanupUnreservedNativeLocalAfterHostFailure({
-            selectingNativeLocal,
+            // A runtime-owned native provider must roll back through its publication journal.
+            selectingNativeLocal:
+              selectingNativeLocal && !hostLocalGatewayMutation?.registerNativeProvider,
             attachment: nativeLocalProviderAttachment,
             reservationEntered: nativeLocalReservationEntered,
             sandboxName,
@@ -2063,6 +2121,8 @@ export function createSetupInference(
         if (!selectedAgent && usesNativeLocalInference(provider, endpointUrl)) throw error;
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
+      selectedLocalNim =
+        provider === "vllm-local" && (options.localNimSelected ?? Boolean(recordedNimContainer));
       nativeLocalAgent = selectedAgent ?? recordedAgent;
       selectingNativeLocal =
         !options.hostLocalInference?.sharedInferenceRoute &&
@@ -2072,6 +2132,10 @@ export function createSetupInference(
           endpointUrl,
           options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
         );
+      if (isModelRouterProvider(provider) && !selectingNativeLocal)
+        throw new Error(
+          "Model Router requires a native provider for the selected agent and configured endpoint.",
+        );
       const preservingLegacyPiRoute =
         options.preserveLegacyPiSharedLocalRoute === true &&
         isPersistedPiSharedLocalInferenceRoute(
@@ -2080,6 +2144,13 @@ export function createSetupInference(
         );
       if (options.preserveLegacyPiSharedLocalRoute && !preservingLegacyPiRoute)
         throw new Error("Recorded Pi shared local inference route changed before setup.");
+      if (
+        preservingLegacyPiRoute &&
+        !/^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? "")
+      )
+        throw new Error(
+          "Cannot resume a legacy Pi shared inference route on this OpenShell runtime. Back up the sandbox and recreate it with native inference; existing data was not changed.",
+        );
       selectingNativeLocal = selectingNativeLocal && !preservingLegacyPiRoute;
       if (selectingNativeLocal)
         await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);

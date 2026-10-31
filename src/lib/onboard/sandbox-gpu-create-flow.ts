@@ -294,6 +294,7 @@ export interface SandboxGpuCreateFlowDeps {
   captureSandboxContainerOutput?: (
     sandboxName: string,
     expectedContainerId: string | null,
+    expectedSandboxId?: string,
   ) => string | null;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;

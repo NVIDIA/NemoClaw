@@ -176,7 +176,7 @@ function stageSecurityInventorySources(rootDir: string, buildCtx: string): void 
 function stageNativeInferenceConfig(rootDir: string, buildCtx: string): void {
   const relativeDir = path.join("src", "lib", "inference", "native-provider");
   fs.mkdirSync(path.join(buildCtx, relativeDir), { recursive: true });
-  for (const fileName of ["agent-config.ts", "hosted.ts", "contract.ts"]) {
+  for (const fileName of ["agent-config.ts", "catalog.ts"]) {
     fs.copyFileSync(
       path.join(rootDir, relativeDir, fileName),
       path.join(buildCtx, relativeDir, fileName),
@@ -401,6 +401,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-native-network.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-native-network.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),

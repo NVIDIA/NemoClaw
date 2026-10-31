@@ -21,7 +21,9 @@ Deep Agents Code `mcp add` and `mcp restart` require native MCP capability v3.
 A legacy image stops with migration guidance before it changes a live provider, policy, or agent configuration.
 </AgentOnly>
 <AgentOnly variant="hermes">
-Hermes stores MCP servers in its native `config.yaml`. Registration and inspection preserve the stable credential handle from the readiness check in the OpenShell resolver placeholder without comparing it with host-side desired state.
+Hermes stores MCP servers in its native `config.yaml`.
+Registration and inspection use the credential placeholder observed by the readiness check.
+Ordinary static credentials use revisioned placeholders; refresh-managed credentials can use stable handles.
 Before an MCP add or restart mutation, NemoClaw requires the Hermes helper to report reconcile-finality capability version 1.
 An add or restart with an older helper stops with rebuild guidance and leaves the provider, policy, attachment, and native configuration unchanged.
 </AgentOnly>
@@ -106,7 +108,9 @@ Before registration, configure an HTTPS endpoint that meets these requirements:
 - The endpoint exposes only the required MCP path and methods.
 
 If the endpoint certificate chains to a private CA, provide that CA with `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
-Rebuild an existing sandbox after adding or changing the CA so both the OpenShell upstream proxy and sandbox clients receive the trust anchor.
+Rebuild an existing sandbox after adding or changing the CA to update its clients' trust.
+On OpenShell `0.1.5` with Docker, this image import does not install the CA in the separate supervisor that verifies upstream TLS.
+Private-CA MCP connections remain unqualified; refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust#understand-image-and-runtime-trust).
 For source validation and custom-image requirements, refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust).
 
 For a host-local MCP process, keep the process bound to loopback when practical.
@@ -169,12 +173,12 @@ Do not reuse OpenShell Google Cloud compatibility names such as `GCP_PROJECT_ID`
 NemoClaw rejects them because OpenShell exposes those non-secret configuration names as child-process values.
 
 It also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
-NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.116` commit `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
+NemoClaw pins the child-visible compatibility list to OpenShell `v0.1.5` commit `bdb956f2cd65a635f1294fccf1d138d263bf650f`.
 Review this list with every OpenShell version change.
 
 OpenShell reserves credential names matching `v[0-9]+_[A-Za-z0-9_]+` for revisioned placeholders.
 NemoClaw rejects names such as `v10_GITHUB_TOKEN` because OpenShell skips them instead of attaching a credential resolver.
-OpenShell `0.0.116` also reserves names matching `s<64-lowercase-hex>_[A-Za-z0-9_]+` for stable credential handles.
+OpenShell `0.1.5` also reserves names matching `s<64-lowercase-hex>_[A-Za-z0-9_]+` for stable credential handles.
 
 NemoClaw rejects host subprocess controls such as `PATH`, proxy or TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys.
 Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well.
@@ -221,7 +225,7 @@ A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
 
 Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal`.
-OpenShell `v0.0.116` has a trusted-gateway branch for a narrow driver-provided topology, but it does not expose an attested driver gateway address that NemoClaw can pin for this flow.
+NemoClaw's managed MCP flow cannot pin an attested driver gateway address for these aliases.
 Use a routed HTTPS endpoint on a stable private address instead.
 
 ## Understand the Generated Method Profile

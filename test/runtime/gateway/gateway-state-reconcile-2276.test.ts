@@ -22,7 +22,7 @@ import { testTimeout } from "../../helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
 const SANDBOX_NAME = "my-assistant";
-const OPENSHELL_FIXTURE_VERSION = "0.0.116";
+const OPENSHELL_FIXTURE_VERSION = "0.1.5";
 
 // Output fixtures that mirror real OpenShell CLI output.
 const gatewayListNemoclaw = (gatewayName: string, port: number) =>
@@ -191,7 +191,7 @@ if (args[0] === "provider" && args[1] === "get") {
 }
 
 if (args[0] === "provider" && args[1] === "list") {
-  process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  process.stdout.write('{"providers":[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}],"next_page_token":""}\\n');
   process.exit(0);
 }
 
@@ -294,7 +294,7 @@ if (a[0] === "inspect") {
   const responses = new Map([
     ["{{.State.Running}}", "true\\n"],
     ["{{json .NetworkSettings.Ports}}", JSON.stringify({[gatewayPort + "/tcp"]:[{HostPort:gatewayPort}]}) + "\\n"],
-    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.116\\n"],
+    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.1.5\\n"],
   ]);
   if (target !== expectedTarget || !responses.has(format)) process.exit(64);
   process.stdout.write(responses.get(format));

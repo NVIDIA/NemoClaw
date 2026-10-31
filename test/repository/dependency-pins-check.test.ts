@@ -231,10 +231,10 @@ describe("dependency pin drift check", () => {
     );
   });
 
-  it("accepts 0.1.3 from the registry without an inline release record", () => {
+  it("accepts 0.1.5 from the registry without an inline release record", () => {
     withFixture(
       "nemoclaw-dependency-pins-registry-",
-      { openshellMin: "0.1.3", openshellMax: "0.1.3" },
+      { openshellMin: "0.1.5", openshellMax: "0.1.5" },
       (root) => expect(verifyDependencyPins(root)).toEqual([]),
     );
   });

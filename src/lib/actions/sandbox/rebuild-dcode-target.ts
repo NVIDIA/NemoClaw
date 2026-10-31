@@ -73,24 +73,16 @@ export function resolveDcodeRebuildTarget(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${gatewayPort}.`,
     );
   }
-  const ownedLocalNim =
-    resumeConfig.provider === "vllm-local" && Boolean(entry.nimContainer?.trim());
-  const nativeLocalProviderAttachment = ownedLocalNim
-    ? null
-    : normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
-  if (
-    !ownedLocalNim &&
-    entry.nativeLocalProviderAttachment !== undefined &&
-    !nativeLocalProviderAttachment
-  ) {
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    entry.nativeLocalProviderAttachment,
+  );
+  if (entry.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment) {
     throw new Error("Malformed native local provider attachment; sandbox is untouched");
   }
-  const nativeAttachment = ownedLocalNim
-    ? null
-    : recordedNativeProviderAttachment({
-        ...entry,
-        provider: resumeConfig.provider,
-      });
+  const nativeAttachment = recordedNativeProviderAttachment({
+    ...entry,
+    provider: resumeConfig.provider,
+  });
   return {
     agent: DCODE_AGENT_NAME,
     gatewayName,

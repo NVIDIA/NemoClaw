@@ -8,7 +8,7 @@ import { qualifyProtectedManagedImageRuntime } from "./managed-image-protected-r
 import {
   protectedRuntimeDeadlines,
   PROTECTED_RUNTIME_CLEANUP_MS,
-} from "./managed-image-protected-runtime-budget.ts";
+} from "./managed-image-protected-runtime-helpers.ts";
 
 // Discovery runs outside the protected workflow. Execution below still requires
 // its real start timestamp before declaring or mutating a fixture.

@@ -62,19 +62,24 @@ function assertNativeStateResumed(): void {
 }
 
 it.each([
-  ["exited leader with stopped sibling", "Z", "Z", "T"],
-  ["exited thread group", "Z", "Z", "Z"],
-] as const)("captures quiescent native state for %s", (_case, leader, first, second) => {
-  writeNativeQuiescenceStates(procRoot, leader, first, second);
-  const backup = sandboxState.backupSandboxState("alpha");
-  expect(backup.success, backup.error).toBe(true);
-  assertNativeStateResumed();
-  expect(backup.manifest?.backupComplete).toBe(true);
-  const archive = path.join(backup.manifest!.backupPath, "native-home.tar");
-  expect(spawnSync("tar", ["-xOf", archive, "./payload.txt"], { encoding: "utf8" }).stdout).toBe(
-    "native payload",
-  );
-});
+  ["exited leader with stopped sibling", "Z", "Z", "T", false],
+  ["exited thread group", "Z", "Z", "Z", false],
+  ["native init ancestor", "T", "T", "T", true],
+] as const)(
+  "captures quiescent native state for %s",
+  (_case, leader, first, second, initAncestor) => {
+    vi.stubEnv("NEMOCLAW_TEST_NATIVE_INIT_ANCESTOR", String(Number(initAncestor)));
+    writeNativeQuiescenceStates(procRoot, leader, first, second);
+    const backup = sandboxState.backupSandboxState("alpha");
+    expect(backup.success, backup.error).toBe(true);
+    assertNativeStateResumed();
+    expect(backup.manifest?.backupComplete).toBe(true);
+    const archive = path.join(backup.manifest!.backupPath, "native-home.tar");
+    expect(spawnSync("tar", ["-xOf", archive, "./payload.txt"], { encoding: "utf8" }).stdout).toBe(
+      "native payload",
+    );
+  },
+);
 
 it("classifies a churning live capture without retaining a failed backup (#12867)", () => {
   vi.stubEnv("NEMOCLAW_TEST_NATIVE_CHURN_MARKER", churnMarker);

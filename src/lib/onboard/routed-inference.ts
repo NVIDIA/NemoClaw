@@ -14,9 +14,25 @@
  * left behind by an earlier run (#4564).
  */
 
+import { nativeModelRouterEndpoint } from "../inference/native-local/model-router";
+import { isProtectedLocalInferencePort } from "../inference/gateway/local-endpoint-ports";
+import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../inference/native-local/agent-config";
+import {
+  ensureNativeLocalProvider,
+  prepareNativeLocalProfile,
+} from "../inference/native-local/profile";
+import {
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
+} from "../state/registry/native-local-provider-authority";
+import type { prepareNativeLocalSelection } from "../inference/native-local/selection";
+export { assertNativeModelRouterOwner } from "./model-router";
+export { isModelRouterProvider } from "../inference/native-local/model-router";
+
 import { HOST_GATEWAY_URL } from "../inference/local";
 import { withModelRouterPortLifecycleLock } from "../inference/gateway-route-mutation-lock";
 import {
+  assertNativeModelRouterOwner,
   DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV,
   loadBlueprintProfile,
   resolveModelRouterPort,
@@ -142,4 +158,37 @@ export function withRoutedInferencePortLock<T>(
     (deps.getModelRouterPort ?? resolveModelRouterPort)(),
     operation,
   );
+}
+
+/** Caller holds the gateway and Model Router port locks through route publication. */
+export async function prepareNativeModelRouterSelection(
+  input: Parameters<typeof prepareNativeLocalSelection>[0] & {
+    preserveProviderCredential?: boolean;
+  },
+) {
+  const endpoint = nativeModelRouterEndpoint(input.binding.provider, input.binding.endpointUrl);
+  if (!endpoint || endpoint !== input.binding.endpointUrl || !input.credentialValue)
+    throw new Error(
+      "Model Router selection does not match its configured endpoint and credential.",
+    );
+  const credentialValue = input.credentialValue;
+  const port = Number(new URL(endpoint).port);
+  if (isProtectedLocalInferencePort(port, { ownedModelRouterPort: port }))
+    throw new Error("Model Router cannot use a gateway or another protected service port.");
+  assertNativeModelRouterOwner(endpoint, credentialValue);
+  const binding = { ...input.binding, credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV };
+  const identity = prepareNativeLocalProfile(binding);
+  const readAuthority = input.readAuthority ?? getNativeLocalProviderAuthority;
+  const writeAuthority = input.writeAuthority ?? setNativeLocalProviderAuthority;
+  const attachment = await ensureNativeLocalProvider({
+    adapter: input.adapter,
+    binding,
+    credentialValue: input.preserveProviderCredential ? null : input.credentialValue,
+    expected: readAuthority(identity.providerName),
+    readAuthority,
+    writeAuthority,
+  });
+  // Keep durable provider authority when router ownership changes during registration.
+  assertNativeModelRouterOwner(endpoint, credentialValue);
+  return attachment;
 }

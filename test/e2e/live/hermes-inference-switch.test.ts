@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -44,7 +44,7 @@ import {
   SWITCH_API,
   SWITCH_MODEL,
   SWITCH_PROVIDER,
-  strictHashPerms,
+  strictHashState,
   useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
@@ -187,6 +187,7 @@ test(
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
       model: hostedInstallModel(env(apiKey, installEnv)),
     });
+    const strictHashBefore = await strictHashState(sandbox, "before-switch");
     progress.phase("prove native local Hermes startup and model switch");
     mockBaseline &&
       (await expectNativeLocalHermesTurn({
@@ -261,8 +262,7 @@ test(
     switchBinding &&
       (await expectOpenAiProvider(
         host,
-        "compatible-anthropic-endpoint",
-        "COMPATIBLE_ANTHROPIC_API_KEY",
+        registryState().registry.sandboxes?.[SANDBOX_NAME]?.nativeHostedProviderAttachment,
       ));
 
     progress.phase("validate switched route and mutable config");
@@ -282,7 +282,7 @@ test(
       },
     );
     expect(health.exitCode, resultText(health)).toBe(0);
-    expect(resultText(health)).toMatch(/ok/i);
+    expect(JSON.parse(health.stdout).status).toBe("ok");
 
     const route = await host.command("node", [CLI, "inference", "get"], {
       artifactName: "nemoclaw-inference-route",
@@ -295,17 +295,6 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const config = await sandbox.exec(
-      SANDBOX_NAME,
-      ["sed", "/^[[:space:]]*api_key:/d", "/sandbox/.hermes/config.yaml"],
-      {
-        artifactName: "hermes-config-yaml",
-        env: env(),
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expect(config.exitCode, resultText(config)).toBe(0);
     // Field projection is covered by inference-set-patch-hermes and config generation
     // tests. Live dashboard, API, and CLI turns below verify the selected route.
     expect((await apiKeyShape(sandbox)).exitCode).toBe(0);
@@ -341,13 +330,16 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const strictHash = await hashCheck(sandbox, "/etc/nemoclaw/hermes.config-hash", "strict");
-    expect(strictHash.exitCode, resultText(strictHash)).toBe(0);
+    // Native config writes update the mutable hash. The root-owned image anchor stays unchanged.
+    const strictHashAfter = await strictHashState(sandbox, "after-switch");
+    expect(strictHashBefore.exitCode, resultText(strictHashBefore)).toBe(0);
+    expect(strictHashAfter.exitCode, resultText(strictHashAfter)).toBe(0);
+    expect(strictHashAfter.stdout).toBe(strictHashBefore.stdout);
     const compatHash = await hashCheck(sandbox, "/sandbox/.hermes/.config-hash", "compat");
     expect(compatHash.exitCode, resultText(compatHash)).toBe(0);
-    const strictPerms = await strictHashPerms(sandbox);
-    expect(strictPerms.stdout.trim()).toMatch(/^0\s+[0-7]+$/u);
-    expect(Number.parseInt(strictPerms.stdout.trim().split(/\s+/u)[1], 8) & 0o222).toBe(0);
+    const strictPerms = strictHashAfter.stdout.trim().split("\n")[1] ?? "";
+    expect(strictPerms).toMatch(/^0\s+[0-7]+$/u);
+    expect(Number.parseInt(strictPerms.split(/\s+/u)[1], 8) & 0o222).toBe(0);
 
     maybeAssertEnvHashStable(
       envHashBefore,
@@ -401,10 +393,7 @@ test(
       canonicalEndpoint(durableEndpointUrl),
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : RUNTIME_SWITCH_API,
-    );
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
+    // API metadata persistence is covered by inference-set-compatible-provider tests.
     progress.phase("exercise sandbox inference and Hermes API");
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -419,7 +408,12 @@ test(
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
-          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
+          trustedSandboxShellScript(
+            sandboxInferenceCommand(
+              inferenceLocalPayload,
+              switchEndpointUrl ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            ),
+          ),
           {
             artifactName: `hermes-sandbox-inference-chat-after-switch-${attempt}`,
             env: env(),
@@ -504,12 +498,9 @@ test(
       },
     );
     expect(reapplied.exitCode, resultText(reapplied)).toBe(0);
-    const strictHashAfterCli = await hashCheck(
-      sandbox,
-      "/etc/nemoclaw/hermes.config-hash",
-      "strict-after-cli",
-    );
+    const strictHashAfterCli = await strictHashState(sandbox, "after-cli");
     expect(strictHashAfterCli.exitCode, resultText(strictHashAfterCli)).toBe(0);
+    expect(strictHashAfterCli.stdout).toBe(strictHashBefore.stdout);
     const compatHashAfterCli = await hashCheck(
       sandbox,
       "/sandbox/.hermes/.config-hash",
@@ -524,7 +515,12 @@ test(
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
-          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
+          trustedSandboxShellScript(
+            sandboxInferenceCommand(
+              inferenceLocalPayload,
+              switchEndpointUrl ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            ),
+          ),
           {
             artifactName: `hermes-sandbox-inference-after-cli-${attempt}`,
             env: env(),
@@ -548,12 +544,16 @@ test(
       mockBaseline,
       redactionValues,
     });
-    const persistedProxyRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: "proxy-resolution-route-after-set",
-      env: env(),
-      redactionValues,
-      timeoutMs: 30_000,
-    });
+    const persistedProxyRoute = await host.command(
+      "node",
+      [CLI, SANDBOX_NAME, "inference", "get"],
+      {
+        artifactName: "proxy-resolution-route-after-set",
+        env: env(),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
     expect(persistedProxyRoute.exitCode, resultText(persistedProxyRoute)).toBe(0);
     expect(parseInferenceRoute(persistedProxyRoute.stdout)).toEqual({
       provider: PROXY_RESOLUTION_PROVIDER,

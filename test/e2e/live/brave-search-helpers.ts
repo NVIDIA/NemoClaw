@@ -7,7 +7,7 @@ const BRAVE_REFERENCE_PATTERN = String.raw`openshell:resolve:env:(?:(?:v[0-9]{1,
 // Node. Cross-tree gateway environ reads are blocked by Yama; the original
 // #7425 regression observes this agent child and a fresh login shell.
 export const BRAVE_AGENT_BOUNDARY = String.raw`
-import os, pathlib, re, signal, subprocess, sys, time
+import pathlib, re, subprocess, sys, time
 
 def inspect(process):
     try:
@@ -37,14 +37,16 @@ else:
                 break
             time.sleep(0.05)
     finally:
+        # OpenShell denies process-group signals. Reap our direct child here;
+        # the test's administrator sandbox deletion owns descendant cleanup.
         try:
-            os.killpg(child.pid, signal.SIGTERM)
+            child.terminate()
         except ProcessLookupError:
             pass
         try:
             child.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
+            child.kill()
             child.wait(timeout=5)
 sys.exit(status)
 `;

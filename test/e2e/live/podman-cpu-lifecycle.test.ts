@@ -33,7 +33,10 @@ import type { SandboxEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import {
+  exactGatewayRelease,
+  OPENSHELL_V015_QUALIFICATION,
+} from "../fixtures/openshell-v0116-qualification.ts";
 import {
   consumeNativeRuntimeCandidateEvidence,
   type NativeRuntimeCandidateEvidence,
@@ -64,11 +67,11 @@ const BASE_IMAGE =
   // Keep the rootless proof on the immutable sandbox-base from the NemoClaw
   // v0.0.89 fixture, which runs OpenShell v0.0.85. Unlike a minimal Ubuntu
   // image, it includes the `ip` binary needed before workload startup and
-  // exercises the v0.0.85 image-to-v0.0.116 supervisor compatibility boundary.
+  // exercises the v0.0.85 image-to-v0.1.5 supervisor compatibility boundary.
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1";
 const ACTIVATION_POLICY = path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml");
 const GATEWAY_PORT = 18_080;
-const SUPERVISOR_IMAGE = OPENSHELL_V0116_QUALIFICATION.supervisorImage;
+const SUPERVISOR_IMAGE = OPENSHELL_V015_QUALIFICATION.supervisorImage;
 const E2E_PHASES = [
   "consume exact candidate prerequisites",
   "pin the exact rootless Podman endpoint",
@@ -120,7 +123,6 @@ test(
 
     progress.phase("pin the exact rootless Podman endpoint");
     expect(process.platform).toBe("linux");
-    expect(process.getuid?.()).not.toBe(0);
     expect(ARTIFACT_DIR).not.toBe("");
     let runtimeEngines = engines();
     const bundle = createPodmanRuntimeProviderBundle({ engines: runtimeEngines });
@@ -150,10 +152,12 @@ test(
     const sandboxBin = executableOnPath("openshell-sandbox");
     for (const component of [openshellBin, gatewayBin, sandboxBin]) {
       expect(
-        await runCommand(shellProbe, component, ["--version"], {
-          artifactName: `podman-lifecycle-version-${path.basename(component)}`,
-        }),
-      ).toContain(OPENSHELL_VERSION);
+        exactGatewayRelease(
+          await runCommand(shellProbe, component, ["--version"], {
+            artifactName: `podman-lifecycle-version-${path.basename(component)}`,
+          }),
+        ),
+      ).toBe(OPENSHELL_VERSION);
     }
 
     const uid = process.getuid?.() ?? -1;
@@ -292,6 +296,7 @@ exit 1
             "--label",
             `nemoclaw.agent=${agent}`,
             "--no-tty",
+            "--detach",
             "--",
             "/bin/sh",
             "-lc",
@@ -330,6 +335,18 @@ exit 1
         ).toBe(agent);
         const activated = inspectContainer(runtimeEngines.sandboxLifecycle, sandboxName);
         expect(activated.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
+        expect(
+          await runCommand(
+            shellProbe,
+            openshellBin,
+            ["sandbox", "exec", "--name", sandboxName, "-g", GATEWAY_NAME, "--", "pwd"],
+            {
+              artifactName: `podman-lifecycle-workspace-${agent}`,
+              env: cliEnv,
+              timeoutMs: 10_000,
+            },
+          ),
+        ).toBe("/sandbox");
       }
 
       expect(

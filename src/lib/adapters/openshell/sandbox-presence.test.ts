@@ -69,3 +69,53 @@ describe("structured OpenShell sandbox identity", () => {
     ).toEqual({ kind: "unknown" });
   });
 });
+
+describe("complete OpenShell 0.1.2 sandbox inventory", () => {
+  const page = (sandboxes: unknown[], next_page_token: unknown = "") => ({
+    status: 0,
+    stdout: JSON.stringify({ sandboxes, next_page_token }),
+    stderr: "",
+  });
+
+  it("reads one durable identity from a complete page", () => {
+    expect(observeOpenShellSandboxIdentity("alpha", page([row()]))).toEqual({
+      kind: "present",
+      id: "sandbox-alpha",
+      phase: "Ready",
+    });
+  });
+
+  it("proves absence only from a complete valid inventory", () => {
+    expect(classifyOpenShellSandboxPresence("alpha", page([]))).toBe("absent");
+    expect(classifyOpenShellSandboxPresence("alpha", page([row({ name: "beta" })]))).toBe("absent");
+  });
+
+  it.each(["next", " ", null, 0, undefined])(
+    "rejects a nonempty or invalid continuation token %s",
+    (token) => {
+      const response = {
+        status: 0,
+        stdout: JSON.stringify({ sandboxes: [], next_page_token: token }),
+        stderr: "",
+      };
+      expect(classifyOpenShellSandboxPresence("alpha", response)).toBe("unknown");
+    },
+  );
+
+  it("rejects partial presence rather than assuming unique identity", () => {
+    expect(observeOpenShellSandboxIdentity("alpha", page([row()], "next"))).toEqual({
+      kind: "unknown",
+    });
+  });
+
+  it("retains row, duplicate and diagnostic rejection for complete pages", () => {
+    expect(classifyOpenShellSandboxPresence("alpha", page([row(), row()]))).toBe("unknown");
+    expect(classifyOpenShellSandboxPresence("alpha", page([row({ labels: null })]))).toBe(
+      "unknown",
+    );
+    expect(classifyOpenShellSandboxPresence("alpha", { ...page([]), stderr: "warning" })).toBe(
+      "unknown",
+    );
+    expect(classifyOpenShellSandboxPresence("alpha", { ...page([]), status: 1 })).toBe("unknown");
+  });
+});

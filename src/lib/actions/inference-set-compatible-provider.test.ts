@@ -9,9 +9,9 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
+  HERMES_TARGET,
+  OPENCLAW_TARGET,
 } from "../../../test/helpers/inference-set";
-
-type ProbeSandboxRoute = NonNullable<Parameters<typeof createDeps>[0]["probeSandboxRoute"]>;
 
 const OPENAI_PROFILE_OUTPUT = JSON.stringify({
   id: "openai",
@@ -26,106 +26,6 @@ const OPENAI_PROFILE_RESULT = {
   stdout: OPENAI_PROFILE_OUTPUT,
   stderr: "",
 };
-
-async function runRejectedCompatibleSwitchScenario(options: {
-  targetFamily: "openai" | "anthropic";
-  probeSandboxRoute: ProbeSandboxRoute;
-  expectedError: RegExp;
-}) {
-  const target =
-    options.targetFamily === "anthropic"
-      ? {
-          provider: "compatible-anthropic-endpoint",
-          model: "mock-anthropic-model",
-          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-          inferenceApi: "anthropic-messages" as const,
-          captureType: "anthropic" as const,
-          configKey: "ANTHROPIC_BASE_URL" as const,
-        }
-      : {
-          provider: "compatible-endpoint",
-          model: "mock-model",
-          credentialEnv: "COMPATIBLE_API_KEY",
-          inferenceApi: "openai-completions" as const,
-          captureType: "openai" as const,
-          configKey: "OPENAI_BASE_URL" as const,
-        };
-  const captureOpenshell = createCompatibleProviderCapture({
-    name: target.provider,
-    type: target.captureType,
-    credentialEnv: target.credentialEnv,
-    configKey: target.configKey,
-    initiallyPresent: false,
-  });
-  const probeSandboxRoute = vi.fn(options.probeSandboxRoute);
-  const deps = createDeps({
-    config: {
-      agents: { defaults: { model: { primary: "inference/old-model" } } },
-      models: { providers: { inference: { api: "openai-completions", models: [] } } },
-    },
-    entry: {
-      name: "alpha",
-      agent: "openclaw",
-      provider: "nvidia-prod",
-      model: "old-model",
-    },
-    session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
-    captureOpenshell,
-    probeSandboxRoute,
-  });
-
-  await expect(
-    runInferenceSet(
-      {
-        provider: target.provider,
-        model: target.model,
-        endpointUrl: "http://host.openshell.internal:18767/",
-        credentialEnv: target.credentialEnv,
-        inferenceApi: target.inferenceApi,
-      },
-      deps,
-    ),
-  ).rejects.toThrow(options.expectedError);
-
-  expect(
-    captureOpenshell.mock.calls
-      .filter(([args]) => args[0] === "inference" && args[1] === "set")
-      .map(([args]) => args),
-  ).toEqual([
-    [
-      "inference",
-      "set",
-      "-g",
-      "nemoclaw",
-      "--no-verify",
-      "--provider",
-      target.provider,
-      "--model",
-      target.model,
-    ],
-    [
-      "inference",
-      "set",
-      "-g",
-      "nemoclaw",
-      "--no-verify",
-      "--provider",
-      "nvidia-prod",
-      "--model",
-      "old-model",
-    ],
-  ]);
-  expect(
-    captureOpenshell.mock.calls
-      .filter(([args]) => args[0] === "provider" && args[1] === "delete")
-      .map(([args]) => args),
-  ).toEqual([["provider", "delete", "-g", "nemoclaw", target.provider]]);
-  expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-  expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-  expect(deps.getSession()).toMatchObject({ provider: "nvidia-prod", model: "old-model" });
-
-  return { deps, probeSandboxRoute };
-}
 
 describe("runInferenceSet compatible providers", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -851,272 +751,68 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
   });
 
-  it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: { providers: { inference: { api: "openai-completions", models: [] } } },
-    };
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-anthropic-endpoint",
-      type: "anthropic",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      configKey: "ANTHROPIC_BASE_URL",
-      initiallyPresent: false,
-    });
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      session: baseSession({
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-        endpointUrl: "https://integrate.api.nvidia.com/v1",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      }),
-      captureOpenshell,
-    });
-
-    await runInferenceSet(
-      {
-        provider: "compatible-anthropic-endpoint",
-        model: "mock-anthropic-model",
-        endpointUrl: "http://host.openshell.internal:18767/",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        inferenceApi: "anthropic-messages",
-      },
-      deps,
-    );
-
-    expect(
-      deps.calls.updateSandbox.mock.calls
-        .filter(([, fields]) => fields.provider !== undefined)
-        .at(-1),
-    ).toEqual([
-      "alpha",
-      expect.objectContaining({
-        provider: "compatible-anthropic-endpoint",
-        model: "mock-anthropic-model",
-        endpointUrl: "http://host.openshell.internal:18767",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: "anthropic-messages",
-        nimContainer: null,
-      }),
-    ]);
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
-    expect(captureOpenshell).toHaveBeenCalledWith(
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--no-verify",
-        "--provider",
-        "compatible-anthropic-endpoint",
-        "--model",
-        "mock-anthropic-model",
-      ],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
-      agentName: "openclaw",
-      gatewayName: "nemoclaw",
-      sandboxName: "alpha",
-      provider: "compatible-anthropic-endpoint",
-      model: "mock-anthropic-model",
-      preferredInferenceApi: "anthropic-messages",
-    });
-    expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
-      deps.calls.updateSandbox.mock.invocationCallOrder[0],
-    );
-    expect(deps.calls.sleep).toHaveBeenCalledWith(6_000);
-  });
-
-  it("waits for a changed API family to replace the previous sandbox route (#9467)", async () => {
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-anthropic-endpoint",
-      type: "anthropic",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      configKey: "ANTHROPIC_BASE_URL",
-      initiallyPresent: false,
-    });
-    const probeSandboxRoute = vi
-      .fn()
-      .mockReturnValueOnce({
-        ok: false,
-        detail: "sandbox inference invocation probe returned HTTP 400",
-        httpStatus: 400,
-      })
-      .mockReturnValueOnce({ ok: true });
-    const deps = createDeps({
-      config: {
-        agents: { defaults: { model: { primary: "inference/old-model" } } },
+  it.each([OPENCLAW_TARGET, HERMES_TARGET])(
+    "persists admitted Anthropic API metadata for $agentName provider switches",
+    async (target) => {
+      const inferenceApi =
+        target.agentName === "hermes" ? "openai-completions" : "anthropic-messages";
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
         models: { providers: { inference: { api: "openai-completions", models: [] } } },
-      },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "compatible-endpoint",
-        model: "old-model",
-      },
-      session: baseSession({
-        provider: "compatible-endpoint",
-        model: "old-model",
-        preferredInferenceApi: "openai-completions",
-      }),
-      captureOpenshell,
-      probeSandboxRoute,
-    });
-
-    await runInferenceSet(
-      {
-        provider: "compatible-anthropic-endpoint",
-        model: "mock-anthropic-model",
-        endpointUrl: "http://host.openshell.internal:18767/",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        inferenceApi: "anthropic-messages",
-      },
-      deps,
-    );
-
-    expect(probeSandboxRoute).toHaveBeenCalledTimes(2);
-    expect(deps.calls.sleep.mock.calls).toEqual([[6_000], [2_000]]);
-    expect(deps.calls.log).toHaveBeenCalledWith(
-      "  Waiting 2s for OpenShell route convergence after HTTP 400 (probe 1/3)...",
-    );
-    expect(deps.calls.updateSandbox).toHaveBeenCalled();
-  });
-
-  it("restores the prior route after changed-family convergence retries are exhausted (#9467)", async () => {
-    const { deps, probeSandboxRoute } = await runRejectedCompatibleSwitchScenario({
-      targetFamily: "anthropic",
-      probeSandboxRoute: vi
-        .fn()
-        .mockReturnValueOnce({
-          ok: false,
-          detail: "sandbox inference invocation probe returned HTTP 400",
-          httpStatus: 400,
-        })
-        .mockReturnValueOnce({
-          ok: false,
-          detail: "sandbox inference invocation probe returned HTTP 404",
-          httpStatus: 404,
-        })
-        .mockReturnValueOnce({
-          ok: false,
-          detail: "sandbox inference invocation probe returned HTTP 400",
-          httpStatus: 400,
-        }),
-      expectedError:
-        /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
-    });
-
-    expect(probeSandboxRoute).toHaveBeenCalledTimes(3);
-    expect(deps.calls.sleep.mock.calls).toEqual([[6_000], [2_000], [4_000]]);
-    expect(deps.calls.log.mock.calls).toEqual(
-      expect.arrayContaining([
-        ["  Waiting 2s for OpenShell route convergence after HTTP 400 (probe 1/3)..."],
-        ["  Waiting 4s for OpenShell route convergence after HTTP 404 (probe 2/3)..."],
-      ]),
-    );
-  });
-
-  it.each([
-    ["authentication", 401],
-    ["server", 500],
-  ])("does not retry a changed-family %s failure (#9467)", async (_failureClass, httpStatus) => {
-    const { deps, probeSandboxRoute } = await runRejectedCompatibleSwitchScenario({
-      targetFamily: "anthropic",
-      probeSandboxRoute: async () => ({
-        ok: false as const,
-        detail: `sandbox inference invocation probe returned HTTP ${httpStatus}`,
-        httpStatus,
-      }),
-      expectedError:
-        /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
-    });
-
-    expect(probeSandboxRoute).toHaveBeenCalledOnce();
-    expect(deps.calls.sleep.mock.calls).toEqual([[6_000]]);
-    expect(deps.calls.log).not.toHaveBeenCalledWith(expect.stringContaining("route convergence"));
-  });
-
-  it("does not retry a target rejection when the API family did not change", async () => {
-    const { deps, probeSandboxRoute } = await runRejectedCompatibleSwitchScenario({
-      targetFamily: "openai",
-      probeSandboxRoute: async () => ({
-        ok: false as const,
-        detail: "sandbox inference invocation probe returned HTTP 400",
-        httpStatus: 400,
-      }),
-      expectedError: /Sandbox-side verification rejected/,
-    });
-
-    expect(probeSandboxRoute).toHaveBeenCalledOnce();
-    expect(deps.calls.sleep.mock.calls).toEqual([[6_000]]);
-  });
-
-  it.each([
-    [
-      "returns a rejection",
-      async () => ({
-        ok: false,
-        detail: "sandbox inference invocation probe exited with status 7",
-        httpStatus: null,
-      }),
-      /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
-    ],
-    [
-      "throws",
-      async () => {
-        throw new Error("sandbox dial failed");
-      },
-      /sandbox inference invocation probe was unavailable: sandbox dial failed.*previous OpenShell inference selection was restored/s,
-    ],
-  ])(
-    "restores the prior route when sandbox-only provider verification %s",
-    async (_failureMode, probeSandboxRoute, expectedError) => {
+      };
       const captureOpenshell = createCompatibleProviderCapture({
         name: "compatible-anthropic-endpoint",
-        type: "anthropic",
+        type: target.agentName === "hermes" ? "openai" : "anthropic",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        configKey: "ANTHROPIC_BASE_URL",
+        configKey: target.agentName === "hermes" ? "OPENAI_BASE_URL" : "ANTHROPIC_BASE_URL",
         initiallyPresent: false,
       });
       const deps = createDeps({
-        config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
+        config,
+        target,
         entry: {
           name: "alpha",
-          agent: "openclaw",
+          agent: target.agentName,
           provider: "nvidia-prod",
-          model: "old-model",
+          model: "nvidia/model-a",
         },
-        session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+        session: baseSession({
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        }),
         captureOpenshell,
-        probeSandboxRoute,
       });
 
-      await expect(
-        runInferenceSet(
-          {
-            provider: "compatible-anthropic-endpoint",
-            model: "mock-anthropic-model",
-            endpointUrl: "http://host.openshell.internal:18767/",
-            credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-            inferenceApi: "anthropic-messages",
-          },
-          deps,
-        ),
-      ).rejects.toThrow(expectedError);
+      await runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "https://anthropic.example/v1",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi,
+        },
+        deps,
+      );
 
       expect(
-        captureOpenshell.mock.calls
-          .filter(([args]) => args[0] === "inference" && args[1] === "set")
-          .map(([args]) => args),
+        deps.calls.updateSandbox.mock.calls
+          .filter(([, fields]) => fields.provider !== undefined)
+          .at(-1),
       ).toEqual([
+        "alpha",
+        expect.objectContaining({
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "http://host.openshell.internal:11438/route/test-route",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          preferredInferenceApi: inferenceApi,
+          nimContainer: null,
+        }),
+      ]);
+      expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+      expect(captureOpenshell).toHaveBeenCalledWith(
         [
           "inference",
           "set",
@@ -1128,130 +824,35 @@ describe("runInferenceSet compatible providers", () => {
           "--model",
           "mock-anthropic-model",
         ],
-        [
-          "inference",
-          "set",
-          "-g",
-          "nemoclaw",
-          "--no-verify",
-          "--provider",
-          "nvidia-prod",
-          "--model",
-          "old-model",
-        ],
-      ]);
-      expect(
-        captureOpenshell.mock.calls.some(
-          ([args]) => args[0] === "provider" && args[1] === "delete",
-        ),
-      ).toBe(true);
-      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+        expect.objectContaining({ ignoreError: true }),
+      );
     },
   );
 
-  it("preserves redacted probe diagnostics when restoring the prior route fails", async () => {
-    const providerCapture = createCompatibleProviderCapture({
-      name: "compatible-anthropic-endpoint",
-      type: "anthropic",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      configKey: "ANTHROPIC_BASE_URL",
-      initiallyPresent: false,
-    });
-    const inferenceSetResults = [
-      null,
-      {
-        status: 19,
-        output: "restore rejected",
-        stdout: "",
-        stderr: "restore rejected",
-      },
-    ];
-    let inferenceSetCalls = 0;
-    const captureOpenshell = vi.fn((args: string[]) => {
-      switch (`${args[0]}:${args[1]}`) {
-        case "inference:set":
-          return inferenceSetResults[inferenceSetCalls++] ?? providerCapture(args);
-        default:
-          return providerCapture(args);
-      }
-    });
+  it("rejects an unverified host bridge before provider or route mutation", async () => {
+    const captureOpenshell = vi.fn();
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "old-model",
-      },
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old-model" },
       session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
       captureOpenshell,
-      probeSandboxRoute: () => {
-        throw new Error("sandbox dial failed; NVIDIA_API_KEY=nvapi-secret-value");
-      },
     });
 
-    let failure: unknown;
-    try {
-      await runInferenceSet(
+    await expect(
+      runInferenceSet(
         {
           provider: "compatible-anthropic-endpoint",
           model: "mock-anthropic-model",
-          endpointUrl: "http://host.openshell.internal:18767/",
+          endpointUrl: "http://host.openshell.internal:49152",
           credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
           inferenceApi: "anthropic-messages",
         },
         deps,
-      );
-    } catch (error) {
-      failure = error;
-    }
-
-    expect(failure).toBeInstanceOf(Error);
-    const failureMessage = (failure as Error).message;
-    expect(failureMessage).toContain(
-      "sandbox inference invocation probe was unavailable: sandbox dial failed",
-    );
-    expect(failureMessage).toContain("NVIDIA_API_KEY=<REDACTED>");
-    expect(failureMessage).not.toContain("nvapi-secret-value");
-    expect(failureMessage).toMatch(
-      /Failed to restore the previous OpenShell inference selection.*status 19.*Re-run onboarding/s,
-    );
-    expect(
-      deps.calls.captureOpenshell.mock.calls
-        .filter(([args]) => args[0] === "inference" && args[1] === "set")
-        .map(([args]) => args),
-    ).toEqual([
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--no-verify",
-        "--provider",
-        "compatible-anthropic-endpoint",
-        "--model",
-        "mock-anthropic-model",
-      ],
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--no-verify",
-        "--provider",
-        "nvidia-prod",
-        "--model",
-        "old-model",
-      ],
-    ]);
-    expect(
-      deps.calls.captureOpenshell.mock.calls.some(
-        ([args]) => args[0] === "provider" && args[1] === "delete",
       ),
-    ).toBe(false);
+    ).rejects.toThrow("cannot use an unverified OpenShell host bridge endpoint");
+
+    expect(captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   it.each(
@@ -1326,7 +927,7 @@ describe("runInferenceSet compatible providers", () => {
     },
   );
 
-  it("does not roll back a created direct provider after an ambiguous route result", async () => {
+  it("retains a legacy shared provider after an ambiguous route result", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -1349,10 +950,10 @@ describe("runInferenceSet compatible providers", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "old-model" }),
       captureOpenshell,
       inferenceRouteMutator: { setInferenceRoute },
     });
@@ -1363,7 +964,7 @@ describe("runInferenceSet compatible providers", () => {
           provider: "compatible-endpoint",
           model: "mock-model",
           noVerify: true,
-          endpointUrl: "http://host.openshell.internal:18767/v1",
+          endpointUrl: "http://8.8.8.8:18767/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -1383,7 +984,7 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
   });
 
-  it("fails before provider or route mutation when a provider-backed route has no rollback authority", async () => {
+  it("rejects a retained shared route without rollback authority before mutation", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -1394,7 +995,7 @@ describe("runInferenceSet compatible providers", () => {
     const setInferenceRoute = vi.fn();
     const deps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw" },
+      entry: { name: "alpha", agent: "openclaw", provider: "compatible-endpoint" },
       captureOpenshell,
       inferenceRouteObserver: {
         observeInferenceRoute: vi.fn(async () => ({
@@ -1410,7 +1011,7 @@ describe("runInferenceSet compatible providers", () => {
         {
           provider: "compatible-endpoint",
           model: "mock-model",
-          endpointUrl: "http://host.openshell.internal:18767/v1",
+          endpointUrl: "http://8.8.8.8:18767/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -1426,7 +1027,7 @@ describe("runInferenceSet compatible providers", () => {
     ).toBe(false);
   });
 
-  it("retries exactly once only for definite provider-not-found after direct binding", async () => {
+  it("retries a retained shared binding only after definite provider-not-found", async () => {
     const directCapture = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -1449,7 +1050,7 @@ describe("runInferenceSet compatible providers", () => {
       .mockResolvedValueOnce({ ok: true as const });
     const directDeps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      entry: { name: "alpha", agent: "openclaw", provider: "compatible-endpoint", model: "old" },
       captureOpenshell: directCapture,
       inferenceRouteMutator: { setInferenceRoute: directSet },
     });
@@ -1460,7 +1061,7 @@ describe("runInferenceSet compatible providers", () => {
           provider: "compatible-endpoint",
           model: "mock-model",
           noVerify: true,
-          endpointUrl: "http://host.openshell.internal:18767/v1",
+          endpointUrl: "http://8.8.8.8:18767/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -1481,14 +1082,11 @@ describe("runInferenceSet compatible providers", () => {
     }));
     const noBindingDeps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      entry: { name: "alpha", agent: "openclaw", provider: "vllm-local", model: "old" },
       inferenceRouteMutator: { setInferenceRoute: noBindingSet },
     });
     await expect(
-      runInferenceSet(
-        { provider: "nvidia-router", model: "gpt-test", noVerify: true },
-        noBindingDeps,
-      ),
+      runInferenceSet({ provider: "vllm-local", model: "gpt-test", noVerify: true }, noBindingDeps),
     ).rejects.toThrow("provider not found");
     expect(noBindingSet).toHaveBeenCalledOnce();
   });

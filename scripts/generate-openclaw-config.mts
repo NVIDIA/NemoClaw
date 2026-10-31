@@ -20,8 +20,7 @@
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
-//   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
-//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_WEB_SEARCH_ENABLED,
 //   NEMOCLAW_WEB_SEARCH_PROVIDER,
 //   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
@@ -774,10 +773,6 @@ export function buildManagedInferenceSafeguardCompaction(
 
 export function buildConfig(env: Env = process.env): JsonObject {
   const providerless = hasProviderlessInferenceEnvironment(env);
-  const proxyHost = env.NEMOCLAW_PROXY_HOST || "10.200.0.1";
-  const proxyPort = env.NEMOCLAW_PROXY_PORT || "3128";
-  const proxyUrl = `http://${proxyHost}:${proxyPort}`;
-  const emitOpenClawManagedProxy = truthyEnvDefault(env, "NEMOCLAW_OPENCLAW_MANAGED_PROXY", true);
   const model = env.NEMOCLAW_MODEL as string;
   if (!providerless && !model) throw new Error("NEMOCLAW_MODEL is required");
   const rawChatUiUrl = env.CHAT_UI_URL || "";
@@ -975,14 +970,22 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
-  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider)
-    ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl)
-    : null;
+  const nativeLocal =
+    ["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
+      upstreamProvider,
+    ) || env.NEMOCLAW_LOCAL_INFERENCE_TOKEN
+      ? nativeLocalCredentialReference(
+          upstreamProvider,
+          inferenceBaseUrl,
+          undefined,
+          env.NEMOCLAW_LOCAL_INFERENCE_TOKEN,
+        )
+      : null;
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
       apiKey:
-        nativeHosted?.apiKey ?? nativeLocal ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
+        nativeLocal ?? nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
       ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
@@ -1088,13 +1091,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     },
   };
 
-  if (emitOpenClawManagedProxy) {
-    config.proxy = {
-      enabled: true,
-      proxyUrl,
-      loopbackMode: "gateway-only",
-    };
-  }
   if (openclawOtel) {
     config.diagnostics = {
       enabled: true,
@@ -1104,7 +1100,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const tools = config.tools;
   tools.web ??= {};
-  tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
+  tools.web.fetch = { enabled: true, useTrustedEnvProxy: false };
   if (!webSearchProvider) {
     // OpenClaw treats OPENROUTER_API_KEY as Perplexity search auth when search is unspecified.
     tools.web.search = { enabled: false };

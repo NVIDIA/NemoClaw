@@ -3,10 +3,10 @@
 
 # OpenShell SDK archive
 
-This directory carries the reviewed `@nvidia/openshell-sdk@0.0.116` package under its upstream Apache-2.0 license.
+This directory carries the reviewed `@nvidia/openshell-sdk@0.1.5` package under its upstream Apache-2.0 license.
 The archive matches the GitHub Packages URL and SHA-512 integrity in the root `package-lock.json`.
-Its source is NVIDIA/OpenShell tag `v0.0.116`, commit `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
-The included `LICENSE` is copied from that source.
+Its source is NVIDIA/OpenShell tag `v0.1.5`, commit `bdb956f2cd65a635f1294fccf1d138d263bf650f`.
+The included `LICENSE.v0.1.5` is copied from that source.
 
 The installer and `npm run dev:setup` verify this archive, seed npm's cache offline, and run the normal dependency installation.
 Users do not need GitHub credentials or an SDK build toolchain.
@@ -32,9 +32,12 @@ Do not substitute a locally repacked archive: its compressed bytes can differ fr
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
 
+The `0.0.116` archive and `LICENSE` remain for the current baseline packaging tests.
+
 ## Trusted E2E Setup
 
-The production SDK remains `0.0.116`; `ci/reviewed-npm-audit.json` also admits `0.1.5` as the reviewed replacement for the OpenShell upgrade.
+The production SDK is `0.1.5`.
+`ci/reviewed-npm-audit.json` admits the `0.0.116` baseline and the reviewed `0.1.5` replacement for the OpenShell upgrade.
 When compiling the candidate CLI and plugin, the E2E planner requires successful SDK packaging, downloads that run's archive bundle, and uses explicit artifact mode.
 Explicit candidate dispatches that select only `llama-cpp-dgx-spark-qualification` or `native-runtime-qualification-producer`, with no target selector, skip SDK packaging and candidate compilation.
 Those dispatches use their trusted producer plans.

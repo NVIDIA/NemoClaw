@@ -92,6 +92,54 @@ print("managed-ultra-template-argument-ok")
     expect(output).toContain("managed-ultra-template-argument-ok");
   });
 
+  it.each([
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "http://10.20.30.40:43123/v1"],
+    [
+      "compatible-anthropic-endpoint",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      "http://10.20.30.40:43123/v1",
+    ],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://integrate.api.nvidia.com/v1"],
+  ])(
+    "supplies the attached %s credential in managed model options",
+    (provider, credential, endpoint) => {
+      const directory = createPackageFixture();
+      patchFixture(directory);
+      const validation = `
+import os
+from pathlib import Path
+from deepagents_code import config
+for file, value in (
+    (${JSON.stringify(path.join(directory, "managed-inference-base-url"))}, ${JSON.stringify(endpoint)}),
+    (${JSON.stringify(managedUpstreamProviderPath(directory))}, ${JSON.stringify(provider)}),
+):
+    p = Path(file)
+    p.chmod(0o644)
+    p.write_text(value + "\\n")
+    p.chmod(0o444)
+name = ${JSON.stringify(credential)}
+reference = "openshell:resolve:env:s" + "a" * 64 + "_" + name
+os.environ[name] = reference
+os.environ["NEMOCLAW_LOCAL_INFERENCE_TOKEN"] = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+assert config._get_provider_kwargs("openai")["api_key"] == reference
+for invalid in ("", "raw-secret", "openshell:resolve:env:" + name, "openshell:resolve:env:v42_OTHER_KEY"):
+    os.environ[name] = invalid
+    try:
+        config._get_provider_kwargs("openai")
+    except RuntimeError as error:
+        assert not invalid or invalid not in str(error)
+    else:
+        raise AssertionError("invalid custom reference accepted")
+print("custom-hosted-constructor-reference-ok")
+`;
+      const output = execFileSync("python3", ["-c", validation], {
+        env: { PATH: process.env.PATH, PYTHONPATH: directory },
+        encoding: "utf8",
+      });
+      expect(output).toContain("custom-hosted-constructor-reference-ok");
+    },
+  );
+
   it("passes the issued native-local reference to the actual model constructor (#12558)", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -112,6 +160,8 @@ name = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
 for upstream in ("ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"):
     write_owned(${JSON.stringify(providerFile)}, upstream)
     for endpoint in ("http://host.openshell.internal:8000/v1", "http://host.docker.internal:11434/v1", "http://10.2.3.4:8000/v1", "http://172.16.2.3:8000/v1", "http://192.168.2.3:8000/v1"):
+        if upstream == "compatible-endpoint" and not endpoint.startswith(("http://host.openshell.internal:", "http://host.docker.internal:")):
+            continue
         write_owned(${JSON.stringify(routeFile)}, endpoint)
         for identity in ("v42", "s" + "a" * 64):
             reference = "openshell:resolve:env:" + identity + "_" + name
@@ -132,18 +182,12 @@ for upstream in ("ollama-local", "vllm-local", "llama-cpp-local", "compatible-en
         else:
             raise AssertionError("invalid native-local reference accepted")
 
-# Ambient local credentials cannot replace a hosted compatible reference.
+# Ambient local credentials cannot replace the managed hosted-route token.
+write_owned(${JSON.stringify(providerFile)}, "ollama-local")
 os.environ[name] = "openshell:resolve:env:v42_" + name
-write_owned(${JSON.stringify(routeFile)}, "https://inference.local/v1")
-assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
-for endpoint in ("https://host.openshell.internal:8000/v1", "http://172.32.2.3:8000/v1"):
+for endpoint in ("https://inference.local/v1", "https://host.openshell.internal:8000/v1", "http://172.32.2.3:8000/v1"):
     write_owned(${JSON.stringify(routeFile)}, endpoint)
-    try:
-        config._get_provider_kwargs("openai")
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("local token replaced a hosted compatible reference")
+    assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
 write_owned(${JSON.stringify(routeFile)}, "http://host.openshell.internal:8000/v1")
 write_owned(${JSON.stringify(providerFile)}, "nvidia-prod")
 assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
@@ -209,66 +253,6 @@ print("native-managed-constructor-placeholder-ok")
       encoding: "utf8",
     });
     expect(output).toContain("native-managed-constructor-placeholder-ok");
-  });
-
-  it("passes the issued compatible placeholder to the hosted DCode constructor (#13164)", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    const routeFile = path.join(tempDir, "managed-inference-base-url");
-    const providerFile = managedUpstreamProviderPath(tempDir);
-    const validation = `
-import os
-from pathlib import Path
-from deepagents_code import config
-
-def write_owned(file, value):
-    path = Path(file)
-    path.chmod(0o644)
-    path.write_text(value + "\\n")
-    path.chmod(0o444)
-
-write_owned(${JSON.stringify(providerFile)}, "compatible-endpoint")
-name = "COMPATIBLE_API_KEY"
-os.environ["NEMOCLAW_LOCAL_INFERENCE_TOKEN"] = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
-for endpoint in ("https://inference-api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1", "https://compatible.example/v1"):
-    write_owned(${JSON.stringify(routeFile)}, endpoint)
-    for reference in (
-        "openshell:resolve:env:" + name,
-        "openshell:resolve:env:v12_" + name,
-        "openshell:resolve:env:s" + "a" * 64 + "_" + name,
-    ):
-        os.environ[name] = reference
-        for adapter in ("openai", "openrouter"):
-            resolved = config._get_provider_kwargs(adapter)
-            assert resolved["api_key"] == reference
-            assert resolved["base_url"] == endpoint
-
-    for invalid in ("", "raw-secret", "nemoclaw-managed-inference", "openshell:resolve:env:v12_OTHER_KEY"):
-        os.environ[name] = invalid
-        try:
-            config._get_provider_kwargs("openai")
-        except RuntimeError as error:
-            assert not invalid or invalid not in str(error)
-        else:
-            raise AssertionError("hosted compatible route accepted an invalid reference")
-    del os.environ[name]
-    try:
-        config._get_provider_kwargs("openai")
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("hosted compatible route accepted a missing reference")
-
-for endpoint in ("https://inference.local/v1", "http://localhost:8000/v1"):
-    write_owned(${JSON.stringify(routeFile)}, endpoint)
-    assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
-print("native-compatible-constructor-placeholder-ok")
-`;
-    const output = execFileSync("python3", ["-c", validation], {
-      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-      encoding: "utf8",
-    });
-    expect(output).toContain("native-compatible-constructor-placeholder-ok");
   });
 
   it("uses only the native OpenRouter resolver handle for Deep Code requests (#13045)", () => {

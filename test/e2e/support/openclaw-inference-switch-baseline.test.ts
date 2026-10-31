@@ -37,9 +37,12 @@ vi.mock("../fixtures/managed-image-receipt.ts", () => ({
 
 const disposables: Array<() => unknown> = [];
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+async function disposeResources(): Promise<void> {
+  for (const dispose of disposables.splice(0).reverse()) await dispose();
+}
 afterEach(async () => {
   Object.defineProperty(process, "platform", platform);
-  for (const dispose of disposables.splice(0).reverse()) await dispose();
+  await disposeResources();
   vi.doUnmock("../live/openclaw-inference-switch-helpers.ts");
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -173,6 +176,8 @@ it.each(
       expect(name).toBe("NVIDIA_API_KEY");
       return "nvapi-public-fixture-key";
     });
+    const cleanupSandbox = vi.fn(async () => undefined);
+    const expectRemoved = vi.fn(async () => undefined);
     await expect(
       run({
         artifacts: { target: { declare: vi.fn() } },
@@ -183,9 +188,15 @@ it.each(
         },
         host: {
           nemoclaw,
-          command: vi.fn(async () => result),
+          cleanupSandbox,
+          command: vi.fn(async (_cmd, _args, options) =>
+            options?.artifactName === "native-baseline-endpoint-address"
+              ? { ...result, stdout: "route 10.20.30.40" }
+              : result,
+          ),
         },
         progress,
+        gateway: { expectRemoved },
         runtimeProvider: { id: runtime, requireAvailable: vi.fn() },
         sandbox: { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() },
         secrets: { required },
@@ -206,9 +217,7 @@ it.each(
     const options = nemoclaw.mock.calls[0]![1];
     const environment = options.env;
     expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
-    expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe(
-      nativeCustom ? "baseline.trycloudflare.com" : "host.openshell.internal",
-    );
+    expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe("baseline.trycloudflare.com");
     expect(environment.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS).toBeUndefined();
     expect(environment.NEMOCLAW_MODEL).toBe("openclaw-switch-baseline-model");
     expect(environment.COMPATIBLE_API_KEY).toBe("openclaw-switch-baseline-credential");
@@ -216,6 +225,15 @@ it.each(
     expect(environment.NVIDIA_API_KEY).toBeUndefined();
     expect(options.redactionValues.includes("nvapi-public-fixture-key")).toBe(!nativeCustom);
     expect(options.redactionValues).toContain("openclaw-switch-baseline-credential");
+    await disposeResources();
+    expect(cleanupSandbox).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      expect.objectContaining({ cleanupGateway: true }),
+    );
+    expect(expectRemoved).toHaveBeenCalledExactlyOnceWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "cleanup-inference-switch-gateway-absent" }),
+    );
   },
 );
 

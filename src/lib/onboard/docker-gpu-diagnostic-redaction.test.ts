@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
+import { openshellMainProcessSpecEnvValue } from "./docker-startup-command-env";
 import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import {
   buildDockerGpuMode,
@@ -236,5 +238,34 @@ describe("Docker GPU diagnostic redaction", () => {
       mkdirSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+});
+
+describe("native main-process diagnostic credentials", () => {
+  it("redacts native argv assignments and the serialized spec from log sinks", () => {
+    const spec = openshellMainProcessSpecEnvValue(
+      [
+        "env",
+        "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=CUSTOM_VALUE",
+        "CUSTOM_VALUE=opaque-custom value",
+        "API_KEY=opaque-key-value",
+        "nemoclaw-start",
+      ],
+      false,
+    );
+    const redactor = createDockerGpuDiagnosticRedactor();
+    redactor.rememberInspect({ Config: { Env: [`OPENSHELL_MAIN_PROCESS_SPEC=${spec}`] } });
+    const output = redactor.redactText(`${spec} opaque-custom value opaque-key-value`);
+    expect(output).not.toContain(spec);
+    expect(output).not.toContain("opaque-custom value");
+    expect(output).not.toContain("opaque-key-value");
+  });
+  it("refuses malformed main-process metadata before trusting log redaction", () => {
+    const redactor = createDockerGpuDiagnosticRedactor();
+    expect(() =>
+      redactor.rememberInspect({
+        Config: { Env: ["OPENSHELL_MAIN_PROCESS_SPEC=invalid"] },
+      }),
+    ).toThrow(/not valid JSON/);
   });
 });

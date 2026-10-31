@@ -24,6 +24,7 @@ import { sleepSeconds } from "../core/wait";
 import { isWsl as detectWsl } from "../platform";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
+import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
 import {
   classifyNvidiaFirmwareProducts,
   hasDgxStationGb300PciGpu,
@@ -452,9 +453,16 @@ export function parseServedModelId(modelsJson: string): string | null {
   return null;
 }
 
-// Model id a running local NIM actually serves; null if unreachable/empty.
-export function getServedModelId(port = VLLM_PORT): string | null {
-  const out = runCapture(
+/** NIM owns this published port; managed vLLM receipts cannot select its endpoint. */
+export function getNimInferenceEndpoints() {
+  return {
+    baseUrl: `http://host.openshell.internal:${VLLM_PORT}/v1`,
+    validationBaseUrl: `http://127.0.0.1:${VLLM_PORT}/v1`,
+  };
+}
+
+function readNimModels(port: number): string | null {
+  return runCapture(
     [
       "curl",
       ...buildValidatedCurlCommandArgs([
@@ -468,7 +476,23 @@ export function getServedModelId(port = VLLM_PORT): string | null {
     ],
     { ignoreError: true },
   );
+}
+
+// Model id a running local NIM actually serves; null if unreachable/empty.
+export function getServedModelId(port = VLLM_PORT): string | null {
+  const out = readNimModels(port);
   return out ? parseServedModelId(out) : null;
+}
+
+/** Read context metadata only from the NIM-owned listener and selected model. */
+export function getNimContextWindow(model: string): number | null {
+  const raw = readNimModels(VLLM_PORT);
+  if (!raw || parseServedModelId(raw) !== model) return null;
+  try {
+    return resolveVllmContextWindowFromModels(JSON.parse(raw), model);
+  } catch {
+    return null;
+  }
 }
 
 // Adopt the id NIM serves (from /v1/models) when it differs from the catalog

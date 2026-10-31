@@ -27,10 +27,16 @@ Run the status command to view sandbox state, gateway health, and the active inf
 $$nemoclaw <name> status
 ```
 
-On a normal read with verified gateway and sandbox state, `$$nemoclaw <name> status` checks an available selected provider path from inside the sandbox as the authoritative inference check. Shared providers use `https://inference.local/v1/models`. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections verify the recorded sandbox-attached OpenShell provider with an inference request to its native endpoint. A fresh Personal-tier hosted compatible selection verifies the shared route and has no native attachment.
+On a normal read with verified gateway and sandbox state, `$$nemoclaw <name> status` checks an available selected provider path from inside the sandbox as the authoritative inference check.
+Shared providers use `https://inference.local/v1/models`.
+NVIDIA Endpoints, supported fixed hosted providers, qualifying hosted compatible endpoints, and qualified local selections verify the recorded sandbox-attached OpenShell provider with an inference request to its native endpoint.
 For local Ollama and local vLLM routes, it also prints labeled host-side backend diagnostics that help identify which hop failed.
 
-During ordinary lifecycle contention, status can return a read-only snapshot only when receipt and registry checks confirm that no conflicting lifecycle authority exists before and after the read. The snapshot shows `Inference: not probed (another lifecycle operation is in progress)` and `inferenceProbeSuppressed: true` in JSON. If a conflicting authority exists, cannot be checked, or appears during the read, status rejects the snapshot and reports lifecycle contention. A snapshot can still observe a shared route, but it does not verify inference health. Wait for the lifecycle operation to finish and rerun status before using the result as inference evidence.
+During ordinary lifecycle contention, status can return a read-only snapshot only when receipt and registry checks confirm that no Portable lifecycle authority exists before and after the read.
+The snapshot shows `Inference: not probed (another lifecycle operation is in progress)` and `inferenceProbeSuppressed: true` in JSON.
+If Portable lifecycle authority exists, cannot be checked, or appears during the read, status rejects the snapshot and reports lifecycle contention.
+A snapshot can still observe a shared route, but it does not verify inference health.
+Wait for the lifecycle operation to finish and rerun status before using the result as inference evidence.
 
 Review these output fields.
 

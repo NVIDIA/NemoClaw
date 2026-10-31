@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  hostedNativeProvider,
+  fixedHostedNativeProvider,
+  recordedHermesEndpointUrl,
   customNativeCredentialEnv,
   isCustomHostedProvider,
-} from "./hosted.ts";
+} from "./catalog.ts";
 
-export { hostedNativeProvider };
-
-/** Public configuration only. Never read the host's provider credential here. */
+/** Public configuration only; this grants neither egress nor a provider attachment.
+ * Host admission validates destinations before OpenShell receives the real credential.
+ */
 export function nativeHostedAgentConfig(provider: string | null | undefined, baseUrl: string) {
   if (isCustomHostedProvider(provider) && new URL(baseUrl).hostname !== "inference.local") {
     const endpoint = new URL(baseUrl);
@@ -25,16 +26,13 @@ export function nativeHostedAgentConfig(provider: string | null | undefined, bas
     const credentialEnv = customNativeCredentialEnv(provider!);
     return { credentialEnv, apiKey: `openshell:resolve:env:${credentialEnv}` };
   }
-  if (!hostedNativeProvider(provider)) return undefined;
+  const definition = fixedHostedNativeProvider(provider);
+  if (!definition) return undefined;
   // Existing shared-route selections keep their original configuration until explicitly changed.
   if (new URL(baseUrl).hostname === "inference.local") return undefined;
-  const definition = hostedNativeProvider(
-    provider,
-    provider === "hermes-provider" ? baseUrl : undefined,
-  );
-  if (!definition) return undefined;
-  const endpoint = new URL(baseUrl);
-  const expected = new URL(definition.endpoint);
+  const endpoint =
+    provider === "hermes-provider" ? recordedHermesEndpointUrl(baseUrl) : new URL(baseUrl);
+  const expected = provider === "hermes-provider" ? endpoint : new URL(definition.endpoint);
   if (
     endpoint.username ||
     endpoint.password ||

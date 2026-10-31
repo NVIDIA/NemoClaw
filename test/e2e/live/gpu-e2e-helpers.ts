@@ -18,6 +18,17 @@ import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
+import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../../src/lib/inference/native-local/contract.ts";
+import {
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
+import type { SandboxEntry } from "../../../src/lib/state/registry.ts";
+import { shellQuote } from "../fixtures/clients/command.ts";
 
 export { REPO_ROOT };
 
@@ -60,6 +71,63 @@ export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama
 const DEFAULT_GPU_E2E_MODEL = "qwen3.5:9b";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
+
+export async function readGpuOllamaRoute(
+  sandbox: SandboxClient,
+  entry: SandboxEntry | null,
+  environment: NodeJS.ProcessEnv,
+): Promise<NativeLocalProviderAttachment | null> {
+  const receipt = normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+  const gateway = environment.OPENSHELL_GATEWAY ?? "nemoclaw";
+  if (
+    !receipt ||
+    entry?.name !== SANDBOX_NAME ||
+    (entry.gatewayName ?? gateway) !== gateway ||
+    (entry.agent ?? "openclaw") !== "openclaw" ||
+    entry.provider !== "ollama-local" ||
+    receipt.provider !== "ollama-local" ||
+    receipt.agent !== "openclaw" ||
+    receipt.sandboxName !== SANDBOX_NAME ||
+    receipt.gatewayName !== gateway ||
+    receipt.authMode !== "authenticated" ||
+    receipt.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV
+  )
+    return null;
+  const options = { env: environment, timeoutMs: 30_000, captureLimitBytes: 16 * 1024 };
+  const provider = await sandbox.openshell(
+    ["provider", "get", "-g", gateway, receipt.providerName],
+    { ...options, artifactName: "gpu-ollama-native-provider" },
+  );
+  const attached = await sandbox.openshell(
+    ["sandbox", "provider", "list", "-g", gateway, SANDBOX_NAME],
+    { ...options, artifactName: "gpu-ollama-native-attachment" },
+  );
+  const metadata =
+    provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+  return metadata?.name === receipt.providerName &&
+    metadata.type === receipt.profileId &&
+    metadata.revision?.id === receipt.providerId &&
+    metadata.configKeys.length === 0 &&
+    metadata.credentialKeys.length === 1 &&
+    metadata.credentialKeys[0] === NATIVE_LOCAL_CREDENTIAL_ENV &&
+    attached.exitCode === 0 &&
+    attached.stdout.split(/\s+/u).includes(receipt.providerName)
+    ? receipt
+    : null;
+}
+
+export function gpuOllamaChatCommand(route: NativeLocalProviderAttachment, model: string): string {
+  const payload = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    // Preserve the routed-inference check without consuming a reasoning-token budget.
+    reasoning_effort: "none",
+    seed: 0,
+    temperature: 0,
+    max_tokens: 32,
+  });
+  return `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -sS --max-time 120 ${shellQuote(`${route.endpointUrl}/chat/completions`)} -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data ${shellQuote(payload)}`;
+}
 
 function tcpPort(value: string | undefined, fallback: string): string {
   const raw = value ?? fallback;
@@ -411,21 +479,5 @@ curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http:/
       redactionValues: [token],
       timeoutMs: 60_000,
     },
-  );
-}
-
-export async function detectOllamaModel(host: HostCliClient): Promise<string> {
-  return (
-    process.env.NEMOCLAW_MODEL ||
-    (
-      await host.command(
-        "bash",
-        [
-          "-lc",
-          'curl -sf http://127.0.0.1:11434/api/tags | python3 -c \'import json,sys; m=json.load(sys.stdin).get("models",[]); print(m[0]["name"] if m else "")\'',
-        ],
-        { artifactName: "detect-ollama-model", env: env(), timeoutMs: 30_000 },
-      )
-    ).stdout.trim()
   );
 }

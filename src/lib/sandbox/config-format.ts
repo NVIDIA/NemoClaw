@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import JSON5 from "json5";
+import type { AgentConfigTarget } from "./agent-config";
+import { buildHermesUpstreamHeader } from "./hermes-upstream-header";
 
 import { assertSafeConfigStructure } from "../security/config-structure.js";
 
@@ -54,4 +56,16 @@ export function serializeConfig(config: ConfigObject, format: string): string {
     throw new Error("config set is not supported for TOML-format agents.");
   }
   return JSON.stringify(config, null, 2);
+}
+
+/** Include the Hermes upstream header in its serialized configuration. */
+export function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
+  const body =
+    target.agentName === "hermes" && target.format === "yaml"
+      ? require("yaml").stringify(config, { compat: "yaml-1.1" })
+      : serializeConfig(config, target.format);
+  if (target.agentName === "hermes" && target.format === "yaml") {
+    return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
+  }
+  return body;
 }

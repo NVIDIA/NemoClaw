@@ -10,6 +10,7 @@ import type { NativeLocalProviderAttachment } from "../../inference/native-local
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
   deferInferenceRouteUntilOnboard?: true;
   agent?: string | null;
+  registeredInferenceProviderAttachment?: import("../../inference/config").RegisteredInferenceProviderAttachment;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   model: string;
   provider: string;
@@ -70,6 +71,15 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  refreshRestoredRegisteredOpenclawInferenceRoute(
+    ...args: Parameters<
+      typeof import("../../onboard/openclaw/initial-inference-route").refreshRestoredRegisteredOpenclawInferenceRoute
+    >
+  ): Promise<void> {
+    return (
+      require("../../onboard/openclaw/initial-inference-route") as typeof import("../../onboard/openclaw/initial-inference-route")
+    ).refreshRestoredRegisteredOpenclawInferenceRoute(...args);
+  },
   verifyRebuiltOpenClawCompatibleEndpoint(
     options: RebuildCompatibleEndpointSmokeOptions,
   ): Promise<void> {

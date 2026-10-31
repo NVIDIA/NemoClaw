@@ -1,3 +1,4 @@
+import { withNativeInferenceFixture } from "./runner-test-fixtures.js";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -52,8 +53,14 @@ vi.mock("./ssrf.js", async (importOriginal) => ({
   validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
 }));
 
-const { actionApply, actionReconcile, actionStatus, loadBlueprint, main } =
-  await import("./runner.js");
+const {
+  actionApply: applyWithoutFixture,
+  actionReconcile,
+  actionStatus,
+  loadBlueprint,
+  main,
+} = await import("./runner.js");
+const actionApply = withNativeInferenceFixture(applyWithoutFixture);
 const stdoutCapture = createStdoutCapture();
 
 function captureStdout(): void {
