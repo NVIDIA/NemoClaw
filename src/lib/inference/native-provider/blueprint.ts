@@ -196,7 +196,10 @@ const defaultDependencies = {
 };
 type Dependencies = typeof defaultDependencies;
 
-function requireCreatedSandbox(receipt: BlueprintNativeReceipt, deps: Dependencies): void {
+export function requireCreatedSandbox(
+  receipt: BlueprintNativeReceipt,
+  deps: Dependencies = defaultDependencies,
+): void {
   const observed = observeCreatedOpenShellSandboxId(
     { ...receipt, runCaptureOpenshell: deps.capture },
     15_000,
@@ -437,6 +440,8 @@ export async function createBlueprintNativeInference(
       });
     }
     await verify();
+    // Awaiting verification yields before this synchronous configuration write.
+    requireCreatedSandbox(receipt, deps);
     deps.writeConfig(
       receipt.sandboxName,
       [
@@ -470,6 +475,7 @@ export async function createBlueprintNativeInference(
 export async function reconcileBlueprintNativeTimeout(
   requested: BlueprintNativeSelection & Readonly<{ timeoutSeconds: number }>,
   observe: () => Promise<string>,
+  revalidate: () => void,
   deps = {
     readConfig: readSandboxConfig,
     configTarget: resolveAgentConfig,
@@ -514,6 +520,7 @@ export async function reconcileBlueprintNativeTimeout(
   if (identity !== (await observe()))
     throw new Error("Native inference identity changed before timeout update.");
   if ((configured as Record<string, unknown>).timeoutSeconds !== requested.timeoutSeconds) {
+    revalidate();
     deps.writeConfig(
       requested.sandboxName,
       [

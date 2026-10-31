@@ -16,6 +16,7 @@ import {
   createBlueprintNativeInference,
   findBlueprintNativeReceipt,
   reconcileBlueprintNativeTimeout,
+  requireCreatedSandbox,
   observeBlueprintCreatedInference,
   type BlueprintNativeReceipt,
 } from "./blueprint";
@@ -458,6 +459,33 @@ describe("blueprint native creation", () => {
     expect(f.deps.writeConfig).not.toHaveBeenCalled();
   });
 
+  it("refuses configuration when the sandbox changes as credential verification returns", async () => {
+    const f = fixture();
+    const capture = f.deps.capture.getMockImplementation()!;
+    let replaced = false;
+    f.deps.readHandle.mockImplementationOnce(async () => {
+      // Verification observes the sandbox before and after its provider checks.
+      f.deps.capture.mockImplementationOnce(capture).mockImplementationOnce(() => {
+        const result = capture();
+        queueMicrotask(() => {
+          f.replaceSandbox();
+          replaced = true;
+        });
+        return result;
+      });
+      return "openshell:resolve:env:v1_OPENAI_API_KEY";
+    });
+    await expect(createBlueprintNativeInference(f.input, f.deps)).rejects.toThrow(
+      "identity changed",
+    );
+    expect(replaced).toBe(true);
+    expect(f.deps.writeConfig).not.toHaveBeenCalled();
+    expect(f.receipts.at(-1)).toMatchObject({ sandboxId: "sandbox-id-1" });
+    expect(f.receipts.at(-1)?.configPublished).toBeUndefined();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+  });
+
   it("retains resources and refuses retry after configuration fails without a timeout", async () => {
     const f = fixture({ configFailure: true });
     const input = { ...f.input, timeoutSeconds: undefined };
@@ -527,9 +555,9 @@ describe("blueprint run receipt recovery", () => {
       const observe = () => observeBlueprintCreatedInference(requested, receipt, f.deps);
       await expect(observe()).rejects.toThrow("require HTTPS");
       const config = { readConfig: vi.fn(), configTarget: vi.fn(), writeConfig: vi.fn() };
-      await expect(reconcileBlueprintNativeTimeout(requested, observe, config)).rejects.toThrow(
-        "require HTTPS",
-      );
+      await expect(
+        reconcileBlueprintNativeTimeout(requested, observe, vi.fn(), config),
+      ).rejects.toThrow("require HTTPS");
       expect(f.deps.adapter).not.toHaveBeenCalled();
       expect(f.deps.capture).not.toHaveBeenCalled();
       expect(f.deps.readHandle).not.toHaveBeenCalled();
@@ -813,13 +841,19 @@ function timeoutFixture() {
     })),
     writeConfig: vi.fn(),
   };
-  return { input, config, deps, observe: vi.fn(async () => "immutable-identity") };
+  return {
+    input,
+    config,
+    deps,
+    revalidate: vi.fn(),
+    observe: vi.fn(async () => "immutable-identity"),
+  };
 }
 
 describe("blueprint native timeout reuse", () => {
   it("updates only the selected provider request timeout under repeated authority checks", async () => {
     const f = timeoutFixture();
-    await reconcileBlueprintNativeTimeout(f.input, f.observe, f.deps);
+    await reconcileBlueprintNativeTimeout(f.input, f.observe, f.revalidate, f.deps);
     expect(f.deps.writeConfig).toHaveBeenCalledWith(
       "chosen-sandbox",
       [{ dotpath: "models.providers.inference.timeoutSeconds", value: 300 }],
@@ -840,6 +874,7 @@ describe("blueprint native timeout reuse", () => {
       await reconcileBlueprintNativeTimeout(
         { ...f.input, api, endpointUrl: requestedUrl },
         f.observe,
+        f.revalidate,
         f.deps,
       );
       expect(f.deps.writeConfig).toHaveBeenCalledTimes(1);
@@ -849,7 +884,12 @@ describe("blueprint native timeout reuse", () => {
 
   it("preserves an already matching timeout without writing config", async () => {
     const f = timeoutFixture();
-    await reconcileBlueprintNativeTimeout({ ...f.input, timeoutSeconds: 180 }, f.observe, f.deps);
+    await reconcileBlueprintNativeTimeout(
+      { ...f.input, timeoutSeconds: 180 },
+      f.observe,
+      f.revalidate,
+      f.deps,
+    );
     expect(f.deps.writeConfig).not.toHaveBeenCalled();
   });
   it.each([
@@ -860,16 +900,47 @@ describe("blueprint native timeout reuse", () => {
   ])("refuses mismatched selection before writes: %j", async (override) => {
     const f = timeoutFixture();
     await expect(
-      reconcileBlueprintNativeTimeout({ ...f.input, ...override }, f.observe, f.deps),
+      reconcileBlueprintNativeTimeout({ ...f.input, ...override }, f.observe, f.revalidate, f.deps),
     ).rejects.toThrow();
     expect(f.deps.writeConfig).not.toHaveBeenCalled();
   });
   it("refuses identity replacement between config read and write", async () => {
     const f = timeoutFixture();
     f.observe.mockResolvedValueOnce("original").mockResolvedValueOnce("replacement");
-    await expect(reconcileBlueprintNativeTimeout(f.input, f.observe, f.deps)).rejects.toThrow(
-      "before timeout update",
-    );
+    await expect(
+      reconcileBlueprintNativeTimeout(f.input, f.observe, f.revalidate, f.deps),
+    ).rejects.toThrow("before timeout update");
     expect(f.deps.writeConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses a timeout write when the sandbox changes as its observer returns", async () => {
+    const created = fixture();
+    const authority = await createBlueprintNativeInference(created.input, created.deps);
+    const receipt = created.receipts.at(-1)!;
+    const f = timeoutFixture();
+    let replaced = false;
+    const observe = vi
+      .fn(() => authority.observe())
+      .mockImplementationOnce(() => authority.observe())
+      .mockImplementationOnce(async () => {
+        const identity = await authority.observe();
+        queueMicrotask(() => {
+          created.replaceSandbox();
+          replaced = true;
+        });
+        return identity;
+      });
+    await expect(
+      reconcileBlueprintNativeTimeout(
+        f.input,
+        observe,
+        () => requireCreatedSandbox(receipt, created.deps),
+        f.deps,
+      ),
+    ).rejects.toThrow("identity changed");
+    expect(replaced).toBe(true);
+    expect(f.deps.writeConfig).not.toHaveBeenCalled();
+    expect(created.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(created.adapter.detachProvider).not.toHaveBeenCalled();
   });
 });

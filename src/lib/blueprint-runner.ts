@@ -57,9 +57,29 @@ export async function prepareBlueprintNativeInference(
   requested: Parameters<typeof observeBlueprintNativeInference>[0] &
     Readonly<{ timeoutSeconds: number }>,
 ): Promise<void> {
-  const { reconcileBlueprintNativeTimeout } = await import("./inference/native-provider/blueprint");
-  await reconcileBlueprintNativeTimeout(requested, () =>
-    observeBlueprintNativeInference(requested),
+  const { reconcileBlueprintNativeTimeout, findBlueprintNativeReceipt, requireCreatedSandbox } =
+    await import("./inference/native-provider/blueprint");
+  const { findSandboxAcrossGatewayRoots } = await import("./state/registry/cross-port");
+  const { createRegisteredSandboxIdentityRevalidation } =
+    await import("./onboard/sandbox-recreate-transaction");
+  const { observeSandboxOnGateway } = await import("./onboard/sandbox-recreate-probe");
+  const readRegistration = (sandboxName: string) =>
+    findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
+  const entry = readRegistration(requested.sandboxName);
+  const receipt = entry ? null : findBlueprintNativeReceipt(requested);
+  const revalidate = receipt
+    ? () => requireCreatedSandbox(receipt)
+    : createRegisteredSandboxIdentityRevalidation(entry, {
+        readRegistration,
+        observe: (sandboxName, gatewayName) =>
+          observeSandboxOnGateway({ sandboxName, gatewayName }, undefined, undefined, 15_000),
+      });
+  if (!revalidate)
+    throw new Error("Runtime identity apply requires recorded sandbox lifecycle authority.");
+  await reconcileBlueprintNativeTimeout(
+    requested,
+    () => observeBlueprintNativeInference(requested),
+    () => revalidate("update native inference timeout"),
   );
 }
 

@@ -593,13 +593,22 @@ vi.mock("../../adapters/openshell/provider-adapter-cli", () => ({
 }));
 vi.mock("../../state/registry/cross-port", () => ({ findSandboxAcrossGatewayRoots: vi.fn() }));
 vi.mock("../../onboard/sandbox-recreate-probe", () => ({ observeSandboxOnGateway: vi.fn() }));
+vi.mock("../../sandbox/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox/config")>()),
+  readSandboxConfig: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+  setOpenClawConfigValues: vi.fn(),
+}));
 
 const { nativeLocalIdentity } = await import("../../inference/native-local/contract");
 const { verifyRecordedNativeLocalProviderAttachment } =
   await import("../../inference/native-local/profile");
 const { findSandboxAcrossGatewayRoots } = await import("../../state/registry/cross-port");
 const { observeSandboxOnGateway } = await import("../../onboard/sandbox-recreate-probe");
-const { observeBlueprintNativeInference } = await import("../../blueprint-runner");
+const { observeBlueprintNativeInference, prepareBlueprintNativeInference } =
+  await import("../../blueprint-runner");
+const { readSandboxConfig, resolveAgentConfig, setOpenClawConfigValues } =
+  await import("../../sandbox/config");
 const localBinding = {
   provider: "compatible-endpoint",
   agent: "openclaw" as const,
@@ -650,7 +659,74 @@ describe("blueprint native inference authority", () => {
     vi.mocked(observeSandboxOnGateway)
       .mockReset()
       .mockReturnValue({ state: "ready", liveIdentityFingerprint: "identity-one" });
+    vi.mocked(resolveAgentConfig).mockReturnValue({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      configFile: "openclaw.json",
+      format: "json",
+    });
+    vi.mocked(readSandboxConfig).mockReturnValue({
+      agents: { defaults: { model: { primary: "inference/test-model" } } },
+      models: { providers: { inference: { api: "openai-completions", timeoutSeconds: 180 } } },
+    });
   });
+
+  it("updates the selected timeout while registered sandbox authority still matches", async () => {
+    await prepareBlueprintNativeInference({ ...nativeRequest, timeoutSeconds: 300 });
+    expect(setOpenClawConfigValues).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      [{ dotpath: "models.providers.inference.timeoutSeconds", value: 300 }],
+      "nemoclaw",
+    );
+  });
+
+  it.each([
+    {
+      name: "registration",
+      replace: () => {
+        vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+          entry: { ...nativeEntry, lifecycleGeneration: "replacement" },
+          registryFile: "/test-state/sandboxes.json",
+          gatewayPort: 8080,
+        } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+      },
+    },
+    {
+      name: "live sandbox",
+      replace: () => {
+        vi.mocked(observeSandboxOnGateway).mockReturnValue({
+          state: "ready",
+          liveIdentityFingerprint: "replacement",
+        });
+      },
+    },
+  ])(
+    "refuses a timeout write after $name replacement at the final observer return",
+    async ({ replace }) => {
+      let replaced = false;
+      const original = { state: "ready" as const, liveIdentityFingerprint: "identity-one" };
+      // Each observer checks live authority three times; replacement follows the second observer.
+      vi.mocked(observeSandboxOnGateway)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockImplementationOnce(() => {
+          queueMicrotask(() => {
+            replaced = true;
+            replace();
+          });
+          return original;
+        });
+      await expect(
+        prepareBlueprintNativeInference({ ...nativeRequest, timeoutSeconds: 300 }),
+      ).rejects.toThrow(/identity.*changed/);
+      expect(replaced).toBe(true);
+      expect(setOpenClawConfigValues).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     "http://localhost:8000/v1",

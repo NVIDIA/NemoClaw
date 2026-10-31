@@ -222,6 +222,11 @@ It repeats the identity checks around later operations.
 The runner marks native configuration publication complete only after the write succeeds and resource identities still match.
 An incomplete or invalid matching run receipt stops reuse even when another complete receipt exists.
 
+Immediately before writing native inference configuration or changing its timeout, the runner rechecks the recorded sandbox identity.
+If that check detects a replacement or cannot establish the identity, the runner stops before the write and preserves the resources and receipt for recovery.
+Retain the receipt and ask the gateway operator to compare it with the live sandbox before retrying.
+These checks do not lock the gateway against changes by another privileged client.
+
 A supplied inference credential requires an existing credential binding during reuse; apply does not rotate that credential.
 The optional `timeout_secs` value updates the selected OpenClaw provider's request timeout without changing the agent turn timeout.
 Fresh authenticated inference uses a sandbox-scoped OpenShell credential handle.
