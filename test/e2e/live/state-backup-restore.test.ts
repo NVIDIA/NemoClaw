@@ -9,6 +9,7 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test, type E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { STOPPED_CONTAINER_STARTUP_LOG_READER } from "../fixtures/stopped-container-startup-log.ts";
 import {
   OPENCLAW_RESTORE_HOST_PROGRAM,
   OPENCLAW_RESTORE_NATIVE_PROGRAM,
@@ -344,8 +345,9 @@ test(
         "-o",
         "pipefail",
         "-c",
-        '"$@" | tar -xOf - nemoclaw-start.log',
+        'reader="$1"; shift; "$@" | python3 -I -c "$reader"',
         "restore-refusal",
+        STOPPED_CONTAINER_STARTUP_LOG_READER,
         copy.command,
         ...copy.args,
       ],
@@ -353,12 +355,13 @@ test(
         artifactName: "state-backup-restore-refusal-startup-log",
         env,
         redactionValues: redactions,
-        captureLimitBytes: 32_768,
+        captureLimitBytes: 128 * 1024,
         timeoutMs: bounded(30_000),
       },
     );
     assertExitZero(startup, "read actual stopped entrypoint refusal evidence");
-    const refusal = await hostFixture("refusal", { startupLog: startup.stdout });
+    const { log: startupLog } = JSON.parse(startup.stdout) as { log: string };
+    const refusal = await hostFixture("refusal", { startupLog });
     await artifacts.writeJson("native-retired-state-refusal.json", refusal);
     await artifacts.target.complete({
       id: "state-backup-restore",
