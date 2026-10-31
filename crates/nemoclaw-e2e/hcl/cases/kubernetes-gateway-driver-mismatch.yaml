@@ -24,7 +24,7 @@ spec:
     assistant:
       image:
         metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
-        ref: fixture/agent@sha256:a690ee2d3d2cde60d5284186f8acf58881b3d84cf0efdeb470956aabd6fbe8bd
+        ref: fixture/agent@sha256:4db4c98eb8c6a9f923d7b13a4f1ab09ce33de218f53024f57f25a00148c1571c
       network:
         tier: isolated
       harness:

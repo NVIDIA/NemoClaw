@@ -8,8 +8,8 @@ ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=21ca8d3eb8b90667d74268d43cc9b424433c2e45
-ARG FABRIC_SHA256=cb6c909f2e1512af84a8ebf55f4dc35935feae23da9266ed6ece8715f3e39c5b
+ARG FABRIC_REVISION=e7913b6c473a15095a1b4c3583a127e558e0c124
+ARG FABRIC_SHA256=454edb1f7d9f34f0e6541a13c550cefe317c40ad5e291c67da76b29e667d8cf4
 # OpenClaw release 2026.9.34, the only version the pinned Fabric's OpenClaw
 # adapter supports; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
