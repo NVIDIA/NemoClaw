@@ -5,7 +5,7 @@ import type { OpenShellSandboxSessionOutcome } from "../../src/lib/adapters/open
 import childProcess from "node:child_process";
 import { createRequire } from "node:module";
 
-import { type MockInstance, vi } from "vitest";
+import { afterEach, beforeEach, type MockInstance, vi } from "vitest";
 import type { ManagedGatewayControlCompletion } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/hermes-secret-boundary-recovery";
 import type {
@@ -37,6 +37,47 @@ export const connectModulePath = "../../src/lib/actions/sandbox/connect.js";
 // still reloads the entry module after installing its dependency spies.
 requireDist(connectModulePath);
 delete require.cache[requireDist.resolve(connectModulePath)];
+
+/** Register the process setup and teardown that every connect-flow suite shares. */
+export function useConnectFlowProcessLifecycle(): { readonly exitSpy: MockInstance } {
+  const stdin = process.stdin as typeof process.stdin & {
+    setRawMode?: (mode: boolean) => unknown;
+  };
+  const originalStdinIsTty = stdin.isTTY;
+  const originalStdinSetRawMode = stdin.setRawMode;
+  const originalStdoutIsTty = process.stdout.isTTY;
+  let exitSpy: MockInstance;
+
+  beforeEach(() => {
+    process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: originalStdoutIsTty,
+    });
+    Object.defineProperty(stdin, "isTTY", { configurable: true, value: originalStdinIsTty });
+    Object.defineProperty(stdin, "setRawMode", {
+      configurable: true,
+      value: originalStdinSetRawMode,
+    });
+    delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+    delete require.cache[requireDist.resolve(connectModulePath)];
+  });
+
+  return {
+    get exitSpy() {
+      return exitSpy;
+    },
+  };
+}
 
 export type ConnectHarness = {
   assertHermesPortableOperatingCommandCurrentSpy: MockInstance;
