@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-analyze-pr-value-stream
 description: "Analyze one NemoClaw PR lifetime to identify contributor, review, and automation delays or compare it with a latency target."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
