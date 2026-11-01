@@ -210,6 +210,17 @@ describe("stable config export source observation (#10938)", () => {
     });
   });
 
+  it("omits provider-composed policy entries from the canonical policy (#13956)", () => {
+    const composed = policy.replace(
+      "network_policies:\n",
+      "network_policies:\n  _provider_alpha_mcp_deepwiki:\n    name: _provider_alpha_mcp_deepwiki\n",
+    );
+    expect(composed).not.toBe(policy);
+    expect(qualifiedPolicy(qualifyEffectivePolicy(observedPolicy(composed)))).toEqual(
+      qualifiedPolicy(qualifyEffectivePolicy(observedPolicy(policy))),
+    );
+  });
+
   it("rejects credential-bearing policy without exposing its value", () => {
     const canary = "credential-canary-value";
     const result = qualifyEffectivePolicy(

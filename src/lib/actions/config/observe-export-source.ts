@@ -22,6 +22,7 @@ import type {
 import { verifyExportSource } from "../../domain/config/verify-export-source";
 import {
   isSandboxPolicyCredentialFree,
+  parseAndValidateEffectiveSandboxPolicy,
   parseAndValidateSandboxPolicy,
 } from "../../policy/sandbox-policy-validation";
 
@@ -53,7 +54,9 @@ function canonicalizeEffectivePolicy(document: string): CanonicalExportPolicy {
   if (!isSandboxPolicyCredentialFree(document)) {
     throw new Error("Effective policy must be credential-free.");
   }
-  const parsed = parseAndValidateSandboxPolicy(document);
+  // Provider-composed `_provider_*` entries are derived from attached providers,
+  // not authored policy, so the export omits them (#13956).
+  const parsed = parseAndValidateEffectiveSandboxPolicy(document);
   const canonical = YAML.stringify(sortCanonicalMappings(parsed), {
     lineWidth: 0,
     sortMapEntries: true,

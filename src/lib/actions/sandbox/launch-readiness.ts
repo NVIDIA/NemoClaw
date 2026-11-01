@@ -30,7 +30,7 @@ import {
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
-import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
+import { parseAndValidateEffectiveSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
   checkLaunchReadinessMutationAuthority,
   classifyLaunchReadinessStoreFailure,
@@ -696,7 +696,7 @@ async function validateLivePolicy(
   });
   if (!result.ok) throw new LaunchReadinessPolicyObservationError(result.error);
   try {
-    parseAndValidateSandboxPolicy(result.value.document);
+    parseAndValidateEffectiveSandboxPolicy(result.value.document);
   } catch {
     throw new LaunchReadinessPolicyObservationError({
       kind: "schema",
