@@ -592,7 +592,7 @@ describe("npm audit handoff", () => {
       });
       expect(direct.status, direct.stderr).toBe(0);
       expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toBe(
-        `/scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high --report ${retainedReport} --result ${retainedResult}`,
+        `/scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high --reviewed-lock-config /scripts/reviewed-npm-audit.json --report ${retainedReport} --result ${retainedResult}`,
       );
 
       const seedEvidence = path.join(root, "seed", "reviewed-npm-audit");
