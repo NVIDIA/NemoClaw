@@ -425,6 +425,9 @@ Choose an unused sandbox name for onboarding.
 This creates another sandbox with its own agent configuration.
 Keep the existing sandbox until verification succeeds.
 Record its required inference settings, policy presets, MCP registrations, messaging channels, and scheduled tasks before you start.
+For scheduled tasks, preserve the complete job definitions, required options, owning profiles, and original enabled states.
+Status listings can omit task content.
+If a required definition is unavailable, recover it through its native owner before changing the old sandbox.
 Export the bundle's host path before onboarding:
 
 ```bash
@@ -435,12 +438,73 @@ $$nemoclaw onboard --name <new-sandbox>
 Recreate the required settings through supported configuration commands.
 Keep messaging channels and scheduled tasks inactive on the new sandbox while the old sandbox still runs them.
 Before copying mutable state, pause the work that writes it.
+NemoClaw has no generic scheduler controls or scheduled-task migration command.
+Use the applicable native controls to stop future dispatch:
+
+<AgentOnly variant="openclaw">
+From the host, list all jobs and disable each enabled job that you intend to move:
+
+```bash
+$$nemoclaw <old-sandbox> exec -- openclaw cron list --all --json
+$$nemoclaw <old-sandbox> exec -- openclaw cron disable <old-job-id>
+$$nemoclaw <old-sandbox> exec -- openclaw cron list --all --json
+$$nemoclaw <old-sandbox> exec -- openclaw cron runs <old-job-id>
+```
+
+Confirm that each selected job has `enabled: false` and is no longer `running`.
+At cutover, use `$$nemoclaw <new-sandbox> exec -- openclaw cron enable <new-job-id>` to enable a recreated job.
+Use `cron list --all --json` through the same `exec` command to verify the new job's state.
+</AgentOnly>
+<AgentOnly variant="hermes">
+From the host, list all jobs and pause each enabled job that you intend to move:
+
+```bash
+$$nemoclaw <old-sandbox> exec -- hermes --profile default cron list --all
+$$nemoclaw <old-sandbox> exec -- hermes --profile default cron pause <old-job-id>
+$$nemoclaw <old-sandbox> exec -- hermes --profile default cron list --all
+$$nemoclaw <old-sandbox> exec -- hermes --profile default cron runs <old-job-id>
+```
+
+Repeat for every named profile that owns scheduled work, replacing `default` with its profile name.
+Confirm that each selected job is marked `[paused]` or `[disabled]`.
+At cutover, use `$$nemoclaw <new-sandbox> exec -- hermes --profile <profile> cron resume <new-job-id>` to resume a recreated job.
+Use `cron list --all` through the same profile's `exec` command to verify the new job's state.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+NemoClaw provides no managed scheduler controls for Deep Agents Code.
+Use the native interface of any scheduler you configured for `dcode` runs.
+</AgentOnly>
+
+For externally scheduled work on any agent, disable dispatch through the owning service's native interface.
+Do not treat a successful pause or disable command as proof that in-flight work has finished.
+Inspect the owning scheduler's run history and the old sandbox's application state.
+Wait for active work to finish before copying mutable state.
+If a control fails or you cannot confirm that dispatch and active work have stopped, stop the transfer and cutover.
+Keep the old sandbox and resolve the condition through the job's owning interface.
 Use [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) to copy required workspace files and agent state, following its per-agent exclusions.
+Include the reviewed scripts, skills, and working directories required by the recorded jobs.
+Review those files and the recorded job definitions for credentials before transfer.
+Do not copy the live cron store.
 Do not copy credential stores, machine-local identities, or the old agent configuration wholesale.
 Provision credentials through supported provider bindings.
 
-If the old sandbox has managed MCP servers, [add each required MCP server](../manage-sandboxes/mcp-servers/add-an-mcp-server) to the new sandbox.
+<AgentOnly variant="openclaw">
+After the required files are present, recreate each job with `$$nemoclaw <new-sandbox> exec -- openclaw cron add --disabled` and its recorded options.
+List all replacement jobs and confirm `enabled: false` before continuing.
+</AgentOnly>
+<AgentOnly variant="hermes">
+After the required files are present, recreate each job with `$$nemoclaw <new-sandbox> exec -- hermes --profile <profile> cron create --paused` and its recorded options.
+Use the corresponding profile for each job.
+List all replacement jobs in every profile and confirm `[paused]` or `[disabled]` before continuing.
+</AgentOnly>
+
+If the old sandbox has managed MCP servers, retrieve each required credential from an approved secret manager or masked prompt.
+In the host shell, export its value under the original credential environment-variable name immediately before `mcp add`.
+Then [add the MCP server](../manage-sandboxes/mcp-servers/add-an-mcp-server) to the new sandbox.
 Use the original URL, credential environment-variable name, denied-tool selectors, and trusted-private declaration.
+Unset the host variable after the command, including when the command fails.
+Unsetting it clears that shell's value; OpenShell retains the credential in its provider store for the registered server.
+Repeat for each required server without placing credential values in shell history or copied configuration.
 For each server, verify credential resolution and tool discovery:
 
 ```bash
@@ -458,7 +522,10 @@ Follow [Pause and Resume a Channel](../manage-sandboxes/messaging-channels/manag
 Stopping the sandbox alone does not clear enabled channels from the messaging plan's conflict checks.
 </AgentOnly>
 
-Use the scheduler's pause and resume controls for scheduled tasks.
+Before enabling replacement jobs, reconcile missed runs and expired one-shot jobs through the native scheduler.
+Enable only the jobs recorded as enabled before the move, using the native controls above in the new sandbox.
+Confirm their enabled state and verify their intended execution while the old jobs remain inactive.
+For external schedules, verify the new target before re-enabling dispatch through the owning service.
 Enable the new sandbox's required integrations and verify their normal workflows.
 Verify the transferred files and any other required integrations before retiring the old sandbox.
 Keep HTTPS and certificate validation enabled.
@@ -478,6 +545,10 @@ $$nemoclaw list
 If verification fails, inspect the reported endpoint or policy condition before retrying.
 Keep the old sandbox as the rollback target.
 Pause any messaging or scheduled work started on the new sandbox before resuming it on the old sandbox.
+Run the same native pause or disable commands against the new sandbox with its job IDs, and wait for replacement work to finish.
+Confirm that replacement dispatch is inactive before resuming only the previously enabled jobs on the old sandbox.
+Run the native enable or resume commands against the old sandbox with its original job IDs, and verify their state.
+For external schedules, restore the old target while dispatch remains disabled, then re-enable it.
 If you abandon the replacement, recover any files you need from it, then destroy only the new sandbox:
 
 ```bash
