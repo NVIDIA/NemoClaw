@@ -11,7 +11,7 @@ export default class InferenceCommand extends NemoClawCommand {
   static usage = ["inference <get|set>"];
   static examples = [
     "<%= config.bin %> inference get",
-    "<%= config.bin %> inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b",
+    "<%= config.bin %> inference set --provider nvidia-prod --model nvidia/nemotron-3.5-super-vl-120b-a12b",
   ];
   static flags = {};
 
