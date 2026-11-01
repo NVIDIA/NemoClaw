@@ -22,6 +22,7 @@ import {
 } from "../registry-messaging";
 import {
   normalizeSandboxPolicyAttribution,
+  parseSandboxExternalComponentSelection,
   parseSandboxRegistryEntries,
   retainedDefaultSandbox,
 } from "../registry-normalization";
@@ -245,6 +246,13 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  const externalComponentSelection =
+    entry.externalComponentSelection === undefined
+      ? undefined
+      : parseSandboxExternalComponentSelection(entry.externalComponentSelection);
+  if (externalComponentSelection === null) {
+    throw new Error("Cannot load a sandbox entry with invalid external component selection");
+  }
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -270,6 +278,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
+    externalComponentSelection: _externalComponentSelection,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     nativeLocalProviderAttachment: _nativeLocalProviderAttachment,
     nativeHostedProviderAttachment: hostedAttachment,
@@ -293,6 +302,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
+    ...(externalComponentSelection ? { externalComponentSelection } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
     ...(messaging ? { messaging } : {}),
   };
@@ -305,6 +315,13 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
  * sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  const externalComponentSelection =
+    entry.externalComponentSelection === undefined
+      ? undefined
+      : parseSandboxExternalComponentSelection(entry.externalComponentSelection);
+  if (externalComponentSelection === null) {
+    throw new Error("Cannot save a sandbox entry with invalid external component selection");
+  }
   // Defensively drop non-durable recovery markers and legacy
   // providerCredentialHashes so they can never reach sandboxes.json even if a
   // caller force-passed them through updateSandbox().
@@ -312,6 +329,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     recoveredFromGateway: _recovered,
     livePhase: _phase,
     providerCredentialHashes: _legacyProviderCredentialHashes,
+    externalComponentSelection: _externalComponentSelection,
     ...durable
   } = entry as SandboxEntry & {
     recoveredFromGateway?: boolean;
@@ -368,6 +386,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
+    ...(externalComponentSelection ? { externalComponentSelection } : {}),
     ...(messaging ? { messaging } : {}),
   };
 }
