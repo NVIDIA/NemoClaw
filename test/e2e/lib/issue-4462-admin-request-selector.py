@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -142,7 +143,29 @@ helper_path = Path(
 spec = importlib.util.spec_from_file_location("nemoclaw_admin_pairing_state", helper_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-records, _metadata = module.read_openclaw_pairing_state(str(state_root), timeout=1)
+# Retry only read-only snapshots, never approval or the identity/scope checks.
+# Each attempt retains the canonical reader's descriptor and WAL validation.
+# Three attempts share the original one-second read budget; emit no state data.
+snapshot_deadline = time.monotonic() + 1
+for snapshot_attempt in range(3):
+    snapshot_remaining = snapshot_deadline - time.monotonic()
+    if snapshot_remaining <= 0:
+        raise module.OpenClawPairingStateRetryableError(
+            "canonical pairing-state snapshot read budget exhausted"
+        )
+    try:
+        records, _metadata = module.read_openclaw_pairing_state(
+            str(state_root), timeout=snapshot_remaining
+        )
+        break
+    except module.OpenClawPairingStateRetryableError:
+        snapshot_remaining = snapshot_deadline - time.monotonic()
+        if snapshot_attempt == 2 or snapshot_remaining <= 0:
+            raise
+        # stderr is private selector diagnostics; stdout survives successful
+        # selection in the enclosing shell's artifact transcript.
+        print(f"ADMIN_SNAPSHOT_RETRY={snapshot_attempt + 1}")
+        time.sleep(min(0.025, snapshot_remaining))
 identity = records.get("identity")
 if not isinstance(identity, dict):
     raise SystemExit("local CLI identity must be an object")
