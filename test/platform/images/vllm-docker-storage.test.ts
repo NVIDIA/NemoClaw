@@ -76,7 +76,7 @@ realDockerTest(
       await expect
         .poll(
           () =>
-            dockerCapture(["logs", "--tail", "1", containerName], {
+            dockerCapture(["logs", "--tail", "80", containerName], {
               env,
               includeStderr: true,
               timeout: 5_000,
