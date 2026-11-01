@@ -837,16 +837,6 @@ ARG OPENCLAW_2026_9_2_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-202
 ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY=sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==
 ARG OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY=sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==
 ARG OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY=sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==
-# E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
-# intentionally build an older OpenClaw base image before proving upgrade
-# behavior. Production workflows reject the fixture flag, both legacy version
-# values, and these four pin overrides before docker build. Only explicit
-# fixture paths may select them; retirement is tracked in #5896 section 9.
-ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
-ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
-ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
-ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==
-ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
 # Keep the mcporter version, integrity, runtime lock, license, and advisory baseline
 # synchronized with agents/openclaw/dependency-review.md.
 ARG MCPORTER_VERSION=0.7.3
@@ -928,36 +918,23 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
-        || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)" >&2; exit 1; }; \
+        || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.9.2)" >&2; exit 1; }; \
     MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$MIN_VER" ] || { echo "ERROR: Could not parse min_openclaw_version from blueprint.yaml" >&2; exit 1; }; \
     if [ "$(printf '%s\n%s' "$MIN_VER" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$MIN_VER" ]; then \
         echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
     fi; \
-    if [ "$OPENCLAW_VERSION" = "2026.3.11" ] || [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then \
-        if [ "$NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW" != "1" ]; then \
-            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} is a legacy E2E fixture pin; set NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1 for stale-upgrade fixture builds" >&2; exit 1; \
-        fi; \
-    fi; \
     EXPECTED_INTEGRITY=""; \
     EXPECTED_TARBALL=""; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_9_2_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_9_2_TARBALL"; fi; \
-    if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_3_11_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_3_11_TARBALL"; fi; \
-    if [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_4_24_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_4_24_TARBALL"; fi; \
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi; \
-    OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
-    OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
-    if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
-        ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
-        [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
-            || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
-        OPENCLAW_RECIPE='locked-ci+reviewed-lifecycle-v2'; \
-    elif [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
-        OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
-    fi; \
+    OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
+    ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
+    [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
+        || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
+    OPENCLAW_RECIPE='locked-ci+reviewed-lifecycle-v2'; \
     MCPORTER_EXPECTED_INTEGRITY=""; \
     MCPORTER_EXPECTED_TARBALL=""; \
     if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi; \
@@ -1034,49 +1011,25 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
         # install spans image layers. Removing it first also prevents unreviewed
         # files from surviving a same-version reinstall.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-        if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-            node /scripts/lib/reviewed-npm-archive.mts --verify-lock \
-                --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
-                --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
-                --registry-origin https://registry.npmjs.org/ \
-                --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
-                --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}"; \
-            npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
-                --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
-                --userconfig /dev/null --registry https://registry.npmjs.org/; \
-            node /scripts/lib/reviewed-npm-archive.mts \
-                --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
-                --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
-                --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
-                --label "OpenClaw ${OPENCLAW_VERSION}"; \
-            node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs; \
-            mkdir -p /usr/local/lib/node_modules; \
-            ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \
-            ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw /usr/local/bin/openclaw; \
-        else \
-            OPENCLAW_SOURCE_PACK_PATH="$(node /scripts/lib/reviewed-npm-archive.mts \
-                --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
-                --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
-            OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
-            OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
-            if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
-                OPENCLAW_REMEDIATION_JSON="$(node /scripts/lib/openclaw-npm-remediation.mts \
-                    --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
-                    --working-directory "$OPENCLAW_PACK_DIR")"; \
-                OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
-            fi; \
-            npm install -g --no-audit --no-fund --no-progress --ignore-scripts --allow-git=root "$OPENCLAW_PACK_PATH"; \
-            case "$OPENCLAW_VERSION" in \
-                2026.4.24) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
-                2026.3.11) ;; \
-                *) echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy" >&2; exit 1 ;; \
-            esac; \
-            rm -rf "$OPENCLAW_PACK_DIR"; \
-        fi; \
+        node /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+            --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
+            --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
+            --registry-origin https://registry.npmjs.org/ \
+            --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
+            --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}"; \
+        npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci \
+            --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
+            --userconfig /dev/null --registry https://registry.npmjs.org/; \
+        node /scripts/lib/reviewed-npm-archive.mts \
+            --verify-installed-lock --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
+            --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
+            --install-root /usr/local/lib/nemoclaw/openclaw-runtime \
+            --label "OpenClaw ${OPENCLAW_VERSION}"; \
+        node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs; \
+        mkdir -p /usr/local/lib/node_modules; \
+        ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw /usr/local/lib/node_modules/openclaw; \
+        ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw /usr/local/bin/openclaw; \
     fi; \
-    case "$OPENCLAW_VERSION" in \
-        2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
-    esac; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
         echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with matching lock provenance"; \
     else \

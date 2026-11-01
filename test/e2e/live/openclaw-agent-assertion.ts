@@ -3,6 +3,10 @@
 
 import { existsSync } from "node:fs";
 
+import {
+  openClawFinalAgentResponse,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { createTempSshConfig } from "../../../src/lib/sandbox/temp-ssh-config.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -15,12 +19,15 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
+  isUnavailableSearchReply,
   projectOpenClawAgentFailureArtifact,
+  parseOpenClawToolEvidence,
   projectPersonalPublicFetchToolEvidenceArtifact,
   runOpenClawAgentAssertionRetry,
   text,
   type OpenClawPublicFetchExpectation,
   type OpenClawToolEvidence,
+  type OpenClawToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
 
@@ -36,13 +43,23 @@ export interface OpenClawAgentAssertionEvidence {
 export interface OpenClawAgentAssertionOptions {
   apiKey: string;
   expected: string;
+  finalReplyContract?: "unavailable-search";
   label: string;
   prompt: string;
   persistCommandArtifacts?: boolean;
   publicFetchExpectation?: OpenClawPublicFetchExpectation;
   redactOutputInFailure?: boolean;
+  /** Receives payload and final visible text, including failed attempts. */
+  recordReplyEvidence?: (
+    reply: string,
+    attempt: number,
+    finalVisibleReply: string,
+  ) => Promise<void>;
   sandboxName: string;
-  toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
+  toolEvidence?: {
+    validate: (evidence: OpenClawToolEvidence) => boolean;
+    project: (evidence: OpenClawToolEvidence) => OpenClawToolEvidenceArtifact;
+  };
 }
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -62,9 +79,6 @@ export async function runOpenClawAgentAssertion(
   artifacts: ArtifactSink,
   args: OpenClawAgentAssertionOptions,
 ): Promise<OpenClawAgentAssertionEvidence> {
-  if (args.toolEvidenceValidator && !args.publicFetchExpectation) {
-    throw new Error(`${args.label}: tool evidence validation requires a public fetch expectation`);
-  }
   const sshConfig = await sandbox.openshell(["sandbox", "ssh-config", args.sandboxName], {
     artifactName: `ssh-config-${args.label}`,
     env: commandEnv(),
@@ -116,18 +130,42 @@ export async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
+      const final = openClawFinalAgentResponse(parseOpenClawJsonDocuments(agent.stdout));
+      const visible = final?.meta.finalAssistantVisibleText;
+      const finalVisibleReply = typeof visible === "string" ? visible : "";
+      await args.recordReplyEvidence?.(reply, attempt, finalVisibleReply);
       lastFailure = args.redactOutputInFailure
         ? `agent output omitted; exit=${agent.exitCode}`
         : `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
             0,
             240,
           )}' stderr='${agent.stderr.slice(0, 240)}'`;
-      const classification = classifyOpenClawAgentAssertion({
+      let classification = classifyOpenClawAgentAssertion({
         exitCode: agent.exitCode,
         expected: args.expected,
         reply,
         response: combined,
       });
+      if (
+        classification.passed &&
+        args.finalReplyContract === "unavailable-search" &&
+        !isUnavailableSearchReply(finalVisibleReply)
+      ) {
+        classification = { passed: false, failureClass: "deterministic" };
+        lastFailure = "final visible reply does not satisfy unavailable-search contract";
+      }
+      const reduceToolEvidence = () =>
+        sandbox.exec(
+          args.sandboxName,
+          [
+            "node",
+            "-e",
+            buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
+            OPENCLAW_MAIN_AGENT_DATABASE,
+            sessionId,
+          ],
+          { env: commandEnv(), persistArtifacts: false, timeoutMs: 30_000 },
+        );
       const recordAttemptEvidence = async (path: string, evidence: unknown): Promise<void> => {
         const write = artifacts.writeJson(path, evidence);
         // Required success evidence retains its original write failure.
@@ -139,6 +177,38 @@ export async function runOpenClawAgentAssertion(
           `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
           projectOpenClawAgentFailureArtifact(attempt, classification, agent),
         );
+        if (args.toolEvidence) {
+          // A timed-out command may have persisted progress without returning JSON.
+          // Keep the read-only projection diagnostic; it cannot accept the failed turn.
+          let diagnostic: {
+            schemaVersion: 1;
+            state: string;
+            toolEvidence?: OpenClawToolEvidenceArtifact;
+          } = { schemaVersion: 1, state: "command-failed" };
+          try {
+            const reduced = await reduceToolEvidence();
+            if (reduced.exitCode === 0) {
+              diagnostic.state = "output-invalid";
+              try {
+                diagnostic = {
+                  schemaVersion: 1,
+                  state: "collected",
+                  toolEvidence: args.toolEvidence.project(
+                    parseOpenClawToolEvidence(reduced.stdout),
+                  ),
+                };
+              } catch {
+                // Parser errors can contain private session data.
+              }
+            }
+          } catch {
+            diagnostic.state = "command-threw";
+          }
+          await recordAttemptEvidence(
+            `actions/${args.label}-attempt-${attempt}-failed-turn-trajectory.json`,
+            diagnostic,
+          );
+        }
       }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
@@ -153,27 +223,15 @@ export async function runOpenClawAgentAssertion(
         recordToolEvidence: async (toolEvidence) => {
           await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
-            projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence),
+            (args.toolEvidence?.project ?? projectPersonalPublicFetchToolEvidenceArtifact)(
+              toolEvidence,
+            ),
           );
         },
-        reduceToolEvidence: async () =>
-          sandbox.exec(
-            args.sandboxName,
-            [
-              "node",
-              "-e",
-              buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
-              OPENCLAW_MAIN_AGENT_DATABASE,
-              sessionId,
-            ],
-            {
-              env: commandEnv(),
-              persistArtifacts: false,
-              timeoutMs: 30_000,
-            },
-          ),
+        reduceToolEvidence,
         reply,
-        toolEvidenceValidator: args.toolEvidenceValidator,
+        toolEvidenceValidator: args.toolEvidence?.validate,
+        toolEvidenceProjector: args.toolEvidence?.project,
       });
       lastFailure = validation.failure ?? lastFailure;
       successfulEvidence = validation.evidence ?? successfulEvidence;

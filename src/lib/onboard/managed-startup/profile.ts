@@ -818,17 +818,9 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
       reason: "integrity-pin",
     },
     {
-      input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW",
-      reason: "release-composition",
-    },
-    {
       input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
       reason: "release-composition",
     },
-    { input: "OPENCLAW_2026_3_11_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_2026_3_11_TARBALL", reason: "release-composition" },
-    { input: "OPENCLAW_2026_4_24_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_2026_4_24_TARBALL", reason: "release-composition" },
     { input: "CODEX_ACP_0_11_1_INTEGRITY", reason: "integrity-pin" },
     {
       input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",

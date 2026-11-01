@@ -773,42 +773,80 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     testTimeout(20_000),
   );
 
-  it("loads the real build applier from the Hermes image module boundary", () => {
-    const dockerfile = fs.readFileSync(
-      path.join(REPO_ROOT, "agents", "hermes", "Dockerfile"),
-      "utf8",
-    );
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-applier-boundary-"));
-    const messagingRoot = path.join(root, "src", "lib", "messaging");
+  it.each([
+    {
+      dockerfile: "agents/hermes/Dockerfile",
+      entry: "src/lib/messaging/applier/build/messaging-build-applier.mts",
+      exportName: "applyMessagingBuildPhase",
+    },
+    {
+      dockerfile: "Dockerfile",
+      entry: "src/lib/messaging/applier/build/messaging-build-applier.mts",
+      exportName: "applyMessagingBuildPhase",
+    },
+    {
+      dockerfile: "Dockerfile",
+      entry: "scripts/lib/reviewed-npm-audit.mts",
+      exportName: "parseAuditExceptionRegistry",
+    },
+    {
+      dockerfile: "Dockerfile.base",
+      entry: "scripts/lib/reviewed-npm-audit.mts",
+      exportName: "parseAuditExceptionRegistry",
+    },
+  ])("loads $entry from $dockerfile build inputs", ({ dockerfile, entry, exportName }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-image-modules-"));
     try {
-      [
-        ...dockerfile.matchAll(
-          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:bundled-npm-package|openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
-        ),
-      ].forEach((copy) => {
-        const source = copy[1] ?? "";
-        const destination = copy[2] ?? "";
-        const sourcePath = path.join(REPO_ROOT, source);
-        const destinationPath = path.join(root, destination.replace(/^\//, ""));
-        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-        fs.cpSync(sourcePath, destinationPath, { recursive: true });
+      // Stage the repository COPY inputs used by these build entrypoints. Loading
+      // the real module graph catches missing transitive helpers before a build.
+      const source = fs.readFileSync(path.join(REPO_ROOT, dockerfile), "utf8");
+      const finalStage = source.split(/^FROM /mu).at(-1)!;
+      const systemStage =
+        source.split(` AS ${finalStage.split("\n")[0]}\n`)[1]?.split(/^FROM /mu)[0] ?? "";
+      const inheritedPayload = [
+        ...`${systemStage}\n${finalStage}`.matchAll(/^COPY --from=(\S+) \/ \/$/gmu),
+      ]
+        .map(([, stage]) => source.split(` AS ${stage}\n`)[1]?.split(/^FROM /mu)[0] ?? "")
+        .join("\n");
+      const copies = `${inheritedPayload}\n${finalStage}`
+        .replace(/\\\n/gu, " ")
+        .matchAll(/^COPY (.+) (\/scripts\/lib\/\S*|\/src\/lib\/messaging\/)$/gmu);
+      [...copies].forEach(([, sources, destination]) => {
+        const args = sources!.trim().split(/\s+/u);
+        expect(
+          args.some((arg) => arg.startsWith("--")),
+          "Unsupported COPY option",
+        ).toBe(false);
+        args.forEach((source) => {
+          const sourcePath = path.join(REPO_ROOT, source);
+          const target = path.join(
+            root,
+            destination!,
+            destination!.endsWith("/") && fs.statSync(sourcePath).isFile()
+              ? path.basename(source)
+              : "",
+          );
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.cpSync(sourcePath, target, { recursive: true });
+        });
       });
-      const stagedApplier = path.join(
-        messagingRoot,
-        "applier",
-        "build",
-        "messaging-build-applier.mts",
-      );
       const result = spawnSync(
         process.execPath,
         [
           "--input-type=module",
-          "--eval",
-          `await import(${JSON.stringify(pathToFileURL(stagedApplier).href)})`,
+          "-e",
+          `
+        const module = await import(process.argv[1]);
+        if (typeof module[process.argv[2]] !== "function") throw new Error("Missing build entrypoint export");
+        process.stdout.write("build module loaded\\n");
+      `,
+          pathToFileURL(path.join(root, entry)).href,
+          exportName,
         ],
-        { encoding: "utf8", timeout: 10_000 },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("build module loaded\n");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
