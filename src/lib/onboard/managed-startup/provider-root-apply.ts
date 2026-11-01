@@ -33,12 +33,15 @@ const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const ROOT_APPLY_TIMEOUT_MS = 300_000;
 // The managed-startup handoff owns this read-only wait because OpenShell can
 // publish its verified sandbox identity just before the engine exposes the
-// matching container row. Retry only the exact missing-container signal. An
-// ambiguous, stopped, or changed identity still fails immediately, and the
-// terminal error records the actual observation count and elapsed time.
-const CREATED_CONTAINER_DISCOVERY_ATTEMPTS = 21;
-const CREATED_CONTAINER_DISCOVERY_BUDGET_MS = 5_000;
+// matching container row. A loaded engine can expose that row well after the
+// create call returns, so the deadline tolerates slow convergence and the
+// capped backoff limits observations. Retry only the exact missing-container
+// signal. An ambiguous, stopped, or changed identity still fails immediately,
+// and the terminal error records the actual observation count and elapsed time.
+const CREATED_CONTAINER_DISCOVERY_ATTEMPTS = 40;
+const CREATED_CONTAINER_DISCOVERY_BUDGET_MS = 60_000;
 const CREATED_CONTAINER_DISCOVERY_INTERVAL_MS = 250;
+const CREATED_CONTAINER_DISCOVERY_MAX_INTERVAL_MS = 2_000;
 const MANAGED_STARTUP_HOLD_RELEASE_ATTEMPTS = 3;
 const FIXED_ROOT_ENV = [
   "HOME=/root",
@@ -139,7 +142,7 @@ function resolveCreatedContainerTarget(
       deadlineMs,
       initialIntervalMs: CREATED_CONTAINER_DISCOVERY_INTERVAL_MS,
       maxAttempts: CREATED_CONTAINER_DISCOVERY_ATTEMPTS,
-      maxIntervalMs: CREATED_CONTAINER_DISCOVERY_INTERVAL_MS,
+      maxIntervalMs: CREATED_CONTAINER_DISCOVERY_MAX_INTERVAL_MS,
       now,
       ...(timing.sleep ? { sleep: timing.sleep } : {}),
     },
