@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { createLinuxArm64DownloadFixture } from "../support/openshell-arm64-download";
+
 import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json";
 import {
   BREW_OUTCOMES,
@@ -827,102 +829,8 @@ exit 1`,
   });
 
   it("bounds stalled Linux arm64 release downloads and verifies every asset (#11281)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
+    const { tmp, fakeBin, downloadLog, checksumLog } = createLinuxArm64DownloadFixture();
     try {
-      const fakeBin = path.join(tmp, "bin");
-      const downloadLog = path.join(tmp, "downloads.log");
-      const checksumLog = path.join(tmp, "checksums.log");
-      fs.mkdirSync(fakeBin);
-
-      writeExecutable(
-        path.join(fakeBin, "uname"),
-        `#!/usr/bin/env bash
-if [ "\${1:-}" = "-m" ]; then echo "aarch64"; else echo "Linux"; fi`,
-      );
-      writeExecutable(
-        path.join(fakeBin, "openshell"),
-        `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
-exit 99`,
-      );
-      writeExecutable(path.join(fakeBin, "gh"), "#!/usr/bin/env bash\nexit 1\n");
-      writeExecutable(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
-echo "$@" >> ${JSON.stringify(downloadLog)}
-out=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then shift; out="$1"; fi
-  shift || true
-done
-case "$(basename "$out")" in
-openshell-checksums-sha256.txt)
-  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' > "$out" ;;
-openshell-gateway-checksums-sha256.txt)
-  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
-openshell-sandbox-checksums-sha256.txt)
-  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz' > "$out" ;;
-*) : > "$out" ;;
-esac
-exit 0`,
-      );
-      writeExecutable(
-        path.join(fakeBin, "sha256sum"),
-        `#!/usr/bin/env bash
-[ "$#" -eq 2 ] && [ "$1" = "-c" ] && [ "$2" = "-" ] || exit 9
-line="$(cat)"
-case "$line" in
-'${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz'|\
-'${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz'|\
-'${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz') ;;
-*) exit 10 ;;
-esac
-printf '%s\n' "$line" >> ${JSON.stringify(checksumLog)}
-printf '%s\n' 'checksum OK'`,
-      );
-      writeExecutable(
-        path.join(fakeBin, "tar"),
-        `#!/usr/bin/env bash
-case "$*" in
-*openshell-gateway*) name="openshell-gateway" ;;
-*openshell-sandbox*) name="openshell-sandbox" ;;
-*) name="openshell" ;;
-esac
-case "\${1:-}" in
--tzf) printf '%s\\n' "$name"; exit 0 ;;
--tvzf) printf '%s\\n' "-rwxr-xr-x 0/0 1 2026-01-01 00:00 $name"; exit 0 ;;
-esac
-outdir=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "-C" ]; then outdir="$arg"; break; fi
-  prev="$arg"
-done
-printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
-chmod 755 "$outdir/$name"`,
-      );
-      writeExecutable(
-        path.join(fakeBin, "install"),
-        `#!/usr/bin/env bash
-dest="\${@: -1}"
-mkdir -p "$(dirname "$dest")"
-case "$(basename "$dest")" in
-openshell)
-  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; else exit 0; fi\n# ${OPENSHELL_FEATURE_MARKERS}\n' > "$dest"
-  ;;
-openshell-sandbox)
-  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell-sandbox ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\n# ${OPENSHELL_MCP_FEATURE_MARKER}\nexit 0\n' > "$dest"
-  ;;
-openshell-gateway)
-  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell-gateway ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\nexit 0\n' > "$dest"
-  ;;
-*)
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$dest"
-  ;;
-esac
-chmod 755 "$dest"`,
-      );
-
       const result = spawnSync("bash", [SCRIPT], {
         env: {
           ...process.env,
@@ -958,6 +866,193 @@ chmod 755 "$dest"`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("creates owner-safe user-local directories in a direct install under umask 0002 (#12496)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    try {
+      fs.rmSync(path.join(fakeBin, "openshell"));
+      const bashEnv = path.join(tmp, "force-user-local-install.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then
+    return 1
+  fi
+  builtin [ "$@"
+}
+`,
+      );
+      const previousUmask = process.umask(0o002);
+      let directInstall;
+      try {
+        directInstall = spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            BASH_ENV: bashEnv,
+            HOME: tmp,
+            XDG_BIN_HOME: "",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            NEMOCLAW_TEST_USER_LOCAL_ONLY: "1",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+      expect(directInstall.status, `${directInstall.stdout}\n${directInstall.stderr}`).toBe(0);
+      expect({
+        local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
+        bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
+      }).toEqual({ local: 0o755, bin: 0o755 });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+  it("falls back from a writable unsafe system default in interactive mode (#12496)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    try {
+      fs.rmSync(path.join(fakeBin, "openshell"));
+      const localBin = path.join(tmp, ".local", "bin");
+      const bashEnv = path.join(tmp, "unsafe-system-target.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then return 0; fi
+  if [[ "$#" -eq 4 && "$1" = "!" && "$2" = "-t" && "$3" = "0" && "$4" = "]" ]]; then return 1; fi
+  builtin [ "$@"
+}
+function stat {
+  if [[ " $* " == *" /usr/local/bin "* ]]; then printf "0 775\\n"; return 0; fi
+  command stat "$@"
+}
+`,
+      );
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          BASH_ENV: bashEnv,
+          HOME: tmp,
+          XDG_BIN_HOME: "",
+          NEMOCLAW_NON_INTERACTIVE: "",
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(localBin, "openshell"))).toBe(true);
+      expect(fs.existsSync(path.join(localBin, "openshell-gateway"))).toBe(true);
+      expect(fs.statSync(localBin).mode & 0o777).toBe(0o755);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+  it("rejects an unsafe system directory before invoking sudo (#12496)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    try {
+      fs.rmSync(path.join(fakeBin, "openshell"));
+      const sudoLog = path.join(tmp, "sudo.log");
+      writeExecutable(
+        path.join(fakeBin, "sudo"),
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NEMOCLAW_TEST_SUDO_LOG"\nexit 99\n',
+      );
+      const bashEnv = path.join(tmp, "unsafe-privileged-system-target.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then return 1; fi
+  if [[ "$#" -eq 4 && "$1" = "!" && "$2" = "-t" && "$3" = "0" && "$4" = "]" ]]; then return 1; fi
+  builtin [ "$@"
+}
+function stat {
+  if [[ " $* " == *" /usr/local/bin "* ]]; then printf "0 775\\n"; return 0; fi
+  command stat "$@"
+}
+`,
+      );
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          BASH_ENV: bashEnv,
+          HOME: tmp,
+          NEMOCLAW_NON_INTERACTIVE: "",
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          NEMOCLAW_TEST_SUDO_LOG: sudoLog,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain("Unsafe executable directory /usr/local/bin");
+      expect(fs.existsSync(sudoLog)).toBe(false);
+      expect(fs.existsSync(path.join(tmp, ".local", "bin", "openshell"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+  it.each(["writable ancestor", "symlinked bin"])(
+    "rejects a %s before publishing a direct user-local binary (#12496)",
+    (unsafePath) => {
+      const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+      try {
+        fs.rmSync(path.join(fakeBin, "openshell"));
+        const local = path.join(tmp, ".local");
+        const bin = path.join(local, "bin");
+        const outside = path.join(tmp, "outside");
+        fs.mkdirSync(local);
+        const makeUnsafe: Record<string, () => void> = {
+          "writable ancestor": () => {
+            fs.mkdirSync(bin);
+            fs.chmodSync(local, 0o775);
+          },
+          "symlinked bin": () => {
+            fs.mkdirSync(outside);
+            fs.symlinkSync(outside, bin);
+          },
+        };
+        makeUnsafe[unsafePath]();
+        const bashEnv = path.join(tmp, "force-user-local-install.sh");
+        fs.writeFileSync(
+          bashEnv,
+          `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then
+    return 1
+  fi
+  builtin [ "$@"
+}
+`,
+        );
+        const result = spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            BASH_ENV: bashEnv,
+            HOME: tmp,
+            XDG_BIN_HOME: "",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            NEMOCLAW_TEST_USER_LOCAL_ONLY: "1",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
+
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+        expect(result.stderr).toContain(unsafePath === "writable ancestor" ? local : bin);
+        expect(
+          fs.existsSync(path.join(unsafePath === "writable ancestor" ? bin : outside, "openshell")),
+        ).toBe(false);
+        const assertUnchanged: Record<string, () => void> = {
+          "writable ancestor": () => expect(fs.statSync(local).mode & 0o777).toBe(0o775),
+          "symlinked bin": () => expect(fs.lstatSync(bin).isSymbolicLink()).toBe(true),
+        };
+        assertUnchanged[unsafePath]();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));

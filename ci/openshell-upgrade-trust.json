@@ -2,7 +2,9 @@
   "schemaVersion": 1,
   "releases": [
     {
-      "brevTemplateSha256": ["e44a3952cd5f6be9f017a5b69028c2068a746060bff31c3f05eecbb36cd7237c"],
+      "brevTemplateSha256": [
+        "e44a3952cd5f6be9f017a5b69028c2068a746060bff31c3f05eecbb36cd7237c"
+      ],
       "formula": {
         "asset": "openshell.rb",
         "sha256": "e760d5c41f5d3fd7a430a87e1efdf813c44848689c76a10029c8f65ed4f4eb4b",
@@ -49,7 +51,9 @@
             "openshell-x86_64-unknown-linux-musl.tar.gz",
             "openshell-aarch64-unknown-linux-musl.tar.gz"
           ],
-          "manifests": ["openshell-checksums-sha256.txt"]
+          "manifests": [
+            "openshell-checksums-sha256.txt"
+          ]
         },
         "installer": {
           "assets": [
@@ -99,7 +103,12 @@
       "installerTemplateSha256": [
         "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
         "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
-        "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f"
+        "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
+        "508d63af4d95001d788afbd1a926cc2513e1fac07ba8b4a2390c38f022c69371",
+        "1995afcf74ac38fb2a5110956531f5ac5319ddc552c190a422df7b326d244afc",
+        "22ddd35eb44bff5fb9e926ca6b935a3a147acbbdec122294f3a9fd99cf7f3e48",
+        "c5aa2fa520221f35257ff7510853a438649bc7c1189f70f3f4be1c6ed1bf29a2",
+        "229888660c962fb85db9e4604485b1b9bd2db23b30a5a31ed7348c9c5a04b179"
       ],
       "manifests": [
         {
@@ -143,7 +152,9 @@
             "openshell-x86_64-unknown-linux-musl.tar.gz",
             "openshell-aarch64-unknown-linux-musl.tar.gz"
           ],
-          "manifests": ["openshell-checksums-sha256.txt"]
+          "manifests": [
+            "openshell-checksums-sha256.txt"
+          ]
         },
         "installer": {
           "assets": [

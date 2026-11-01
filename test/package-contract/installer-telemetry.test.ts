@@ -162,6 +162,7 @@ spin() { :; }
 command_exists() { [[ "$1" == git ]]; }
 resolve_repo_root() { printf '%s\\n' "$NEMOCLAW_SOURCE_ROOT"; }
 is_source_checkout() { return 0; }
+link_nemoclaw_cli() { :; }
 verify_nemoclaw() { _NEMOCLAW_VERIFIED_VERSION="$EXPECTED_VERSION"; _CLI_PATH="$TEST_CLI_PATH"; }
 maybe_install_openshell_during_install() { :; }
 ensure_nemoclaw_shim() { :; }

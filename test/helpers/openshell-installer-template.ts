@@ -25,6 +25,17 @@ export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: strin
   });
 }
 
+/** Keep synthetic historical fixtures on the base trust record. */
+export function retainBaseInstallerTrust(root: string, mode?: FixtureMode): void {
+  if (mode === "trusted-formula-mismatch") return;
+  const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+    releases: { version: string }[];
+  };
+  registry.releases = registry.releases.filter((release) => release.version !== "0.0.116");
+  fs.writeFileSync(registryPath, JSON.stringify(registry));
+}
+
 export function prepareTrustedFormulaMismatchFixture(root: string, mode: FixtureMode): void {
   if (mode !== "trusted-formula-mismatch") return;
   const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
@@ -115,6 +126,51 @@ const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL
 const MACOS_METHOD_END = "esac\n";
 
 export function installerReleaseTemplate(source: string, version: string): string {
+  // Historical trust fixtures retain the installer bytes authorized before the
+  // direct-install permission fix. The current candidate is checked separately.
+  const safetyHelper = "user_local_executable_directory_safe() {\n";
+  if (source.includes(safetyHelper)) {
+    const systemTargetFallback = `force_user_local=0
+if [ "$target_dir" = "/usr/local/bin" ] && [ -w "$target_dir" ] \\
+  && [ -z "$ACTIVE_OPENSHELL_BIN" ] && ! user_local_executable_directory_safe "$target_dir"; then
+  target_dir="\${XDG_BIN_HOME:-$HOME/.local/bin}"
+  force_user_local=1
+fi
+
+`;
+    assert.equal(source.split(systemTargetFallback).length - 1, 1, "system target fallback");
+    source = source.replace(systemTargetFallback, "");
+    const userLocalFallback =
+      'elif [ "$force_user_local" = "1" ] || [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then';
+    assert.equal(source.split(userLocalFallback).length - 1, 1, "user-local fallback branch");
+    source = source.replace(
+      userLocalFallback,
+      'elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then',
+    );
+    const activeDirectorySafetyCheck = `  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+`;
+    assert.equal(
+      source.split(activeDirectorySafetyCheck).length - 1,
+      2,
+      "active and privileged directory guard calls",
+    );
+    source = source.replaceAll(activeDirectorySafetyCheck, "");
+    const start = source.indexOf(safetyHelper);
+    const end = source.indexOf('if [ -w "$target_dir" ]; then', start);
+    assert.ok(end > start, "user-local directory guard fixture boundaries");
+    source = source.slice(0, start) + source.slice(end);
+    const safetyCheck = `  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+`;
+    assert.equal(source.split(safetyCheck).length - 1, 2, "two user-local guard calls");
+    source = source.replaceAll(safetyCheck, "");
+  }
+  const currentInstall = '  (umask g-w,o-w && mkdir -p "$target_dir")';
+  const historicalInstall = '  mkdir -p "$target_dir"';
+  if (source.includes(currentInstall)) source = source.replace(currentInstall, historicalInstall);
   const v012Comment =
     "  # OpenShell 0.1.2 enforces MCP policy in its supervisor image. Recognize\n" +
     "  # only its exact pinned sandbox artifacts here, not version text alone.\n" +

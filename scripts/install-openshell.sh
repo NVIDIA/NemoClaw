@@ -1033,16 +1033,67 @@ install_bins() {
   fi
 }
 
-if [ -w "$target_dir" ]; then
-  install_bins "$target_dir"
-elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+user_local_executable_directory_safe() {
+  local current="$1" uid owner mode metadata mode_value
+  UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+  [[ "$current" == /* && "$current" != */../* && "$current" != */.. &&
+    "$current" != */./* && "$current" != */. ]] || return 1
+  uid="$(id -u)" || return 1
+  while :; do
+    UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+    [[ ! -L "$current" ]] || return 1
+    if [[ -e "$current" ]]; then
+      [[ -d "$current" ]] || return 1
+      if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
+        :
+      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
+        :
+      else
+        return 1
+      fi
+      read -r owner mode <<<"$metadata"
+      [[ "$owner" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      mode_value=$((8#$mode))
+      [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
+      if ((mode_value & 022)); then
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+      fi
+    fi
+    [[ "$current" != / ]] || return 0
+    current="${current%/*}"
+    [[ -n "$current" ]] || current=/
+  done
+}
+
+force_user_local=0
+if [ "$target_dir" = "/usr/local/bin" ] && [ -w "$target_dir" ] \
+  && [ -z "$ACTIVE_OPENSHELL_BIN" ] && ! user_local_executable_directory_safe "$target_dir"; then
   target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
-  mkdir -p "$target_dir"
+  force_user_local=1
+fi
+
+if [ -w "$target_dir" ]; then
+  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+  install_bins "$target_dir"
+elif [ "$force_user_local" = "1" ] || [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+  target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+  (umask g-w,o-w && mkdir -p "$target_dir")
+  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   install_bins "$target_dir"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
   warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
   warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
+  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   if [ -x "$tmpdir/openshell-gateway" ]; then
     sudo install -m 755 "$tmpdir/openshell-gateway" "$target_dir/openshell-gateway"

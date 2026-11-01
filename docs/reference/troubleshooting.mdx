@@ -291,14 +291,26 @@ docker info
 
 The NemoClaw installer does not require `sudo` or root. It installs Node.js via nvm and NemoClaw via npm, both into user-local directories. The installer also handles OpenShell installation automatically using a pinned release.
 
-If you see permission errors during installation, they typically come from Docker, not the NemoClaw installer itself. Docker must be installed and running before you run the installer, and installing Docker may require elevated privileges on Linux.
+If the installer reports `Unsafe user-local executable directory`, `Unsafe npm executable directory`, or `Unsafe executable directory`, inspect the named path and each parent directory.
+Each component must be a real directory owned by you or root, without group or world write access except in a root-owned sticky parent such as `/tmp`.
+The installer leaves existing directory modes unchanged and stops before it publishes executables.
+If you own the named real directory and only its mode is unsafe, run `chmod go-w` on that directory, then rerun the installer.
+Otherwise, ask the directory owner or host administrator to repair the path before you rerun the installer.
+Do not use `sudo` to bypass this error.
+
+For Docker permission errors, verify that Docker is installed and running.
+Installing Docker may require elevated privileges on Linux.
 
 ### npm install fails with permission errors
 
-If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`. Instead, configure npm to use a directory you own:
+If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`.
+Before configuring npm, inspect `~/.npm-global` (if it exists) and every parent directory.
+Each existing directory must meet the ownership and permission requirements in [Permission errors during installation](#permission-errors-during-installation).
+Repair any unsafe directory using that procedure before running these commands.
+Configure npm to use a directory you own:
 
 ```bash
-mkdir -p ~/.npm-global
+(umask g-w,o-w && mkdir -p ~/.npm-global)
 npm config set prefix ~/.npm-global
 export PATH=~/.npm-global/bin:$PATH
 ```
