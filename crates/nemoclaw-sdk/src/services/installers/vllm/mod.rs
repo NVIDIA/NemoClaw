@@ -31,8 +31,7 @@ pub const RUNTIME_DATA_SOURCE: &str = "vllm_runtime";
 
 /// OpenTofu attributes for the vLLM runtime contract.
 pub fn runtime_fields() -> Result<crate::hcl_schema::Fields, crate::hcl_schema::Unmappable> {
-    let schema = serde_json::to_value(schemars::schema_for!(nemoclaw_runtime::vllm::Service))
-        .expect("the vLLM runtime schema serializes");
+    let schema = schemars::schema_for!(nemoclaw_runtime::vllm::Service).to_value();
     crate::hcl_schema::fields(&schema, &[])
 }
 
