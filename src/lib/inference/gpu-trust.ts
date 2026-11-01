@@ -16,6 +16,8 @@ export const WSL_NVIDIA_SMI_PATH = "/usr/lib/wsl/lib/nvidia-smi";
 
 export interface NvidiaSmiOptions {
   isWsl?: boolean;
+  /** Skip a candidate whose output this rejects, so the next candidate runs. */
+  acceptOutput?: (output: string) => boolean;
   runCaptureImpl: (command: readonly string[], options: { ignoreError: boolean }) => string;
 }
 
@@ -28,7 +30,7 @@ export function captureNvidiaSmi(args: readonly string[], options: NvidiaSmiOpti
   const runningInWsl = options.isWsl ?? detectWsl();
   for (const command of nvidiaSmiCandidates(runningInWsl)) {
     const output = options.runCaptureImpl([command, ...args], { ignoreError: true });
-    if (output.trim()) return output;
+    if (output.trim() && (options.acceptOutput?.(output) ?? true)) return output;
   }
   return "";
 }
