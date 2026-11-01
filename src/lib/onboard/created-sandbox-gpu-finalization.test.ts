@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import type { SandboxEntry } from "../state/registry";
+import * as openclawLifecycle from "../actions/sandbox/runtime/openclaw-lifecycle";
+import * as restoreAuthority from "../actions/sandbox/snapshot/restore-authority";
+import * as sandboxState from "../state/sandbox";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
@@ -17,6 +20,7 @@ function createCompletionFixture(
   provider = "ollama-local",
   route: SandboxGpuCreateFlowResult["route"] = "compatibility",
   gpuEnabled = true,
+  restoreBackupPath: string | null = null,
 ) {
   const order: string[] = [];
   const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => {
@@ -81,7 +85,7 @@ function createCompletionFixture(
   } as NonNullable<registration.CreatedSandboxRegistrationInput["verifiedCreate"]>;
   const completion = createOnboardCreatedSandboxCompletion(
     "gpu-box",
-    null,
+    restoreBackupPath,
     null,
     null,
     null,
@@ -244,6 +248,51 @@ describe("GPU inference verification in production finalization", () => {
       expect(fixture.runBuffered).not.toHaveBeenCalled();
       expect(fixture.order).toEqual(enabled ? ["commit", "acknowledge", "register"] : ["register"]);
       expect(fixture.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [true, { targetAgentType: "openclaw", allowAccelerationEnable: true }],
+    [false, { targetAgentType: "openclaw" }],
+  ] as const)(
+    "maps sandboxGpuEnabled=%s to the state-restore acceleration option",
+    async (enabled, expectedOptions) => {
+      const backupPath = "/tmp/gpu-box-backup";
+      vi.spyOn(openclawLifecycle, "beginUnregisteredOpenClawBackupQuiesce").mockResolvedValue({
+        ok: true,
+        window: { sandboxName: "gpu-box", kind: "backup" },
+      } as never);
+      vi.spyOn(openclawLifecycle, "finishUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+        ok: true,
+      } as never);
+      vi.spyOn(openclawLifecycle, "abortUnregisteredOpenClawPostRestoreDoctor").mockResolvedValue({
+        ok: true,
+      } as never);
+      vi.spyOn(sandboxState, "getLatestBackup").mockReturnValue({ backupPath } as never);
+      const restore = vi
+        .spyOn(restoreAuthority, "restoreRecreatedSandboxStateWithManagedAuthority")
+        .mockResolvedValue({
+          success: true,
+          restoredDirs: ["."],
+          failedDirs: [],
+          restoredFiles: [],
+          failedFiles: [],
+        });
+      const fixture = createCompletionFixture(
+        "HTTP_200",
+        "nvidia-prod",
+        enabled ? "native" : "none",
+        enabled,
+        backupPath,
+      );
+      await fixture.complete().catch(() => undefined);
+
+      expect(restore).toHaveBeenCalledWith(
+        "gpu-box",
+        expect.objectContaining({ backupPath }),
+        expectedOptions,
+        expect.anything(),
+      );
     },
   );
 });

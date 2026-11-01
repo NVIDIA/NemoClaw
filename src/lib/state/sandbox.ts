@@ -350,6 +350,11 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   targetAgentType: string;
   /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
   runtimeSelection?: OpenShellRuntimeSelection;
+  /**
+   * The recreate deliberately enabled acceleration, so a CPU-only snapshot may
+   * be restored into the accelerated replacement.
+   */
+  allowAccelerationEnable?: boolean;
 }
 
 interface InternalRestoreOptions {
