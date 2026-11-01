@@ -4,6 +4,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,10 +12,13 @@ import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
 
+import { dockerCapture, dockerSpawn } from "../../../src/lib/adapters/docker";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm";
+import { readVllmStartupLogExcerpts } from "../../../src/lib/inference/vllm/startup-observations";
 import { imageStorageRequirementBytes } from "../../../src/lib/inference/vllm-storage";
 import { VLLM_DOCKER_STORAGE_NVIDIA_SMI_SOURCE } from "../../e2e/fixtures/vllm-docker-storage-telemetry.ts";
+import { VLLM_STARTUP_LOG_HISTORY_SCRIPT } from "../../e2e/fixtures/vllm-startup-log-history.ts";
 import { test } from "../../e2e/fixtures/workflow-e2e-test.ts";
 
 const TARGET_ID = "vllm-docker-storage";
@@ -31,6 +35,75 @@ const RUN_REAL_DOCKER =
   process.env.E2E_TARGET_ID === TARGET_ID ||
   process.env.NEMOCLAW_RUN_VLLM_STORAGE_DOCKER_E2E === "1";
 const realDockerTest = RUN_REAL_DOCKER ? test : test.skip;
+
+realDockerTest(
+  "retains the startup error across a real Docker restart (#14017)",
+  {
+    timeout: 90_000,
+    meta: {
+      e2ePhases: [
+        "prepare restarted Docker log fixture",
+        "collect production startup log excerpts",
+        "release startup log fixture",
+      ],
+    },
+  },
+  async ({ progress }) => {
+    const containerName = `nemoclaw-vllm-logs-${randomUUID()}`;
+    const env = { DOCKER_HOST, PATH: process.env.PATH ?? "" };
+    try {
+      dockerCapture(
+        [
+          "run",
+          "--detach",
+          "--name",
+          containerName,
+          "--network=none",
+          "--cap-drop=ALL",
+          "--security-opt=no-new-privileges",
+          "--pids-limit=32",
+          "--memory=64m",
+          "--log-driver=json-file",
+          "--restart=on-failure:1",
+          "--workdir=/tmp",
+          "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+          "sh",
+          "-c",
+          VLLM_STARTUP_LOG_HISTORY_SCRIPT,
+        ],
+        { env, timeout: 60_000, killSignal: "SIGKILL" },
+      );
+      await expect
+        .poll(
+          () =>
+            dockerCapture(["logs", "--tail", "1", containerName], {
+              env,
+              includeStderr: true,
+              timeout: 5_000,
+              killSignal: "SIGKILL",
+            }),
+          { timeout: 15_000 },
+        )
+        .toContain("WARNING: Running pip as the 'root' user");
+
+      progress.phase("collect production startup log excerpts");
+      const excerpts = await readVllmStartupLogExcerpts(containerName, env, {
+        dockerCapture,
+        dockerSpawn,
+      });
+      expect(
+        excerpts.find(({ suffix }) => suffix === " before the latest restart")?.lines,
+      ).toContain("vllm: error: unrecognized arguments: --disable-log-requests");
+    } finally {
+      progress.phase("release startup log fixture");
+      dockerCapture(["rm", "--force", containerName], {
+        env,
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+    }
+  },
+);
 
 interface DockerInfo {
   DockerRootDir?: unknown;

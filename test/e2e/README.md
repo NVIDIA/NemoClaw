@@ -820,6 +820,15 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+The `vllm-docker-storage` job also checks startup log history through a real
+Docker daemon at `/run/docker.sock`. A pinned CPU-only BusyBox container emits
+a startup error, restarts automatically, and emits 80 newer records. The production
+log reader must recover the earlier stderr error before fixture cleanup.
+The fixture has no network access, host mounts, GPU, or credentials. Cleanup
+removes only its uniquely named container and retains the shared image cache.
+Source tests own record bounds, ordering, redaction, fallback, and installer cleanup ordering.
+The support test owns the shell fixture's two-attempt output.
+
 ### External gateway health
 
 `external-gateway-health` is an explicit-only retained job for the external
