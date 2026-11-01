@@ -7,14 +7,14 @@ import { assessHost } from "./preflight";
 
 const WSL_NVIDIA_SMI = "/usr/lib/wsl/lib/nvidia-smi";
 
-// `nvidia-smi` is off PATH; only the stock WSL driver path answers with `listing`.
-const assessWslHost = (listing: string) =>
+// The stock WSL driver path answers with `listing`; PATH `nvidia-smi` answers with `pathListing`.
+const assessWslHost = (listing: string, pathListing = "") =>
   assessHost({
     platform: "linux",
     env: { WSL_DISTRO_NAME: "Ubuntu" },
     dockerInfoOutput: "",
     commandExistsImpl: () => false,
-    runCaptureImpl: (command) => (command[0] === WSL_NVIDIA_SMI ? listing : ""),
+    runCaptureImpl: (command) => (command[0] === WSL_NVIDIA_SMI ? listing : pathListing),
   });
 
 describe("assessHost NVIDIA GPU detection through the WSL nvidia-smi path", () => {
@@ -22,6 +22,15 @@ describe("assessHost NVIDIA GPU detection through the WSL nvidia-smi path", () =
     const result = assessWslHost("GPU 0: NVIDIA RTX Spark N1X (UUID: GPU-1)");
 
     expect(result.isWsl).toBe(true);
+    expect(result.hasNvidiaGpu).toBe(true);
+  });
+
+  it("tries the WSL path when PATH nvidia-smi lists no GPU", () => {
+    const result = assessWslHost(
+      "GPU 0: NVIDIA RTX Spark N1X (UUID: GPU-1)",
+      "No devices were found",
+    );
+
     expect(result.hasNvidiaGpu).toBe(true);
   });
 

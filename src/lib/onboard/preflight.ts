@@ -560,8 +560,12 @@ function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
 function detectNvidiaGpu(runCaptureImpl: RunCaptureFn, isWsl: boolean): boolean {
   // Share the PATH-then-WSL-driver lookup with GPU detection. Placeholder names
   // still count here: the bounded CUDA proof, not this probe, rejects them.
-  const listing = captureNvidiaSmi(["-L"], { isWsl, runCaptureImpl });
-  if (listing.split("\n").some((line) => line.trim().startsWith("GPU "))) {
+  const listing = captureNvidiaSmi(["-L"], {
+    isWsl,
+    runCaptureImpl,
+    acceptOutput: (output) => output.split("\n").some((line) => line.trim().startsWith("GPU ")),
+  });
+  if (listing) {
     return true;
   }
   // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
