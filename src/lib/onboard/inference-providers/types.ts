@@ -29,13 +29,22 @@ export interface StagedNativeLocalRecreation {
   attachment: import("../../inference/native-local/contract").NativeLocalProviderAttachment;
 }
 
+/** Prepared registry route carried across a published sandbox's pre-delete backup. */
+export type DeferredInferenceRouteReservation = Parameters<
+  typeof import("../../state/registry").reserveSandboxInferenceRoute
+>[1];
+
+export type DeferredInferenceRoute = (
+  reserve: (route?: DeferredInferenceRouteReservation) => void,
+) => Promise<void>;
+
 export type SetupInferenceResult =
   | {
       ok: true;
       retry?: undefined;
       nativeInference?: { endpointUrl: string; credentialEnv: string };
       stagedNativeLocalRecreation?: StagedNativeLocalRecreation;
-      deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+      deferredInferenceRoute?: DeferredInferenceRoute;
     }
   | { retry: "selection" };
 

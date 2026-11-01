@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import type { DeferredInferenceRouteReservation } from "../../inference-providers/types";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
@@ -257,11 +258,28 @@ describe("sandbox route publication", () => {
       registryEntry.reservationSessionId = session.sessionId;
       return true;
     });
-    const deferredInferenceRoute = vi.fn(async (reserve: () => void) => {
-      expect(gatewayLockHeld).toBe(true);
-      expect(registryEntry.model).toBe("old-model");
-      reserve();
-    });
+    const nativeNvidiaProviderAttachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "provider-id",
+    };
+    const deferredInferenceRoute = vi.fn(
+      async (reserve: (route?: DeferredInferenceRouteReservation) => void) => {
+        expect(gatewayLockHeld).toBe(true);
+        expect(registryEntry.model).toBe("old-model");
+        reserve({
+          provider: "provider",
+          model: "changed-model",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          gatewayName: "nemoclaw",
+          nativeNvidiaProviderAttachment,
+        });
+      },
+    );
     const createSandbox = vi.fn(async (...args: unknown[]) => {
       expect(registryEntry.model).toBe("old-model");
       const intent = args.at(-2) as {
@@ -297,6 +315,10 @@ describe("sandbox route publication", () => {
     expect(createSandbox).toHaveBeenCalledOnce();
     expect(deferredInferenceRoute).toHaveBeenCalledOnce();
     expect(reserveSandboxInferenceRoute).toHaveBeenCalledOnce();
+    expect(reserveSandboxInferenceRoute).toHaveBeenCalledWith(
+      "saved",
+      expect.objectContaining({ nativeNvidiaProviderAttachment }),
+    );
     expect(gatewayLockHeld).toBe(false);
   });
 
