@@ -659,8 +659,8 @@ describe("Model Router process identity", () => {
         script,
         "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nprint('ready', flush=True)\nwhile True: time.sleep(1)\n",
       );
-      const child = spawn("python3", ["-I", script, "proxy", "--port", "4000"], {
-        env: { PATH: process.env.PATH },
+      const child = spawn("python3", [script, "proxy", "--port", "4000"], {
+        env: { PATH: process.env.PATH, PYTHONSAFEPATH: "1", PYTHONNOUSERSITE: "1" },
         stdio: ["ignore", "pipe", "ignore"],
       });
       const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
