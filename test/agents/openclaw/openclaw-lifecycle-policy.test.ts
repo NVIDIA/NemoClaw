@@ -138,10 +138,7 @@ describe("reviewed npm lifecycle policy", () => {
   it("installs a native CLI launcher owned by the reviewed OpenClaw package", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launcher-layout-"));
     try {
-      const installer = fs.readFileSync(
-        path.join(REPO_ROOT, "scripts/lib/install-openclaw-cli-wrapper.sh"),
-        "utf8",
-      );
+      const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf8");
       const prefix = path.join(root, "usr/local");
       const modules = path.join(prefix, "lib/nemoclaw/openclaw-runtime/node_modules");
       const packageRoot = path.join(modules, "openclaw");
@@ -155,7 +152,7 @@ describe("reviewed npm lifecycle policy", () => {
       );
       fs.symlinkSync(path.join(modules, ".bin/openclaw"), launcher);
       const command = shellCommandSegmentBetween(
-        installer.replace(/\\\n\s*/g, " "),
+        dockerfile.replace(/\\\n\s*/g, " "),
         "rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw",
         "if [ ! -e",
       )

@@ -669,7 +669,7 @@ COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/we
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/verify-openclaw-official-plugin.mts scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/lib/patch-bundled-npm-undici.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/
-COPY --chmod=0555 scripts/lib/install-openclaw-optional-plugins.sh scripts/lib/install-openclaw-cli-wrapper.sh /scripts/lib/
+COPY --chmod=0555 scripts/lib/install-openclaw-optional-plugins.sh /scripts/lib/
 COPY scripts/lib/openclaw-legacy-migrations.mts scripts/lib/openclaw-legacy-session-admission.mts scripts/lib/openclaw-gateway-owner.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
@@ -1658,8 +1658,25 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
 # launcher ownership. Its .bin symlink still selects /usr/local for updates.
 # Install this before config generation so the late runtime payload copy remains
 # within the reviewed post-generator instruction sequence.
+# Startup config readers use the policy-visible package path. OpenClaw 10.5
+# hoists JSON5 into the reviewed runtime graph; retain that path without adding
+# or resolving another package. Historical runtimes keep their bundled copy.
 COPY scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh
-RUN /scripts/lib/install-openclaw-cli-wrapper.sh
+RUN set -eu \
+    && rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
+    && install -o root -g root -m 0755 \
+        /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/nemoclaw-cli-wrapper.sh \
+    && ln -s ../openclaw/nemoclaw-cli-wrapper.sh \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
+    && if [ ! -e /usr/local/lib/node_modules/openclaw/node_modules/json5 ]; then \
+        openclaw_json5_root="$(node -e 'const fs=require("node:fs"); const path=require("node:path"); const r=require("node:module").createRequire(fs.realpathSync("/usr/local/lib/node_modules/openclaw/package.json")); process.stdout.write(path.dirname(r.resolve("json5/package.json")));')"; \
+        mkdir -p /usr/local/lib/node_modules/openclaw/node_modules; \
+        ln -s "$openclaw_json5_root" /usr/local/lib/node_modules/openclaw/node_modules/json5; \
+    fi \
+    && node -e 'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5"); if (typeof JSON5.parse !== "function") process.exit(1)' \
+    && openclaw_json5_unsafe="$(find -L /usr/local/lib/node_modules/openclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$openclaw_json5_unsafe"
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
@@ -2262,50 +2279,17 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
-# can detect and restart unhealthy containers in standalone deployments.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
-#
-# Layered probe so Docker health does not contradict the NemoClaw delivery
-# chain on runtimes where the dashboard port lives in a different network
-# namespace (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding).
-# The reporter saw `nemoclaw status` Ready + the host forward succeed while
-# Docker marked the container unhealthy because the in-container curl could
-# not see the dashboard listener. See #3975.
-#
-#   1. Direct in-container probe (HTTP 200) — definitive when it works,
-#      preserves the original Compose/standalone health signal.
-#   2. A connect timeout (curl exit 28) or HTTP 4xx/5xx (curl exit 22) is a
-#      real bad signal: a listener exists but is wedged or answered with a
-#      failure inside this container, so Docker should restart it.
-#   3. ONLY on curl exit 7 ("Couldn't connect" — the kernel refused the
-#      in-container TCP connect because nothing is bound to the dashboard
-#      port in THIS network namespace) the meaning depends on whether this
-#      container is the one running the OpenClaw gateway:
-#        a. If nemoclaw-start launched the gateway in this container it
-#           drops the /tmp/nemoclaw-gateway-local marker (see
-#           scripts/nemoclaw-start.sh). The gateway is local but its port
-#           may be forwarded out of this namespace (#3975), so confirm the
-#           gateway came up: the process is still alive (pgrep
-#           --ignore-ancestors) AND the gateway log is non-empty. A
-#           standalone deployment whose gateway never started fails here so
-#           Docker restarts it (#1430).
-#        b. If the marker is ABSENT the OpenClaw gateway is delivered
-#           outside this container (OpenShell docker-driver deployments run
-#           it on the host / in a host-side process chain — #4503). An
-#           in-container curl/pgrep cannot observe an out-of-namespace
-#           gateway, so a process-name fallback here produced false
-#           "unhealthy" while `nemoclaw status` and OpenShell reported the
-#           sandbox Ready. We must not drive Docker health off a signal we
-#           cannot prove: report healthy and defer to NemoClaw/OpenShell's
-#           host-side delivery-chain monitoring (verify-deployment.ts, host
-#           port forward, sandbox status).
-#
-# nemoclaw-start records `pid starttime` for the gateway process in
-# /tmp/nemoclaw-gateway.pid on every launch.  When curl sees connection
-# refused, validate both values against `/proc/<pid>/stat` field 22 before
-# accepting the OpenClaw gateway cmdline fallback.  A numeric PID or
-# OpenClaw-looking argv alone is insufficient because either can belong to a
-# recycled process.
+# can restart unhealthy standalone containers (#1430).
+# Namespace-aware delivery avoids false failures on OpenShell (#3975, #4503):
+# - HTTP 200 is healthy. Errors other than connection-refused (curl 7), including
+#   timeout 28 and HTTP failure 22, remain unhealthy and trigger restart.
+# - With no /tmp/nemoclaw-gateway-local marker, the gateway is external to this
+#   namespace. Defer to NemoClaw/OpenShell's host-side delivery-chain checks
+#   (verify-deployment.ts, host forwarding, sandbox status), not local curl/pgrep.
+# - With the marker, require a live local gateway and nonempty /tmp/gateway.log.
+#   Validate the recorded PID and starttime in /tmp/nemoclaw-gateway.pid against
+#   /proc/<pid>/stat field 22 before and after cmdline inspection; reject zombies
+#   and PID reuse. A numeric PID or OpenClaw-looking argv alone is insufficient.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \

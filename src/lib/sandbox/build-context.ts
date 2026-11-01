@@ -508,7 +508,6 @@ function stageOptimizedSandboxBuildContext(
     "remediate-openclaw-runtime-dependencies.mts",
     "install-openclaw-optional-plugins.sh",
     "install-openclaw-migration-runtimes.sh",
-    "install-openclaw-cli-wrapper.sh",
     "openclaw-legacy-session-admission.mts",
     "openclaw-gateway-owner.mts",
   ]) {
