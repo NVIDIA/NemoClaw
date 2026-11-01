@@ -438,6 +438,35 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
 }
 
+// True when a `/v1/models` body is an OpenAI-style list: JSON with a `data` array.
+export function isOpenAiModelListBody(body: string): boolean {
+  try {
+    return Array.isArray(JSON.parse(body)?.data);
+  } catch {
+    return false;
+  }
+}
+
+// curl output suffix that prints the HTTP status on a final line after the body.
+export const MODEL_LIST_STATUS_WRITE_OUT = ["--write-out", "\\n%{http_code}"] as const;
+
+// True when probe output is a model list followed by HTTP status 200. `curl -f`
+// still exits 0 for a 3xx, which can carry a model list body.
+export function isOpenAiModelListResponse(output: string): boolean {
+  const text = output.trimEnd();
+  const split = text.lastIndexOf("\n");
+  return (
+    split >= 0 && text.slice(split + 1) === "200" && isOpenAiModelListBody(text.slice(0, split))
+  );
+}
+
+// curl argv that probes a `/v1/models` URL and prints the HTTP status after the body.
+export function buildModelListProbeCommand(args: string[], url: string): string[] {
+  const validated = buildValidatedCurlCommandArgs(["-sf", ...args, url]);
+  const target = validated.pop() ?? url;
+  return ["curl", ...validated, ...MODEL_LIST_STATUS_WRITE_OUT, target];
+}
+
 // First model id from a NIM `/v1/models` body, or null if absent/unparseable.
 export function parseServedModelId(modelsJson: string): string | null {
   try {
@@ -1223,31 +1252,24 @@ export function waitForNimHealth(
   console.log(`  Waiting for NIM health on port ${hostPort} (timeout: ${timeout}s)...`);
 
   while ((Date.now() - start) / 1000 < timeout) {
+    let listed = false;
     try {
       const result = runCaptureImpl(
-        [
-          "curl",
-          ...buildValidatedCurlCommandArgs([
-            "-sf",
-            "--connect-timeout",
-            "5",
-            "--max-time",
-            "5",
-            `http://127.0.0.1:${hostPort}/v1/models`,
-          ]),
-        ],
+        buildModelListProbeCommand(
+          ["--connect-timeout", "5", "--max-time", "5"],
+          `http://127.0.0.1:${hostPort}/v1/models`,
+        ),
         { ignoreError: true },
       );
-      if (result) {
-        console.log("  NIM is healthy.");
-        return true;
-      }
+      listed = isOpenAiModelListResponse(result);
     } catch {
       /* ignored */
     }
     // Short-circuit if the container has already exited — typically NGC auth
     // failure or OOM during model load. Without this, the wizard polls the
     // full timeout (default 1200s) against a dead container. See #3333.
+    // Check it before reporting healthy so another server on the port cannot
+    // stand in for an exited NIM container.
     if (container) {
       const state = inspectContainerState("{{.State.Status}}", container, {
         ignoreError: true,
@@ -1264,6 +1286,12 @@ export function waitForNimHealth(
         }
         return false;
       }
+    }
+    if (listed) {
+      console.log("  NIM is healthy.");
+      return true;
+    }
+    if (container) {
       const tail = readContainerLogs(container, { tail: 30 });
       if (hasNimMemoryCapacityWarning(tail)) {
         console.error(
@@ -1341,20 +1369,13 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
       const health = runCapture(
-        [
-          "curl",
-          ...buildValidatedCurlCommandArgs([
-            "-sf",
-            "--connect-timeout",
-            "5",
-            "--max-time",
-            "5",
-            `http://127.0.0.1:${resolvedHostPort}/v1/models`,
-          ]),
-        ],
+        buildModelListProbeCommand(
+          ["--connect-timeout", "5", "--max-time", "5"],
+          `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+        ),
         { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );
-      healthy = !!health;
+      healthy = isOpenAiModelListResponse(health);
     }
     return { running: state === "running", healthy, container: name, state };
   } catch {
