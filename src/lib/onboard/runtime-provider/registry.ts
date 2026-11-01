@@ -490,6 +490,12 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
   }
   requireFunction(surface, "observeHostRuntime", "gateway");
   requireFunction(surface, "prepareHostRuntime", "gateway");
+  if (surface.installedSession !== undefined) {
+    const installed = requireOwnRecord(surface, "installedSession");
+    validateBoundSurface(providerId, "gateway", installed);
+    if (installed.supported === true)
+      requireFunction(installed, "create", "gateway.installedSession");
+  }
 }
 
 function validateWorkloadSurface(providerId: string, surface: Record<string, unknown>): void {

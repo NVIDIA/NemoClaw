@@ -1,0 +1,445 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+// CI compiler. Dependency/native builds precede this stage; never run it at install/startup.
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { buildPrivateDirectoryLibrary } from "./sqlite-private-directory-build.mts";
+import { nativeModelCatalogSource } from "./native-model-catalog-build.mts";
+
+import {
+  compiledPluginPlan,
+  publishPluginFacades,
+  publishDynamicImportBridges,
+  stagePublishedResources,
+  resourceInventory,
+  PREBUILT_CHOICE_PLUGINS,
+  prebuiltPluginRegistrationSource,
+  runtimeExternalPlugin,
+  runtimeInputRoot,
+} from "./openclaw-app-resources.mts";
+
+const require = createRequire(import.meta.url);
+const external = [
+  "koffi",
+  "@opentelemetry/api",
+  "@lydell/node-pty",
+  "@openclaw/fs-safe",
+  "@silvia-odwyer/photon-node",
+  "clawpdf",
+  "rastermill",
+  "quickjs-wasi",
+  "web-tree-sitter",
+  "tree-sitter-bash",
+  "playwright-core",
+  "typescript",
+  "jiti",
+  "@snazzah/davey",
+  "libopus-wasm",
+  "undici",
+  "ws",
+  "@discordjs/voice",
+];
+function argument(name: string) {
+  const index = process.argv.indexOf(name);
+  if (index < 0 || !process.argv[index + 1]) throw new Error(`Missing ${name}`);
+  return path.resolve(process.argv[index + 1]);
+}
+const source = argument("--source-root");
+const output = argument("--output");
+const toolRoot = argument("--tool-root");
+const portable = process.argv.includes("--portable-proof");
+if (
+  !portable &&
+  (process.platform !== "win32" || process.arch !== "arm64" || process.versions.node !== "22.23.2")
+)
+  throw new Error("Windows application compilation requires canonical Node 22.23.2 ARM64.");
+const compiler = require(
+  path.join(toolRoot, "node_modules", "esbuild"),
+) as typeof import("esbuild");
+if (compiler.version !== "0.27.4") throw new Error("The reviewed compiler is esbuild 0.27.4.");
+const materializationBytes = fs.readFileSync(
+  path.join(runtimeInputRoot(source), "materialization-receipt.json"),
+);
+const materialization = JSON.parse(materializationBytes.toString("utf8")) as {
+  classification: string;
+  source: { sha256: string };
+  sourceRoot: string;
+  dependencyLock: { path: string; sha256: string };
+  choiceDependencyLock: { path: string; sha256: string };
+  additionalPackages: {
+    package: string;
+    version: string;
+    sha256: string;
+    integrity: string;
+    bytes: number;
+  }[];
+};
+if (
+  materialization.classification !== "verified-application-build-inputs" ||
+  materialization.source.sha256 !==
+    "3431f4cd2d8dbd6b936def2694ac27e19fa0256295cf4ada0f652ecf1c9ee520" ||
+  materialization.sourceRoot !== "node_modules/openclaw" ||
+  materialization.dependencyLock?.path !== "runtime-package-lock.json" ||
+  materialization.dependencyLock.sha256 !==
+    "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199" ||
+  materialization.choiceDependencyLock?.path !== "choice-package-lock.json" ||
+  materialization.choiceDependencyLock.sha256 !==
+    "72aecf8caf45e9773cda0e40c9a61adb6eea48c2122d0a5e469a8f6bdcf168f6" ||
+  !Object.values(PREBUILT_CHOICE_PLUGINS).every((expected) =>
+    materialization.additionalPackages?.some(
+      (item) =>
+        item.package === expected.package &&
+        item.version === "2026.9.2" &&
+        item.sha256 === expected.sha256,
+    ),
+  )
+)
+  throw new Error("The verified complete application input receipt is required.");
+const metadata = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "utf8")) as {
+  name: string;
+  version: string;
+};
+if (metadata.name !== "openclaw" || metadata.version !== "2026.9.2")
+  throw new Error("The exact selected OpenClaw package is required.");
+const dependencyLockBytes = fs.readFileSync(
+  path.join(runtimeInputRoot(source), materialization.dependencyLock.path),
+);
+if (
+  createHash("sha256").update(dependencyLockBytes).digest("hex") !==
+  materialization.dependencyLock.sha256
+)
+  throw new Error("The canonical runtime dependency lock changed after materialization.");
+const choiceLockBytes = fs.readFileSync(
+  path.join(runtimeInputRoot(source), materialization.choiceDependencyLock.path),
+);
+if (
+  createHash("sha256").update(choiceLockBytes).digest("hex") !==
+  materialization.choiceDependencyLock.sha256
+)
+  throw new Error("The canonical choice dependency lock changed after materialization.");
+if (fs.existsSync(output)) throw new Error("Compilation output must be fresh.");
+fs.mkdirSync(output, { recursive: true });
+const app = path.join(output, "app");
+const diagnostics = path.join(output, "diagnostics");
+fs.mkdirSync(app);
+fs.mkdirSync(diagnostics);
+const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
+const entry = path.join(source, "dist", "cli", "run-main.js");
+const syntaxApi = require(
+  path.join(source, "node_modules", "typescript"),
+) as typeof import("typescript");
+const pluginPlan = compiledPluginPlan(source, syntaxApi, compiler);
+const adapter = `${pluginPlan.prelude}${prebuiltPluginRegistrationSource(source)}${nativeModelCatalogSource(source)}export async function runCli(argv = process.argv) {
+  __nemoPrepareAssetRoot();
+  const upstream = await import(${JSON.stringify(entry.replaceAll("\\", "/"))});
+  return await upstream.runCli(argv);
+}
+export const runOpenClaw = runCli;
+if (typeof require !== "undefined" && require.main === module) {
+  runCli().catch(error => { console.error(error instanceof Error ? error.stack ?? error.message : String(error)); process.exitCode = 1; });
+}
+`;
+const banner = `${pluginPlan.banner}\nlet __nemoAssetDir, __nemoFilename, __nemoModuleUrl;
+function __nemoPrepareAssetRoot() {
+  const path = require("node:path");
+  const root = process.env.OPENCLAW_COMPILED_ASSET_ROOT;
+  if (!root || !path.isAbsolute(root)) throw new Error("The sealed OpenClaw asset root is required.");
+  const resolved = path.resolve(root);
+  if (__nemoAssetDir && __nemoAssetDir !== resolved) throw new Error("The compiled OpenClaw asset root cannot change within one process.");
+  __nemoAssetDir = resolved;
+  __nemoFilename = path.join(resolved, "openclaw-app.cjs");
+  __nemoModuleUrl = require("node:url").pathToFileURL(__nemoFilename).href;
+}
+function __nemoExternalRequire(specifier) {
+  return require("node:module").createRequire(__nemoFilename)(specifier);
+}
+function __nemoExternalResolve(specifier) {
+  return require("node:module").createRequire(__nemoFilename).resolve(specifier);
+}
+function __nemoExternalImport(specifier) {
+  return require("node:module").createRequire(__nemoFilename)("./openclaw-dynamic-import.cjs")(specifier);
+}`;
+fs.writeFileSync(path.join(diagnostics, "entry-adapter.mjs"), adapter, { flag: "wx" });
+try {
+  const result = await compiler.build({
+    stdin: {
+      contents: adapter,
+      resolveDir: source,
+      sourcefile: "windows-openclaw-entry.mjs",
+      loader: "js",
+    },
+    outfile: path.join(app, "openclaw-app.cjs"),
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22.23",
+    define: {
+      "process.env.OPENCLAW_BUNDLED_VERSION": JSON.stringify(metadata.version),
+    },
+    banner: { js: banner },
+    plugins: [runtimeExternalPlugin(source, external), pluginPlan.plugin],
+    metafile: true,
+    sourcemap: "external",
+    treeShaking: false,
+    keepNames: true,
+    logLevel: "warning",
+  });
+  if (!result.metafile) throw new Error("Compiler input/output evidence is missing.");
+  fs.writeFileSync(
+    path.join(diagnostics, "metafile.json"),
+    JSON.stringify(result.metafile, null, 2) + "\n",
+    { flag: "wx" },
+  );
+  fs.writeFileSync(
+    path.join(diagnostics, "warnings.json"),
+    JSON.stringify(result.warnings, null, 2) + "\n",
+    { flag: "wx" },
+  );
+  fs.renameSync(
+    path.join(app, "openclaw-app.cjs.map"),
+    path.join(diagnostics, "pre-import-bridge-openclaw-app.cjs.map"),
+  );
+  // Native import() cannot execute from a SEA main with useCodeCache. Delegate
+  // only these generated external-import expressions to one normal Node module.
+  // Internal imports are already compiler module-table calls. No source file is edited.
+  const ts = require(path.join(source, "node_modules", "typescript")) as {
+    ScriptTarget: { Latest: number };
+    ScriptKind: { JS: number };
+    SyntaxKind: { ImportKeyword: number; Identifier: number; StringLiteral: number };
+    createSourceFile(
+      name: string,
+      text: string,
+      target: number,
+      parents: boolean,
+      kind: number,
+    ): AstNode;
+    isCallExpression(node: AstNode): boolean;
+    isPropertyAccessExpression(node: AstNode): boolean;
+    forEachChild(node: AstNode, visit: (node: AstNode) => void): void;
+  };
+  type AstNode = {
+    kind: number;
+    expression?: AstNode;
+    arguments?: AstNode[];
+    text?: string;
+    name?: { text?: string };
+    getStart(source: AstNode): number;
+  };
+  const codePath = path.join(app, "openclaw-app.cjs");
+  let codeText = fs.readFileSync(codePath, "utf8");
+  const syntax = ts.createSourceFile(
+    codePath,
+    codeText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const imports: number[] = [];
+  const standaloneRequires: number[] = [];
+  const standaloneResolves: number[] = [];
+  const standalonePackages = new Set([
+    // This optional peer remains absent. Keep its lazy Mistral tracing import
+    // opaque to the second compiler instead of resolving it at build time.
+    "@opentelemetry/api",
+    "undici",
+    "@snazzah/davey",
+    "libopus-wasm",
+    "@discordjs/voice",
+  ]);
+  const visit = (node: AstNode) => {
+    if (ts.isCallExpression(node) && node.expression?.kind === ts.SyntaxKind.ImportKeyword)
+      imports.push(node.expression.getStart(syntax));
+    if (
+      ts.isCallExpression(node) &&
+      node.expression?.kind === ts.SyntaxKind.Identifier &&
+      node.expression.text === "require" &&
+      node.arguments?.length === 1 &&
+      node.arguments[0].kind === ts.SyntaxKind.StringLiteral &&
+      (standalonePackages.has(node.arguments[0].text ?? "") ||
+        node.arguments[0].text?.startsWith("./node_modules/") ||
+        node.arguments[0].text?.startsWith("./plugins/"))
+    )
+      standaloneRequires.push(node.expression.getStart(syntax));
+    if (
+      ts.isCallExpression(node) &&
+      node.expression &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.expression?.kind === ts.SyntaxKind.Identifier &&
+      node.expression.expression.text === "require" &&
+      node.expression.name?.text === "resolve" &&
+      node.arguments?.length === 1 &&
+      node.arguments[0].kind === ts.SyntaxKind.StringLiteral &&
+      (node.arguments[0].text?.startsWith("./node_modules/") ||
+        node.arguments[0].text?.startsWith("./plugins/"))
+    )
+      standaloneResolves.push(node.expression.getStart(syntax));
+    ts.forEachChild(node, visit);
+  };
+  visit(syntax);
+  const replacements = [
+    ...imports.map((offset) => ({
+      offset,
+      original: "import",
+      replacement: "__nemoExternalImport",
+    })),
+    ...standaloneRequires.map((offset) => ({
+      offset,
+      original: "require",
+      replacement: "__nemoExternalRequire",
+    })),
+    ...standaloneResolves.map((offset) => ({
+      offset,
+      original: "require.resolve",
+      replacement: "__nemoExternalResolve",
+    })),
+  ];
+  for (const { offset, original, replacement } of replacements.sort(
+    (a, b) => b.offset - a.offset,
+  )) {
+    if (codeText.slice(offset, offset + original.length) !== original)
+      throw new Error("Unexpected generated module loading syntax.");
+    codeText = codeText.slice(0, offset) + replacement + codeText.slice(offset + original.length);
+  }
+  fs.writeFileSync(codePath, codeText);
+  const bridge = publishDynamicImportBridges(app);
+  const code = Buffer.from(codeText);
+  publishPluginFacades(app, pluginPlan.entries);
+  const {
+    packages: admittedPackages,
+    controlUiStartup,
+    controlUiServiceWorker,
+  } = stagePublishedResources(source, app, portable ? process.platform : "win32");
+  const privateDirectoryLibrary = buildPrivateDirectoryLibrary(source, app);
+  fs.writeFileSync(
+    path.join(diagnostics, "plugin-registry.json"),
+    JSON.stringify(pluginPlan.entries, null, 2) + "\n",
+    { flag: "wx" },
+  );
+  fs.writeFileSync(
+    path.join(output, "build-receipt.json"),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        classification: "compiled-openclaw-code-unit",
+        sourceVersion: metadata.version,
+        materializationReceiptSha256: sha256(materializationBytes),
+        sourcePackageSha256: sha256(fs.readFileSync(path.join(source, "package.json"))),
+        sourceLockSha256: sha256(dependencyLockBytes),
+        choiceLockSha256: sha256(choiceLockBytes),
+        entrySourceSha256: sha256(fs.readFileSync(entry)),
+        adapterSha256: sha256(adapter),
+        compilerVersion: compiler.version,
+        platform: process.platform,
+        architecture: process.arch,
+        nodeVersion: process.versions.node,
+        portableProof: portable,
+        compiledInputs: Object.keys(result.metafile.inputs).length,
+        code: { file: "app/openclaw-app.cjs", bytes: code.length, sha256: sha256(code) },
+        exports: ["runOpenClaw", "runCli", "registerPrebuiltPlugins"],
+        argvConvention: "full [node, entry, ...args]",
+        assetRootEnvironment: "OPENCLAW_COMPILED_ASSET_ROOT",
+        nativeImportBridge: {
+          file: "app/openclaw-dynamic-import.cjs",
+          bytes: Buffer.byteLength(bridge),
+          sha256: sha256(bridge),
+          rewrittenGeneratedImports: imports.length,
+          rewrittenStandaloneRequires: standaloneRequires.length,
+          rewrittenStandaloneResolves: standaloneResolves.length,
+          standalonePackages: [...standalonePackages],
+          keepExternalToSea: true,
+        },
+        externalPackages: external,
+        privateDirectoryLibrary,
+        controlUiStartup,
+        controlUiServiceWorker,
+        optionalUninstalledPeer: "@opentelemetry/api",
+        resourceContract:
+          "Original module-relative resource URLs are preserved under the sealed asset root; one shared compiled registry backs canonical plugin facades. Remaining tool/browser execution qualification stays separate.",
+        runtimeClosureProven: false,
+        windowsQualified: false,
+        seaPrepared: false,
+        cacheCoverage:
+          "Statically link main CJS into shared SEA useCodeCache. The tiny dynamic-import bridge and separately admitted native/ESM sidecars remain normal Node runtime execution; no whole-runtime cache or native-AOT claim.",
+        developmentArtifacts:
+          "diagnostics/ contains the generated adapter, complete compiler map and the explicitly pre-import-bridge source map; it is not a production expansion tree.",
+      },
+      null,
+      2,
+    ) + "\n",
+    { flag: "wx" },
+  );
+  const resourceReceipt = {
+    schemaVersion: 1,
+    classification: "compiled-openclaw-resource-closure",
+    package: {
+      name: metadata.name,
+      version: metadata.version,
+      sourceArchiveSha256: "3431f4cd2d8dbd6b936def2694ac27e19fa0256295cf4ada0f652ecf1c9ee520",
+      dependencyLockSha256: sha256(dependencyLockBytes),
+      choiceDependencyLockSha256: sha256(choiceLockBytes),
+    },
+    compiler: {
+      receiptSha256: sha256(fs.readFileSync(path.join(output, "build-receipt.json"))),
+      mainSha256: sha256(code),
+      bridgeSha256: sha256(bridge),
+      pluginRegistryModuleCount: pluginPlan.entries.length,
+    },
+    files: resourceInventory(
+      app,
+      pluginPlan.entries.map((entry) => entry.path),
+    ),
+    controlUiRoot: "node_modules/openclaw/dist/control-ui",
+    canonicalPluginEntries: pluginPlan.entries,
+    admittedPackages,
+    additionalInputArchives: materialization.additionalPackages.map(
+      ({ package: name, version, sha256, integrity, bytes }) => ({
+        name,
+        version,
+        sha256,
+        integrity,
+        bytes,
+      }),
+    ),
+    absentOptionalPeers: ["@opentelemetry/api", "bufferutil", "utf-8-validate", "supports-color"],
+    closureAdmitted: false,
+    closureAdmissionMeaning:
+      "Reviewed selected gateway composition with no customer build/install fallback; independent of execution qualification. Pending final sidecar/tool and Windows checks.",
+    qualification: {
+      portableGatewayObserved: false,
+      windowsGatewayObserved: false,
+      modelTools: false,
+    },
+  };
+  fs.writeFileSync(
+    path.join(app, "openclaw-resource-closure.json"),
+    JSON.stringify(resourceReceipt, null, 2) + "\n",
+    { flag: "wx" },
+  );
+  console.log(
+    JSON.stringify({
+      compiledInputs: Object.keys(result.metafile.inputs).length,
+      codeBytes: code.length,
+      externalPackages: external.length,
+      runtimeClosureProven: false,
+    }),
+  );
+} catch (error) {
+  try {
+    fs.writeFileSync(
+      path.join(output, "build-failure.json"),
+      JSON.stringify(
+        {
+          classification: "application-compiler-failure",
+          error: error instanceof Error ? error.message : "Compilation failed.",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  } catch {
+    /* Failure evidence must not replace the original compiler exception. */
+  }
+  throw error;
+}

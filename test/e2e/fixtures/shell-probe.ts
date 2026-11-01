@@ -33,6 +33,7 @@ export interface ShellProbeRunOptions {
   killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
+  forbiddenOutputValues?: string[];
   /** Retain at most the last N bytes from each output stream. */
   captureLimitBytes?: number;
   /** Persist redacted, size-bounded output and result metadata; set false to write neither. */
@@ -106,6 +107,7 @@ export interface ShellProbeResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  forbiddenOutputDetected?: boolean;
   stdout: string;
   stderr: string;
   artifacts: {
@@ -211,6 +213,44 @@ function redactTruncatedSecretPrefix(text: string, redactionValues: string[]): s
   return fragmentLength > 0 ? `[REDACTED]${text.slice(fragmentLength)}` : text;
 }
 
+function createForbiddenOutputDetector(values: readonly string[]) {
+  let tail = "";
+  let detected = false;
+  const overlapLength = Math.max(0, ...values.map((value) => value.length - 1));
+  return {
+    append(chunk: string): void {
+      if (detected || values.length === 0) return;
+      const text = tail + chunk;
+      detected = values.some((value) => text.includes(value));
+      tail = detected || overlapLength === 0 ? "" : text.slice(-overlapLength);
+    },
+    detected: () => detected,
+  };
+}
+
+function createCrossStreamForbiddenOutputDetector(values: readonly string[]) {
+  const overlapLength = Math.max(0, ...values.map((value) => value.length - 1));
+  let detected = false;
+  const streams = {
+    stdout: { prefix: "", tail: "" },
+    stderr: { prefix: "", tail: "" },
+  };
+  return {
+    append(stream: "stdout" | "stderr", chunk: string): void {
+      if (overlapLength === 0) return;
+      const state = streams[stream];
+      state.prefix = (state.prefix + chunk).slice(0, overlapLength);
+      state.tail = (state.tail + chunk).slice(-overlapLength);
+      detected ||= values.some(
+        (value) =>
+          (streams.stdout.tail + streams.stderr.prefix).includes(value) ||
+          (streams.stderr.tail + streams.stdout.prefix).includes(value),
+      );
+    },
+    detected: () => detected,
+  };
+}
+
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly progress: ChildProcessProgress;
@@ -233,7 +273,11 @@ export class ShellProbe {
     const args = [...trustedCommand.args];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
-    const redactionValues = options.redactionValues ?? [];
+    const forbiddenOutputValues = options.forbiddenOutputValues;
+    if (forbiddenOutputValues?.some((value) => value.length === 0)) {
+      throw new Error("forbiddenOutputValues must contain non-empty values");
+    }
+    const redactionValues = [...(options.redactionValues ?? []), ...(forbiddenOutputValues ?? [])];
     const enforcedValues = [
       ...new Set(redactionValues.filter((value) => value && value.length > 0)),
     ].sort((a, b) => b.length - a.length);
@@ -293,6 +337,12 @@ export class ShellProbe {
 
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
+    const combinedDetector = createForbiddenOutputDetector(forbiddenOutputValues ?? []);
+    const crossStreamDetector = createCrossStreamForbiddenOutputDetector(
+      forbiddenOutputValues ?? [],
+    );
+    const stdoutDetector = createForbiddenOutputDetector(forbiddenOutputValues ?? []);
+    const stderrDetector = createForbiddenOutputDetector(forbiddenOutputValues ?? []);
     const startedAtMs = Date.now();
     const commandOutputObserver =
       options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
@@ -316,6 +366,9 @@ export class ShellProbe {
       killGraceMs,
       signal,
       onStdout: (chunk) => {
+        combinedDetector.append(chunk);
+        crossStreamDetector.append("stdout", chunk);
+        stdoutDetector.append(chunk);
         stdout.append(chunk);
         try {
           commandOutputObserver?.({ stream: "stdout", atMs: Date.now() });
@@ -324,6 +377,9 @@ export class ShellProbe {
         }
       },
       onStderr: (chunk) => {
+        combinedDetector.append(chunk);
+        crossStreamDetector.append("stderr", chunk);
+        stderrDetector.append(chunk);
         stderr.append(chunk);
         try {
           commandOutputObserver?.({ stream: "stderr", atMs: Date.now() });
@@ -333,13 +389,25 @@ export class ShellProbe {
       },
     });
 
-    const redactedStdout = renderCapturedText(stdout);
-    const redactedStderr = renderCapturedText(stderr);
+    const crossStreamDisclosure =
+      crossStreamDetector.detected() ||
+      (combinedDetector.detected() && !stdoutDetector.detected() && !stderrDetector.detected());
+    const redactedStdout = crossStreamDisclosure ? "[REDACTED]" : renderCapturedText(stdout);
+    const redactedStderr = crossStreamDisclosure ? "[REDACTED]" : renderCapturedText(stderr);
     const finishedAtMs = Date.now();
     const timing = {
       startedAt: new Date(startedAtMs).toISOString(),
       finishedAt: new Date(finishedAtMs).toISOString(),
       durationMs: finishedAtMs - startedAtMs,
+      ...(forbiddenOutputValues === undefined
+        ? {}
+        : {
+            forbiddenOutputDetected:
+              combinedDetector.detected() ||
+              crossStreamDetector.detected() ||
+              stdoutDetector.detected() ||
+              stderrDetector.detected(),
+          }),
     };
     const superviseError = supervised.spawnError ?? supervised.cleanupError;
     if (superviseError) {
