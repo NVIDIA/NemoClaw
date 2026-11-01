@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { redactString } from "../fixtures/redaction.ts";
 import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -15,6 +15,8 @@ import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
   getRouteOutput,
+  OPENCLAW_GATEWAY_PID_PROBE,
+  openClawGatewayRestarted,
   readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
@@ -27,6 +29,56 @@ import {
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+function inspectGatewayPid(processes: string) {
+  return spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `ps() { printf '%s\\n' "$PROBE_PS_OUTPUT"; }\n${OPENCLAW_GATEWAY_PID_PROBE}`,
+    ],
+    { encoding: "utf8", env: { PATH: process.env.PATH, PROBE_PS_OUTPUT: processes } },
+  );
+}
+
+describe("OpenClaw gateway restart evidence", () => {
+  it.each([
+    ["native process title", "123 openclaw-gatewa openclaw-gateway", "123"],
+    ["legacy argv", "124 node /opt/openclaw/entry.js gateway run --port 18789", "124"],
+    [
+      "ignores inspection shells",
+      "400 sh sh -lc openclaw gateway run\n401 awk awk openclaw gateway run\n125 openclaw-gatewa openclaw-gateway",
+      "125",
+    ],
+  ])("finds exactly one gateway using %s", (_name, processes, pid) => {
+    const result = inspectGatewayPid(processes);
+    expect(result).toMatchObject({ status: 0, stdout: `${pid}\n`, stderr: "" });
+  });
+
+  it.each([
+    ["missing", "25 node /bin/unrelated"],
+    ["ambiguous", "12 openclaw-gatewa openclaw-gateway\n13 openclaw-gatewa openclaw-gateway"],
+    ["invalid", "0 openclaw-gatewa openclaw-gateway"],
+  ])("emits no PID for %s gateway identity", (_name, processes) => {
+    const result = inspectGatewayPid(processes);
+    expect(result).toMatchObject({ status: 1, stdout: "", stderr: "" });
+  });
+
+  it.each([
+    { before: "123", after: "124", expected: true },
+    { before: "", after: "124", expected: false },
+    { before: "123", after: "", expected: false },
+    { before: "", after: "", expected: false },
+    { before: "123", after: "123", expected: false },
+    { before: "0", after: "124", expected: false },
+    { before: "abc", after: "124", expected: false },
+    { before: "123\n125", after: "124", expected: false },
+  ])("requires distinct valid process IDs [$before -> $after]", ({ before, after, expected }) => {
+    expect(openClawGatewayRestarted(before, after)).toBe(expected);
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {

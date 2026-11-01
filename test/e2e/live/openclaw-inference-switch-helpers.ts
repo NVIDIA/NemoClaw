@@ -22,6 +22,14 @@ export interface OpenClawPostSwitchInferenceAttempt {
   productMatched: boolean;
 }
 
+/** Observe one gateway without mistaking an inspector command for the agent. */
+export const OPENCLAW_GATEWAY_PID_PROBE =
+  'ps -eo pid=,comm=,args= 2>/dev/null | awk \'$2 != "sh" && $2 != "bash" && $2 != "awk" && ($3 == "openclaw-gateway" || ($0 ~ /openclaw/ && $0 ~ /gateway run/)) { count++; pid = $1 } END { if (count != 1 || pid !~ /^[1-9][0-9]*$/) exit 1; print pid }\'';
+
+export function openClawGatewayRestarted(before: string, after: string): boolean {
+  return /^[1-9][0-9]*$/u.test(before) && /^[1-9][0-9]*$/u.test(after) && before !== after;
+}
+
 export type OpenClawPostSwitchInferenceClassification =
   | { outcome: "passed" }
   | { outcome: "failed"; failureClass: RetryFailureClass };

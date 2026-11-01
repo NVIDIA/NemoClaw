@@ -57,6 +57,8 @@ import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   getRouteOutput,
+  OPENCLAW_GATEWAY_PID_PROBE,
+  openClawGatewayRestarted,
   readOpenClawConfig,
   agentReplyContainsToken,
   classifyExhaustedPostSwitchEvidence,
@@ -355,16 +357,15 @@ async function prepareCompatibleAnthropicSwitchBinding(
   return binding;
 }
 
-async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise<string> {
-  const result = await sandboxShell(
-    sandbox,
-    home,
-    'ps -eo pid=,comm=,args= 2>/dev/null | awk \'$2 != "sh" && $2 != "bash" && $2 != "awk" && $0 ~ /openclaw/ && $0 ~ /gateway run/ { print $1; exit }\' || true',
-    {
-      artifactName: "openclaw-gateway-pid",
-      timeoutMs: 30_000,
-    },
-  );
+async function openclawGatewayPid(
+  sandbox: SandboxClient,
+  home: string,
+  observation: "before" | "after",
+): Promise<string> {
+  const result = await sandboxShell(sandbox, home, OPENCLAW_GATEWAY_PID_PROBE, {
+    artifactName: `openclaw-gateway-pid-${observation}`,
+    timeoutMs: 30_000,
+  });
   return result.stdout.trim();
 }
 
@@ -1031,7 +1032,7 @@ test(
       redactionValues,
       false,
     );
-    const pidBefore = await openclawGatewayPid(sandbox, home);
+    const pidBefore = await openclawGatewayPid(sandbox, home, "before");
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
@@ -1042,14 +1043,12 @@ test(
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
 
-    const pidAfter = await openclawGatewayPid(sandbox, home);
-    const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
-    if (gatewayPidStable !== null) {
-      expect(
-        gatewayPidStable,
-        `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
-      ).toBe(false);
-    }
+    const pidAfter = await openclawGatewayPid(sandbox, home, "after");
+    const gatewayPidStable = pidBefore === pidAfter;
+    expect(
+      openClawGatewayRestarted(pidBefore, pidAfter),
+      `OpenClaw gateway requires distinct valid process IDs after the config switch (${pidBefore || "missing"} -> ${pidAfter || "missing"})`,
+    ).toBe(true);
 
     progress.phase("inspect route configuration and recorded state");
     const route = await getRouteOutput(host, {
