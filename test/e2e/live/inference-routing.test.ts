@@ -957,7 +957,12 @@ test(
       {
         artifactName: "tc-inf-11-inference-set-https-pin-endpoint",
         artifacts,
-        env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          COMPATIBLE_API_KEY: apiKey,
+          // This bounded probe owns route isolation, not optional telemetry delivery.
+          NEMOCLAW_DISABLE_TELEMETRY: "1",
+        },
         progress,
         redactionValues: [apiKey],
         timeoutMs: 60_000,
