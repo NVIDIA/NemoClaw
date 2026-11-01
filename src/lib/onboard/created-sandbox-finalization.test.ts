@@ -423,6 +423,70 @@ describe("created DCode sandbox finalization", () => {
     }
   });
 
+  it.each([
+    { customImage: false, reconcile: true, keep: true },
+    { customImage: true, reconcile: true, keep: false },
+    { customImage: false, reconcile: false, keep: false },
+  ])(
+    "hands off the generated config for customImage=$customImage reconcile=$reconcile (#13897)",
+    async ({ customImage, reconcile, keep }) => {
+      const fixture = makeRestoreFixture();
+      const restoreOptions: sandboxState.RecreatedSandboxRestoreOptions[] = [];
+      try {
+        await finalizeCreatedSandbox(
+          {
+            sandboxName: "dcode",
+            restoreBackupPath: fixture.backupPath,
+            preUpgradeBackup: false,
+            targetAgentType: "langchain-deepagents-code",
+            customImage,
+            reconcileOpenClawInference: reconcile,
+            validateManagedDcode: true,
+            provider: "nvidia-prod",
+            model: "new-model",
+            preferredInferenceApi: null,
+          },
+          {
+            ...preparedRestoreAuthority("dcode"),
+            restoreRecreatedSandboxState: async (_name, _backup, options) => {
+              restoreOptions.push(options);
+              return {
+                success: true,
+                restoredDirs: ["."],
+                failedDirs: [],
+                restoredFiles: [],
+                failedFiles: [],
+              };
+            },
+            getDcodeSelectionDrift: async () => ({
+              changed: false,
+              providerChanged: false,
+              modelChanged: false,
+              existingProvider: "nvidia-prod",
+              existingModel: "openai:new-model",
+              unknown: false,
+            }),
+            register: vi.fn(),
+            note: vi.fn(),
+            error: vi.fn(),
+            exitProcess: (code): never => {
+              throw new Error(`exit ${code}`);
+            },
+          },
+        );
+
+        expect(restoreOptions).toEqual([
+          {
+            targetAgentType: "langchain-deepagents-code",
+            ...(keep ? { keepReplacementDeepAgentsConfig: true } : {}),
+          },
+        ]);
+      } finally {
+        process.env.PATH = fixture.oldPath;
+      }
+    },
+  );
+
   it.each([false, true])(
     "passes native attachment selection %s before registry publication",
     async (nativeProvider) => {

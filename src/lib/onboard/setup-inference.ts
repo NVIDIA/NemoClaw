@@ -911,6 +911,35 @@ function shouldStageGatewayRouteAfterBackup(
   );
 }
 
+// A native provider attachment bypasses the gateway-wide route, so a source
+// that uses one may leave no published route to capture or restore. Count only
+// an attachment that belongs to the source's recorded provider: an earlier
+// provider switch may have left a stale one on a routed source (#13897).
+function usesNativeProviderAttachment(source: SandboxEntry | null): boolean {
+  if (!source) return false;
+  if (
+    source.nativeNvidiaProviderAttachment !== undefined &&
+    isNativeNvidiaProvider(source.provider)
+  )
+    return true;
+  const provider = source.provider ?? null;
+  const endpointUrl = source.endpointUrl ?? null;
+  if (
+    source.nativeLocalProviderAttachment?.provider === provider &&
+    (usesNativeLocalInference(provider, endpointUrl) ||
+      usesNativeLocalInferenceForAgent(source.agent, provider, endpointUrl))
+  )
+    return true;
+  try {
+    return (
+      requireHostedProviderAttachment(source.nativeHostedProviderAttachment, source.provider) !==
+      undefined
+    );
+  } catch {
+    return false;
+  }
+}
+
 function createGatewayRouteStager(input: {
   deps: SetupInferenceDeps;
   provider: string;
@@ -923,6 +952,7 @@ function createGatewayRouteStager(input: {
   revalidateSandboxIdentity?: (operation: string) => void;
 }) {
   let stagedRoute: Parameters<OpenShellInferenceRouteMutator["setInferenceRoute"]>[0] | null = null;
+  let stagedSource: SandboxEntry | null = null;
   const stagedProviderUpserts: Array<
     () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>
   > = [];
@@ -944,8 +974,10 @@ function createGatewayRouteStager(input: {
   const mutator: OpenShellInferenceRouteMutator = {
     setInferenceRoute: (request) => {
       input.revalidateSandboxIdentity?.("change the OpenShell inference provider route");
-      if (publishedSourceForStaging()) {
+      const source = publishedSourceForStaging();
+      if (source) {
         stagedRoute = request;
+        stagedSource = source;
         return Promise.resolve({ ok: true });
       }
       return input.deps.inferenceRouteMutator.setInferenceRoute(request);
@@ -987,6 +1019,7 @@ function createGatewayRouteStager(input: {
         return { ok: true };
       }
       const request = stagedRoute;
+      const nativeSource = usesNativeProviderAttachment(stagedSource);
       const providerUpserts = [...stagedProviderUpserts];
       return {
         ok: true,
@@ -1001,12 +1034,12 @@ function createGatewayRouteStager(input: {
           const before = await input.deps.inferenceRouteObserver.observeInferenceRoute({
             target,
           });
-          if (!before.ok || before.value.state !== "configured") {
+          if (!before.ok || (before.value.state !== "configured" && !nativeSource)) {
             throw new Error(
               `Cannot capture the published inference route on gateway '${input.gatewayName}' before replacement.`,
             );
           }
-          const sourceRoute = before.value.route;
+          const sourceRoute = before.value.state === "configured" ? before.value.route : null;
           try {
             for (const upsert of providerUpserts) {
               const providerResult = await upsert();
@@ -1031,6 +1064,9 @@ function createGatewayRouteStager(input: {
             }
             reserve();
           } catch (error) {
+            // No sandbox used the unconfigured gateway route, so there is no
+            // published route to restore.
+            if (!sourceRoute) throw error;
             const live = await input.deps.inferenceRouteObserver.observeInferenceRoute({
               target,
             });

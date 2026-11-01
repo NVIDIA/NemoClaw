@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shouldReconcileRestoredOpenClawSelection } from "./onboard-recreate-journal";
+import { shouldReconcileRestoredSelection } from "./onboard-recreate-journal";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -615,10 +615,40 @@ describe("restored selection override admission", () => {
       modelChanged: true,
       expected: false,
     },
+    {
+      label: "Deep Agents forced provider switch",
+      agent: "langchain-deepagents-code",
+      custom: false,
+      forced: true,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: false,
+      expected: true,
+    },
+    {
+      label: "Deep Agents fresh provider switch",
+      agent: "langchain-deepagents-code",
+      custom: false,
+      forced: false,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: false,
+      expected: true,
+    },
+    {
+      label: "Deep Agents custom image",
+      agent: "langchain-deepagents-code",
+      custom: true,
+      forced: true,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: false,
+      expected: false,
+    },
   ])(
     "bounds reconciliation for $label (#12667)",
     ({ agent, custom, forced, expected, ...drift }) => {
-      expect(shouldReconcileRestoredOpenClawSelection(agent, custom, forced, drift)).toBe(expected);
+      expect(shouldReconcileRestoredSelection(agent, custom, forced, drift)).toBe(expected);
     },
   );
 });
