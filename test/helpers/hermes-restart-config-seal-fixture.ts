@@ -153,7 +153,7 @@ export function runWriteConfig(
   fixture: RestartFixture,
   expectedDigest: string,
   content: string,
-  options: { env?: NodeJS.ProcessEnv } = {},
+  options: { env?: NodeJS.ProcessEnv; restoreNativeLocalCredential?: boolean } = {},
 ) {
   const wrapper = String.raw`
 import sys
@@ -180,6 +180,7 @@ with open(source_path, "rb") as source:
       fixture.statePath,
       "--expected-config-sha256",
       expectedDigest,
+      ...(options.restoreNativeLocalCredential ? ["--restore-native-local-credential"] : []),
     ],
     {
       encoding: "utf-8",
