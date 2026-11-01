@@ -42,6 +42,14 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)test\/e2e\/lib\/issue-4462-admin-request-selector\.py$/,
+    testsToRun: runTests(
+      "test/security/admin-approval-helper.test.ts",
+      "test/e2e/support/issue-4462-gateway-snapshot.test.ts",
+      "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)scripts\/lib\/openclaw-gateway-owner\.mts$/,
     testsToRun: runTests("src/lib/onboard/managed-startup/provider-root-apply.test.ts"),
   },

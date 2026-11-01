@@ -1145,7 +1145,8 @@ def read_openclaw_pairing_state(state_dir, timeout=1):
       const result = runSelector(adminState(), identity, writeLocalIdentity, helper);
       expect(result.status, result.stderr).toBe(status);
       expect(result.stderr.match(/^SNAPSHOT_CALL$/gm) ?? []).toHaveLength(calls);
-      expect(result.stdout.match(/^ADMIN_SNAPSHOT_RETRY=[12]$/gm) ?? []).toHaveLength(calls - 1);
+      expect(result.stderr.match(/^ADMIN_SNAPSHOT_RETRY=[12]$/gm) ?? []).toHaveLength(calls - 1);
+      expect(result.stdout).toBe("");
       expect(result.selectedRequestId).toBe(status === 0 ? EXPECTED_REQUEST_ID : "");
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(EXPECTED_PUBLIC_KEY);
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(EXPECTED_DEVICE_ID);

@@ -42,6 +42,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "test/e2e/lib/issue-4462-admin-request-selector.py",
   ".github/workflows/release-daily-brev-image.yaml",
   "test/helpers/onboard-script-mocks.cjs",
   "scripts/release-daily-brev-image.sh",

@@ -162,9 +162,9 @@ for snapshot_attempt in range(3):
         snapshot_remaining = snapshot_deadline - time.monotonic()
         if snapshot_attempt == 2 or snapshot_remaining <= 0:
             raise
-        # stderr is private selector diagnostics; stdout survives successful
-        # selection in the enclosing shell's artifact transcript.
-        print(f"ADMIN_SNAPSHOT_RETRY={snapshot_attempt + 1}")
+        # Keep ordinals in the private diagnostic stream. The enclosing shell
+        # redacts failures, and the request ID travels only through its file.
+        print(f"ADMIN_SNAPSHOT_RETRY={snapshot_attempt + 1}", file=sys.stderr)
         time.sleep(min(0.025, snapshot_remaining))
 identity = records.get("identity")
 if not isinstance(identity, dict):
