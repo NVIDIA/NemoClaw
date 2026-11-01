@@ -222,10 +222,14 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
 import { HermesMcpReloadRelayLossError } from "./mcp-bridge-adapters";
 import { addMcpBridge } from "./mcp-bridge-add-restart";
 import {
+  assertNoProviderCredentialCollisions,
+  assertSandboxProviderAttachmentCapacity,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   upsertMcpProvider,
 } from "./mcp-bridge-provider";
+import { inspectSourceBridgeState } from "./mcp-bridge-source";
+import { getBridgeAdapter } from "./mcp-bridge-state";
 import * as policies from "../../policy";
 
 async function runAdd(): Promise<void> {
@@ -313,6 +317,12 @@ describe("Hermes MCP add reload finality", () => {
             ]
           : [],
       }));
+    vi.mocked(assertNoProviderCredentialCollisions)
+      .mockReset()
+      .mockImplementation(async (sandboxName, entries, runtimeSelection) => {
+        const inspection = await inspectMcpProviderAttachments(sandboxName, runtimeSelection);
+        assertSandboxProviderAttachmentCapacity(sandboxName, entries, inspection.attachments ?? []);
+      });
     vi.mocked(policies.getPresetContentGatewayState)
       .mockReset()
       .mockImplementation(async (_sandbox: string, content: string) => {
@@ -719,5 +729,81 @@ describe("Hermes MCP add reload finality", () => {
 
     expect(String(failure)).toContain("did not roll back or repeat the mutation");
     expect(String(failure)).not.toContain("host-only-secret");
+  });
+
+  it("refuses a new MCP server before policy or provider creation when 32 providers are attached", async () => {
+    const thirtyTwoAttachments = Array.from({ length: 32 }, (_, index) => ({
+      credentialKeys: [index === 0 ? "NVIDIA_API_KEY" : `T_MCP_${String(index)}`],
+      name: index === 0 ? "nvidia-nim" : `alpha-mcp-srv${String(index)}`,
+      providerId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
+    vi.mocked(inspectMcpProviderAttachments).mockResolvedValue({
+      attachments: thirtyTwoAttachments,
+    });
+
+    await expect(runAdd()).rejects.toThrow(
+      "Sandbox 'alpha' already has 32 attached OpenShell providers (maximum 32 per sandbox across inference, messaging, web search, extra credential, and managed MCP providers).",
+    );
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.upsertMcpProvider).not.toHaveBeenCalled();
+    expect(mocks.attachProvider).not.toHaveBeenCalled();
+    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
+  });
+
+  it("resumes an interrupted MCP add when its provider is already among the 32 attached providers", async () => {
+    mocks.state.provider = true;
+    mocks.state.policy = "bound";
+    mocks.state.attachment = true;
+    const thirtyTwoAttachments = [
+      {
+        credentialKeys: ["GITHUB_TOKEN"],
+        name: "alpha-mcp-github",
+        providerId: "11111111-2222-4333-8444-555555555555",
+      },
+      ...Array.from({ length: 31 }, (_, index) => ({
+        credentialKeys: [`T_MCP_${String(index)}`],
+        name: `alpha-mcp-srv${String(index)}`,
+        providerId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      })),
+    ];
+    vi.mocked(inspectMcpProviderAttachments).mockResolvedValue({
+      attachments: thirtyTwoAttachments,
+    });
+
+    await expect(runAdd()).resolves.toBeUndefined();
+    expect(mocks.attachProvider).not.toHaveBeenCalled();
+    expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a 65th Deep Agents native server before OpenShell policy or provider mutations", async () => {
+    vi.mocked(getBridgeAdapter).mockReturnValueOnce("deepagents-config");
+    const native = Object.fromEntries(
+      Array.from({ length: 63 }, (_, index) => [
+        `srv${String(index)}`,
+        {
+          adapter: "deepagents-config" as const,
+          agent: "langchain-deepagents-code",
+          env: [`T_MCP_${String(index)}`],
+          policyName: `mcp-bridge-srv${String(index)}`,
+          server: `srv${String(index)}`,
+          url: `https://8.8.8.8/mcp/${String(index)}`,
+        },
+      ]),
+    );
+    vi.mocked(inspectSourceBridgeState).mockResolvedValueOnce({
+      bridges: {},
+      sources: {
+        legacy: {},
+        native,
+        nativeServerNames: [...Object.keys(native), "local-stdio"],
+      },
+    });
+
+    await expect(runAdd()).rejects.toThrow(
+      "Deep Agents managed MCP supports at most 64 servers; refusing to render a 65-server mutation.",
+    );
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.upsertMcpProvider).not.toHaveBeenCalled();
+    expect(mocks.attachProvider).not.toHaveBeenCalled();
   });
 });

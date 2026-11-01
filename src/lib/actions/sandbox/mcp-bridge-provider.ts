@@ -12,15 +12,18 @@ export {
   assertNoAttachedProviderCredentialCollisions,
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  assertSandboxProviderAttachmentCapacity,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
+  MAX_SANDBOX_PROVIDER_ATTACHMENTS,
   MCP_BRIDGE_PROVIDER_TYPE,
   preflightMcpEntryTargets,
   providerAttached,
   providerMatchesCredential,
   providerMatchesManagedCredential,
   providerShapeDetail,
+  sandboxProviderAttachmentLimitError,
 } from "./mcp-bridge-provider-inspection";
 export type { ProviderDetachOutcome } from "./mcp-bridge-provider-mutation";
 export {

@@ -14,12 +14,14 @@ import {
   createMcpProviderAdapterBoundary,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
+  MAX_SANDBOX_PROVIDER_ATTACHMENTS,
   type McpProviderAttachment,
   type McpProviderAttachmentInspection,
   type McpProviderInspectionRuntimeSelection,
   providerMatchesCredential,
   providerMatchesManagedCredential,
   providerShapeDetail,
+  sandboxProviderAttachmentLimitError,
 } from "./mcp-bridge-provider-inspection";
 import {
   assertAuthenticatedBridgeEntry,
@@ -103,6 +105,19 @@ export async function attachProvider(
       boundary.adapter,
     );
     if (attachmentMatchesCurrentProviderSnapshot(afterError.attachment, entry)) return;
+    if (
+      /\bproviders list\s+exceeds maximum\b/iu.test(result.error.message) ||
+      (afterError.inspection.attachments &&
+        afterError.inspection.attachments.length >= MAX_SANDBOX_PROVIDER_ATTACHMENTS)
+    ) {
+      throw sandboxProviderAttachmentLimitError(
+        sandboxName,
+        Math.max(
+          afterError.inspection.attachments?.length ?? MAX_SANDBOX_PROVIDER_ATTACHMENTS,
+          MAX_SANDBOX_PROVIDER_ATTACHMENTS,
+        ),
+      );
+    }
     throw new McpBridgeError(
       result.error.message ||
         afterError.inspection.error ||
