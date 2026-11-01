@@ -25,6 +25,19 @@ describe("assessHost NVIDIA GPU detection through the WSL nvidia-smi path", () =
     expect(result.hasNvidiaGpu).toBe(true);
   });
 
+  it("ignores placeholder devices from the WSL shim", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      dockerInfoOutput: "",
+      commandExistsImpl: () => false,
+      runCaptureImpl: (command) =>
+        command[0] === WSL_NVIDIA_SMI ? "GPU 0: JMJWOA-Generic-GPU (UUID: GPU-1)" : "",
+    });
+
+    expect(result.hasNvidiaGpu).toBe(false);
+  });
+
   it("does not probe the WSL path on a non-WSL host", () => {
     const result = assessHost({
       platform: "linux",

@@ -28,7 +28,7 @@ import {
   isDockerDaemonReachable,
   isSupportedGatewayDockerHost,
 } from "../domain/docker-host";
-import { captureNvidiaSmi } from "../inference/gpu-trust";
+import { captureNvidiaSmi, isDenylistedNvidiaGpuName } from "../inference/gpu-trust";
 import type { DockerAuthorityConflict } from "../platform";
 import { classifyDockerVersionIdentity, observeDockerAuthorityConflict } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
@@ -560,7 +560,11 @@ function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
 function detectNvidiaGpu(runCaptureImpl: RunCaptureFn, isWsl: boolean): boolean {
   // Share the PATH-then-WSL-driver lookup with GPU detection so a WSL host that
   // reaches nvidia-smi only through its stock driver path is still recognised.
-  if (captureNvidiaSmi(["-L"], { isWsl, runCaptureImpl }).trim()) return true;
+  // The Windows-on-ARM shim lists placeholder devices; do not count those.
+  const listing = captureNvidiaSmi(["-L"], { isWsl, runCaptureImpl });
+  if (listing.split("\n").some((line) => line.trim() && !isDenylistedNvidiaGpuName(line))) {
+    return true;
+  }
   // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
   // NVIDIA GPU hardware is present. Fall back to a hardware probe so CDI/toolkit
   // remediation still fires when the toolkit is missing and Docker CDI dirs are
