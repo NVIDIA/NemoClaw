@@ -45,7 +45,7 @@ If the detail is `probe exited 56`, curl failed to receive network data.
 An HTTPS MCP endpoint with an untrusted private CA can cause this result when OpenShell closes the connection after upstream certificate validation fails.
 The exit code alone does not identify the cause.
 `provider.credentialReady: true` confirms that the provider has a credential, but does not prove endpoint connectivity or credential resolution.
-For a private CA, follow [the CA trust recovery procedure](#private-or-plain-http-mcp-url-is-rejected).
+For CA bundle requirements and rebuild limitations, refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust).
 
 A detail containing `CONNECT 503` means OpenShell failed closed before TLS setup because gateway TLS termination state was unavailable.
 Inspect the OpenShell gateway's ephemeral CA generation and CA-file initialization, repair the reported condition, and rerun `mcp status <server>`.
@@ -236,7 +236,7 @@ For example, an HTTPS MCP endpoint with an untrusted private CA can produce `tra
 The proxy's upstream TLS error is not visible at the sandbox's `fetch` boundary in this case.
 Neither this socket error nor `probe exited 56` alone proves a CA trust failure.
 Check the endpoint's certificate chain and the runtime's CA trust before changing credentials or increasing timeouts.
-For recovery, follow [the CA trust guidance](#private-or-plain-http-mcp-url-is-rejected).
+For CA configuration requirements, refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust).
 
 `route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
 `route=unknown` states that the diagnostic did not observe one.
@@ -416,20 +416,8 @@ The managed image installs that CA for both the OpenShell upstream proxy and san
 Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
 
 `--trusted-private-host` permits a private destination; it does not install a CA or disable certificate validation.
-If registration succeeds with an inconclusive probe, the endpoint can still be unusable until CA trust is configured.
-Use a PEM bundle from your CA administrator that contains the required CA certificates.
-Refer to [Review the Trust Boundary](../security/configure-corporate-ca-trust#review-the-trust-boundary) for bundle requirements.
-
-Managed-image rebuilds preserve the recorded CA profile, so exporting a different bundle before rebuild does not update that trust.
-To add or change that CA trust, obtain the approved bundle and export its host path before replacement onboarding:
-
-```bash
-export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/private-ca-bundle.pem
-```
-
-Follow [Replace a Sandbox](../manage-sandboxes/state-and-backups/transfer-state-manually#replace-a-sandbox) to preserve configuration and transfer reviewed state.
-Keep the old sandbox until the replacement passes the procedure's checks, including MCP credential resolution and tool discovery.
-Keep HTTPS and certificate validation enabled.
+Managed-image rebuilds preserve the recorded CA profile and do not import a newly exported bundle.
+Refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) for bundle requirements and the limitation for existing sandboxes.
 
 Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
 Sandbox loopback is not the host service, and `--trusted-private-host` does not create a route to it.
