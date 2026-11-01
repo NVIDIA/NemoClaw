@@ -25,7 +25,7 @@ $$nemoclaw onboard
 
 The explicit variable fails onboarding when the file is missing, invalid, unsafe, or a merged operating-system trust store.
 Managed-image rebuilds preserve the recorded CA profile and do not import a newly exported bundle.
-For an existing sandbox, use `NEMOCLAW_CORPORATE_CA_BUNDLE` with the [explicit recreation options `--fresh --name <sandbox-name> --recreate-sandbox`](../reference/commands#--resume-and--fresh), subject to the [state-preservation and recovery limits](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+For an existing sandbox, use the [explicit recreation command `NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox`](../reference/commands#--resume-and--fresh), subject to the [state-preservation and recovery limits](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
 
 ## Understand Image and Runtime Trust
 
