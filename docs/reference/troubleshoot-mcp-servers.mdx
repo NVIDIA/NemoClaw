@@ -41,8 +41,7 @@ Compare status for the same server on a known-good host.
 A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment.
 Fix the reported endpoint or policy condition, then rerun status.
 
-If the detail is `probe exited 56`, curl failed to receive network data.
-An HTTPS MCP endpoint with an untrusted private CA can cause this result when OpenShell closes the connection after upstream certificate validation fails.
+If the detail is `probe exited 56`, the adapter HTTP probe failed.
 The exit code alone does not identify the cause.
 `provider.credentialReady: true` confirms that the provider has a credential, but does not prove endpoint connectivity or credential resolution.
 For CA bundle requirements and rebuild limitations, refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust).
@@ -231,11 +230,9 @@ It classifies the error visible to OpenClaw at the `fetch` boundary:
 | `request` | The request failed before any response arrived |
 | `response_headers` | A response arrived and its status or headers report the failure |
 
-An upstream certificate validation failure inside the OpenShell L7 MCP proxy can appear to OpenClaw as a closed socket.
-For example, an HTTPS MCP endpoint with an untrusted private CA can produce `transport_phase=request` with `UND_ERR_SOCKET` and `other side closed` in `cause_chain`.
-The proxy's upstream TLS error is not visible at the sandbox's `fetch` boundary in this case.
+A closed socket with `UND_ERR_SOCKET` and `other side closed` in `cause_chain` falls under `transport_phase=request` when no more specific cause is visible.
 Neither this socket error nor `probe exited 56` alone proves a CA trust failure.
-Check the endpoint's certificate chain and the runtime's CA trust before changing credentials or increasing timeouts.
+For a private-CA endpoint, check the certificate chain and runtime CA trust before changing credentials or increasing timeouts.
 For CA configuration requirements, refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust).
 
 `route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
