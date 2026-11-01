@@ -424,6 +424,7 @@ Managed-image rebuilds preserve the recorded CA profile, so exporting a differen
 Choose an unused sandbox name for onboarding.
 This creates another sandbox with its own agent configuration.
 Keep the existing sandbox until verification succeeds.
+Record its required inference settings, policy presets, MCP registrations, messaging channels, and scheduled tasks before you start.
 Export the bundle's host path before onboarding:
 
 ```bash
@@ -431,9 +432,16 @@ export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/private-ca-bundle.pem
 $$nemoclaw onboard --name <new-sandbox>
 ```
 
-After onboarding completes, [add the MCP server](../manage-sandboxes/mcp-servers/add-an-mcp-server) to the new sandbox.
+Recreate the required settings through supported configuration commands.
+Keep messaging channels and scheduled tasks inactive on the new sandbox while the old sandbox still runs them.
+Before copying mutable state, pause the work that writes it.
+Use [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) to copy required workspace files and agent state, following its per-agent exclusions.
+Do not copy credential stores, machine-local identities, or the old agent configuration wholesale.
+Provision credentials through supported provider bindings.
+
+If the old sandbox has managed MCP servers, [add each required MCP server](../manage-sandboxes/mcp-servers/add-an-mcp-server) to the new sandbox.
 Use the original URL, credential environment-variable name, denied-tool selectors, and trusted-private declaration.
-Then verify credential resolution and tool discovery:
+For each server, verify credential resolution and tool discovery:
 
 ```bash
 $$nemoclaw <new-sandbox> mcp status <server> --json
@@ -441,8 +449,47 @@ $$nemoclaw <new-sandbox> mcp status <server> --tools
 ```
 
 Confirm that `provider.credentialResolution.ok` is `true` and tool discovery succeeds.
-If either check fails, inspect the reported endpoint or policy condition before retrying.
+If no MCP server is configured, verify the affected feature through its normal HTTPS workflow instead.
+Before starting messaging or scheduled work on the new sandbox, pause it on the old sandbox through its supported controls.
+Confirm that the old sandbox no longer runs that work before enabling it on the new sandbox.
+
+<AgentOnly variant="openclaw,hermes">
+Follow [Pause and Resume a Channel](../manage-sandboxes/messaging-channels/manage-messaging-channels#pause-and-resume-a-channel) for channel controls, including any requested rebuild.
+Stopping the sandbox alone does not clear enabled channels from the messaging plan's conflict checks.
+</AgentOnly>
+
+Use the scheduler's pause and resume controls for scheduled tasks.
+Enable the new sandbox's required integrations and verify their normal workflows.
+Verify the transferred files and any other required integrations before retiring the old sandbox.
 Keep HTTPS and certificate validation enabled.
+
+<Warning>
+Destroy removes the named sandbox's native state.
+Copy any files you need before either cleanup command below.
+</Warning>
+
+After verification succeeds and you move clients to the new sandbox, destroy the old sandbox by its original name:
+
+```bash
+$$nemoclaw <old-sandbox> destroy
+$$nemoclaw list
+```
+
+If verification fails, inspect the reported endpoint or policy condition before retrying.
+Keep the old sandbox as the rollback target.
+Pause any messaging or scheduled work started on the new sandbox before resuming it on the old sandbox.
+If you abandon the replacement, recover any files you need from it, then destroy only the new sandbox:
+
+```bash
+$$nemoclaw <new-sandbox> destroy
+$$nemoclaw list
+```
+
+For either cleanup, confirm that destroy reports the named sandbox destroyed and that the name no longer appears in the list.
+If destroy fails or reports residual cleanup, resolve the reported condition before retrying.
+Destroy preserves workspace-level MCP providers.
+Inspect its printed provider names, and resolve any provider-inventory warning before selecting a provider for cleanup.
+Remove a retained provider only after confirming that no remaining sandbox uses it, following the cleanup guidance in [Manage MCP Servers](../manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential).
 
 Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
 Sandbox loopback is not the host service, and `--trusted-private-host` does not create a route to it.

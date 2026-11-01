@@ -1939,12 +1939,9 @@ $$nemoclaw <name> rebuild
 
 On networks where a corporate proxy re-signs external TLS, endpoints such as `api.telegram.org` can fail certificate verification even when network policy allows the connection. Logs show the request opening as `NET:OPEN ... api.telegram.org:443` followed by `NET:FAIL` because the corporate root is not in the OpenShell trust path.
 
-Provide the corporate CA before onboarding, then onboard or rebuild the sandbox.
-
-```bash
-export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
-$$nemoclaw onboard
-```
+For a new sandbox, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
+Managed-image rebuilds preserve the recorded CA profile.
+To add or change CA trust for an existing managed-image sandbox, follow [the new-sandbox recovery procedure](troubleshoot-mcp-servers#private-or-plain-http-mcp-url-is-rejected).
 
 Refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) for source precedence, host anchor discovery, image and runtime trust, custom Dockerfile requirements, import validation, and `NEMOCLAW_CORPORATE_CA_IMPORT=0`. If the import does not occur, check onboarding output for `baking corporate proxy CA from ...` or a warning that the selected source was skipped.
 

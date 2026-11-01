@@ -106,7 +106,8 @@ Before registration, configure an HTTPS endpoint that meets these requirements:
 - The endpoint exposes only the required MCP path and methods.
 
 If the endpoint certificate chains to a private CA, provide that CA with `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
-Rebuild an existing sandbox after adding or changing the CA so both the OpenShell upstream proxy and sandbox clients receive the trust anchor.
+Managed-image rebuilds preserve the recorded CA profile.
+To add or change CA trust for an existing managed-image sandbox, follow [the new-sandbox recovery procedure](../../reference/troubleshoot-mcp-servers#private-or-plain-http-mcp-url-is-rejected).
 For source validation and custom-image requirements, refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust).
 
 For a host-local MCP process, keep the process bound to loopback when practical.
