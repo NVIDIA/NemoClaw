@@ -145,6 +145,17 @@ Select the workspace files, agent state, scripts, skills, and working directorie
 Review those files and job definitions for credentials before any download or upload.
 Exclude raw credential values from every transfer copy and recorded job definition.
 Do not copy live cron stores, credential stores, machine-local identities, or the old agent configuration wholesale.
+Exclude messaging-session and pairing state, including custom session paths and copies under named profiles, from replacement and rollback transfers.
+
+<AgentOnly variant="hermes">
+Do not transfer `/sandbox/.hermes/platforms/` or legacy `dashboard-home` messaging sessions into the replacement.
+These paths can contain credentials such as WhatsApp `session/creds.json`.
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+Do not transfer native WhatsApp session state or credential and account directories outside the reviewed workspace files.
+These include `/sandbox/.openclaw/whatsapp/`, `/sandbox/.openclaw/credentials/`, `/sandbox/.openclaw/wechat/`, and `/sandbox/.openclaw/openclaw-weixin/`.
+</AgentOnly>
 
 Follow [Download State](#download-state) and [Upload State](#upload-state), including their per-agent exclusions.
 Verify that the required files are present in the replacement before recreating jobs.
@@ -191,7 +202,17 @@ Confirm that the old sandbox's scheduled work and integrations remain inactive.
 
 <AgentOnly variant="openclaw,hermes">
 Restore the recorded messaging channel settings through [Add Channels After Onboarding](../messaging-channels/add-channels-after-onboarding).
-Complete its required rebuild and verification steps while replacement jobs remain disabled or paused.
+Complete its required rebuild while replacement jobs remain disabled or paused.
+
+Removing a WhatsApp Linked Device entry invalidates that sandbox's session.
+Rollback after removing the old entry requires fresh pairing on the old sandbox.
+
+For WhatsApp, remove the old sandbox's entry from the phone's Linked Devices before pairing the replacement.
+Follow the [channel removal guidance](../messaging-channels/manage-messaging-channels#remove-a-channel) for this external step.
+Pair the replacement through [Set Up WhatsApp](../messaging-channels/set-up-whatsapp).
+
+For other channels, pair or provision credentials through their supported setup flow.
+Do not restore native messaging-session files into the replacement.
 </AgentOnly>
 
 Restore other required integration settings through their supported configuration controls.
@@ -229,7 +250,14 @@ Wait for replacement work to finish, then pause replacement integrations through
 Confirm that replacement dispatch and integrations are inactive.
 
 Recover any required reviewed state while both sandboxes' writers remain inactive.
+
+<AgentOnly variant="openclaw,hermes">
+If the replacement was paired with WhatsApp, remove its entry from the phone's Linked Devices before pairing the old sandbox.
+</AgentOnly>
+
+If a channel session was invalidated during cutover, repeat its supported pairing or credential setup on the old sandbox.
 Restore and verify the old sandbox's required integrations before resuming its scheduled work.
+Verify delivery before resuming jobs that depend on that channel.
 Then enable or resume only the originally enabled jobs, using their original job IDs, and verify their state.
 For external schedules, restore and verify the old target while dispatch remains disabled, then re-enable it.
 
@@ -303,8 +331,11 @@ mkdir -p "$BACKUP_DIR"
 
 $$nemoclaw "$SANDBOX" download /sandbox/.hermes/SOUL.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.hermes/state.db "$BACKUP_DIR/"
-$$nemoclaw "$SANDBOX" download /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
+
+Exclude `/sandbox/.hermes/platforms/` and other messaging-session or pairing state from manual copies.
+For normal lifecycle preservation of native messaging sessions, use [Persist Sandbox State](create-and-restore-snapshots).
+For replacement sandboxes, restore channels through their supported pairing or credential setup instead of transferring sessions.
 
 Do not copy `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` between sandboxes.
 The gateway, CLI, TUI, and Web Dashboard share those native files, and NemoClaw recreates their managed route and credential placeholders for the destination sandbox.
@@ -373,8 +404,10 @@ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/SOUL.md" /sandbox/.hermes/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/state.db" /sandbox/.hermes/
-$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
+
+Do not upload saved `platforms/` contents, legacy messaging sessions, or other pairing state into a replacement sandbox.
+Recreate and verify its messaging channels through their supported setup flow.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
