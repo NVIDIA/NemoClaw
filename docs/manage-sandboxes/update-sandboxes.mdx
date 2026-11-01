@@ -109,46 +109,25 @@ If the forced installation fails, the installer does not stage a gateway service
 
 ## Resume a Manually Prepared Upgrade
 
-Use this path only with the current release CLI.
-If the installer has not already reported that it prepared the current CLI, start the supported automatic flow first:
-
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
-```
-
-That flow prepares the current CLI before it replaces OpenShell.
-If it completes, do not run the manual steps below.
-Continue manually only when the automatic flow stops after preparing the CLI or a support workflow directs you to this recovery path.
-Set the prepared-upgrade state only after strict backup succeeds, every applicable registered legacy forward is retired, and the gateway is retired.
-Strict backup can report a confirmed stranded registry sandbox without creating a backup for it because both the selected gateway and the container provider prove that no sandbox runtime remains.
-That record requires the cleanup or recreation action printed by `$$nemoclaw backup-all`, but it does not block a prepared upgrade after the strict command succeeds.
-Run the backup and forward-retirement step with the current prepared NemoClaw CLI before you retire the gateway:
+If the gateway has not been retired, rerun the automatic upgrade with the selected gateway port:
 
 ```bash
 selected_port=8080
-gateway_name=nemoclaw
-NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all --retire-legacy-forwards && \
-  openshell gateway destroy -g "$gateway_name"
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_FORCE_FRESH_INSTALL=0 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=0 NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
 ```
 
-For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
-If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
-Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
-Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
-Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
-A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
-If either command fails or cannot prove a retirement, resolve that failure while the completed backups remain intact.
-Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
+For a non-default gateway, replace `8080` with its port.
+If the installed OpenShell version is outside the supported range, the installer backs up the sandboxes and retires applicable legacy forwards before it retires the gateway.
+If it cannot verify gateway retirement, it stops and preserves the backups.
+If the backup reports a confirmed stranded sandbox, complete its reported cleanup or recreation action during recovery.
+Do not use `openshell gateway remove` to retire the gateway: it removes the registration without stopping the process.
 
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
-```
-
-Set `NEMOCLAW_GATEWAY_PORT=8080` when you prepared the default gateway.
-Omitting it selects port `8080` only when no automatic alternate-port marker exists, so an explicit value prevents a previously recorded alternate environment from receiving the prepared upgrade.
-`NEMOCLAW_OPENSHELL_UPGRADE_PREPARED` asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
-It reuses the latest backups, forces installation of the OpenShell version pinned by the prepared source, and starts recovery only after that installation succeeds.
-If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.
+If the installer reports that gateway retirement succeeded but the pinned OpenShell installation failed, use the prepared retry it prints.
+Set `NEMOCLAW_FORCE_FRESH_INSTALL=0` on the `bash` side of that retry to prevent a destructive reset.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after strict backup, forward retirement, and gateway retirement have succeeded.
+This flag skips those preparation steps and reuses the backups.
+Preserve the selected `NEMOCLAW_GATEWAY_PORT` on the `bash` side of the install pipeline.
+If the retry fails, preserve the backups and resolve the reported failure before retrying.
 Outside these forced paths, an in-range source checkout preserves an existing OpenShell installation and installs OpenShell only when it is missing.
 
 ## Reconcile Registered Sandboxes
