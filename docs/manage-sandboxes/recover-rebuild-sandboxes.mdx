@@ -66,8 +66,9 @@ credential-free user data from an independently maintained backup. Rebuild canno
 workspace or live OpenShell policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
-The `start` command repairs the agent runtime and host-side port forwards.
-It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
+The `start` command verifies the agent runtime and checks or restores host-side port forwards.
+It does not relaunch a stopped native gateway.
+It returns success only after OpenShell reports the sandbox ready, the agent runtime passes verification, and host-side port forwards pass their checks.
 If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.
 </AgentOnly>
 
@@ -119,8 +120,8 @@ $$nemoclaw <sandbox-name> recover
 ```
 
 The command verifies the native gateway and re-establishes the dashboard port forward.
-If the gateway is stopped, `recover` reports it and does not relaunch it.
-Run `gateway restart` to request a native restart.
+If the existing Hermes supervisor is waiting for authenticated gated recovery after a clean exit or exit status `79`, `recover` requests a supervised gateway relaunch before verification.
+Otherwise, `recover` reports a stopped gateway without relaunching it; use `gateway restart` to request a native restart.
 If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
 If a listener that NemoClaw cannot attribute to the sandbox's OpenShell forward holds the port, `recover` reports it and leaves it running.
 It then exits nonzero and does not restore the forward.
@@ -165,10 +166,9 @@ The host does not start the in-sandbox processes independently. Refer to [`$$nem
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
-Recovery repairs supported agent processes and host forwards inside the registered sandbox. When the
-sandbox itself is stopped, `start` submits that lifecycle mutation to OpenShell; recovery does not
-take independent ownership of the provider container. If the native supervisor remains absent after
-bounded recovery, NemoClaw leaves the sandbox unchanged and directs you to rebuild or re-onboard.
+Recovery verifies the native agent gateway and repairs host forwards for the registered sandbox.
+When the sandbox itself is stopped, `start` submits that lifecycle mutation to OpenShell; recovery does not take independent ownership of the provider container.
+If the native supervisor remains absent after bounded recovery, NemoClaw leaves the sandbox unchanged and directs you to rebuild or re-onboard.
 
 For the lifecycle trust boundary and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
 If recovery cannot verify a sandbox that needs current credentials or native lifecycle support, rebuild it.
@@ -245,7 +245,11 @@ Refer to the [probe timing reference](../../reference/commands#$$nemoclaw-name-c
 <AgentOnly variant="openclaw,hermes">
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
 
-`recover` and `start` repair the in-sandbox agent gateway and the host-side port forwards for one named sandbox. `connect --probe-only` waits for that sandbox to become ready, rechecks it on its recorded gateway, and then verifies or repairs the same sandbox-scoped processes and forwards. These commands do not restart, replace, or reap the shared host OpenShell gateway process. If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
+`recover` and `start` verify the in-sandbox agent gateway and check or restore host-side port forwards for one named sandbox.
+`connect --probe-only` waits for that sandbox to become ready and rechecks it on its recorded gateway.
+It then verifies the agent gateway and checks or restores host-side port forwards.
+These commands do not restart, replace, or reap the shared host OpenShell gateway process.
+If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
 
 The OpenShell CLI has no command that starts a gateway, and `openshell status` only reports the gateway state. If NemoClaw starts the gateway on your host, run `$$nemoclaw onboard` again to repair the host gateway itself. If a deployment outside NemoClaw owns the gateway process, start the gateway with that deployment, then run `openshell gateway select <gateway>`. NemoClaw prints the applicable recovery guidance when a sandbox-scoped command reports that the host gateway is down. Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicitly recover the named host gateway when their operation requires it. `$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 
@@ -456,7 +460,7 @@ Do not manually remove the cron restore marker or release recovery record becaus
 </Warning>
 
 If managed MCP restoration failed, correct the reported cause and run `$$nemoclaw <sandbox-name> mcp restart` first.
-Then run `$$nemoclaw <sandbox-name> recover` to repair the gateway, validate the restored cron tree, and clear NemoClaw-owned recovery state.
+Then run `$$nemoclaw <sandbox-name> recover` to verify the gateway, validate the restored cron tree, and clear NemoClaw-owned recovery state.
 
 When NemoClaw is ready to reopen dispatch and no operator drain remains, its root-owned controller reschedules only enabled one-shot jobs that became due at or after the NemoClaw gate was acquired, have never run, and carry no dispatch or fire claim. It persists that update before removing the gate. If the update fails, rebuild or recovery exits nonzero and leaves the gate active.
 

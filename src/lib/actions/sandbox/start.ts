@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
-import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
+import { shellQuote } from "../../core/shell-quote";
 import { cliName } from "../../onboard/branding";
 import {
   classifyRegisteredPortableAgentLifecycle,
@@ -37,7 +37,7 @@ import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   isSandboxGatewayRunningForStatus,
   resolveGatewayRecoveryWaitSeconds,
-  waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess,
 } from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
@@ -100,48 +100,40 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   log?: (message: string) => void;
 }
 
-const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+const START_OPENCLAW_GATEWAY_WAIT_SECONDS = 120;
 
-/** Observe native startup only after an intentional stop; never relaunch the agent here. */
-async function waitForStartedNativeGatewayProcess(
+/** Observe native startup after the runtime starts; never relaunch the agent here. */
+async function waitForStartedSandboxGatewayProcess(
   sandboxName: string,
   sandbox: SandboxEntry,
   deps: SandboxStartDeps,
   log: (message: string) => void,
 ): Promise<boolean | null | undefined> {
   const nativeAgent = sandbox.agent ?? "openclaw";
-  if ((nativeAgent !== "hermes" && nativeAgent !== "openclaw") || sandbox.stopped !== true) {
+  if (nativeAgent !== "hermes" && nativeAgent !== "openclaw") return undefined;
+  if (nativeAgent === "hermes" && sandbox.stopped !== true) return undefined;
+  // Preserve verification-only starts when an unstopped OpenClaw has no settlement budget.
+  if (
+    nativeAgent === "openclaw" &&
+    sandbox.stopped !== true &&
+    resolveGatewayRecoveryWaitSeconds(START_OPENCLAW_GATEWAY_WAIT_SECONDS, deps.environment) === 0
+  )
     return undefined;
-  }
-  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
-  const delay = async (delayMs: number) => {
-    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
-    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
-  };
-  if (nativeAgent === "hermes") {
-    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
-      probe,
-      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+  return await waitForStartedNativeGatewayProcess(
+    sandboxName,
+    nativeAgent,
+    getPersistedSandboxTargetGatewayName(sandbox),
+    {
+      // Allow cold OpenClaw startup after Docker recovery without changing onboarding's default.
+      defaultTimeoutSeconds: START_OPENCLAW_GATEWAY_WAIT_SECONDS,
+      environment: deps.environment,
+      probe: deps.probeGatewayProcess,
+      delay: deps.delayGatewayProcessProbe ?? sleep,
+      now: deps.now,
       log,
-    });
-  }
-
-  const now = deps.now ?? (() => performance.now());
-  const deadline =
-    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
-  while (now() < deadline) {
-    const remaining = Math.floor(deadline - now());
-    if (remaining < 1) break;
-    const running = await probe(sandboxName, gatewayName, {
-      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
-    });
-    if (now() >= deadline) break;
-    if (running !== false) return running;
-    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
-  }
-  return false;
+    },
+  );
 }
 
 /**
@@ -333,7 +325,7 @@ async function startSandboxWithinLifecycleFence(
   };
   log("  Waiting for OpenShell sandbox readiness…");
   await waitForSandboxReady(sandboxName, deps.observer, deps.allowDockerRuntimeInspection);
-  readiness.gatewayProcess = await waitForStartedNativeGatewayProcess(
+  readiness.gatewayProcess = await waitForStartedSandboxGatewayProcess(
     sandboxName,
     resolved.sandbox,
     deps,
@@ -364,6 +356,9 @@ async function startSandboxWithinLifecycleFence(
   if (readiness.gatewayProcess === false) {
     log(
       "  The sandbox started but its native agent gateway did not become responsive before the startup settlement window expired.",
+    );
+    log(
+      `  Restart the native gateway from the host: ${cliName()} ${shellQuote(sandboxName)} gateway restart`,
     );
     return { exitCode: 1 };
   }

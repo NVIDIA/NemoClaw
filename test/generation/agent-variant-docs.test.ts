@@ -110,10 +110,11 @@ describe("agent variant docs", () => {
     const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
     const render = (variant: "openclaw" | "hermes" | "deepagents") =>
       renderAgentVariantPage(pageSource, variant, { sourcePath });
-    const gatewayStartRepair =
-      "The `start` command repairs the agent runtime and host-side port forwards.";
+    const gatewayStartVerification =
+      "The `start` command verifies the agent runtime and checks or restores host-side port forwards.";
+    const gatewayStartNoRelaunch = "It does not relaunch a stopped native gateway.";
     const gatewayStartSuccess =
-      "It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.";
+      "It returns success only after OpenShell reports the sandbox ready, the agent runtime passes verification, and host-side port forwards pass their checks.";
     const gatewayStartFailure =
       "If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.";
     const terminalRuntimeScope =
@@ -121,9 +122,12 @@ describe("agent variant docs", () => {
     const forwardPrerequisites =
       "The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.";
 
-    expect(render("openclaw")).toContain(gatewayStartRepair);
-    expect(render("hermes")).toContain(gatewayStartRepair);
-    expect(render("deepagents")).not.toContain(gatewayStartRepair);
+    expect(render("openclaw")).toContain(gatewayStartVerification);
+    expect(render("hermes")).toContain(gatewayStartVerification);
+    expect(render("deepagents")).not.toContain(gatewayStartVerification);
+    expect(render("openclaw")).toContain(gatewayStartNoRelaunch);
+    expect(render("hermes")).toContain(gatewayStartNoRelaunch);
+    expect(render("deepagents")).not.toContain(gatewayStartNoRelaunch);
     expect(render("openclaw")).toContain(gatewayStartSuccess);
     expect(render("hermes")).toContain(gatewayStartSuccess);
     expect(render("deepagents")).not.toContain(gatewayStartSuccess);
@@ -137,6 +141,58 @@ describe("agent variant docs", () => {
     expect(render("hermes")).not.toContain(terminalRuntimeScope);
     expect(render("hermes")).not.toContain(forwardPrerequisites);
   });
+
+  it.each(
+    findGeneratedNavigationTargets()
+      .filter((target) => target.sourcePath === "reference/commands.mdx")
+      .map((target) => target.variant),
+  )("documents startup verification for %s without promising gateway repair", (variant) => {
+    const sourcePath = "reference/commands.mdx";
+    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+    const rendered = renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const startReference = rendered.split(" <name> start`\n")[1]?.split("\n### ")[0] ?? "";
+
+    expect(startReference).toContain("Then verify agent runtime readiness.");
+    expect(startReference).toContain(
+      "After runtime verification and any required host-forward checks pass",
+    );
+    expect(startReference).not.toContain("then repair the in-sandbox gateway");
+    expect(startReference).not.toContain("Before it repairs the gateway");
+    expect(startReference).not.toContain("name-recover)");
+    const nativeGateway = ["openclaw", "hermes"].includes(variant);
+    expect(
+      startReference.includes("Gateway startup observation does not relaunch the agent."),
+    ).toBe(nativeGateway);
+    expect(startReference.includes("Gateway startup observation")).toBe(nativeGateway);
+    expect(startReference.includes("[native gateway restart procedure]")).toBe(nativeGateway);
+    expect(startReference.includes("#recover-the-agent-runtime)")).toBe(nativeGateway);
+  });
+
+  it.each(["reference/commands.mdx", "manage-sandboxes/gateway-lifecycle-control.mdx"])(
+    "limits the supervised recovery exception to Hermes in %s",
+    (sourcePath) => {
+      const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+      const render = (variant: (typeof agentVariants)[number]) =>
+        renderAgentVariantPage(pageSource, variant, { sourcePath });
+      const supervisedRecovery =
+        "`recover` requests a supervised gateway relaunch before verification.";
+
+      expect(render("hermes")).toContain(supervisedRecovery);
+      expect(render("hermes")).toContain("after a clean exit or exit status `79`");
+      expect(render("hermes")).toContain("authenticated gated recovery");
+      expect(render("hermes")).not.toContain(
+        "If a built-in gateway is stopped, `recover` reports that state instead of relaunching the process.",
+      );
+      expect(render("hermes")).toContain(
+        "Otherwise, `recover` reports a stopped gateway without relaunching it.",
+      );
+      expect(render("openclaw")).toContain(
+        "If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.",
+      );
+      expect(render("openclaw")).not.toContain(supervisedRecovery);
+      expect(render("deepagents")).not.toContain(supervisedRecovery);
+    },
+  );
 
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");

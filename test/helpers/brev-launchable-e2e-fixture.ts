@@ -46,6 +46,7 @@ export function fixture(
     createAppearsAfterRefresh?: number;
     createStatus?: number;
     deleteFails?: boolean;
+    delayFullE2eDiagnosticLog?: boolean;
     delayWorkspaceSshLog?: boolean;
     diagnosticResolverMissing?: boolean;
     e2eDiagnosticTimesOut?: boolean;
@@ -195,7 +196,7 @@ exec "$@"
     path.join(bin, "sleep"),
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
   );
-  if (options.delayWorkspaceSshLog) {
+  if (options.delayWorkspaceSshLog || options.delayFullE2eDiagnosticLog) {
     executable(
       path.join(bin, "tee"),
       `#!/usr/bin/env bash
@@ -209,7 +210,10 @@ while :; do
   else
     break
   fi
-  if [[ "$line" == "Waiting up to "*" seconds for workspace SSH access" ]]; then
+  if { [ "${options.delayWorkspaceSshLog ? 1 : 0}" = 1 ] &&
+    [[ "$line" == "Waiting up to "*" seconds for workspace SSH access" ]]; } ||
+    { [ "${options.delayFullE2eDiagnosticLog ? 1 : 0}" = 1 ] &&
+      [[ "$line" == "Full E2E failure diagnostics budget:"* ]]; }; then
     /bin/sleep 1
   fi
   printf '%s' "$line"
