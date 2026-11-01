@@ -283,7 +283,7 @@ export function validateResourceValue(value: string): void {
 
 /**
  * Resolve a resource value that may be a percentage or absolute quantity.
- * Throws on invalid percentages so callers can surface clear errors.
+ * Throws on invalid percentages or absolute quantities before OpenShell create.
  */
 export function resolveResourceValue(value: string, total: number, unit: "cpu" | "memory"): string {
   if (!value) return "";
@@ -303,7 +303,40 @@ export function resolveResourceValue(value: string, total: number, unit: "cpu" |
     const resultGi = Math.max(1, Math.floor(resultMB / 1024));
     return `${resultGi}Gi`;
   }
-  // Absolute value — pass through as-is
+  if (unit === "memory") {
+    // Docker's lowercase g/t/p suffixes denote binary units; valid Kubernetes
+    // decimal suffixes such as G, k, and m retain their existing meaning.
+    const quantity = trimmed.replace(
+      /^(\d+(?:\.\d+)?)([gtp])$/,
+      (_match, amount: string, suffix: string) => `${amount}${suffix.toUpperCase()}i`,
+    );
+    const memoryQuantity = /^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+|[numkMGTPE]|[KMGTPE]i)?$/;
+    if (
+      !memoryQuantity.test(quantity) ||
+      !Number.isFinite(Number.parseFloat(quantity)) ||
+      Number.parseFloat(quantity) < 0
+    ) {
+      throw new Error(
+        `Invalid memory quantity '${trimmed}': use a Kubernetes quantity such as 8Gi or a percentage`,
+      );
+    }
+    return quantity;
+  }
+  const cpuQuantity = /^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:m|[eE]([+-]?\d+))?$/.exec(trimmed);
+  // Reject exponents that Kubernetes would narrow to a different int32 value.
+  const exponent = BigInt(cpuQuantity?.[1] ?? "0");
+  const cores = Number(trimmed.endsWith("m") ? trimmed.slice(0, -1) : trimmed);
+  if (
+    !cpuQuantity ||
+    !Number.isFinite(cores) ||
+    cores < 0 ||
+    exponent < -2147483648n ||
+    exponent > 2147483647n
+  ) {
+    throw new Error(
+      `Invalid CPU quantity '${trimmed}': use cores such as 4, millicores such as 750m, or a percentage`,
+    );
+  }
   return trimmed;
 }
 
