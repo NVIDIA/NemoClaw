@@ -167,6 +167,8 @@ export interface HostAssessment {
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
+  /** Validated explicit endpoint captured before the Docker readiness probes. */
+  dockerSelectedEndpoint?: string;
   dockerProbeIssue?:
     | "info_timeout"
     | "info_unavailable"
@@ -851,6 +853,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerInstalled,
     dockerRunning,
     dockerReachable,
+    dockerSelectedEndpoint: dockerHostInvalid ? undefined : explicitDockerHost || undefined,
     dockerProbeIssue,
     dockerAuthorityConflict,
     nodeInstalled,

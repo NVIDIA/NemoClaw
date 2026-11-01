@@ -296,11 +296,16 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
-      selection?: { sandboxName: string | null; endpointUrl: string | null },
+      selection?: {
+        sandboxName: string | null;
+        endpointUrl: string | null;
+        recoverRecordedProvider?: boolean;
+      },
     ): Promise<{
       forceInferenceSetup: boolean;
       credentialEnv: string | null;
       nativeCustomSetup?: boolean;
+      nativeNvidiaRecovery?: boolean;
     }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
@@ -623,16 +628,31 @@ function canResumeInferenceRoute(input: {
   );
 }
 
-function shouldReuseRetainedOpenRouterCredential(input: {
+function shouldReuseRetainedGatewayCredential(input: {
   provider: string | null;
   forceInferenceSetup: boolean;
   hydratedCredential: string | null | undefined;
+  nativeNvidiaRecovery?: boolean;
 }): boolean {
   return (
-    input.provider === OPENROUTER_PROVIDER_NAME &&
-    !input.forceInferenceSetup &&
-    !input.hydratedCredential
+    !input.hydratedCredential &&
+    (input.nativeNvidiaRecovery === true ||
+      (input.provider === OPENROUTER_PROVIDER_NAME && !input.forceInferenceSetup))
   );
+}
+
+function createResumeProviderSelection(
+  provider: string | null,
+  sandboxName: string | null,
+  reusableSandboxName: string | null,
+  endpointUrl: string | null,
+  recoverRecordedProvider: () => boolean,
+) {
+  return {
+    sandboxName: provider === "nvidia-prod" ? sandboxName : reusableSandboxName,
+    endpointUrl,
+    recoverRecordedProvider: provider === "nvidia-prod" && recoverRecordedProvider(),
+  };
 }
 
 function hostLocalToolCallingRequirement(
@@ -1687,8 +1707,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         credentialEnv,
         undefined,
-        { sandboxName: reusableResumeSandboxName, endpointUrl },
+        createResumeProviderSelection(
+          provider,
+          sandboxName,
+          reusableResumeSandboxName,
+          endpointUrl,
+          () => providerRecovery.shouldRecover(),
+        ),
       );
+      recoveredRecordedProvider = recovery.nativeNvidiaRecovery === true;
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1723,13 +1750,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // while the host adapter needs only its persisted authorization hash
       // to recover a stopped process. Do not export the gateway credential
       // merely to restart that adapter.
-      const reuseRetainedOpenRouterCredential = shouldReuseRetainedOpenRouterCredential({
+      const reuseRetainedCredential = shouldReuseRetainedGatewayCredential({
         provider,
         forceInferenceSetup: recovery.forceInferenceSetup,
         hydratedCredential,
+        nativeNvidiaRecovery: recovery.nativeNvidiaRecovery,
       });
-      reuseGatewayCredentialWithoutLocalKey ||= reuseRetainedOpenRouterCredential;
-      skipHostInferenceSmoke ||= reuseRetainedOpenRouterCredential;
+      reuseGatewayCredentialWithoutLocalKey ||= reuseRetainedCredential;
+      skipHostInferenceSmoke ||= reuseRetainedCredential;
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's
       // `inference.local` route is not actually wired to the compatible
