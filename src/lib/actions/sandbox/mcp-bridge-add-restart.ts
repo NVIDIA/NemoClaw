@@ -43,6 +43,8 @@ import {
   attachProvider,
   detachProvider,
   ensureMcpBridgeProviderProfile,
+  formatDeleteMcpProviderCommand,
+  formatMcpGatewayAttachmentCheckCommands,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
@@ -379,19 +381,6 @@ async function inspectMcpAddRecovery(
       `MCP add recovery for '${entry.server}' could not inspect provider '${entry.providerName}': ${providerInspection.error ?? "provider inspection failed"}. No source was changed.`,
     );
   }
-  if (
-    providerInspection.exists === true &&
-    (!providerInspection.id ||
-      (entry.providerId !== undefined && providerInspection.id !== entry.providerId) ||
-      providerInspection.resourceVersion === null ||
-      providerInspection.type !== MCP_BRIDGE_PROVIDER_TYPE ||
-      providerInspection.credentialKeys?.length !== 1 ||
-      providerInspection.credentialKeys[0] !== entry.env[0])
-  ) {
-    throw new McpBridgeError(
-      `MCP add recovery for '${entry.server}' found an incompatible provider '${entry.providerName}': ${providerShapeDetail(providerInspection, entry.env[0]) ?? "provider shape differs"}. No source was changed.`,
-    );
-  }
   const recoveredEntry = providerInspection.id
     ? { ...entry, providerId: providerInspection.id }
     : entry;
@@ -447,6 +436,48 @@ async function inspectMcpAddRecovery(
   const attachment = attachmentInspection.attachments.find(
     (candidate) => candidate.name === entry.providerName,
   );
+  const providerPresent = providerInspection.exists === true;
+  const attachmentPresent = Boolean(attachment);
+  const adapterRegistered = adapterInspection.state === "registered";
+  const providerMatchesRetainedMcpShape =
+    providerPresent &&
+    Boolean(providerInspection.id) &&
+    (entry.providerId === undefined || providerInspection.id === entry.providerId) &&
+    providerInspection.resourceVersion !== null &&
+    providerInspection.type === MCP_BRIDGE_PROVIDER_TYPE &&
+    providerInspection.credentialKeys?.length === 1 &&
+    providerInspection.credentialKeys[0] === entry.env[0];
+  if (
+    !deadline &&
+    providerMatchesRetainedMcpShape &&
+    policyState === "absent" &&
+    !attachmentPresent &&
+    !adapterRegistered
+  ) {
+    const deleteCommand = formatDeleteMcpProviderCommand(
+      entry.providerName ?? "",
+      providerRuntimeSelection.gatewayName,
+    );
+    const attachmentChecks = formatMcpGatewayAttachmentCheckCommands(
+      providerRuntimeSelection.gatewayName,
+    );
+    throw new McpBridgeError(
+      `OpenShell provider '${entry.providerName}' already exists, but no MCP registration, policy, or attachment for '${entry.server}' is active on sandbox '${sandboxName}' (for example, after \`nemoclaw ${sandboxName} mcp remove ${entry.server}\` or \`nemoclaw ${sandboxName} destroy\` preserved the provider). Confirm its type, credential key, and known provider identity; the name alone does not prove ownership. Confirm that no sandbox on the gateway uses '${entry.providerName}' (${attachmentChecks}). Only then delete it with \`${deleteCommand}\` and rerun \`mcp add\`. If ownership is uncertain, preserve it. No source was changed.`,
+    );
+  }
+  if (
+    providerPresent &&
+    (!providerInspection.id ||
+      (entry.providerId !== undefined && providerInspection.id !== entry.providerId) ||
+      providerInspection.resourceVersion === null ||
+      providerInspection.type !== MCP_BRIDGE_PROVIDER_TYPE ||
+      providerInspection.credentialKeys?.length !== 1 ||
+      providerInspection.credentialKeys[0] !== entry.env[0])
+  ) {
+    throw new McpBridgeError(
+      `MCP add recovery for '${entry.server}' found an incompatible provider '${entry.providerName}': ${providerShapeDetail(providerInspection, entry.env[0], entry.providerId) ?? "provider shape differs"}. No source was changed.`,
+    );
+  }
   if (
     attachment &&
     (attachment.providerId !== recoveredEntry.providerId ||
@@ -457,9 +488,6 @@ async function inspectMcpAddRecovery(
       `MCP add recovery for '${entry.server}' found an incompatible provider attachment '${entry.providerName}'. No source was changed.`,
     );
   }
-  const providerPresent = providerInspection.exists === true;
-  const attachmentPresent = Boolean(attachment);
-  const adapterRegistered = adapterInspection.state === "registered";
   if (
     (providerPresent && policyState === "absent") ||
     (attachmentPresent && (!providerPresent || policyState === "absent")) ||
@@ -1133,8 +1161,15 @@ async function addMcpBridgeUnlocked(
       }
     }
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
+      const deleteCommand = formatDeleteMcpProviderCommand(
+        providerName ?? "",
+        providerRuntimeSelection.gatewayName,
+      );
+      const attachmentChecks = formatMcpGatewayAttachmentCheckCommands(
+        providerRuntimeSelection.gatewayName,
+      );
       console.warn(
-        `  Preserved detached OpenShell provider '${providerName}' after MCP add rollback. Remove it explicitly after confirming no sandbox uses it.`,
+        `  Preserved detached OpenShell provider '${providerName}' after MCP add rollback. Confirm that no sandbox on the gateway uses it (${attachmentChecks}), then delete it with \`${deleteCommand}\`.`,
       );
     }
     // Exception rollback is best-effort and process death skips it entirely.

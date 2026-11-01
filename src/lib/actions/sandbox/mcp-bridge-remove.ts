@@ -16,6 +16,8 @@ import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-source";
 import {
   detachProvider,
+  formatDeleteMcpProviderCommand,
+  formatMcpGatewayAttachmentCheckCommands,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   providerMatchesManagedCredential,
@@ -240,9 +242,20 @@ export async function removeMcpBridge(
           `Provider '${entry.providerName}' could not be proven as the current exact MCP provider and was preserved.`,
         );
       }
-      if (provider.exists !== false) {
+      if (provider.exists !== false && exact && warnings.length === 0) {
+        const deleteCommand = formatDeleteMcpProviderCommand(
+          entry.providerName,
+          runtimeSelection.gatewayName,
+        );
+        const attachmentChecks = formatMcpGatewayAttachmentCheckCommands(
+          runtimeSelection.gatewayName,
+        );
         console.warn(
-          `  Preserved OpenShell provider '${entry.providerName}'. Remove it explicitly after confirming no sandbox uses it.`,
+          `  Preserved OpenShell provider '${entry.providerName}'. Confirm that no sandbox on the gateway uses it (${attachmentChecks}), then delete it with \`${deleteCommand}\` before you add '${server}' again.`,
+        );
+      } else if (provider.exists !== false) {
+        console.warn(
+          `  Preserved OpenShell provider '${entry.providerName}'. Resolve the MCP cleanup warning(s) and prove provider ownership before detaching or deleting it.`,
         );
       }
     }
