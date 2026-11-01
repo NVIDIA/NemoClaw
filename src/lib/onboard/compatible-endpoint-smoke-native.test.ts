@@ -137,4 +137,113 @@ describe("native compatible endpoint smoke", () => {
       }
     },
   );
+
+  it("verifies the Deep Agents Code credential selection before its native request (#13798)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "native-dcode-smoke-"));
+    const definition = customNativeProvider({
+      provider: "compatible-endpoint",
+      endpointUrl: "http://10.2.3.4:19379/v1",
+      api: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      allowedIps: ["10.2.3.4"],
+    });
+    const attachment: NativeProviderAttachment = {
+      schemaVersion: 1,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "native-identity",
+      endpointUrl: definition.endpointUrl,
+      allowedIps: definition.allowedIps,
+      custom: definition.custom,
+    };
+    const selection: SandboxEntry = {
+      name: "dcode-smoke",
+      gatewayName: "test-gateway",
+      provider: "compatible-endpoint",
+      model: "test-model",
+      endpointUrl: definition.custom!.endpointUrl,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nativeHostedProviderAttachment: attachment,
+    };
+    const verify = vi
+      .spyOn(NativeProviderLifecycle.prototype, "verifyNativeProviderAttachment")
+      .mockResolvedValue(attachment);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("smoke failed");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { binDir, callFile } = writeFakeCurl(
+        tmp,
+        `printf '%s' '{"choices":[{"message":{"content":"OK"}}]}'`,
+      );
+      let credentialCheck = { exitCode: 0, stdout: "DCODE_INFERENCE_CREDENTIAL_OK\n", stderr: "" };
+      const executor = {
+        runBuffered: vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+          const result =
+            request.command[0] === "/opt/venv/bin/python3"
+              ? { ...credentialCheck, status: credentialCheck.exitCode }
+              : spawnSync("sh", ["-c", request.command.at(-1)!], {
+                  encoding: "utf8",
+                  env: {
+                    PATH: `${binDir}:${process.env.PATH}`,
+                    COMPATIBLE_API_KEY: "openshell:resolve:env:v7_COMPATIBLE_API_KEY",
+                  },
+                });
+          return {
+            outcome: { kind: "completed" as const, exitCode: result.status ?? 1 },
+            stdout: result.stdout,
+            stderr: result.stderr,
+          };
+        }),
+      };
+      const run = vi.fn();
+      const smoke = createCompatibleEndpointSmoke(
+        run,
+        executor,
+        (value) => value,
+        () => selection,
+      );
+      const invoke = () =>
+        smoke.verify({
+          sandboxName: selection.name,
+          provider: "compatible-endpoint",
+          model: "test-model",
+          agent: { name: "langchain-deepagents-code" },
+        });
+
+      await invoke();
+      const [check, request] = executor.runBuffered.mock.calls.map(([call]) => call);
+      expect(check!.command.slice(0, 3)).toEqual(["/opt/venv/bin/python3", "-I", "-c"]);
+      expect(check!.command[3]).toContain("managed_inference_api_key");
+      expect(check!.target).toEqual({ kind: "named", gatewayName: "test-gateway" });
+      expect(request!.command[0]).toBe("/usr/local/lib/nemoclaw/dcode-managed-exec");
+      expect(fs.readFileSync(callFile, "utf8")).toBe("1");
+      expect(run).not.toHaveBeenCalled();
+
+      credentialCheck = {
+        exitCode: 1,
+        stdout: "",
+        stderr: "native local inference requires an issued OpenShell credential reference",
+      };
+      await expect(invoke()).rejects.toThrow("smoke failed");
+      const diagnostics = error.mock.calls.flat().join("\n");
+      expect(diagnostics).toContain(
+        "LangChain Deep Agents Code cannot use the selected inference route inside the sandbox.",
+      );
+      expect(diagnostics).toContain("requires an issued OpenShell credential reference");
+      expect(fs.readFileSync(callFile, "utf8")).toBe("1");
+
+      executor.runBuffered.mockClear();
+      delete selection.nativeHostedProviderAttachment;
+      await invoke();
+      expect(executor.runBuffered).not.toHaveBeenCalled();
+    } finally {
+      verify.mockRestore();
+      exit.mockRestore();
+      error.mockRestore();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
