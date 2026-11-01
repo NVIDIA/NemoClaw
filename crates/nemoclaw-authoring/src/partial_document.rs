@@ -3,7 +3,10 @@
 
 //! Sparse authored input and a conservative first pass over the SDK input schema.
 
-use std::sync::LazyLock;
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
 
 use nemoclaw_sdk::config::{
     Document, parse_yaml_value,
@@ -90,6 +93,27 @@ impl PartialDocument {
     /// Inspect the current sparse input. Compound rules remain deferred until
     /// a partial evaluator can prove whether a branch is impossible or incomplete.
     pub fn assess(&self) -> PartialAssessment {
+        // Resolving a journey assesses the same values several times per
+        // answer: before it, for the answered state, and for the next
+        // question. The assessment depends only on the values, so keep the
+        // latest ones; the cache empties itself when full.
+        const CAPACITY: usize = 32;
+        static ASSESSED: LazyLock<Mutex<HashMap<String, PartialAssessment>>> =
+            LazyLock::new(Default::default);
+        let text = self.supplied.to_string();
+        if let Some(assessment) = ASSESSED.lock().expect("assessment cache").get(&text) {
+            return assessment.clone();
+        }
+        let assessment = self.assess_text(&text);
+        let mut cache = ASSESSED.lock().expect("assessment cache");
+        if cache.len() >= CAPACITY {
+            cache.clear();
+        }
+        cache.insert(text, assessment.clone());
+        assessment
+    }
+
+    fn assess_text(&self, text: &str) -> PartialAssessment {
         let issues = schema_issues(&INPUT_SCHEMA, &INPUT_VALIDATOR, &self.supplied);
         if !issues.is_empty() {
             return PartialAssessment {
@@ -97,8 +121,7 @@ impl PartialDocument {
                 document: None,
             };
         }
-        let bytes = self.supplied.to_string();
-        match Document::parse(bytes.as_bytes()) {
+        match Document::parse(text.as_bytes()) {
             Ok(document) => PartialAssessment {
                 issues,
                 document: Some(document),
