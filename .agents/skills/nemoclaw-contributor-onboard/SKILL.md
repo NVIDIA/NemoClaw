@@ -1,12 +1,18 @@
 ---
 name: nemoclaw-contributor-onboard
-description: "Set up, repair, or check a NemoClaw contributor checkout. Also handles requested development CLI exposure, runtime onboarding, and pinned-agent launch."
+description: "Set up or check an already-cloned NemoClaw contributor checkout, or repair it on explicit request. Optional CLI exposure, runtime onboarding, and pinned-agent launch require explicit requests."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Onboard a NemoClaw Contributor
+# Set Up a Contributor Checkout
+
+Use this skill when a contributor asks an agent to set up, check, or repair an already-cloned NemoClaw checkout.
+Contributors can also select the skill explicitly, including through `$nemoclaw-contributor-onboard` in clients that support that syntax.
+Compatible-agent use is optional; contributors can run the setup commands directly as described in `CONTRIBUTING.md`.
+Cloning or opening a repository, or starting a first PR, does not itself establish automatic invocation of this skill.
+Follow the requested mode below. CLI exposure, runtime onboarding, and pinned-agent launch are optional and require explicit authorization.
 
 Use the repository setup script as the executable source of truth.
 Do not duplicate its dependency, build, hook, CLI-exposure, or readiness logic in agent commands.
