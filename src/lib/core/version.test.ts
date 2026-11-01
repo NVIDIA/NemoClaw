@@ -181,4 +181,19 @@ describe("lib/version", () => {
   it("returns a string", () => {
     expect(typeof getVersion({ rootDir: testDir })).toBe("string");
   });
+
+  it("reports 0.0.0 for checkouts without git tags and guards installer default (#14026)", () => {
+    writeFileSync(join(testDir, "package.json"), JSON.stringify({ version: "0.0.0" }));
+    const version = getVersion({ rootDir: testDir });
+    expect(version).toBe("0.0.0");
+    expect(version).not.toMatch(/^0\.1\./);
+
+    const installerDefault = execFileSync(
+      "bash",
+      ["-c", 'source scripts/install.sh >/dev/null 2>&1; printf "%s" "$DEFAULT_NEMOCLAW_VERSION"'],
+      { cwd: repoRoot, encoding: "utf-8" },
+    );
+    expect(installerDefault).toBe("0.0.0");
+    expect(installerDefault).not.toMatch(/^0\.1\./);
+  });
 });
