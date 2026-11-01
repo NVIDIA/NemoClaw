@@ -26,8 +26,23 @@ Use the provider ID in the output with the new model ID.
 
 <AgentOnly variant="openclaw,hermes">
 
-Runtime model changes update the OpenShell route and synchronize the selected running agent configuration.
+Runtime model changes synchronize the selected running agent configuration.
+Shared-route selections also update the OpenShell route.
 Pass `--sandbox <name>` when you do not want to use the default sandbox.
+
+For an older NVIDIA Endpoints sandbox without a native provider attachment, a same-provider model change exits with status `2`.
+Follow the recreation guidance in [Use NVIDIA Endpoints](../hosted-inference/use-nvidia-endpoints#onboard) before retrying.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+If the current or selected route uses a native hosted or local provider, the model change restarts the Hermes gateway.
+Active agent requests can be interrupted during the restart.
+If restart fails, the selection remains committed.
+Follow the restart recovery in [Switch Providers](switch-providers#switch-the-provider-at-runtime).
+
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 Switch the model with one host command.
 
@@ -70,9 +85,11 @@ To validate a new model before replacing the current sandbox, onboard it under a
 
 ## Account for Shared Gateways
 
-One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Shared-route sandboxes on one gateway use one live route, even when NemoClaw records different intended routes for them.
+This applies to retained legacy, custom, local, and Model Router shared routes.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
-Runtime `inference set` remains fail-closed when the requested change conflicts with another registered sandbox or when route metadata is incomplete.
+For shared-route selections, runtime `inference set` stops when provider identity conflicts or required route metadata is incomplete.
+Native model changes affect only the selected sandbox and do not change the shared gateway route.
 
 ## Verify the Change
 
