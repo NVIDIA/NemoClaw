@@ -16,7 +16,7 @@ NemoClaw imports a bounded corporate CA chain without replacing the OpenShell tr
 
 ## Provide the Corporate CA Explicitly
 
-Point NemoClaw at a PEM bundle that contains your corporate root and any required intermediates.
+For initial sandbox creation, point NemoClaw at a PEM bundle that contains your corporate root and any required intermediates.
 
 ```bash
 export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
@@ -25,7 +25,6 @@ $$nemoclaw onboard
 
 The explicit variable fails onboarding when the file is missing, invalid, unsafe, or a merged operating-system trust store.
 Managed-image rebuilds preserve the recorded CA profile and do not import a newly exported bundle.
-Adding or changing that trust requires onboarding a new sandbox with the intended CA bundle.
 
 ## Understand Image and Runtime Trust
 
