@@ -235,3 +235,72 @@ describe("gateway GPU passthrough inspection", () => {
     }
   });
 });
+
+describe("reconcileGatewayGpuReuseForGpuIntent Docker-driver notice (#12680)", () => {
+  it("prints a GPU-capability notice when a Docker-driver gateway is reused with GPU intent", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stopForwards = vi.fn();
+    const retire = vi.fn();
+
+    const result = await reconcileGatewayGpuReuseForGpuIntent({
+      gatewayReuseState: "healthy",
+      gpuPassthrough: true,
+      gatewayName: "nemoclaw",
+      currentSandboxName: "dc",
+      recreateSandbox: true,
+      confirmedDockerDriverGateway: true,
+      stopDashboardForwards: stopForwards,
+      retireLegacyGatewayForDockerDriverUpgrade: retire,
+      destroyGatewayRuntimeForGpuReuse: () => true,
+    });
+
+    expect(result).toBe("healthy");
+    expect(log.mock.calls.map(([l]) => l).join("\n")).toContain("GPU passthrough");
+    expect(stopForwards).not.toHaveBeenCalled();
+    expect(retire).not.toHaveBeenCalled();
+
+    log.mockRestore();
+  });
+
+  it("does not print the notice when GPU passthrough is not requested", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = await reconcileGatewayGpuReuseForGpuIntent({
+      gatewayReuseState: "healthy",
+      gpuPassthrough: false,
+      gatewayName: "nemoclaw",
+      currentSandboxName: "dc",
+      recreateSandbox: true,
+      confirmedDockerDriverGateway: true,
+      stopDashboardForwards: () => {},
+      retireLegacyGatewayForDockerDriverUpgrade: () => {},
+      destroyGatewayRuntimeForGpuReuse: () => true,
+    });
+
+    expect(result).toBe("healthy");
+    expect(log).not.toHaveBeenCalled();
+
+    log.mockRestore();
+  });
+
+  it("does not print the notice when the gateway is not healthy", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = await reconcileGatewayGpuReuseForGpuIntent({
+      gatewayReuseState: "missing",
+      gpuPassthrough: true,
+      gatewayName: "nemoclaw",
+      currentSandboxName: "dc",
+      recreateSandbox: true,
+      confirmedDockerDriverGateway: true,
+      stopDashboardForwards: () => {},
+      retireLegacyGatewayForDockerDriverUpgrade: () => {},
+      destroyGatewayRuntimeForGpuReuse: () => true,
+    });
+
+    expect(result).toBe("missing");
+    expect(log).not.toHaveBeenCalled();
+
+    log.mockRestore();
+  });
+});
