@@ -23,20 +23,55 @@ describe("onboard resume hint", () => {
     expect(text).toContain("--fresh");
   });
 
-  it("includes the required name argument when no sandbox name was recorded", () => {
+  it.each([undefined, null])("prints a runnable command when the name is %s (#13730)", (name) => {
     const lines: string[] = [];
-    printOnboardResumeHint(false, (message) => lines.push(message), null);
+    printOnboardResumeHint(false, (message) => lines.push(message), name);
 
-    expect(lines).toContain("    nemoclaw onboard --resume --name <sandbox>");
+    expect(lines).toContain("    nemoclaw onboard --resume");
+    expect(lines.join("\n")).not.toContain("--name");
   });
 
-  it("keeps the short resume command when the sandbox name was recorded", () => {
+  it("includes the chosen name in the resume command (#13730)", () => {
     const lines: string[] = [];
     printOnboardResumeHint(false, (message) => lines.push(message), "alpha");
 
-    expect(lines).toContain("    nemoclaw onboard --resume");
-    expect(lines.join("\n")).not.toContain("--name <sandbox>");
+    expect(lines).toContain("    nemoclaw onboard --resume --name alpha");
+    expect(lines.join("\n")).not.toContain("<sandbox>");
   });
+
+  it.each(["alpha; printf injected", "alpha\n--fresh", "invalid_name"])(
+    "omits an invalid name from the recovery command: %s (#13730)",
+    (name) => {
+      const lines: string[] = [];
+      printOnboardResumeHint(false, (message) => lines.push(message), name);
+
+      expect(lines).toContain("    nemoclaw onboard --resume");
+      expect(lines.join("\n")).not.toContain("--name");
+    },
+  );
+
+  it.each([
+    [false, "invalid_name", "requested-name", " --name requested-name"],
+    [true, "invalid_name", "requested-name", " --name requested-name"],
+    [false, "chosen-name", "requested-name", " --name chosen-name"],
+    [false, "invalid_name", "requested; printf injected", ""],
+    [true, "invalid_name", "requested\n--fresh", ""],
+  ] as const)(
+    "uses the first valid recovery name with portable=%s, recorded=%s, requested=%s (#13730)",
+    (portable, sandboxName, requestedSandboxName, nameArg) => {
+      const lines: string[] = [];
+      printOnboardResumeHint(
+        portable,
+        (message) => lines.push(message),
+        sandboxName,
+        requestedSandboxName,
+      );
+
+      expect(lines.filter((line) => line.includes("onboard --resume"))).toEqual([
+        `    nemoclaw onboard --resume${nameArg}`,
+      ]);
+    },
+  );
 
   it("prints portable resume recovery guidance when the portable env is set (#9035)", () => {
     const prev = process.env[portableEnv];
@@ -45,7 +80,8 @@ describe("onboard resume hint", () => {
       const lines: string[] = [];
       printOnboardResumeHint(undefined, (message) => lines.push(message), null);
       const text = lines.join("\n");
-      expect(text).toContain("onboard --resume --name <sandbox>");
+      expect(lines).toContain("    nemoclaw onboard --resume");
+      expect(text).not.toContain("<sandbox>");
       expect(text).toContain("restored from the checkpoint");
       expect(text).toContain("onboard --experimental-profile portable --fresh");
     } finally {
