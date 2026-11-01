@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Hermes + vLLM. Deploy the GPU Helm chart with
+# INFERENCE_RUNTIME=vllm first. Replace metadata.uid and every image digest
+# before apply. Set NEMOCLAW_AGENT_IMAGE_METADATA from
+# `cargo images export-metadata`.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata: {name: gpu-autoscaling-hermes-vllm, uid: d8ecf41d-d313-4a0b-aaa4-e69725729f2d}
+spec:
+  gateway:
+    management: managed
+    runtime: {provider: kubernetes}
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: default
+      namespace: nemoclaw-v1-gpu-autoscaling
+      # NemoClaw apply only. Operator openshell invoke needs oidc (docs/kubernetes.md).
+      authentication: {profile: development}
+  inferenceProviders:
+    gpu-vllm:
+      provider: openai
+      api: openai-completions
+      # Cluster Service /v1; same pattern as examples/kubernetes/in-cluster-vllm.yaml.
+      endpoint: http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1
+      credential: {env: GPU_INFERENCE_API_KEY}
+  sandboxes:
+    user-0000:
+      harness:
+        kind: nvidia.fabric.hermes
+        execution: {timeoutSeconds: 300}
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: localhost:5000/nc-fabric@sha256:bcef5fa0ca461c8931712cacd7af15d1de44f037346a24283b502500b299a4a6
+      network: {tier: isolated}
+      agent:
+        name: assistant
+        inference:
+          routes:
+          - name: primary
+            providerRef: gpu-vllm
+            overrides: {model: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8, maxTokens: 2048}
+    user-0001:
+      harness:
+        kind: nvidia.fabric.hermes
+        execution: {timeoutSeconds: 300}
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: localhost:5000/nc-fabric@sha256:bcef5fa0ca461c8931712cacd7af15d1de44f037346a24283b502500b299a4a6
+      network: {tier: isolated}
+      agent:
+        name: assistant
+        inference:
+          routes:
+          - name: primary
+            providerRef: gpu-vllm
+            overrides: {model: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8, maxTokens: 2048}

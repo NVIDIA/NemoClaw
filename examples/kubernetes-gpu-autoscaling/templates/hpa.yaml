@@ -1,0 +1,48 @@
+{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.autoscaling.enabled }}
+{{- $hpaMin := include "nemoclaw-gpu.hpaMinReplicas" . | int }}
+{{- $hpaMax := include "nemoclaw-gpu.hpaMaxReplicas" . | int }}
+{{- if lt $hpaMax $hpaMin }}
+{{- fail (printf "autoscaling.maxReplicas (%d) must be >= minReplicas (%d)" $hpaMax $hpaMin) }}
+{{- end }}
+{{- $metricName := include "nemoclaw-gpu.hpaMetric" . }}
+{{- $metricTarget := include "nemoclaw-gpu.hpaMetricTarget" . }}
+{{- $metricDisplay := include "nemoclaw-gpu.hpaMetricDisplay" . }}
+{{- $metricMode := .Values.autoscaling.metric | default "gpu_utilization" }}
+{{- if eq $metricMode "gpu" }}
+{{- $metricMode = "gpu_utilization" }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "nemoclaw-gpu.fullname" . }}-metrics-proxy
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+  annotations:
+    nemoclaw.ai/hpa-policy: "min-{{ $hpaMin }}-max-{{ $hpaMax }}-metric-{{ $metricMode }}-target-{{ $metricTarget }}"
+    nemoclaw.ai/hpa-mode: {{ $metricMode | quote }}
+    nemoclaw.ai/hpa-metric: {{ $metricName | quote }}
+    nemoclaw.ai/hpa-metric-display: {{ $metricDisplay | quote }}
+    nemoclaw.ai/hpa-targets-format: "{{ $metricName }}: <current>/<target> ({{ $metricDisplay }})"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "nemoclaw-gpu.fullname" . }}-metrics-proxy
+  minReplicas: {{ $hpaMin }}
+  maxReplicas: {{ $hpaMax }}
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $metricName }}
+        target:
+          type: AverageValue
+          averageValue: {{ $metricTarget | quote }}
+  {{- with .Values.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

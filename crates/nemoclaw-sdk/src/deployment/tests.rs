@@ -1290,6 +1290,18 @@ fn replacement_cleanup_reports_opentofu_objects_within_deployment_scope() {
     }
 }
 
+/// Helm charts and monitoring YAML can sit beside a recipe. The onboarding
+/// journey generator in `crates/nemoclaw-onboarding/build.rs` uses this rule.
+fn is_nemoclaw_config(path: &std::path::Path) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    String::from_utf8_lossy(&bytes).lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("apiVersion:") && line.contains("nemoclaw.nvidia.com/")
+    })
+}
+
 pub(super) fn example_documents() -> Vec<(String, Document)> {
     fn walk(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
         for entry in fs::read_dir(directory).unwrap() {
@@ -1299,6 +1311,7 @@ pub(super) fn example_documents() -> Vec<(String, Document)> {
             } else if path
                 .extension()
                 .is_some_and(|extension| extension == "yaml" || extension == "yml")
+                && is_nemoclaw_config(&path)
             {
                 found.push(path);
             }
