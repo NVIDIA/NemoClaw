@@ -821,6 +821,50 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       },
     );
 
+    it("reports only the rejected persisted field for an incompatible local pair (#13709)", () => {
+      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.clientMode = "webchat";
+      writeJson(pairedPath, paired);
+
+      let failure: unknown;
+      try {
+        observeOrdinarySettlement();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(OpenClawPairingIncompatibleError);
+      expect((failure as OpenClawPairingIncompatibleError).field).toBe("paired.clientMode");
+      expect(JSON.stringify(failure)).not.toContain(TOKEN);
+      expect(JSON.stringify(failure)).not.toContain(deviceId);
+    });
+
+    it("discards untrusted mismatch output outside the field allowlist (#13709)", () => {
+      const failure = () =>
+        observeOrdinaryOpenClawPairingSettlement(
+          "alpha",
+          "nemoclaw-8080",
+          "2026.7.1",
+          stateDirectory,
+          {
+            getOpenshellBinary: () => "openshell",
+            readApprovalPolicy: () => POLICY,
+            spawnSync: (() => ({
+              status: 4,
+              signal: null,
+              error: undefined,
+              stdout: '__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"secret-token"}\n',
+            })) as unknown as typeof spawnSync,
+          },
+        );
+      expect(failure).toThrow(OpenClawPairingIncompatibleError);
+      try {
+        failure();
+      } catch (error) {
+        expect((error as OpenClawPairingIncompatibleError).field).toBeNull();
+      }
+    });
+
     it.each(["ui", "unknown"])("rejects %s metadata on the local device (#13100)", (clientMode) => {
       const pairedPath = path.join(stateDirectory, "devices", "paired.json");
       const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;

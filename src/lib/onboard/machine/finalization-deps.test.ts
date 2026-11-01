@@ -119,6 +119,20 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.sleep).not.toHaveBeenCalled();
   });
 
+  it("carries a redacted incompatible field to rebuild diagnostics (#13709)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        throw new OpenClawPairingIncompatibleError("paired.clientMode");
+      }),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-incompatible",
+      pairingField: "paired.clientMode",
+    });
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+  });
+
   it.each([1, 2])(
     "retains incompatible evidence through transient reads after attempt %i (#13100)",
     async (attempt) => {
@@ -742,6 +756,20 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "pairing-lock-unavailable")).toBe(
       "OpenClaw onboarding for 'alpha' is incomplete because NemoClaw could not acquire the pairing settlement locks. Resume or rerun onboarding.",
     );
+    expect(
+      ordinaryOpenClawPairingIncompleteMessage(
+        "alpha",
+        "pairing-incompatible",
+        "paired.clientMode",
+      ),
+    ).toContain("incompatible metadata, scopes, or credentials (paired.clientMode)");
+    expect(
+      ordinaryOpenClawPairingIncompleteMessage(
+        "alpha",
+        "pairing-incompatible",
+        "credential-value-must-not-leave-the-sandbox",
+      ),
+    ).not.toContain("credential-value-must-not-leave-the-sandbox");
   });
 });
 

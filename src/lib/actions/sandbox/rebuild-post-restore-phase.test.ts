@@ -459,20 +459,22 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    "rejects rebuild with recovery=%s whose normal write pairing remains pending",
-    async (preparedBackupRecovery) => {
+  it.each([
+    [false, "scope-upgrade-not-approved", undefined],
+    [true, "pairing-incompatible", "paired.clientMode"],
+  ] as const)(
+    "rejects rebuild with recovery=%s when pairing is incomplete",
+    async (preparedBackupRecovery, reason, pairingField) => {
       vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
         kind: "incomplete",
-        reason: "scope-upgrade-not-approved",
+        reason,
+        ...(pairingField ? { pairingField } : {}),
       });
       const args = { ...input(), preparedBackupRecovery };
-      const result = await runRebuildPostRestorePhase(args);
+      expect(await runRebuildPostRestorePhase(args)).toBeUndefined();
       expect(args.bail).toHaveBeenCalledWith("OpenClaw pairing remained incomplete after rebuild.");
-      expect(result).toBeUndefined();
-      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-        "rebuild completed",
-      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).toContain(pairingField ? `${reason} (${pairingField})` : reason);
     },
   );
 
