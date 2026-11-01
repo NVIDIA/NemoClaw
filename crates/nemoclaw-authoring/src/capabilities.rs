@@ -15,6 +15,10 @@ pub struct Capabilities {
     pub(crate) model_schemas: std::collections::BTreeMap<String, serde_json::Value>,
     pub(crate) targets: Vec<serde_json::Value>,
     pub(crate) schemas: std::collections::BTreeMap<String, Vec<(String, serde_json::Value)>>,
+    /// Distinguishes these capabilities from any constructed separately.
+    /// Nothing changes capabilities after construction, so a copy has its
+    /// original's identity, and resolutions can be reused for it.
+    pub(crate) identity: u64,
 }
 
 impl Capabilities {
@@ -76,6 +80,10 @@ impl Capabilities {
             config_schemas: Default::default(),
             targets: Vec::new(),
             model_schemas: Default::default(),
+            identity: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         }
     }
 
