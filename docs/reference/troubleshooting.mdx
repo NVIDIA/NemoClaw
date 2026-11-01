@@ -1751,25 +1751,11 @@ When status reports `sandbox_container_stopped`, Docker still has a container fo
 
 1. Run recovery from the host.
 
-<AgentOnly variant="openclaw,hermes">
-
 ```bash
 $$nemoclaw <name> recover
 ```
 
 For a stopped standard sandbox, `recover` asks OpenShell to start that exact sandbox before it waits for readiness. If provider state appears active while OpenShell reports `Stopped`, recovery still submits the start through OpenShell so one lifecycle owner repairs the phase. If OpenShell cannot start the sandbox, recovery reports the failure and does not fall back to a direct provider-container mutation.
-
-</AgentOnly>
-
-<AgentOnly variant="deepagents">
-
-```bash
-$$nemoclaw <name> status
-```
-
-Deep Agents Code does not provide the `recover` command. Use `$$nemoclaw <name> start` to start its existing container.
-
-</AgentOnly>
 
 1. Check status from the host.
 

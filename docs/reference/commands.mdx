@@ -1673,6 +1673,19 @@ $$nemoclaw my-assistant recover
 
 </AgentOnly>
 
+<AgentOnly variant="deepagents">
+
+### `$$nemoclaw <name> recover`
+
+Start a stopped sandbox through OpenShell and check its inference route and terminal runtime.
+If a check fails, inspect the output and run `$$nemoclaw <name> status` and `$$nemoclaw <name> doctor`.
+
+```bash
+$$nemoclaw my-assistant recover
+```
+
+</AgentOnly>
+
 <AgentOnly variant="openclaw,hermes">
 
 ### `$$nemoclaw <name> gateway restart`
@@ -1782,7 +1795,11 @@ mutation. Portable remains a separate receipt-bound lifecycle path.
 
 ### `$$nemoclaw <name> start`
 
-Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot.
+
+<AgentOnly variant="openclaw,hermes">
+Then repair the in-sandbox gateway and host-side forwards as [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+</AgentOnly>
 
 ```bash
 $$nemoclaw my-assistant start
@@ -1803,7 +1820,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. After an OpenClaw sandbox and gateway become Ready, a verified native NVIDIA attachment can start with degraded inference when the request returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout. The command clears the stop record and exits `0`, but the failed request leaves model availability unverified. A terminal credential, route, policy, or malformed-response failure still exits non-zero. Other providers also exit non-zero when the inference request fails. For terminal failures, the command prints the probe result, including any HTTP status, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After readiness checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. After an OpenClaw sandbox and gateway become Ready, a verified native NVIDIA attachment can start with degraded inference when the request returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout. The command clears the stop record and exits `0`, but the failed request leaves model availability unverified. A terminal credential, route, policy, or malformed-response failure still exits non-zero. Other providers also exit non-zero when the inference request fails. If the inference request fails, inspect the output and run `$$nemoclaw <name> doctor`. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 
