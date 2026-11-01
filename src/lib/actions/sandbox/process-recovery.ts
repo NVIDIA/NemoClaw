@@ -15,6 +15,7 @@ import type {
 import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
+  type OpenShellSandboxObservation,
 } from "../../adapters/openshell/sandbox-observer";
 import {
   captureOpenshell,
@@ -580,12 +581,12 @@ function openClawDoctorSandboxLookup(
   });
 }
 
-async function isOpenClawDoctorSandboxStopped(
+async function readOpenClawDoctorSandboxState(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
   deps: OpenClawPostRestoreDoctorDeps,
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-): Promise<boolean> {
+): Promise<OpenShellSandboxObservation | null> {
   try {
     const observed = await openClawDoctorSandboxLookup(
       deps,
@@ -597,12 +598,42 @@ async function isOpenClawDoctorSandboxStopped(
         : selectedOpenShellGateway(),
       timeoutMs: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, Math.floor(timeoutMs))),
     });
-    if (!observed.result.ok || observed.result.value.state !== "present") return false;
-    const sandbox = observed.result.value.sandbox;
-    return sandbox.phase === "Stopped" || sandbox.readiness === "terminal";
+    if (!observed.result.ok || observed.result.value.state !== "present") return null;
+    return observed.result.value.sandbox;
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function isOpenClawDoctorSandboxStopped(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+  timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  const sandbox = await readOpenClawDoctorSandboxState(
+    sandboxName,
+    runtimeSelection,
+    deps,
+    timeoutMs,
+  );
+  // Error and Failed describe control-plane readiness, not whether the process stopped.
+  return sandbox?.phase === "Stopped";
+}
+
+async function isOpenClawDoctorSandboxUnavailable(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  deps: OpenClawPostRestoreDoctorDeps,
+  timeoutMs: number,
+): Promise<boolean> {
+  const sandbox = await readOpenClawDoctorSandboxState(
+    sandboxName,
+    runtimeSelection,
+    deps,
+    timeoutMs,
+  );
+  return sandbox !== null && (sandbox.phase === "Stopped" || sandbox.readiness === "terminal");
 }
 
 async function waitForOpenClawDoctorSandboxStopped(
@@ -612,7 +643,11 @@ async function waitForOpenClawDoctorSandboxStopped(
 ): Promise<boolean> {
   const deadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   return await waitUntilAsync(
-    async () => await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps),
+    async () => {
+      const remainingMs = deadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      return await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps, remainingMs);
+    },
     {
       deadlineMs,
       initialIntervalMs: 3_000,
@@ -682,14 +717,8 @@ export async function abortOpenClawPostRestoreDoctor(
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
     });
   }
-  const stop = captureOpenClawDoctorLifecycle(
-    deps,
-    ["sandbox", "stop", sandboxName],
-    lifecycleOptions,
-  );
-  const stopped =
-    stop.status === 0 ||
-    (await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps));
+  captureOpenClawDoctorLifecycle(deps, ["sandbox", "stop", sandboxName], lifecycleOptions);
+  const stopped = await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps);
   if (!abortPublished) {
     return {
       ok: false,
@@ -711,7 +740,7 @@ export async function abortOpenClawPostRestoreDoctor(
  * Retire a source-only maintenance gate at the rebuild delete edge. Remove the
  * ephemeral receipt before the persistent marker so an interrupted command
  * leaves startup fail-closed in its gate. Once both are absent, stop and prove
- * the source sandbox terminal before its retained PVC can receive more writes.
+ * the source sandbox stopped before its retained PVC can receive more writes.
  */
 export async function retireOpenClawPostRestoreDoctorForDelete(
   window: OpenClawPostRestoreDoctorWindow,
@@ -743,14 +772,8 @@ export async function retireOpenClawPostRestoreDoctorForDelete(
     },
     runtimeSelection,
   );
-  const stop = captureOpenClawDoctorLifecycle(
-    deps,
-    ["sandbox", "stop", sandboxName],
-    lifecycleOptions,
-  );
-  const stopped =
-    stop.status === 0 ||
-    (await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps));
+  captureOpenClawDoctorLifecycle(deps, ["sandbox", "stop", sandboxName], lifecycleOptions);
+  const stopped = await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps);
   if (stopped) return { ok: true };
   return {
     ok: false,
@@ -996,7 +1019,7 @@ async function promoteOpenClawBackupQuiesceToDoctor(
     reconciliationStartedMs,
     reconciliationDeadlineMs,
   );
-  let stopped = false;
+  let unavailable = false;
   const settled = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
@@ -1015,13 +1038,13 @@ async function promoteOpenClawBackupQuiesceToDoctor(
       // receipt. Report failure now; never release or restart refused state.
       const lookupRemainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(lookupRemainingMs) || lookupRemainingMs <= 0) return false;
-      stopped = await isOpenClawDoctorSandboxStopped(
+      unavailable = await isOpenClawDoctorSandboxUnavailable(
         sandboxName,
         runtimeSelection,
         deps,
         lookupRemainingMs,
       );
-      return stopped;
+      return unavailable;
     },
     {
       deadlineMs: reconciliationDeadlineMs,
@@ -1032,12 +1055,12 @@ async function promoteOpenClawBackupQuiesceToDoctor(
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
     },
   );
-  if (settled && !stopped) return { ok: true };
+  if (settled && !unavailable) return { ok: true };
   return {
     ok: false,
     stage: "doctor",
-    detail: stopped
-      ? "the restored sandbox stopped before post-upgrade doctor completed; the gateway remains held down"
+    detail: unavailable
+      ? "the restored sandbox became unavailable before post-upgrade doctor completed; the gateway remains held down"
       : "restored state did not complete post-upgrade doctor with the gateway held down",
   };
 }

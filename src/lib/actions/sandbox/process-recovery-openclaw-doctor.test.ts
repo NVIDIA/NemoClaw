@@ -44,6 +44,19 @@ function fakeGnuStatEnv(root: string): NodeJS.ProcessEnv {
   return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
 }
 
+function stoppedSandboxLookup() {
+  return vi.fn(async () => ({
+    result: {
+      ok: true as const,
+      value: {
+        state: "present" as const,
+        sandbox: { name: "alpha", phase: "Stopped", readiness: "not_ready" as const },
+      },
+    },
+    displayOutput: "",
+  }));
+}
+
 describe("OpenClaw post-upgrade recovery doctor", () => {
   it("retires a stale ready receipt before publishing an owner-only one-shot marker", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-doctor-marker-"));
@@ -504,7 +517,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       ok: false,
       stage: "doctor",
       detail:
-        "the restored sandbox stopped before post-upgrade doctor completed; the gateway remains held down",
+        "the restored sandbox became unavailable before post-upgrade doctor completed; the gateway remains held down",
     });
     expect(execute).toHaveBeenCalledTimes(2);
     expect(lookupSandbox).toHaveBeenCalledExactlyOnceWith({
@@ -692,6 +705,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     const deps = {
       captureOpenshell: capture as never,
       executeSandboxExecCommand: execute,
+      lookupSandbox: stoppedSandboxLookup(),
       now: () => 0,
       sleep: vi.fn(async () => undefined),
     };
@@ -859,6 +873,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: vi.fn(() => ({ status: 0, output: "" })) as never,
         executeSandboxExecCommand: execute,
+        lookupSandbox: stoppedSandboxLookup(),
         now: () => currentMs,
         sleep: vi.fn(async (seconds: number) => {
           currentMs += Math.max(seconds, 30) * 1_000;
@@ -927,6 +942,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
         executeSandboxExecCommand: execute,
+        lookupSandbox: stoppedSandboxLookup(),
         now: () => currentMs,
         sleep: vi.fn(async (seconds: number) => {
           currentMs += Math.max(seconds, 30) * 1_000;
@@ -942,6 +958,138 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       ["sandbox", "start", "alpha"],
       ["sandbox", "stop", "alpha"],
     ]);
+  });
+
+  it.each(["Error", "Failed", "Ready"])(
+    "refuses a successful maintenance stop acknowledgement while the sandbox is %s",
+    async (phase) => {
+      let currentMs = 0;
+      const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
+        status: 0,
+        output: "stop accepted",
+      }));
+      const lookupSandbox = vi.fn(async () => ({
+        result: {
+          ok: true as const,
+          value: {
+            state: "present" as const,
+            sandbox: {
+              name: "alpha",
+              phase,
+              readiness: phase === "Ready" ? ("ready" as const) : ("terminal" as const),
+            },
+          },
+        },
+        displayOutput: "",
+      }));
+      const deps = {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: vi.fn(async () => ({ status: 0, stdout: "", stderr: "" })),
+        lookupSandbox,
+        now: () => currentMs,
+        sleep: vi.fn(async (seconds: number) => {
+          currentMs += seconds * 1_000;
+        }),
+      };
+
+      const aborted = await abortOpenClawPostRestoreDoctor({ sandboxName: "alpha" }, deps);
+      expect(aborted).toEqual({
+        ok: false,
+        stage: "abort",
+        detail: "could not prove the sandbox stopped after maintenance was aborted",
+      });
+      expect(lookupSandbox).toHaveBeenCalled();
+      expect(capture.mock.calls.map((call) => call[0])).toEqual([["sandbox", "stop", "alpha"]]);
+
+      currentMs = 0;
+      const retired = await retireOpenClawPostRestoreDoctorForDelete(
+        { sandboxName: "alpha" },
+        deps,
+      );
+      expect(retired).toEqual({
+        ok: false,
+        stage: "abort",
+        detail: "source maintenance was retired, but the sandbox did not stop before deletion",
+      });
+    },
+  );
+
+  it("does not restart an errored sandbox when the abort marker cannot be published", async () => {
+    let currentMs = 0;
+    const capture = vi.fn((_args: readonly string[], _options: Record<string, unknown>) => ({
+      status: 0,
+      output: "accepted",
+    }));
+    const lookupSandbox = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: {
+          state: "present" as const,
+          sandbox: { name: "alpha", phase: "Error", readiness: "terminal" as const },
+        },
+      },
+      displayOutput: "",
+    }));
+    const result = await abortOpenClawPostRestoreDoctor(
+      { sandboxName: "alpha" },
+      {
+        captureOpenshell: capture as never,
+        executeSandboxExecCommand: vi.fn(async () => ({
+          status: 1,
+          stdout: "",
+          stderr: "exec unavailable",
+        })),
+        lookupSandbox,
+        now: () => currentMs,
+        sleep: vi.fn(async (seconds: number) => {
+          currentMs += seconds * 1_000;
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      stage: "abort",
+      detail: "could not publish the maintenance abort or prove the sandbox stopped",
+    });
+    expect(capture.mock.calls.map((call) => call[0])).toEqual([["sandbox", "stop", "alpha"]]);
+  });
+
+  it("caps the stop observation to the remaining maintenance reconciliation budget", async () => {
+    let now = 179_000;
+    let clockReads = 0;
+    const lookupSandbox = vi.fn(async () => {
+      now = 180_000;
+      return {
+        result: {
+          ok: true as const,
+          value: {
+            state: "present" as const,
+            sandbox: { name: "alpha", phase: "Ready", readiness: "ready" as const },
+          },
+        },
+        displayOutput: "",
+      };
+    });
+    const result = await abortOpenClawPostRestoreDoctor(
+      { sandboxName: "alpha" },
+      {
+        captureOpenshell: vi.fn(() => ({ status: 0, output: "accepted" })) as never,
+        executeSandboxExecCommand: vi.fn(async () => ({ status: 0, stdout: "", stderr: "" })),
+        lookupSandbox,
+        now: () => (clockReads++ === 0 ? 0 : now),
+        sleep: vi.fn(async (seconds: number) => {
+          now += seconds * 1_000;
+        }),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(lookupSandbox).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      timeoutMs: 1_000,
+    });
   });
 
   it("reconciles a nonzero abort stop from the observed stopped phase", async () => {
