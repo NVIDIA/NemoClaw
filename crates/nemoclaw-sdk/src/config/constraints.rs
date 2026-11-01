@@ -7,6 +7,22 @@
 //! Patterns use syntax that ECMA-262 and RE2 validators share: `$` ends the
 //! input, and there is no lookaround and no `\u` escape.
 
+/// Whether `value` matches one of the SDK's constant patterns. Each pattern
+/// compiles once: managed and Kubernetes resources check their identities on
+/// every compile and observation, and compiling costs more than matching.
+pub(crate) fn matches(pattern: &'static str, value: &str) -> bool {
+    static COMPILED: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, regex::Regex>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let regex = COMPILED
+        .lock()
+        .expect("pattern cache")
+        .entry(pattern)
+        .or_insert_with(|| regex::Regex::new(pattern).expect("constant pattern"))
+        .clone();
+    regex.is_match(value)
+}
+
 pub(crate) const KIND: &str = "NemoClawConfig";
 pub(crate) const SLUG: &str = nemoclaw_openshell::NAME_PATTERN;
 pub(crate) const UUID: &str = r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$";
