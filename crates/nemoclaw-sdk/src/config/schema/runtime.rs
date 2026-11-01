@@ -10,8 +10,8 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-static INPUT_SCHEMA: LazyLock<Value> = LazyLock::new(super::input_schema);
-static INPUT: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&INPUT_SCHEMA));
+static INPUT: LazyLock<jsonschema::Validator> =
+    LazyLock::new(|| compile(super::input_schema_ref()));
 static NORMALIZED: LazyLock<Value> = LazyLock::new(|| super::build_schema(true));
 static DOCUMENT: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&NORMALIZED));
 static DEFINITIONS: LazyLock<Mutex<BTreeMap<String, Arc<jsonschema::Validator>>>> =
@@ -20,8 +20,9 @@ static TUNING_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
     serde_json::to_value(schemars::schema_for!(RouteTuning)).expect("tuning schema")
 });
 static TUNING: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&TUNING_SCHEMA));
-static NAME: LazyLock<jsonschema::Validator> =
-    LazyLock::new(|| compile(&INPUT_SCHEMA["$defs"]["Metadata"]["properties"]["name"]));
+static NAME: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
+    compile(&super::input_schema_ref()["$defs"]["Metadata"]["properties"]["name"])
+});
 static FIELDS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
     fn collect(value: &Value, fields: &mut BTreeSet<String>) {
         if let Some(properties) = value["properties"].as_object() {
@@ -34,7 +35,7 @@ static FIELDS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
         }
     }
     let mut fields = BTreeSet::new();
-    collect(&INPUT_SCHEMA, &mut fields);
+    collect(super::input_schema_ref(), &mut fields);
     fields
 });
 
@@ -254,7 +255,7 @@ fn value(value: &impl Serialize) -> Result<Value, ConfigError> {
 }
 
 pub(crate) fn validate_input(value: &Value, source: Option<&str>) -> Result<(), ConfigError> {
-    check(&INPUT, value, &INPUT_SCHEMA, source)
+    check(&INPUT, value, super::input_schema_ref(), source)
 }
 
 pub(crate) fn validate_document(document: &Document) -> Result<(), ConfigError> {

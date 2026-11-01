@@ -9,7 +9,15 @@ pub use nemoclaw_runtime::schema::select_variant;
 pub const SCHEMA_PATH: &str = "schemas/nemoclaw-v1alpha1.schema.json";
 
 pub fn input_schema() -> serde_json::Value {
-    build_schema(false)
+    input_schema_ref().clone()
+}
+
+/// The input schema without a copy. Generating it costs more than most
+/// checks against it, so a process generates it once.
+pub fn input_schema_ref() -> &'static serde_json::Value {
+    static INPUT: std::sync::LazyLock<serde_json::Value> =
+        std::sync::LazyLock::new(|| build_schema(false));
+    &INPUT
 }
 
 fn build_schema(normalized: bool) -> serde_json::Value {
