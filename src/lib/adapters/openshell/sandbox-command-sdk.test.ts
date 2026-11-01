@@ -7,9 +7,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ensureManagedGatewayStateRoot } from "../../onboard/gateway/state-dir";
+import { GatewayManagementDeclarationError } from "../../onboard/gateway-management";
+import {
+  ensureManagedGatewayStateRoot,
+  UnsafeGatewayStateDirectoryError,
+} from "../../onboard/gateway/state-dir";
 import { writeDockerDriverGatewayBinding } from "../../onboard/gateway/state-dir";
-import { connectManagedOpenShellSdk } from "./sdk";
+import { connectManagedOpenShellSdk, OpenShellSdkPreflightUnavailableError } from "./sdk";
 import { createSdkOpenShellSandboxCommandExecutor } from "./sandbox-command-sdk";
 
 const roots: string[] = [];
@@ -154,6 +158,16 @@ describe("OpenShell SDK sandbox command executor", () => {
           loadSdk: async () => ({ OpenShellClient: { connect: vi.fn() } }),
         },
       ),
+    ).rejects.toThrow(UnsafeGatewayStateDirectoryError);
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw" },
+        {
+          env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+          homeDir: "/unused",
+          loadSdk: async () => ({ OpenShellClient: { connect: vi.fn() } }),
+        },
+      ),
     ).rejects.toThrow(/managed gateway state root marker/u);
     const homeDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-sdk-unmarked-binding-"));
     roots.push(homeDir);
@@ -166,7 +180,7 @@ describe("OpenShell SDK sandbox command executor", () => {
         { kind: "named", gatewayName: "nemoclaw" },
         { env: {}, homeDir, loadSdk: async () => ({ OpenShellClient: { connect: vi.fn() } }) },
       ),
-    ).rejects.toThrow(/managed gateway state root marker/u);
+    ).rejects.toThrow(OpenShellSdkPreflightUnavailableError);
   });
 
   it.each([false, true])(
@@ -228,7 +242,11 @@ describe("OpenShell SDK sandbox command executor", () => {
           loadSdk: async () => ({ OpenShellClient: { connect } }),
         },
       ),
-    ).rejects.toThrow(/gateway declaration.*selected gateway/u);
+    ).rejects.toSatisfy(
+      (error) =>
+        error instanceof GatewayManagementDeclarationError &&
+        /gateway declaration.*selected gateway/u.test(error.message),
+    );
     expect(connect).not.toHaveBeenCalled();
   });
 
@@ -247,7 +265,11 @@ describe("OpenShell SDK sandbox command executor", () => {
           loadSdk: async () => ({ OpenShellClient: { connect } }),
         },
       ),
-    ).rejects.toThrow(/gateway declaration.*state directory override/u);
+    ).rejects.toSatisfy(
+      (error) =>
+        error instanceof GatewayManagementDeclarationError &&
+        /gateway declaration.*state directory override/u.test(error.message),
+    );
     expect(connect).not.toHaveBeenCalled();
   });
 

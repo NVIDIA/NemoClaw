@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import tls from "node:tls";
 import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import {
+  readManagedOpenShellSdkTls,
+  resolveManagedOpenShellSdkStateDir,
+} from "../../../adapters/openshell/sdk";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { webSearchEnvFor } from "../../../inference/web-search";
 import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
@@ -97,11 +103,126 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_OPENSHELL_BIN",
   "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
   "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
+  "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+  "NEMOCLAW_GATEWAY_MANAGEMENT",
   "NEMOCLAW_REBUILD_VERBOSE",
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
   "NEMOCLAW_TELEMETRY_CONTEXT_DIR",
   "NEMOCLAW_DISABLE_TELEMETRY",
 ] as const;
+
+function parseCertificates(pem: Buffer, label: string): X509Certificate[] {
+  const source = pem.toString("utf8");
+  const begins = [...source.matchAll(/-----BEGIN ([^\r\n]*?CERTIFICATE)-----/gu)];
+  const ends = [...source.matchAll(/-----END ([^\r\n]*?CERTIFICATE)-----/gu)];
+  if (begins.length === 0) throw new Error(`${label} has no PEM certificate`);
+  if (begins.length !== ends.length) throw new Error(`${label} has malformed PEM certificates`);
+  return begins.map((begin, index) => {
+    const end = ends[index];
+    const nextBegin = begins[index + 1];
+    if (
+      !["CERTIFICATE", "TRUSTED CERTIFICATE", "X509 CERTIFICATE"].includes(begin[1]) ||
+      end[1] !== begin[1] ||
+      end.index! < begin.index! ||
+      (nextBegin && end.index! > nextBegin.index!)
+    ) {
+      throw new Error(`${label} has malformed or unsupported PEM certificates`);
+    }
+    return new X509Certificate(source.slice(begin.index, end.index! + end[0].length));
+  });
+}
+
+function certificateValidityIssue(certificate: X509Certificate, label: string): string | null {
+  const now = Date.now();
+  const validFrom = Date.parse(certificate.validFrom);
+  const validTo = Date.parse(certificate.validTo);
+  return !Number.isFinite(validFrom) ||
+    !Number.isFinite(validTo) ||
+    now < validFrom ||
+    now >= validTo
+    ? `${label} certificate is expired or not yet valid`
+    : null;
+}
+
+function assertClientCertificateTrustedByGatewayCa(
+  clientCertificates: readonly X509Certificate[],
+  caCertificates: readonly X509Certificate[],
+): void {
+  const trusted = new Set(caCertificates.map((certificate) => certificate.fingerprint256));
+  const possibleIssuers = [...clientCertificates.slice(1), ...caCertificates];
+  const pending = [clientCertificates[0]];
+  const visited = new Set<string>();
+  const clientValidityIssue = certificateValidityIssue(clientCertificates[0], "Gateway client");
+  if (clientValidityIssue) throw new Error(clientValidityIssue);
+  let invalidIssuer: string | null = null;
+  while (pending.length > 0) {
+    const certificate = pending.pop()!;
+    if (trusted.has(certificate.fingerprint256)) return;
+    if (visited.has(certificate.fingerprint256)) continue;
+    visited.add(certificate.fingerprint256);
+    for (const issuer of possibleIssuers) {
+      if (issuer.ca && certificate.checkIssued(issuer) && certificate.verify(issuer.publicKey)) {
+        const issue = certificateValidityIssue(
+          issuer,
+          trusted.has(issuer.fingerprint256) ? "Gateway CA" : "Gateway client",
+        );
+        if (issue) {
+          invalidIssuer ??= issue;
+          continue;
+        }
+        pending.push(issuer);
+      }
+    }
+  }
+  throw new Error(invalidIssuer ?? "Gateway client certificate is not signed by the gateway CA");
+}
+
+/**
+ * Validate a configured gateway state location before rebuild changes anything.
+ * The replacement uses the SDK after the source is deleted, so a location the SDK
+ * rejects, or one without usable SDK mTLS files, would otherwise strand the sandbox.
+ * Returns the reason, or null when usable.
+ */
+export function rebuildGatewayStateDirIssue(
+  entry: Pick<SandboxEntry, "name" | "gatewayName" | "gatewayPort">,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (
+    !env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
+    !env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim()
+  ) {
+    return null;
+  }
+  try {
+    const port = registryEntryGatewayPort({
+      name: entry.name,
+      gatewayName: entry.gatewayName,
+      gatewayPort: entry.gatewayPort,
+    });
+    const stateDir = resolveManagedOpenShellSdkStateDir(
+      { kind: "named", gatewayName: resolveGatewayName(port) },
+      { env, homeDir: resolveHome(env) },
+    );
+    try {
+      // The SDK hands these to Node TLS; reject malformed or mismatched material here.
+      const credentials = readManagedOpenShellSdkTls(stateDir);
+      const caCertificates = parseCertificates(credentials.caCert, "Gateway CA");
+      const clientCertificates = parseCertificates(credentials.clientCert, "Gateway client");
+      tls.createSecureContext({
+        ca: credentials.caCert,
+        cert: credentials.clientCert,
+        key: credentials.clientKey,
+      });
+      assertClientCertificateTrustedByGatewayCa(clientCertificates, caCertificates);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return `The gateway TLS credentials in ${stateDir}/tls are unusable: ${detail}`;
+    }
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
 
 /** Recover the recorded gateway location before rebuild can start or replace it. */
 export function restoreRecordedRebuildGatewayStateDir(
