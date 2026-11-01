@@ -22,12 +22,10 @@ pub fn input_schema_ref() -> &'static serde_json::Value {
 
 fn build_schema(normalized: bool) -> serde_json::Value {
     let settings = schemars::generate::SchemaSettings::draft2020_12();
-    let mut schema = serde_json::to_value(
-        settings
-            .into_generator()
-            .into_root_schema_for::<super::Document>(),
-    )
-    .unwrap();
+    let mut schema = settings
+        .into_generator()
+        .into_root_schema_for::<super::Document>()
+        .to_value();
     remove_serde_defaults(&mut schema);
     validation::constrain(&mut schema, normalized);
     schema["$id"] = serde_json::json!("urn:nemoclaw:config:v1alpha1");

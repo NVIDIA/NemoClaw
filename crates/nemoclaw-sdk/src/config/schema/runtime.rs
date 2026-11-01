@@ -16,9 +16,8 @@ static NORMALIZED: LazyLock<Value> = LazyLock::new(|| super::build_schema(true))
 static DOCUMENT: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&NORMALIZED));
 static DEFINITIONS: LazyLock<Mutex<BTreeMap<String, Arc<jsonschema::Validator>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
-static TUNING_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::to_value(schemars::schema_for!(RouteTuning)).expect("tuning schema")
-});
+static TUNING_SCHEMA: LazyLock<Value> =
+    LazyLock::new(|| schemars::schema_for!(RouteTuning).to_value());
 static TUNING: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&TUNING_SCHEMA));
 static NAME: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
     compile(&super::input_schema_ref()["$defs"]["Metadata"]["properties"]["name"])
