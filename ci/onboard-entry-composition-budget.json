@@ -17,7 +17,7 @@
   },
   "provider": {
     "handleNimLocalSelection": 32,
-    "handleRemoteProviderSelection": 81,
+    "handleRemoteProviderSelection": 77,
     "handleRemoteProviderSelection.providerExistsInGateway": 1,
     "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
     "handleVllmSelection.queryVllmModels": 1,

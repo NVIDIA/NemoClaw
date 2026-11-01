@@ -1856,7 +1856,14 @@ async function handleRemoteProviderSelection(
           : "anthropic-messages";
     }
   }
-  state.assertRouteCompatible?.();
+  // Route checks use the route credential; API-key staging reads the provider env.
+  const routeCheck = compatibleEndpointGatewayRoute.bindCompatibleEndpointRouteCheck(
+    selected.key,
+    state,
+    isNonInteractive(),
+    OLLAMA_PROXY_CREDENTIAL_ENV,
+  );
+  const { eligible: compatibleNoAuth, noAuth: useNoAuth } = routeCheck;
   if (selected.key === "hermesProvider") {
     const selectedHermesAuthMethod = await promptHermesAuthMethod();
     if (isBackToSelection(selectedHermesAuthMethod)) {
@@ -1938,7 +1945,7 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-  hydrateCredentialEnv(state.credentialEnv);
+  hydrateCredentialEnv(remoteConfig.credentialEnv);
   if (selected.key === "build") {
     assertSelectionMutationAuthority(state, "stage the NVIDIA provider credential");
     providerKeyBridge.stageBuildProviderKeyBridge();
@@ -1976,7 +1983,10 @@ async function handleRemoteProviderSelection(
       state,
       `stage inference provider ${JSON.stringify(state.provider)} credential`,
     );
-    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
+    providerKeyBridge.stageRemoteProviderKeyBridge(
+      useNoAuth && isNonInteractive() ? null : remoteConfig.credentialEnv,
+      routeCheck.beforeSave,
+    );
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
@@ -1986,19 +1996,9 @@ async function handleRemoteProviderSelection(
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
     const selectedCredentialEnv = requireValue(
-      state.credentialEnv,
+      remoteConfig.credentialEnv,
       `Missing credential env for ${remoteConfig.label}`,
     );
-    const compatibleNoAuth =
-      selected.key === "custom" &&
-      compatibleEndpointGatewayRoute.isLoopbackNoAuthCompatibleEndpointUrl(
-        state.provider,
-        state.endpointUrl,
-      );
-    const useNoAuth =
-      compatibleNoAuth &&
-      (!isNonInteractive() ||
-        (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
     assertSelectionMutationAuthority(
       state,
       `register inference provider ${JSON.stringify(state.provider)} credential`,
@@ -2077,12 +2077,12 @@ async function handleRemoteProviderSelection(
         remoteConfig.helpUrl,
         openrouterSelection.credentialValidatorForProvider(selected.key),
         compatibleNoAuth,
-        credentialMutationGuardFor(state),
+        routeCheck.guardSave(credentialMutationGuardFor(state)),
       );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
-      if (credentialResult === "") state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
+      routeCheck.afterPrompt(credentialResult);
     }
     if (!useNoAuth)
       openrouterSelection.validateNonInteractiveCredential({

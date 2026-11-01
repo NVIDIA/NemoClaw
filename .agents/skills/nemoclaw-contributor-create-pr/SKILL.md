@@ -32,6 +32,14 @@ The check uses the candidate checkout's validator and workflow. It does not prot
 
 Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
 
+## Existing Pull Requests
+
+A PR opened before this requirement needs one opening report on its next update.
+
+- If the PR author has no opening report, post one with the summary `Authoring session — opening`. Report only what the available session record establishes, up to a cutoff you state. Mark each field you cannot establish `unavailable` with `-` and the reason, for example that the session record no longer exists or the update session did not author the earlier commits. Do not reconstruct values from memory.
+- If an opening report by the PR author already exists, keep it and its cutoff unchanged. Do not edit it to cover later work.
+- Report later work, if you choose to, in a separate collapsed comment with a distinct summary and revision, as described above. It does not replace the opening report.
+
 ## Session Report
 
 Report the session that wrote the change, up to a cutoff you state. When publishing or taking over a PR without the original authoring-session evidence, mark the fields unavailable; the report does not need to come from the person who wrote the change.
