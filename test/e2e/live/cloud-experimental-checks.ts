@@ -165,11 +165,21 @@ async function cleanupFailedTuiSession(
   sandboxName: string,
   sessionId: string,
   baseline: number,
+  scriptPath: string,
   context: Pick<E2ETargetFixtures, "host">,
 ): Promise<void> {
   const result = await context.host.command(
     "bash",
-    [DCODE_TUI_SESSION_GUARD, "recover", sandboxName, sessionId, String(baseline)],
+    [
+      DCODE_TUI_SESSION_GUARD,
+      "recover",
+      sandboxName,
+      sessionId,
+      String(baseline),
+      ...(scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK
+        ? ["/proc", "restore-startup-config"]
+        : []),
+    ],
     {
       artifactName: "cloud-experimental-dcode-tui-caller-recovery",
       env: buildAvailabilityProbeEnv(),
@@ -200,7 +210,13 @@ async function runDcodeTuiCheck(
   let recoveryAttempt: Promise<void> | undefined;
   const recover = async (): Promise<void> => {
     if (!recoveryArmed) return;
-    recoveryAttempt ??= cleanupFailedTuiSession(sandboxName, sessionId, baseline, context);
+    recoveryAttempt ??= cleanupFailedTuiSession(
+      sandboxName,
+      sessionId,
+      baseline,
+      scriptPath,
+      context,
+    );
     try {
       await recoveryAttempt;
       recoveryArmed = false;
@@ -231,7 +247,7 @@ async function runDcodeTuiCheck(
       return Promise.reject(
         new AggregateError(
           [error, recoveryError],
-          "DCode TUI check failed, and its sandbox process cleanup did not complete",
+          "DCode TUI check failed, and its caller recovery did not complete",
         ),
       );
     }
@@ -283,7 +299,8 @@ export async function runE2eCloudExperimentalChecks(
   }
   for (const scriptPath of checkScripts) {
     const result =
-      scriptPath === DEEPAGENTS_CODE_TUI_CHECK
+      scriptPath === DEEPAGENTS_CODE_TUI_CHECK ||
+      scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK
         ? await runDcodeTuiCheck(sandboxName, scriptPath, apiKey, context)
         : await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
             artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
