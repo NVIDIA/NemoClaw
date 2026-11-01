@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { serializedOllamaHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { onboardInferenceVerificationContext } from "../../verify-deployment";
 
 import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
@@ -17,26 +18,56 @@ const input = {
 describe("terminal inference finalization dependency", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("uses the sandbox's recorded gateway for the bounded inference probe", async () => {
-    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
-      load: () => ({ sandboxes: { "deep-code": { gatewayName: "nemoclaw-19090" } } }),
-    } as never);
-    const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
-    vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
-      probeOnboardInferenceInvocation,
-      onboardInferenceVerificationContext,
-    } as never);
-
-    await expect(finalizationHandlerDeps.probeTerminalInference(input)).resolves.toEqual({
-      ok: true,
-    });
-    expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
-      ...input,
-      gatewayName: "nemoclaw-19090",
+  it.each([
+    {
+      label: "hosted Deep Agents Code",
+      probeInput: input,
+      entry: { gatewayName: "nemoclaw-19090" },
       endpointUrl: null,
-      nativeLocalExpected: false,
-    });
-  });
+    },
+    {
+      label: "Portable Hermes with a matching Ollama receipt",
+      probeInput: {
+        ...input,
+        sandboxName: "portable-hermes",
+        agentName: "hermes",
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+      },
+      entry: {
+        gatewayName: "nemoclaw-19090",
+        agent: "hermes",
+        portableLifecycleProfile: "hermes",
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("qwen3-vl:4b"),
+      },
+      endpointUrl: "https://inference.local/v1",
+    },
+  ])(
+    "uses the recorded gateway and route for $label",
+    async ({ probeInput, entry, endpointUrl }) => {
+      vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+        load: () => ({ sandboxes: { [probeInput.sandboxName]: entry } }),
+      } as never);
+      const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
+      vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
+        probeOnboardInferenceInvocation,
+        onboardInferenceVerificationContext,
+      } as never);
+
+      await expect(finalizationHandlerDeps.probeTerminalInference(probeInput)).resolves.toEqual({
+        ok: true,
+      });
+      expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
+        ...probeInput,
+        gatewayName: "nemoclaw-19090",
+        endpointUrl,
+        nativeLocalExpected: false,
+      });
+    },
+  );
 
   it("passes the sandbox native attachment to the terminal inference verifier", async () => {
     const nativeHostedProviderAttachment = { providerId: "owned-id" };
