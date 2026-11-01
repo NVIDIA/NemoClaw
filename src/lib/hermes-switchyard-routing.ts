@@ -315,6 +315,9 @@ function clientAndTargetToml(
     `base_url = ${tomlString(client.baseUrl)}`,
     `api_key_env = ${tomlString(client.apiKeyEnv)}`,
     "forward_auth = false",
+    // Per client call, including the complete stream; not a whole-turn deadline.
+    "timeout_ms = 120000",
+    "max_retries = 0",
     ...(Object.keys(client.extraHeaders).length > 0
       ? [`extra_headers = ${tomlStringMap(client.extraHeaders)}`]
       : []),
