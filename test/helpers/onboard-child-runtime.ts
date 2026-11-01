@@ -26,6 +26,16 @@ childCrypto.createHash = (algorithm, options) => {
   return hash;
 };
 
+function stubOllamaServeSpawn(onServe) {
+  const childProcess = require("node:child_process");
+  childProcess.spawn = (file, args, options) => {
+    if (Array.isArray(args) && args[0] === "serve") {
+      onServe({ file, host: options?.env?.OLLAMA_HOST, detached: options?.detached });
+    }
+    return { pid: 99999, unref() {}, on() {} };
+  };
+}
+
 function supportedOllamaHostMetadataOutput(command) {
   if (command.includes("ollama --version")) {
     return ${JSON.stringify(`ollama version is ${MIN_OLLAMA_VERSION}`)};
