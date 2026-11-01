@@ -52,6 +52,7 @@ describe("Docker authority readiness", () => {
       env: {},
       platform: "linux",
       uid: 1000,
+      inspectCurrentDockerContext: () => null,
       existsSync: (candidate) => sockets.has(candidate),
       probeDockerHost: (dockerHost) =>
         dockerHost

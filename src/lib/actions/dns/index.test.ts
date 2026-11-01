@@ -144,6 +144,7 @@ describe("runFixCoreDns", () => {
         log: vi.fn(),
         platform: "linux",
         probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "docker" }),
+        inspectCurrentDockerContext: () => null,
         readFile: () => "nameserver 1.1.1.1\n",
         runDocker,
         uid: () => "1000",
@@ -154,6 +155,36 @@ describe("runFixCoreDns", () => {
     expect(result.runtime).toBe("colima");
     expect(result.upstreamDns).toBe("9.9.9.9");
     expect(calls.map((call) => call.env?.DOCKER_HOST)).not.toContain(`unix://${PODMAN_SOCKET}`);
+  });
+
+  it("uses the persisted context endpoint for every DNS repair command (#12367)", () => {
+    const socket = "/home/test/.colima/default/docker.sock";
+    const dockerHost = `unix://${socket}`;
+    const { calls, runDocker } = patchingRunDocker("Name: colima\nServer Version: 27.0.0\n");
+    const probeDockerHost = vi.fn(probeAnswers({ [DEFAULT_AUTHORITY]: "docker" }));
+    const result = runFixCoreDns(
+      { gatewayName: "nemoclaw" },
+      {
+        commandExists: () => false,
+        env: LINUX_ENV,
+        existsSocket: () => false,
+        inspectCurrentDockerContext: () => ({ name: "colima", dockerHost }),
+        resolveSocketRealPath: (pathname) => (pathname === socket ? socket : null),
+        log: vi.fn(),
+        platform: "linux",
+        probeDockerHost,
+        readFile: () => "nameserver 1.1.1.1\n",
+        runDocker,
+        uid: () => "1000",
+      },
+    );
+
+    expect(result).toMatchObject({ exitCode: 0, runtime: "colima" });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.map((call) => call.env?.DOCKER_HOST)).toEqual(
+      Array(calls.length).fill(dockerHost),
+    );
+    expect(probeDockerHost).toHaveBeenCalledExactlyOnceWith(undefined);
   });
 
   it("adopts a discovered Podman socket once it answers", () => {
@@ -261,6 +292,7 @@ describe("runFixCoreDns", () => {
         log: vi.fn(),
         platform: "linux",
         probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "podman" }),
+        inspectCurrentDockerContext: () => null,
         readFile: () => "nameserver 1.1.1.1\n",
         runDocker,
         uid: () => "1000",
@@ -379,6 +411,7 @@ describe("runSetupDnsProxy", () => {
         existsSocket: (socketPath) => socketPath === PODMAN_SOCKET,
         log: vi.fn(),
         probeDockerHost: probeAnswers({ [DEFAULT_AUTHORITY]: "docker" }),
+        inspectCurrentDockerContext: () => null,
         runDocker,
         sleep: vi.fn(),
         uid: () => "1000",
