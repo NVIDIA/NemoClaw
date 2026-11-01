@@ -265,6 +265,11 @@ fn the_interfaces_document_enables_each_p0_interface() {
     });
     let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
     let value = serde_json::to_value(&parsed).unwrap();
+    // The gateway lets the test mount a volume on the Hermes sandbox later.
+    assert_eq!(
+        value["spec"]["gateway"]["config"],
+        serde_json::json!({"openshell.drivers.docker": {"allow_driver_config": true}})
+    );
     let provider = &value["spec"]["inferenceProviders"]["model"];
     assert_eq!(provider["endpoint"], "http://172.30.203.1:18431/v1");
     assert_eq!(provider["credential"]["env"], INTERFACES_MODEL_KEY);

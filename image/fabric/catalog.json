@@ -480,6 +480,7 @@
             "models.max_tokens",
             "instructions.system",
             "runtime.max_turns",
+            "runtime.keep_state",
             "tools.enabled",
             "tools.blocked",
             "mcp",
@@ -517,7 +518,7 @@
               "properties": {
                 "api": {
                   "additionalProperties": false,
-                  "description": "Hermes's API server, run by a gateway child. After both interfaces start, the adapter writes its bearer token to <artifact root>/.fabric/hermes/runtimes/<runtime-id>/interfaces/api.token.",
+                  "description": "Hermes's API server, run by a gateway child. After both interfaces start, the adapter writes its bearer token to interfaces/api.token in the Hermes home: <artifact root>/.fabric/hermes/runtimes/<runtime-id>, or the agent's state folder with runtime.keep_state.",
                   "properties": {
                     "enabled": {
                       "default": true,
@@ -2357,8 +2358,8 @@
       ]
     }
   ],
-  "fabric_revision": "995cc79e130c0fe0f950697a2667eba78dc412d9",
+  "fabric_revision": "a3b57155593877135f2557ef37d5e18161a1ad82",
   "schema_version": 2,
-  "source_sha256": "13b319fa89cb79aea0d7354de0a4d48b5905cd08c80e1fdbea54c3e31356b8ae",
+  "source_sha256": "449bd7bc94c3effc53713f5beb1bcd559d02242da591196fa165186d8c9b7f03",
   "targets": []
 }

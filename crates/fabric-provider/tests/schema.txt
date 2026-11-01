@@ -403,6 +403,10 @@ resource fabric_agent (version 0)
       > Undeclared properties, as JSON text.
     input_schema: string, optional
       > Input schema label.
+    keep_state: bool, optional
+      > Keep the adapter's native state in a folder named after the agent, so
+      > every runtime of the agent uses the same folder. Requires an artifact
+      > directory and an adapter that accepts `runtime.keep_state`.
     max_turns: number, optional
       > Maximum number of harness turns within one invocation.
     output_schema: string, optional

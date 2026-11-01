@@ -125,7 +125,8 @@ pub struct InterfacesInputs<'a> {
 /// A managed Docker gateway with OpenClaw's dashboard, Hermes's API server and
 /// dashboard, and Deep Agents Code's terminal enabled. The model endpoint is
 /// the test's stand-in on the gateway network's host address, with a key the
-/// test supplies. Every sandbox takes its image's default policy.
+/// test supplies. Every sandbox takes its image's default policy. The gateway
+/// allows driver configuration, so the test can mount a volume on a sandbox.
 pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
     let InterfacesInputs {
         name,
@@ -156,6 +157,9 @@ spec:
     engine: unix:///var/run/docker.sock
     endpoint: http://127.0.0.1:{port}
     networkCIDR: {subnet}
+    config:
+      openshell.drivers.docker:
+        allow_driver_config: true
   inferenceProviders:
     model:
       provider: openai

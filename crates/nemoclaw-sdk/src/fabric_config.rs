@@ -61,6 +61,15 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         .iter()
         .any(|schema| schema["properties"].get("api").is_some())
     });
+    // Fabric gives every runtime of an agent one state folder only when asked,
+    // and rejects the request for an adapter that doesn't accept it.
+    if descriptor.is_some_and(|descriptor| {
+        descriptor["config"]["accepts"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "runtime.keep_state"))
+    }) {
+        result["runtime"]["keep_state"] = true.into();
+    }
     for route in &selection.inference.routes {
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;

@@ -80,8 +80,9 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                 sandbox: "reviewer".into(),
                 interface: "api".into(),
                 port: Some(8642),
+                // Hermes keeps its state, with the token, in the agent's folder.
                 token_path: Some(
-                    "/sandbox/artifacts/.fabric/hermes/runtimes/rt-hermes-1/interfaces/api.token"
+                    "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token"
                         .into()
                 ),
                 launcher: None,
@@ -93,9 +94,31 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
     let json = serde_json::to_value(&result).unwrap();
     assert_eq!(
         json["interfaces"][1]["tokenPath"],
-        "/sandbox/artifacts/.fabric/hermes/runtimes/rt-hermes-1/interfaces/api.token"
+        "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token"
     );
     assert_eq!(json["interfaces"][1]["signIn"], "bearer_token");
+}
+
+/// An agent that keeps its state has one token path for every runtime, so it is
+/// known even before a runtime ID is recorded.
+#[tokio::test]
+async fn an_agent_that_keeps_its_state_reports_its_token_without_a_runtime_id() {
+    let result = apply(&document(), &[("assistant", ""), ("reviewer", "")]).await;
+    let hermes = result
+        .interfaces
+        .iter()
+        .find(|access| access.sandbox == "reviewer")
+        .unwrap();
+    assert_eq!(
+        hermes.token_path.as_deref(),
+        Some("/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token")
+    );
+    let openclaw = result
+        .interfaces
+        .iter()
+        .find(|access| access.sandbox == "assistant")
+        .unwrap();
+    assert_eq!(openclaw.token_path, None);
 }
 
 /// Hermes's dashboard has no token or sign-in: the forward is its access control.
