@@ -186,8 +186,12 @@ exec /bin/sleep "$@"
         installerSource,
         signalAnchor,
         `
-  while [[ ! -s "\${LOOKUP_PID:?}" ]]; do :; done
-  /bin/bash -c 'kill -${options.lookupSignal} "$PPID"'
+  case "$label" in
+    "installed NemoClaw version lookup")
+      while [[ ! -s "\${LOOKUP_PID:?}" ]]; do :; done
+      /bin/bash -c 'kill -${options.lookupSignal} "$PPID"'
+      ;;
+  esac
 ${signalAnchor}`,
       )
     : installerSource;
