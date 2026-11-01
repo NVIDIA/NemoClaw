@@ -4095,6 +4095,15 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 ```
 </AgentOnly>
 
+With `--type nvidia`, NemoClaw registers the `nvidia-prod` provider as the native NVIDIA provider.
+Pass `--credential NVIDIA_INFERENCE_API_KEY`, or `--from-existing` to reuse the credential that the gateway already stores.
+Another provider name with `--type nvidia` uses the gateway's `nvidia` profile, so each `--credential` must name a credential that the profile declares, such as `NVIDIA_API_KEY`.
+When a name is not declared, the command shows up to five declared names, reports how many more exist, and creates no provider.
+
+```bash
+$$nemoclaw credentials add nvidia-extra --type nvidia --credential NVIDIA_API_KEY
+```
+
 | Flag                      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--type <TYPE>`           | Provider profile, such as `tavily`, `tavily-hermes-v1`, `nvidia`, `openai`, `anthropic`, or `generic`                                                                                                                                                                                                                                                                                                                                                                                                                                     |
