@@ -76,6 +76,7 @@ import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
   mockDockerSpawnSuccess,
+  mockDockerSpawnWithLogs,
   resetVllmInstallEnv,
   type VllmInstallSpies,
   vllmHostCommandCapture,
@@ -655,6 +656,51 @@ describe("managed vLLM crash-loop watchdog", () => {
     expect(printedTail).not.toContain("secret-value");
     expect(printedTail).not.toContain("nvapi-ABCDEFGHIJKLMN");
     expect(printedTail).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
+  });
+
+  it("prints the redacted prior startup error before stopping a crash loop (#14017)", async () => {
+    const profile = detectVllmProfile({ type: "nvidia" })!;
+    const startedAt = "2026-10-31T10:00:00.123456789Z";
+    const pipTail = Array.from(
+      { length: 79 },
+      (_, index) => `Requirement already satisfied: package-${String(index)}`,
+    ).concat("WARNING: Running pip as the 'root' user");
+    mockHostCommands({ computeCap: "8.9\n", curl: "" });
+    mockDockerDaemon(profile.containerName, "3", pipTail.join("\n"));
+    const capture = mocks.dockerCapture.getMockImplementation();
+    mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
+      args[0] === "inspect" && args[2]?.includes(".State.StartedAt") ? startedAt : capture?.(args),
+    );
+    mocks.dockerSpawn.mockImplementation(
+      mockDockerSpawnWithLogs(
+        "2026-10-31T09:59:59.999999999Z \u001b[31mvllm: error: unrecognized arguments: --disable-log-requests\u001b[0m\n" +
+          "2026-10-31T09:59:59.999999999Z OPENAI_API_KEY=prior-secret\u0007\u0000\n",
+      ),
+    );
+    let diagnosticsAtStop = "";
+    mocks.dockerStop.mockImplementation(() => {
+      diagnosticsAtStop = stderrWrite.mock.calls.map(([text]) => String(text)).join("");
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerStop).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalledWith(
+      "  vLLM install failed: vLLM container restarted 3 times before readiness",
+    );
+    expect(diagnosticsAtStop).toContain(
+      "vllm: error: unrecognized arguments: --disable-log-requests",
+    );
+    expect(diagnosticsAtStop).toContain("Requirement already satisfied: package-78");
+    expect(diagnosticsAtStop).toContain("WARNING: Running pip as the 'root' user");
+    expect(diagnosticsAtStop).toContain("OPENAI_API_KEY=");
+    expect(diagnosticsAtStop).not.toContain("prior-secret");
+    expect(diagnosticsAtStop).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
   });
 
   it("keeps waiting below the startup restart limit (#8307)", async () => {

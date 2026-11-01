@@ -24,6 +24,7 @@ import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/vllm-port";
+import { readVllmStartupLogExcerpts, vllmEndpointReady } from "./vllm/startup-observations";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { redact, redactFull, runCapture, shellQuote } from "../runner";
 import { isSafeModelId } from "../validation";
@@ -31,7 +32,7 @@ import {
   acquireHuggingFaceModel,
   hfDownloadAuthentication,
 } from "./model-acquisition/hugging-face";
-import { buildModelListProbeCommand, getGpuIndicesByName, isOpenAiModelListResponse } from "./nim";
+import { getGpuIndicesByName } from "./nim";
 import {
   buildLocalDualStationDockerEnv,
   buildLocalManagedVllmDockerEnv,
@@ -1284,27 +1285,6 @@ function startContainer(
   return { ok: true, containerId: launched.containerId };
 }
 
-function vllmEndpointReady(baseUrl?: string): boolean {
-  if (baseUrl) {
-    // The dual-Station /v1 surface is bearer-protected. vLLM deliberately
-    // leaves /health outside its auth middleware, so readiness can stay
-    // secret-free while onboarding separately validates model inventory with
-    // the persisted key.
-    return runCurlProbe(
-      ["-sS", "--connect-timeout", "2", "--max-time", "5", `${baseUrl.replace(/\/+$/, "")}/health`],
-      { pinnedAddresses: [] },
-    ).ok;
-  }
-  const response = runCapture(
-    buildModelListProbeCommand(
-      ["--connect-timeout", "2", "--max-time", "5"],
-      `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`,
-    ),
-    { ignoreError: true },
-  );
-  return isOpenAiModelListResponse(response);
-}
-
 function verifyDualStationVllmAuthBoundary(
   baseUrl: string,
   apiKey: string,
@@ -1377,30 +1357,21 @@ function sanitizeContainerLogOutput(output: string): string {
   return redact(redactFull(normalizedOutput));
 }
 
-function readContainerLogTail(
+async function printContainerLogTail(
   profile: VllmProfile,
-  lineCount = 80,
-  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
-): string[] {
-  const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
-    env: dockerEnv,
-    ignoreError: true,
-    includeStderr: true,
-  }).trim();
-  if (!output) return [];
-  const safeOutput = sanitizeContainerLogOutput(output);
-  return safeOutput.split(/\r?\n/).slice(-lineCount);
-}
-
-function printContainerLogTail(
-  profile: VllmProfile,
-  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
-): void {
-  const tail = readContainerLogTail(profile, 80, dockerEnv);
-  if (tail.length === 0) return;
-  process.stderr.write(`  --- Last ${String(tail.length)} vLLM log lines: ---\n`);
-  for (const line of tail) process.stderr.write(`    ${line}\n`);
-  process.stderr.write("  ---\n");
+  dockerEnv: Record<string, string>,
+): Promise<void> {
+  const excerpts = await readVllmStartupLogExcerpts(profile.containerName, dockerEnv, {
+    dockerCapture,
+    dockerSpawn,
+  });
+  for (const { lines, suffix } of excerpts) {
+    if (lines.length === 0) continue;
+    const tail = sanitizeContainerLogOutput(lines.join("\n")).split("\n").slice(-80);
+    process.stderr.write(`  --- Last ${String(tail.length)} vLLM log lines${suffix}: ---\n`);
+    for (const line of tail) process.stderr.write(`    ${line}\n`);
+    process.stderr.write("  ---\n");
+  }
 }
 
 // Poll the real OpenAI-compatible models endpoint for the legacy local path,
@@ -1430,7 +1401,7 @@ function waitForVllmReady(
 
     function poll(): void {
       if (resolved) return;
-      if (vllmEndpointReady(baseUrl)) {
+      if (vllmEndpointReady(baseUrl, runCapture)) {
         emit(`vLLM is serving on :${String(VLLM_PORT)}`);
         done({ ok: true });
         return;
@@ -2724,7 +2695,7 @@ async function runVllmInstall(
 
         const ready = await waitForVllmReady(runtimeProfile, start.baseUrl, localDockerEnv);
         if (!ready.ok) {
-          printContainerLogTail(runtimeProfile, localDockerEnv);
+          await printContainerLogTail(runtimeProfile, localDockerEnv);
           await rollbackStartedPair();
           console.error(`  vLLM install failed: ${String(ready.reason)}`);
           return { ok: false };
@@ -2854,7 +2825,7 @@ async function runVllmInstall(
     : undefined;
   const ready = await waitForVllmReady(runtimeProfile, hostLocalBaseUrl, localDockerEnv);
   if (!ready.ok) {
-    printContainerLogTail(runtimeProfile, localDockerEnv);
+    await printContainerLogTail(runtimeProfile, localDockerEnv);
     dockerStop(runtimeProfile.containerName, {
       env: localDockerEnv,
       ignoreError: true,
