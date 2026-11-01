@@ -17,6 +17,7 @@ network_policies:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
       - host: host.openshell.internal
@@ -25,10 +26,12 @@ network_policies:
         enforcement: enforce
         allowed_ips:
           # OpenShell's SSRF guard rejects private host-gateway IPs unless
-          # the policy explicitly allowlists the resolved address.
+          # the policy explicitly allowlists every resolved address. Docker
+          # Desktop also resolves the bridge to an IPv6 unique-local address.
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -40,6 +43,7 @@ network_policies:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -51,6 +55,7 @@ network_policies:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+          - fc00::/7
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }

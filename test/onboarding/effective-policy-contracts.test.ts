@@ -350,7 +350,7 @@ describe("effective built-in policy contracts", () => {
     ]);
     const observability = requireNetworkPolicy(effective, "observability-otlp-local");
     const diagnostics = requireNetworkPolicy(effective, "openclaw-diagnostics-otel-local");
-    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
 
     const observabilityEndpoint = requireEndpoint(observability, "host.openshell.internal");
     expect(observabilityEndpoint).toMatchObject({
@@ -388,7 +388,7 @@ describe("effective built-in policy contracts", () => {
     const effective = composePresets(["local-memory"], "hermes");
     const localMemory = requireNetworkPolicy(effective, "local_memory");
     const endpoint = requireEndpoint(localMemory, "host.openshell.internal");
-    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
 
     expect(endpoint).toMatchObject({
       port: 8888,
@@ -409,7 +409,7 @@ describe("effective built-in policy contracts", () => {
     const managedPresetNames = Object.keys(matrix);
     const effective = composePresets(["local-inference", ...managedPresetNames]);
     const localInference = requireNetworkPolicy(effective, "local_inference");
-    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
 
     [8000, 11434, 11435].forEach((port) => {
       const endpoint = (localInference.endpoints ?? []).find(
@@ -425,6 +425,7 @@ describe("effective built-in policy contracts", () => {
     const llamaCpp = (localInference.endpoints ?? []).find(
       (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 8081,
     );
+    expect(llamaCpp).toMatchObject({ allowed_ips: privateRanges });
     expect(llamaCpp?.rules).toEqual([{ allow: { method: "POST", path: "/v1/chat/completions" } }]);
     expect(binaries(localInference)).toEqual(
       expect.arrayContaining([
@@ -451,6 +452,7 @@ describe("effective built-in policy contracts", () => {
         (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
       );
       expect(JSON.stringify(broker), presetName).toContain(new URL(entry.envValue).pathname);
+      expect(broker, presetName).toMatchObject({ allowed_ips: privateRanges });
       expect(
         vendorHosts.every((host) =>
           Object.is(
