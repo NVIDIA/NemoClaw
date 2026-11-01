@@ -10,6 +10,7 @@ import {
 import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
 import { runInferenceSet } from "./inference-set";
 import { nativeLocalIdentity } from "../inference/native-local/contract";
+import { buildOpenClawNativeConfigBatchInvocation } from "../sandbox/openclaw-native-config";
 
 vi.mock("../adapters/openshell/provider-policy", () => ({
   requireNativeProviderPolicy: vi.fn(async () => {}),
@@ -98,6 +99,44 @@ describe("OpenClaw native local live selection", () => {
       expect.objectContaining({ nativeLocalProviderAttachment: next }),
     );
     expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(previous);
+  });
+
+  it("pins the scoped local credential handle during an Ollama model switch (#13665)", async () => {
+    const { deps } = switchingFixture(attachment, "ollama-local");
+    let invocation: ReturnType<typeof buildOpenClawNativeConfigBatchInvocation> | undefined;
+    deps.calls.setOpenClawConfigValues.mockImplementation((sandboxName, updates) => {
+      invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates);
+      return true;
+    });
+
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", sandboxName: "alpha" }, deps),
+    ).resolves.toMatchObject({ provider: "ollama-local", model: "qwen2.5:7b" });
+
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      expect.arrayContaining([
+        { dotpath: "agents.defaults.model.primary", value: "inference/qwen2.5:7b" },
+      ]),
+      "nemoclaw",
+    );
+    expect(invocation?.nativeHandleUpdate).toBe(true);
+    expect(JSON.parse(invocation?.input ?? "[]")).toEqual(
+      expect.arrayContaining([
+        {
+          path: "agents.defaults.model.primary",
+          value: "inference/qwen2.5:7b",
+        },
+        {
+          path: "models.providers.inference",
+          value: expect.objectContaining({
+            baseUrl: "http://host.openshell.internal:11435/v1",
+            apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+            headers: expect.objectContaining({ "X-NemoClaw-Upstream-Provider": "ollama-local" }),
+          }),
+        },
+      ]),
+    );
   });
 
   it("restores the IPv4 attachment when dual-stack selection cannot save the registry (#13544)", async () => {

@@ -303,6 +303,20 @@ describe("composeSandboxConfigBody", () => {
       "https://hermes.example/v1",
       "openai-completions",
     ],
+    [
+      "ollama-local",
+      "inference",
+      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      "http://host.openshell.internal:11434/v1",
+      "openai-completions",
+    ],
+    [
+      "vllm-local",
+      "inference",
+      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      "http://10.1.1.225:8000/v1",
+      "openai-completions",
+    ],
   ])(
     "materializes %s native credentials at %s from %s before the atomic config write",
     (logicalProvider, provider, key, baseUrl, api) => {
@@ -680,6 +694,51 @@ describe("composeSandboxConfigBody", () => {
         },
       ]),
     ).toThrow("Native NVIDIA provider identity does not match its credential placeholder");
+  });
+
+  it("rejects a mismatched local provider marker before handle pinning (#13665)", () => {
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "http://host.openshell.internal:11434/v1",
+            apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+            headers: { "X-NemoClaw-Upstream-Provider": "openai-api" },
+          },
+        },
+      ]),
+    ).toThrow("Native local provider identity does not match its credential placeholder");
+  });
+
+  it("rejects an unqualified local endpoint before handle pinning (#13665)", () => {
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "http://remote.example.com:11434/v1",
+            apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+            headers: { "X-NemoClaw-Upstream-Provider": "ollama-local" },
+          },
+        },
+      ]),
+    ).toThrow("Native provider endpoint does not match");
+  });
+
+  it("rejects a mismatched credential placeholder for a local provider marker (#13665)", () => {
+    expect(() =>
+      buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "http://host.openshell.internal:11434/v1",
+            apiKey: "openshell:resolve:env:OPENAI_API_KEY",
+            headers: { "X-NemoClaw-Upstream-Provider": "ollama-local" },
+          },
+        },
+      ]),
+    ).toThrow("Native provider identity does not match its credential placeholder");
   });
 
   it("pins a scoped handle for an authenticated Hermes endpoint (#13040)", () => {
