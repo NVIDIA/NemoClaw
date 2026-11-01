@@ -50,7 +50,9 @@ vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) =
 vi.mock("./connect-hermes-light-skin", () => ({
   prepareHermesLightTerminalSkin: mocks.prepareHermesLightTerminalSkin,
 }));
-vi.mock("./launch-readiness", () => ({
+vi.mock("./launch-readiness", async (importOriginal) => ({
+  formatUnknownLaunchAgent: (await importOriginal<typeof import("./launch-readiness")>())
+    .formatUnknownLaunchAgent,
   createBoundLaunchReadinessDeps: (capture: unknown, commandExecutor: unknown) => ({
     boundReadinessCapture: true,
     capture,
@@ -1233,6 +1235,29 @@ describe("launchSandbox", () => {
     );
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
+  });
+
+  it("names an unknown recorded agent instead of advising a retry (#12208)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "config",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    mocks.publishLaunchReadiness.mockResolvedValue({
+      kind: "validation-failed",
+      category: "config",
+      unknownAgent: "missing-launch-agent",
+    });
+
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      `Launch readiness refused sandbox 'alpha' because the recorded agent "missing-launch-agent" is unknown, so recreate the sandbox with a supported agent.`,
+    );
+
     expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 

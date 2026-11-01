@@ -1328,6 +1328,10 @@ describe("launch readiness validation", () => {
       diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
+    const unknownAgent = { ...deps(), getSandbox: () => ({ ...sandbox, agent: "no-such-agent" }) };
+    const refused = await publishLaunchReadiness(publication, unknownAgent);
+    expect(refused).toMatchObject({ category: "config", unknownAgent: "no-such-agent" });
+
     const pairingObservationUnavailable = deps();
     pairingObservationUnavailable.observeOpenClawPairingQualification = () => {
       throw new Error("pairing observation unavailable");
