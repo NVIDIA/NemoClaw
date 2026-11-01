@@ -57,8 +57,8 @@ import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   getRouteOutput,
-  OPENCLAW_GATEWAY_PID_PROBE,
   openClawGatewayRestarted,
+  parseOpenClawGatewayIdentity,
   readOpenClawConfig,
   agentReplyContainsToken,
   classifyExhaustedPostSwitchEvidence,
@@ -357,16 +357,21 @@ async function prepareCompatibleAnthropicSwitchBinding(
   return binding;
 }
 
-async function openclawGatewayPid(
+async function openclawGatewayIdentity(
   sandbox: SandboxClient,
   home: string,
   observation: "before" | "after",
-): Promise<string> {
-  const result = await sandboxShell(sandbox, home, OPENCLAW_GATEWAY_PID_PROBE, {
-    artifactName: `openclaw-gateway-pid-${observation}`,
-    timeoutMs: 30_000,
-  });
-  return result.stdout.trim();
+): Promise<ReturnType<typeof parseOpenClawGatewayIdentity>> {
+  const result = await sandbox.exec(
+    SANDBOX_NAME,
+    ["openclaw", "gateway", "status", "--require-rpc", "--json", "--timeout", "3000"],
+    {
+      artifactName: `openclaw-gateway-identity-${observation}`,
+      env: commandEnv(home),
+      timeoutMs: 30_000,
+    },
+  );
+  return result.exitCode === 0 ? parseOpenClawGatewayIdentity(result.stdout) : null;
 }
 
 async function verifyNativeNvidiaAttachmentAfterSwitch(
@@ -817,7 +822,7 @@ test(
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
         "nemoclaw inference set switches the running sandbox route",
-        "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
+        "OpenClaw starts a new gateway boot after every changed inference configuration",
         "NemoClaw reports the switched provider/model",
         "sandbox inference returns PONG from the switched model",
         "OpenClaw gateway model inference answers through the switched route without agent tools",
@@ -1032,7 +1037,7 @@ test(
       redactionValues,
       false,
     );
-    const pidBefore = await openclawGatewayPid(sandbox, home, "before");
+    const identityBefore = await openclawGatewayIdentity(sandbox, home, "before");
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
@@ -1043,11 +1048,10 @@ test(
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
 
-    const pidAfter = await openclawGatewayPid(sandbox, home, "after");
-    const gatewayPidStable = pidBefore === pidAfter;
+    const identityAfter = await openclawGatewayIdentity(sandbox, home, "after");
     expect(
-      openClawGatewayRestarted(pidBefore, pidAfter),
-      `OpenClaw gateway requires distinct valid process IDs after the config switch (${pidBefore || "missing"} -> ${pidAfter || "missing"})`,
+      openClawGatewayRestarted(identityBefore, identityAfter),
+      `OpenClaw requires distinct gateway boot IDs after the config switch (${identityBefore?.bootId ?? "missing"} -> ${identityAfter?.bootId ?? "missing"})`,
     ).toBe(true);
 
     progress.phase("inspect route configuration and recorded state");
@@ -1127,7 +1131,8 @@ test(
         baselineGatewayReachedFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
-        gatewayPidStable,
+        gatewayBootBefore: identityBefore?.bootId,
+        gatewayBootAfter: identityAfter?.bootId,
         routeChecked: true,
         inferenceLocalPong: true,
         inferenceLocalModelMatched: true,

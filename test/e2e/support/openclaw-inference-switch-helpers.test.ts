@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { redactString } from "../fixtures/redaction.ts";
 import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -15,8 +15,8 @@ import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
   getRouteOutput,
-  OPENCLAW_GATEWAY_PID_PROBE,
   openClawGatewayRestarted,
+  parseOpenClawGatewayIdentity,
   readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
@@ -30,53 +30,34 @@ import {
   startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
 
-function inspectGatewayPid(processes: string) {
-  return spawnSync(
-    "bash",
-    [
-      "--noprofile",
-      "--norc",
-      "-c",
-      `ps() { printf '%s\\n' "$PROBE_PS_OUTPUT"; }\n${OPENCLAW_GATEWAY_PID_PROBE}`,
-    ],
-    { encoding: "utf8", env: { PATH: process.env.PATH, PROBE_PS_OUTPUT: processes } },
-  );
-}
-
 describe("OpenClaw gateway restart evidence", () => {
-  it.each([
-    ["native process title", "123 openclaw-gatewa openclaw-gateway", "123"],
-    ["legacy argv", "124 node /opt/openclaw/entry.js gateway run --port 18789", "124"],
-    [
-      "ignores inspection shells",
-      "400 sh sh -lc openclaw gateway run\n401 awk awk openclaw gateway run\n125 openclaw-gatewa openclaw-gateway",
-      "125",
-    ],
-  ])("finds exactly one gateway using %s", (_name, processes, pid) => {
-    const result = inspectGatewayPid(processes);
-    expect(result).toMatchObject({ status: 0, stdout: `${pid}\n`, stderr: "" });
-  });
+  const firstBoot = "11111111-1111-4111-8111-111111111111";
+  const nextBoot = "22222222-2222-4222-8222-222222222222";
+  const identity = (bootId: string) =>
+    parseOpenClawGatewayIdentity(JSON.stringify({ rpc: { ok: true, server: { bootId } } }));
 
   it.each([
-    ["missing", "25 node /bin/unrelated"],
-    ["ambiguous", "12 openclaw-gatewa openclaw-gateway\n13 openclaw-gatewa openclaw-gateway"],
-    ["invalid", "0 openclaw-gatewa openclaw-gateway"],
-  ])("emits no PID for %s gateway identity", (_name, processes) => {
-    const result = inspectGatewayPid(processes);
-    expect(result).toMatchObject({ status: 1, stdout: "", stderr: "" });
-  });
-
-  it.each([
-    { before: "123", after: "124", expected: true },
-    { before: "", after: "124", expected: false },
-    { before: "123", after: "", expected: false },
-    { before: "", after: "", expected: false },
-    { before: "123", after: "123", expected: false },
-    { before: "0", after: "124", expected: false },
-    { before: "abc", after: "124", expected: false },
-    { before: "123\n125", after: "124", expected: false },
-  ])("requires distinct valid process IDs [$before -> $after]", ({ before, after, expected }) => {
+    { before: identity(firstBoot), after: identity(nextBoot), expected: true },
+    { before: identity(firstBoot), after: identity(firstBoot), expected: false },
+    { before: null, after: identity(nextBoot), expected: false },
+    { before: identity(firstBoot), after: null, expected: false },
+    { before: null, after: null, expected: false },
+    { before: identity("bad-boot"), after: identity(nextBoot), expected: false },
+  ])("requires an observed new gateway boot [$before -> $after]", ({ before, after, expected }) => {
     expect(openClawGatewayRestarted(before, after)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    "not-json",
+    "null",
+    "{}",
+    JSON.stringify({ rpc: { ok: false, server: { bootId: firstBoot } } }),
+    JSON.stringify({ rpc: { ok: true, server: { bootId: "" } } }),
+    JSON.stringify({ rpc: { ok: true, server: { bootId: [firstBoot] } } }),
+    JSON.stringify({ rpc: { ok: true, server: { bootId: firstBoot } } }) + "trailing-data",
+  ])("rejects unavailable or malformed gateway boot evidence [%s]", (raw) => {
+    expect(parseOpenClawGatewayIdentity(raw)).toBeNull();
   });
 });
 
