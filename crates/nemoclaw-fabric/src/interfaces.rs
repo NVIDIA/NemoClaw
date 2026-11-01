@@ -7,6 +7,10 @@
 //! A terminal interface has no port: its launcher, at
 //! `<artifact root>/.fabric/<adapter>/runtimes/<runtime-id>/interfaces/<name>`,
 //! is run in the sandbox with `openshell sandbox exec --tty`.
+//! An agent whose configuration sets `runtime.keep_state` keeps its native
+//! state in the folder Fabric names after it,
+//! `<artifact root>/.fabric/state/<adapter id>/<agent name>`, so its
+//! `interfaces` directory is there for every runtime.
 //! Fabric's descriptors don't yet say which interfaces have a token or how a
 //! person signs in (NVIDIA/NeMo-Fabric#565), so this lists the P0 adapters'.
 //! None of this reads or carries a token.
@@ -109,6 +113,14 @@ pub fn access(
         .and_then(Value::as_str)
         .filter(|root| root.starts_with('/') && !root.split('/').any(|part| part == ".."));
     let runtime_id = runtime_id.filter(|id| safe(id));
+    let kept_state = (configuration.pointer("/runtime/keep_state") == Some(&Value::Bool(true)))
+        .then(|| {
+            configuration
+                .pointer("/metadata/name")
+                .and_then(Value::as_str)
+        })
+        .flatten()
+        .filter(|agent| safe(agent) && safe(adapter_id));
     let Some(interfaces) = configuration
         .pointer("/harness/settings/interfaces")
         .and_then(Value::as_object)
@@ -122,8 +134,12 @@ pub fn access(
         })
         .map(|(name, settings)| {
             let convention = convention(adapter_id, name);
-            let interfaces = match (&convention, artifacts, runtime_id) {
-                (Some(convention), Some(root), Some(runtime)) => Some(format!(
+            let interfaces = match (&convention, artifacts, kept_state, runtime_id) {
+                (Some(_), Some(root), Some(agent), _) => Some(format!(
+                    "{}/.fabric/state/{adapter_id}/{agent}/interfaces",
+                    root.trim_end_matches('/'),
+                )),
+                (Some(convention), Some(root), None, Some(runtime)) => Some(format!(
                     "{}/.fabric/{}/runtimes/{runtime}/interfaces",
                     root.trim_end_matches('/'),
                     convention.directory

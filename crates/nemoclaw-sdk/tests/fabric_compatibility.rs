@@ -585,6 +585,24 @@ fn the_bundled_deep_agents_code_adapter_accepts_its_terminal_without_a_port() {
 }
 
 #[test]
+fn agents_keep_their_state_where_the_adapter_accepts_it() {
+    // Fabric gives every runtime of an agent one state folder when asked, and
+    // rejects the request for an adapter that doesn't accept it, so the SDK asks
+    // only where the descriptor accepts `runtime.keep_state`.
+    let project = |text: &[u8]| {
+        let doc = nemoclaw_sdk::config::Document::parse(text).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
+    };
+    let hermes = project(include_bytes!("../../../examples/fabric-hermes.yaml"));
+    assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
+    let openclaw = project(include_bytes!("../../../examples/openclaw.yaml"));
+    assert!(
+        openclaw["runtime"].get("keep_state").is_none(),
+        "{openclaw}"
+    );
+}
+
+#[test]
 fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK
     // sends its generated base URL only where the descriptor accepts one.

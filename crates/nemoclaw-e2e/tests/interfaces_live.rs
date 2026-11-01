@@ -5,6 +5,10 @@
 //! token and terminal commands that apply reports, run through the pinned
 //! OpenShell CLI.
 //!
+//! With `/sandbox/artifacts` on a Docker volume, a session that Hermes's API
+//! server created is still there after the sandbox is replaced, because every
+//! runtime of the agent keeps its state in the folder Fabric names after it.
+//!
 //! A model stand-in in this process answers every chat completion with a value
 //! unique to the run, or a reply derived from a prompt that names a token, and
 //! records the credential each request carried. It doesn't establish inference
@@ -310,6 +314,56 @@ fn files(directory: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// A Docker volume that the deployment's OpenShell workspace may attach,
+/// writable by the bundled images' user, removed when dropped.
+struct Volume(String);
+
+impl Volume {
+    fn create(workspace: &str, image: &str) -> Self {
+        let name = format!("nc-live-kept-state-{}", random_hex(6));
+        let docker = |args: &[&str]| {
+            let output = Command::new("docker").args(args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "docker {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        docker(&[
+            "volume",
+            "create",
+            "--label",
+            "openshell.ai/sandbox-attachable=true",
+            "--label",
+            &format!("openshell.ai/sandbox-attachable-workspace={workspace}"),
+            &name,
+        ]);
+        let volume = Self(name);
+        docker(&[
+            "run",
+            "--rm",
+            "--user",
+            "0",
+            "--entrypoint",
+            "chown",
+            "-v",
+            &format!("{}:/v", volume.0),
+            image,
+            "10001:10001",
+            "/v",
+        ]);
+        volume
+    }
+}
+
+impl Drop for Volume {
+    fn drop(&mut self) {
+        let _ = Command::new("docker")
+            .args(["volume", "rm", "--force", &self.0])
+            .output();
+    }
 }
 
 /// Keeps the state directory when the test fails, so `nemoclaw destroy` can
@@ -782,6 +836,101 @@ async fn openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports()
                     .any(|window| window == token.as_bytes()),
                 "output {index} holds an interface token"
             );
+        }
+    }
+
+    // Kept state: mount a volume on /sandbox/artifacts, which replaces the
+    // Hermes sandbox, and create a session through the API server.
+    let hermes_image = authored["spec"]["sandboxes"]["hermes"]["image"]["ref"]
+        .as_str()
+        .unwrap();
+    let volume = Volume::create(&document.workspace(), hermes_image);
+    let mut mounted = authored.clone();
+    mounted["spec"]["sandboxes"]["hermes"]["driverConfig"] = serde_json::json!({"docker": {"mounts": [
+        {"type": "volume", "source": volume.0.as_str(), "target": "/sandbox/artifacts", "read_only": false}]}});
+    let reapply = |value: &Value| {
+        let path = scratch.path().join("mounted.yaml");
+        fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+        let output = nemoclaw(
+            &bundle,
+            &key,
+            &[
+                "apply",
+                "-o",
+                "json",
+                "--progress",
+                "off",
+                "--state-dir",
+                state_arg,
+                path.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "apply failed: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let result: OperationResult = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result.outcome, Outcome::Succeeded);
+        let token_path = result
+            .interfaces
+            .iter()
+            .find(|access| access.sandbox == "hermes" && access.interface == "api")
+            .and_then(|access| access.token_path.clone())
+            .unwrap();
+        (output, token_path)
+    };
+    let kept_token_path =
+        "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token";
+    let (first_apply, token_path) = reapply(&mounted);
+    assert_eq!(token_path, kept_token_path);
+    let first_runtime = runtime_id(&state_path, "hermes");
+    let first_token = cli.exec("hermes", &["cat", kept_token_path]);
+    let session_id = format!("nc-kept-{}", random_hex(6));
+    {
+        let api = cli.forward("hermes", 8642);
+        let created = client
+            .post(api.url("/api/sessions"))
+            .header("Authorization", format!("Bearer {first_token}"))
+            .header("Content-Type", "application/json")
+            .body(serde_json::json!({"id": session_id}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            created.status().is_success(),
+            "the API server didn't create a session: {}",
+            created.status()
+        );
+    }
+
+    // Changing Hermes's settings replaces its sandbox with a new runtime; the
+    // session is still there.
+    mounted["spec"]["sandboxes"]["hermes"]["harness"]["settings"]["terminal_timeout"] = 61.into();
+    let (second_apply, token_path) = reapply(&mounted);
+    assert_eq!(token_path, kept_token_path);
+    assert_ne!(runtime_id(&state_path, "hermes"), first_runtime);
+    let second_token = cli.exec("hermes", &["cat", kept_token_path]);
+    {
+        let api = cli.forward("hermes", 8642);
+        let (status, _) = get(
+            &client,
+            &api.url(&format!("/api/sessions/{session_id}")),
+            &[("Authorization", &format!("Bearer {second_token}"))],
+        )
+        .await;
+        assert_eq!(status, 200, "the session didn't survive the replacement");
+    }
+    for output in [first_apply, second_apply] {
+        for stream in [&output.stdout, &output.stderr] {
+            for token in [&first_token, &second_token] {
+                assert!(
+                    !stream
+                        .windows(token.len())
+                        .any(|window| window == token.as_bytes()),
+                    "apply output holds an interface token"
+                );
+            }
         }
     }
 

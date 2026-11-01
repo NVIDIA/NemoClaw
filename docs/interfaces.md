@@ -82,7 +82,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Deep Agents Code's terminal is a launcher for `dcode`'s terminal UI, which you run in the sandbox.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/995cc79e130c0fe0f950697a2667eba78dc412d9/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/995cc79e130c0fe0f950697a2667eba78dc412d9/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
+The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/a3b57155593877135f2557ef37d5e18161a1ad82/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/a3b57155593877135f2557ef37d5e18161a1ad82/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
 
 ### Enable an Interface
 
@@ -146,6 +146,7 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
    The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
+   For an agent that [keeps its state](state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
 3. Sign in:
