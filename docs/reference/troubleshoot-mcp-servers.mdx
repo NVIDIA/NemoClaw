@@ -41,6 +41,12 @@ Compare status for the same server on a known-good host.
 A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment.
 Fix the reported endpoint or policy condition, then rerun status.
 
+If the detail is `probe exited 56`, curl failed to receive network data.
+An HTTPS MCP endpoint with an untrusted private CA can cause this result when OpenShell closes the connection after upstream certificate validation fails.
+The exit code alone does not identify the cause.
+`provider.credentialReady: true` confirms that the provider has a credential, but does not prove endpoint connectivity or credential resolution.
+For a private CA, follow [the CA trust recovery procedure](#private-or-plain-http-mcp-url-is-rejected).
+
 A detail containing `CONNECT 503` means OpenShell failed closed before TLS setup because gateway TLS termination state was unavailable.
 Inspect the OpenShell gateway's ephemeral CA generation and CA-file initialization, repair the reported condition, and rerun `mcp status <server>`.
 
@@ -214,16 +220,23 @@ $$nemoclaw <sandbox> logs --tail 100
 ```
 
 Read `transport_phase` first.
-It states which transport step failed:
+It classifies the error visible to OpenClaw at the `fetch` boundary:
 
 | Transport phase | What failed |
 |-----------------|-------------|
 | `policy` | The network policy refused the destination |
 | `connect` | The proxy CONNECT tunnel failed for a reason other than a denial |
-| `tls` | TLS setup or certificate validation failed |
+| `tls` | A TLS setup or certificate validation error reached OpenClaw |
 | `app_connect` | The upstream connection was refused, unreachable, or unresolved |
 | `request` | The request failed before any response arrived |
 | `response_headers` | A response arrived and its status or headers report the failure |
+
+An upstream certificate validation failure inside the OpenShell L7 MCP proxy can appear to OpenClaw as a closed socket.
+For example, an HTTPS MCP endpoint with an untrusted private CA can produce `transport_phase=request` with `UND_ERR_SOCKET` and `other side closed` in `cause_chain`.
+The proxy's upstream TLS error is not visible at the sandbox's `fetch` boundary in this case.
+Neither this socket error nor `probe exited 56` alone proves a CA trust failure.
+Check the endpoint's certificate chain and the runtime's CA trust before changing credentials or increasing timeouts.
+For recovery, follow [the CA trust guidance](#private-or-plain-http-mcp-url-is-rejected).
 
 `route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
 `route=unknown` states that the diagnostic did not observe one.
@@ -398,9 +411,38 @@ A URL that the agent-native path accepts is therefore not registrable through ma
 For a host-local server, keep the MCP process on loopback when practical.
 Place an operator-managed HTTPS reverse proxy on a stable private address that the OpenShell gateway can route to.
 The certificate must match the original endpoint hostname and chain to a trust root available to the managed runtime.
-For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rebuild the existing sandbox after setting it.
+For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding a new sandbox.
 The managed image installs that CA for both the OpenShell upstream proxy and sandbox TLS clients.
 Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
+
+`--trusted-private-host` permits a private destination; it does not install a CA or disable certificate validation.
+If registration succeeds with an inconclusive probe, the endpoint can still be unusable until CA trust is configured.
+Use a PEM bundle from your CA administrator that contains the required CA certificates.
+Refer to [Review the Trust Boundary](../security/configure-corporate-ca-trust#review-the-trust-boundary) for bundle requirements.
+
+Managed-image rebuilds preserve the recorded CA profile, so exporting a different bundle before rebuild does not update that trust.
+Choose an unused sandbox name for onboarding.
+This creates another sandbox with its own agent configuration.
+Keep the existing sandbox until verification succeeds.
+Export the bundle's host path before onboarding:
+
+```bash
+export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/private-ca-bundle.pem
+$$nemoclaw onboard --name <new-sandbox>
+```
+
+After onboarding completes, [add the MCP server](../manage-sandboxes/mcp-servers/add-an-mcp-server) to the new sandbox.
+Use the original URL, credential environment-variable name, denied-tool selectors, and trusted-private declaration.
+Then verify credential resolution and tool discovery:
+
+```bash
+$$nemoclaw <new-sandbox> mcp status <server> --json
+$$nemoclaw <new-sandbox> mcp status <server> --tools
+```
+
+Confirm that `provider.credentialResolution.ok` is `true` and tool discovery succeeds.
+If either check fails, inspect the reported endpoint or policy condition before retrying.
+Keep HTTPS and certificate validation enabled.
 
 Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
 Sandbox loopback is not the host service, and `--trusted-private-host` does not create a route to it.

@@ -24,7 +24,8 @@ $$nemoclaw onboard
 ```
 
 The explicit variable fails onboarding when the file is missing, invalid, unsafe, or a merged operating-system trust store.
-Use `$$nemoclaw <name> rebuild` after adding or changing the CA for an existing sandbox.
+Managed-image rebuilds preserve the recorded CA profile.
+To add or change CA trust for that path, follow [the new-sandbox recovery procedure](../reference/troubleshoot-mcp-servers#private-or-plain-http-mcp-url-is-rejected).
 
 ## Understand Image and Runtime Trust
 
