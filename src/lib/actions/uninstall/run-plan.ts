@@ -2737,7 +2737,7 @@ function hasDockerSandboxRegistrations(
   );
 }
 
-/** Container deletion belongs to the runtime owners; names only identify uncertain leftovers. */
+/** Container deletion belongs to the runtime owners. A row that is not whitespace-free ID|IMAGE|NAMES, or that has both IMAGE and NAMES empty, stops verification and preserves uninstall state. */
 function verifyDockerContainerCleanup(
   runtime: UninstallRuntime,
   gatewayName: string | null,
@@ -2747,7 +2747,7 @@ function verifyDockerContainerCleanup(
 ): boolean {
   if (!runtime.commandExists("docker") && !hasDockerSandboxRegistrations(registrations))
     return true;
-  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
+  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}}|{{.Image}}|{{.Names}}"], {
     env: runtime.env,
   });
   if (result.status !== 0 || result.error || result.signal) {
@@ -2756,10 +2756,21 @@ function verifyDockerContainerCleanup(
     );
     return false;
   }
-  const rows = splitNonEmptyLines(result.stdout).map((line) => line.trim().split(/\s+/u));
-  if (rows.some((fields) => fields.length !== 3 || fields.some((field) => !field))) {
+  const rows = result.stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0)
+    .map((line) => line.split("|"));
+  const unparseable = rows.filter(
+    (fields) =>
+      fields.length !== 3 ||
+      !fields[0] ||
+      (!fields[1] && !fields[2]) ||
+      fields.some((field) => /\s/u.test(field)),
+  );
+  if (unparseable.length > 0) {
+    const named = unparseable.map(describeUnparseableContainerInventoryRow).join(", ");
     runtime.error(
-      "Docker returned an incomplete container inventory. Remaining uninstall state was preserved for retry.",
+      `Docker returned container inventory rows that NemoClaw could not parse (${named}). Remaining uninstall state was preserved for retry.`,
     );
     return false;
   }
@@ -2769,7 +2780,7 @@ function verifyDockerContainerCleanup(
     GATEWAY_PORT,
     sandboxNames,
     registrations,
-    rows.map((fields) => fields[2]!),
+    rows.map((fields) => fields[2]!).filter(Boolean),
     (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
     (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
   );
@@ -2780,19 +2791,21 @@ function verifyDockerContainerCleanup(
     return false;
   }
   const remaining = rows.filter((fields) => {
+    const image = fields[1]!;
     const name = fields[2]!;
     if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
+    if (!name && isOwnedDockerImageRepository(image)) return true;
     return (
       (gatewayName !== null &&
         (name === `openshell-cluster-${gatewayName}` ||
           name === resolveGatewayCompatContainerName(GATEWAY_PORT))) ||
       (rejectConventionMatches &&
-        (isConventionalDockerContainerName(name) || isOwnedDockerImageRepository(fields[1]!)))
+        (isConventionalDockerContainerName(name) || isOwnedDockerImageRepository(image)))
     );
   });
   if (remaining.length === 0) return true;
   runtime.error(
-    `Preserved Docker containers with unverified ownership: ${remaining.map((fields) => `${fields[2]} (${fields[0]})`).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
+    `Preserved Docker containers with unverified ownership: ${remaining.map((fields) => (fields[2] ? `${fields[2]} (${fields[0]})` : `image ${fields[1]} (${fields[0]})`)).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
   );
   return false;
 }
@@ -2826,6 +2839,16 @@ function removeDockerImages(runtime: UninstallRuntime): boolean {
     }
   }
   return removedAll;
+}
+
+function describeUnparseableContainerInventoryRow(fields: readonly string[]): string {
+  const id = fields[0];
+  if (fields.length === 3 && id && /^[0-9a-f]+$/iu.test(id)) {
+    return `container ${id}`;
+  }
+  const raw = fields.join("|").replace(/\s+/gu, " ").trim();
+  const bounded = raw.length > 80 ? `${raw.slice(0, 77)}...` : raw;
+  return `row '${bounded}'`;
 }
 
 function dockerInventoryFields(line: string, expectedFields: number): string[] {

@@ -3780,11 +3780,12 @@ run_preupgrade_backup() {
 }
 
 force_fresh_install_has_existing_state() {
-  local container_id container_image container_inventory container_label_inventory container_name
+  local container_id container_image container_inventory container_label_inventory container_name container_row
   local receipt_volume_inventory user_bin volume_name volume_suffix
-  local existing_state=0
+  local existing_state=0 docker_inventory_row_pattern='^[0-9a-f]+[|][^|[:space:]]*[|][^|[:space:]]*$'
   _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
   _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
+  _FORCE_FRESH_MALFORMED_DOCKER_ROW=""
   user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   if [[ -e "$(nemoclaw_state_root)" ]] \
     || [[ -e "${HOME}/.config/nemoclaw" ]] \
@@ -3810,10 +3811,20 @@ force_fresh_install_has_existing_state() {
     )" || return 2
     _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$(printf '%s\n' "$container_label_inventory" | sed -n '1p')"
     container_inventory="$(
-      docker ps -a --format '{{.ID}} {{.Image}} {{.Names}}' 2>/dev/null
+      docker ps -a --format '{{.ID}}|{{.Image}}|{{.Names}}' 2>/dev/null
     )" || return 2
-    while read -r container_id container_image container_name; do
-      [[ -n "$container_id" ]] || continue
+    while IFS= read -r container_row; do
+      [[ -n "$container_row" ]] || continue
+      printf -v _FORCE_FRESH_MALFORMED_DOCKER_ROW '%q' "${container_row:0:80}"
+      [[ "$container_row" =~ $docker_inventory_row_pattern ]] || return 5
+      IFS='|' read -r container_id container_image container_name <<<"$container_row"
+      [[ -n "$container_image$container_name" ]] || return 5
+      _FORCE_FRESH_MALFORMED_DOCKER_ROW=""
+      if [[ -z "$container_name" ]]; then
+        case "$container_image" in
+          openshell-* | nemoclaw-*) container_name="$container_image" ;;
+        esac
+      fi
       case "$container_name" in
         openshell-* | nemoclaw-*) _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id" ;;
       esac
@@ -3822,7 +3833,6 @@ force_fresh_install_has_existing_state() {
           _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id"
           ;;
       esac
-      [[ -z "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]] || break
     done <<<"$container_inventory"
     receipt_volume_inventory="$(
       docker volume ls --format '{{.Name}}' 2>/dev/null
@@ -3971,6 +3981,7 @@ run_force_fresh_install_reset() {
     2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
     3) error "Force-fresh cleanup found unverified receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. Docker names and mutable labels are not ownership proof. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
     4) error "Force-fresh cleanup found unverified Docker container ${_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER}. NemoClaw cannot prove this Docker-only resource belongs to the current installation. Inspect and reconcile it explicitly, then rerun. No cleanup started." ;;
+    5) error "Docker returned a malformed container inventory row: ${_FORCE_FRESH_MALFORMED_DOCKER_ROW}. Inspect and reconcile this row in the selected Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
     *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
   esac
   remove_macos_openshell_for_force_fresh_install

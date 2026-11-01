@@ -1033,7 +1033,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const kill = vi.fn((_pid: number, _signal?: NodeJS.Signals | number) => true);
       const dockerOutputByCommand: Record<string, string> = {
         images: "shared-image nemoclaw:latest",
-        ps: ["default-id image openshell-cluster-nemoclaw"].join("\n"),
+        ps: "default-id|image|openshell-cluster-nemoclaw\n",
       };
       const result = await runPortUninstall(
         {
