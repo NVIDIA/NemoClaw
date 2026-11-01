@@ -48,7 +48,7 @@ describe("OpenClaw onboarding failure diagnostics", () => {
         redactionValues: options.redactionValues,
         timeoutMs: 15000,
         killGraceMs: 1000,
-        captureLimitBytes: 65536,
+        captureLimitBytes: 1024 * 1024,
       }),
     );
     expect(sandbox.openshell).toHaveBeenCalledWith(
@@ -64,7 +64,12 @@ describe("OpenClaw onboarding failure diagnostics", () => {
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       1,
       options.sandboxName,
-      expect.any(Array),
+      expect.arrayContaining([
+        "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor",
+        "/tmp/nemoclaw-post-upgrade-doctor-ready",
+        "/tmp/nemoclaw-gateway-local",
+        "/tmp/nemoclaw-gateway.pid",
+      ]),
       bounded,
     );
     expect(sandbox.exec).toHaveBeenNthCalledWith(
@@ -106,7 +111,7 @@ describe("OpenClaw onboarding failure diagnostics", () => {
         redactionValues: options.redactionValues,
         timeoutMs: 15000,
         killGraceMs: 1000,
-        captureLimitBytes: 65536,
+        captureLimitBytes: 1024 * 1024,
         artifactName: `${artifactPrefix}-failure-container-id`,
       }),
     );
@@ -183,7 +188,9 @@ describe("OpenClaw onboarding failure diagnostics", () => {
   it("captures complete upgrade logs within the explicit bound before value redaction", async () => {
     const directory = mkdtempSync(join(tmpdir(), "onboard-diagnostics-upgrade-"));
     try {
-      const paths = ["startup", "gateway", "pairing"].map((name) => join(directory, name));
+      const paths = ["startup", "gateway", "pairing", "doctor", "ready", "local", "pid"].map(
+        (name) => join(directory, name),
+      );
       const secret = 'synthetic-credential-"quoted"\\with\na-newline';
       const content = "\u0001".repeat(131_072 - Buffer.byteLength(secret)) + secret;
       paths.forEach((file) => writeFileSync(file, content));
@@ -192,15 +199,19 @@ describe("OpenClaw onboarding failure diagnostics", () => {
         encoding: "utf8",
         timeout: 5000,
         killSignal: "SIGKILL",
-        maxBuffer: 4 * 1024 * 1024,
+        maxBuffer: 8 * 1024 * 1024,
       });
       expect(result.status).toBe(0);
       const records = result.stdout
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-      expect(records.slice(0, 3).map((record) => record.log)).toEqual(paths.map(() => content));
-      expect(records.slice(0, 3).every((record) => record.truncated === false)).toBe(true);
+      expect(records.slice(0, paths.length).map((record) => record.log)).toEqual(
+        paths.map(() => content),
+      );
+      expect(records.slice(0, paths.length).every((record) => record.truncated === false)).toBe(
+        true,
+      );
       const sandbox = clients();
       await captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
         ...options,
@@ -217,7 +228,7 @@ describe("OpenClaw onboarding failure diagnostics", () => {
       const oversized = spawnSync(command, args, {
         encoding: "utf8",
         timeout: 5000,
-        maxBuffer: 4 * 1024 * 1024,
+        maxBuffer: 8 * 1024 * 1024,
       });
       expect(oversized.status).toBe(0);
       expect(JSON.parse(oversized.stdout.split("\n")[0])).toMatchObject({

@@ -29,7 +29,7 @@ export async function captureOpenClawContainerFailure(
           "container",
           "inspect",
           "--format",
-          "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+          "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
           id,
         ],
         {

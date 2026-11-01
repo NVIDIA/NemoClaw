@@ -6,7 +6,15 @@ import type { ShellProbeResult } from "./shell-probe.ts";
 import { captureOpenClawContainerFailure } from "./openclaw-container-diagnostics.ts";
 import type { HostCliClient } from "./clients/host.ts";
 
-const LOG_PATHS = ["/tmp/nemoclaw-start.log", "/tmp/gateway.log", "/tmp/auto-pair.log"];
+const LOG_PATHS = [
+  "/tmp/nemoclaw-start.log",
+  "/tmp/gateway.log",
+  "/tmp/auto-pair.log",
+  "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor",
+  "/tmp/nemoclaw-post-upgrade-doctor-ready",
+  "/tmp/nemoclaw-gateway-local",
+  "/tmp/nemoclaw-gateway.pid",
+];
 
 export function buildOpenClawOnboardDiagnosticsCommand(
   paths: readonly string[] = LOG_PATHS,
@@ -86,8 +94,8 @@ export async function captureOpenClawOnboardFailure(
     ],
     timeoutMs: 15_000,
     killGraceMs: 1_000,
-    // Keep every JSON-escaped byte of all three logs for complete-value redaction.
-    captureLimitBytes: logLimitBytes === 131_072 ? 4 * 1024 * 1024 : 64 * 1024,
+    // Keep complete JSON values from every bounded file for credential redaction.
+    captureLimitBytes: logLimitBytes === 131_072 ? 8 * 1024 * 1024 : 1024 * 1024,
   };
   await Promise.allSettled([
     ...(options.runtime

@@ -33,7 +33,7 @@ it("pins bounded read-only container probes to the full discovered identity", as
       "container",
       "inspect",
       "--format",
-      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
       ID,
     ],
     ["logs", "--tail", "120", ID],
@@ -98,7 +98,7 @@ it("keeps initial install failure evidence when no sandbox container was created
   expect(sandbox.openshell.mock.calls[0]![1]).toMatchObject({
     artifactName: "phase-0-install-token-a-failure-status",
     redactionValues: options.redactionValues,
-    captureLimitBytes: 65536,
+    captureLimitBytes: 1024 * 1024,
   });
 });
 
@@ -119,7 +119,7 @@ it("protects raw and JSON-escaped secrets on direct runtime probes", async () =>
   expect(client.command.mock.calls[2]![1]).toMatchObject({
     timeoutMs: 15000,
     killGraceMs: 1000,
-    captureLimitBytes: 65536,
+    captureLimitBytes: 1024 * 1024,
     redactionValues: [secret, JSON.stringify(secret).slice(1, -1)],
   });
 });
