@@ -53,11 +53,7 @@ pub struct Spec {
 
 impl Spec {
     pub fn validate(&self) -> Result<(), Error> {
-        let identifier = |pattern: &str, value: &str| {
-            regex::Regex::new(pattern)
-                .expect("constant pattern")
-                .is_match(value)
-        };
+        let identifier = crate::config::constraints::matches;
         if self.layout != 1
             || !matches!(self.kind.as_str(), STORAGE_KIND | AUTH_KIND | GATEWAY_KIND)
             || !identifier(r"^nc-[a-f0-9]{16}-gateway$", &self.name)
@@ -269,10 +265,7 @@ pub fn check_attribute(attribute: &str, value: &str) -> Result<(), &'static str>
         ),
         _ => return Ok(()),
     };
-    if regex::Regex::new(pattern)
-        .expect("constant pattern")
-        .is_match(value)
-    {
+    if crate::config::constraints::matches(pattern, value) {
         Ok(())
     } else {
         Err(requirement)

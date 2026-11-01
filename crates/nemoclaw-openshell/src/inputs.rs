@@ -11,12 +11,16 @@ fn strings() -> Shape {
 }
 
 /// Typed sandbox policy: authored rules and deployment-managed grants.
+/// Every sandbox's inputs include it, so it is derived from the schema once.
 fn policy_input() -> Shape {
-    let schema = serde_json::to_value(schemars::schema_for!(crate::runtime::PolicyInput))
-        .expect("the sandbox policy schema serializes");
-    Shape::Object(
-        nemoclaw_tofu::shape::fields(&schema, &[]).expect("the sandbox policy maps to OpenTofu"),
-    )
+    static POLICY: std::sync::LazyLock<Shape> = std::sync::LazyLock::new(|| {
+        let schema = schemars::schema_for!(crate::runtime::PolicyInput).to_value();
+        Shape::Object(
+            nemoclaw_tofu::shape::fields(&schema, &[])
+                .expect("the sandbox policy maps to OpenTofu"),
+        )
+    });
+    POLICY.clone()
 }
 
 /// One sandbox service endpoint, in OpenShell's terms.

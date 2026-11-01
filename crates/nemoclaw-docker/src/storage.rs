@@ -20,6 +20,22 @@ pub struct Storage {
     pub generation: String,
     pub engine: String,
 }
+/// Whether `value` matches a constant attribute pattern. Each pattern
+/// compiles once: every compile and observation checks storage identities,
+/// and compiling costs more than matching.
+fn matches(pattern: &'static str, value: &str) -> bool {
+    static COMPILED: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, regex::Regex>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let regex = COMPILED
+        .lock()
+        .expect("pattern cache")
+        .entry(pattern)
+        .or_insert_with(|| regex::Regex::new(pattern).expect("constant pattern"))
+        .clone();
+    regex.is_match(value)
+}
+
 impl Storage {
     /// Attributes of a storage resource, in schema order.
     pub const ATTRIBUTES: [&str; 4] = ["name", "owner", "generation", "engine"];
@@ -42,7 +58,7 @@ impl Storage {
             }
             _ => return Err("is not a storage attribute".into()),
         };
-        if regex::Regex::new(pattern).unwrap().is_match(value) {
+        if matches(pattern, value) {
             Ok(())
         } else {
             Err(requirement.into())

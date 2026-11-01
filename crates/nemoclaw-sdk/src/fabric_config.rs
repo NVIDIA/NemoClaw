@@ -42,7 +42,7 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
     // Fabric rejects a model field an adapter doesn't accept, so values the
     // deployment generates follow the adapter's descriptor. A base URL also goes
     // to adapters outside the bundled catalog; an API goes only where declared.
-    let catalog = crate::fabric_catalog::FabricCatalog::bundled();
+    let catalog = crate::fabric_catalog::FabricCatalog::bundled_ref();
     let descriptor = catalog
         .adapters
         .iter()

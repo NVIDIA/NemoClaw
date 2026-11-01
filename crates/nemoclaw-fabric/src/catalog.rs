@@ -48,13 +48,19 @@ impl FabricAdapter {
 
 impl FabricCatalog {
     pub fn bundled() -> Self {
+        Self::bundled_ref().clone()
+    }
+
+    /// The bundled catalog without a copy, for callers that only read it:
+    /// copying its descriptors costs more than many reads take.
+    pub fn bundled_ref() -> &'static Self {
         // Parsing and checking the catalog dominates compiling small
         // deployments, so do it once.
         static BUNDLED: std::sync::LazyLock<FabricCatalog> = std::sync::LazyLock::new(|| {
             FabricCatalog::from_json(include_str!("../../../image/fabric/catalog.json"))
                 .expect("generated Fabric catalog must be valid")
         });
-        BUNDLED.clone()
+        &BUNDLED
     }
 
     /// The records of one adapter: what an agent using it is planned against.

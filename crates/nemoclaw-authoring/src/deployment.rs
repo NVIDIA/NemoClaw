@@ -175,6 +175,12 @@ fn title(path: &str) -> String {
     )
 }
 
+/// Whether `path` names a field inside `parent`.
+fn within(path: &str, parent: &str) -> bool {
+    path.strip_prefix(parent)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
 fn interested(path: &str) -> bool {
     [
         "/spec/gateway",
@@ -190,10 +196,7 @@ fn interested(path: &str) -> bool {
         "/spec/sandboxes/*/harnesses",
     ]
     .iter()
-    .any(|root| {
-        path == *root
-            || path.starts_with(&format!("{root}/"))
-            || root.starts_with(&format!("{path}/"))
-    }) && !path.contains("/settings")
+    .any(|root| path == *root || within(path, root) || within(root, path))
+        && !path.contains("/settings")
         && !path.contains("/config")
 }

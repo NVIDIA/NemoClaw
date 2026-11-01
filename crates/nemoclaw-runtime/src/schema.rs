@@ -57,7 +57,7 @@ pub fn at(path: &str, rule: Value, required: bool) -> Value {
 
 pub const MODEL: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$";
 fn build() -> Value {
-    let mut root = serde_json::to_value(schemars::schema_for!(crate::RuntimeSpec)).unwrap();
+    let mut root = schemars::schema_for!(crate::RuntimeSpec).to_value();
     let variants = root.get("oneOf").cloned().unwrap();
     let defs = root["$defs"].as_object_mut().unwrap();
     defs.insert("ServiceDefinition".into(), json!({"oneOf":variants}));

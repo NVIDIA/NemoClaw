@@ -7,7 +7,7 @@
 use super::*;
 
 /// Sparse desired-state values and authoring-only memory for inactive branches.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct AuthoredValues {
     pub(super) values: Value,
     pub(super) inactive_settings: BTreeMap<String, Value>,
