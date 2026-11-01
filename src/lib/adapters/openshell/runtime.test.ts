@@ -261,6 +261,7 @@ describe("sanitized OpenShell capture", () => {
         const forward = process.listeners(signal).find((listener) => !before.includes(listener));
         expect(forward).toBeTypeOf("function");
         forward!(signal);
+        expect(process.listeners(signal)).not.toContain(forward);
         const result = await pending;
         expect(result.status).toBe(1);
         expect(result.outcome.kind).not.toBe("applied");
