@@ -424,8 +424,13 @@ Managed-image rebuilds preserve the recorded CA profile, so exporting a differen
 Choose an unused sandbox name for onboarding.
 This creates another sandbox with its own agent configuration.
 Keep the existing sandbox until verification succeeds.
-Record its required inference settings, policy presets, MCP registrations, messaging channels, and scheduled tasks before you start.
-For scheduled tasks, preserve the complete job definitions, required options, owning profiles, and original enabled states.
+Record only non-secret configuration before you start.
+Include required inference settings, policy presets, MCP registration metadata, messaging channel settings, and scheduled tasks.
+Keep credential values in their approved secret source.
+For scheduled tasks, record complete credential-free job definitions, required options, owning profiles, and original enabled states.
+When preparing records and transfer copies, exclude credential values from arguments, environment assignments, prompt text, and referenced files.
+Preserve the old sandbox's live job definitions and files for rollback.
+Preserve only secret references supported by the destination's documented credential mechanism.
 Status listings can omit task content.
 If a required definition is unavailable, recover it through its native owner before changing the old sandbox.
 Export the bundle's host path before onboarding:
@@ -439,6 +444,12 @@ Recreate the required settings through supported configuration commands.
 Keep messaging channels and scheduled tasks inactive on the new sandbox while the old sandbox still runs them.
 Before copying mutable state, pause the work that writes it.
 NemoClaw has no generic scheduler controls or scheduled-task migration command.
+
+<Warning>
+Native scheduler listings and run history can contain credential values from existing jobs.
+Inspect them in a trusted terminal without recording or sharing the raw output.
+</Warning>
+
 Use the applicable native controls to stop future dispatch:
 
 <AgentOnly variant="openclaw">
@@ -481,19 +492,23 @@ Inspect the owning scheduler's run history and the old sandbox's application sta
 Wait for active work to finish before copying mutable state.
 If a control fails or you cannot confirm that dispatch and active work have stopped, stop the transfer and cutover.
 Keep the old sandbox and resolve the condition through the job's owning interface.
-Use [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) to copy required workspace files and agent state, following its per-agent exclusions.
-Include the reviewed scripts, skills, and working directories required by the recorded jobs.
-Review those files and the recorded job definitions for credentials before transfer.
+Select the workspace files, agent state, scripts, skills, and working directories required by the recorded jobs.
+Review those files and the recorded job definitions for credentials before any download or upload.
+Exclude raw credential values from every transfer copy and recorded job definition.
 Do not copy the live cron store.
 Do not copy credential stores, machine-local identities, or the old agent configuration wholesale.
-Provision credentials through supported provider bindings.
+Use [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) to copy the reviewed state, following its per-agent exclusions.
+Provision managed inference and MCP credentials through their documented [provider bindings](../security/credential-storage).
+For other job credentials, use the job runner's documented secret mechanism and credential input.
+Do not pass credential values in job-creation arguments, environment assignments, or prompt text through host-shell `exec` commands.
+If no supported credential mechanism can preserve the job's authentication, stop the migration and retain the old sandbox.
 
 <AgentOnly variant="openclaw">
-After the required files are present, recreate each job with `$$nemoclaw <new-sandbox> exec -- openclaw cron add --disabled` and its recorded options.
+After the required files are present, recreate each job with `$$nemoclaw <new-sandbox> exec -- openclaw cron add --disabled` and its credential-free recorded options.
 List all replacement jobs and confirm `enabled: false` before continuing.
 </AgentOnly>
 <AgentOnly variant="hermes">
-After the required files are present, recreate each job with `$$nemoclaw <new-sandbox> exec -- hermes --profile <profile> cron create --paused` and its recorded options.
+After the required files are present, recreate each job with `$$nemoclaw <new-sandbox> exec -- hermes --profile <profile> cron create --paused` and its credential-free recorded options.
 Use the corresponding profile for each job.
 List all replacement jobs in every profile and confirm `[paused]` or `[disabled]` before continuing.
 </AgentOnly>
@@ -523,6 +538,7 @@ Stopping the sandbox alone does not clear enabled channels from the messaging pl
 </AgentOnly>
 
 Before enabling replacement jobs, reconcile missed runs and expired one-shot jobs through the native scheduler.
+Keep each job disabled until its required credential access is configured through the supported mechanism.
 Enable only the jobs recorded as enabled before the move, using the native controls above in the new sandbox.
 Confirm their enabled state and verify their intended execution while the old jobs remain inactive.
 For external schedules, verify the new target before re-enabling dispatch through the owning service.
