@@ -64,6 +64,9 @@ export const managedWorkloadRebuild = requireDist(
 export const rebuildBackupPhase = requireDist(
   "./rebuild-backup-phase.js",
 ) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");
+export const rebuildDestroyPhase = requireDist(
+  "./rebuild-destroy-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-destroy-phase");
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
