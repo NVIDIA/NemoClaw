@@ -2325,6 +2325,10 @@ Before changing a Docker-backed sandbox, NemoClaw inspects every container with 
 - A nonempty `openshell.ai/sandbox-workspace`
 - A nonempty `openshell.ai/sandbox-id`
 
+When several gateways share one Docker host, each gateway can use the same sandbox name in its own sandbox namespace.
+If NemoClaw can prove the scoped `openshell.ai/sandbox-namespace` of the gateway whose registry owns the sandbox, `destroy` ignores OpenShell-managed containers whose namespace label names a different namespace.
+Containers without the managed-by label, containers whose namespace cannot be read, sandboxes that no single gateway registry owns, and sandboxes on a legacy gateway without a scoped namespace still count as matches.
+
 In an ordinary destroy flow, if the initial inspection cannot complete, more than one container matches, a matching container has conflicting or incomplete labels, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
 Retained-sandbox recovery accepts multiple managed containers only when every immutable sandbox ID matches the retained recovery fingerprint.
 The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity.
@@ -2344,7 +2348,7 @@ If `destroy` reports conflicting, incomplete, or malformed identity data, inspec
 ```bash
 docker ps -a --no-trunc \
   --filter "label=openshell.ai/sandbox-name=my-assistant" \
-  --format 'table {{.ID}}\t{{.Label "openshell.ai/managed-by"}}\t{{.Label "openshell.ai/sandbox-workspace"}}\t{{.Label "openshell.ai/sandbox-id"}}'
+  --format 'table {{.ID}}\t{{.Label "openshell.ai/managed-by"}}\t{{.Label "openshell.ai/sandbox-workspace"}}\t{{.Label "openshell.ai/sandbox-id"}}\t{{.Label "openshell.ai/sandbox-namespace"}}'
 ```
 
 The labels show what each container claims. They do not prove container ownership.
@@ -2355,6 +2359,7 @@ The labels show what each container claims. They do not prove container ownershi
 </Warning>
 
 Resolve a conflict through the workflow that created the conflicting container. Docker cannot change labels on an existing container. Rerun the query after you resolve the conflict. Rerun `destroy` only when the query returns one complete expected label set that you verified belongs to the target sandbox, or no containers after you independently confirm that the sandbox is absent.
+OpenShell-managed containers whose `openshell.ai/sandbox-namespace` belongs to another gateway on the same Docker host can remain in the query output; they do not block `destroy` when NemoClaw proves the namespace of the gateway that owns the sandbox.
 
 When the sandbox has MCP entries, destroy reads the current agent-native configuration and joins it to the live OpenShell policy and providers before deletion. It does not scrub the agent file or write an MCP destroy marker. OpenShell deletion owns sandbox-scoped policy and attachment cleanup. Workspace-level MCP providers and stored credentials are preserved, and NemoClaw prints their names for later inspection. `--force` does not bypass an unavailable, unsafe, or conflicting MCP source.
 

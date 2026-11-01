@@ -215,6 +215,36 @@ describe("Docker privileged exact target", () => {
     );
   });
 
+  it.each([
+    { namespace: undefined, filter: [] },
+    {
+      namespace: "ns-own",
+      filter: ["--filter", "label=openshell.ai/sandbox-namespace=ns-own"],
+    },
+  ])(
+    "scopes direct target discovery to the passed gateway namespace $namespace (#13895)",
+    ({ namespace, filter }) => {
+      mocks.dockerCapture.mockReturnValue(
+        `${CONTAINER_ID}\topenshell-default--alpha-sandbox-id\tsandbox`,
+      );
+      const control = createDockerPrivilegedSandboxControl();
+
+      expect(
+        control.resolveTarget({
+          sandbox: { name: "alpha", openshellDriver: "docker" },
+          sandboxName: "alpha",
+          registeredSandboxNames: ["alpha"],
+          sandboxNamespace: namespace,
+        }),
+      ).toEqual({ providerId: "docker", resourceHandle: CONTAINER_ID });
+      const [argv] = mocks.dockerCapture.mock.calls[0]!;
+      expect(
+        argv.slice(argv.indexOf("--format") - filter.length, argv.indexOf("--format")),
+      ).toEqual(filter);
+      expect(argv).toContain("label=openshell.ai/sandbox-name=alpha");
+    },
+  );
+
   it.each([undefined, "sandbox"])(
     "executes in the pinned workload with role %s (#11905)",
     (role) => {

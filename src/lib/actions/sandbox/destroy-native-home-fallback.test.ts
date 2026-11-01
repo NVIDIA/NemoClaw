@@ -8,6 +8,12 @@ vi.mock("./mcp-bridge", async (importOriginal) => ({
   prepareMcpBridgesForDestroy: async () => ({ entries: [] }),
 }));
 
+const gatewayNamespace = vi.hoisted(() => ({ value: null as string | null }));
+vi.mock("./destroy-presence", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./destroy-presence")>()),
+  readSandboxGatewaySandboxNamespace: () => gatewayNamespace.value,
+}));
+
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
 import type { SandboxEntry } from "../../state/registry";
@@ -311,4 +317,116 @@ describe("native-home destroy fallback", () => {
       );
     },
   );
+
+  it.each([
+    { scope: "the owning gateway namespace", namespace: "ns-own" },
+    { scope: "no proven namespace", namespace: null },
+  ])("passes $scope to every privileged native-home cleanup (#13895)", async ({ namespace }) => {
+    gatewayNamespace.value = namespace;
+    const base = createInMemoryRuntimeProviderBundle({
+      providerId: "mxc",
+      workloadProfile: {
+        support: null,
+        hostArchitectures: ["x64"],
+        managedImageSelectionPolicy: "prefer-managed",
+        legacyDockerfileBuilds: false,
+      },
+    });
+    const control = base.lifecycle.privilegedSandboxControl;
+    const done = { status: 0, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    const execute = vi.fn((_input: Record<string, unknown>) => done);
+    const executeAsSandboxUser = vi.fn((_input: Record<string, unknown>) => done);
+    const clearStoppedNativeHome = vi.fn((_input: Record<string, unknown>) => ({
+      cleared: true as const,
+    }));
+    const identity = {
+      schemaVersion: 1 as const,
+      providerId: "mxc",
+      resourceHandle: "in-memory:alpha",
+      ownershipSha256: null,
+    };
+    const bundle = {
+      ...base,
+      cleanup: { ...base.cleanup, captureDestroyIdentity: () => identity },
+      lifecycle: {
+        ...base.lifecycle,
+        privilegedSandboxControl: {
+          ...control,
+          execute,
+          executeAsSandboxUser,
+          clearStoppedNativeHome,
+        } as unknown as typeof control,
+      },
+    };
+    const sandbox: SandboxEntry = {
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      openshellDriver: "mxc",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "alpha-generation-1",
+    };
+    let current: SandboxEntry | null = sandbox;
+    const wipe = vi.fn(
+      (
+        ...args: [
+          string,
+          string,
+          unknown,
+          unknown,
+          ((command: readonly string[]) => unknown)?,
+          ((root: string, protectedPaths: readonly string[]) => unknown)?,
+          ((command: readonly string[]) => unknown)?,
+        ]
+      ) => {
+        args[4]?.(["true"]);
+        args[5]?.("/sandbox/.deepagents", []);
+        args[6]?.(["true"]);
+      },
+    );
+    const ok = { status: 0, stdout: "", stderr: "" };
+    const handlers: Record<string, () => { status: number; stdout: string; stderr: string }> = {
+      "sandbox:delete": () => {
+        current = null;
+        return ok;
+      },
+      "sandbox:get": () =>
+        current
+          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+    };
+    const runOpenshell = vi.fn(
+      (args: string[]) => handlers[`${String(args[0])}:${String(args[1])}`]?.() ?? ok,
+    );
+
+    await executeSandboxDestroy({
+      force: false,
+      deleteGatewayName: "nemoclaw",
+      getSandbox: () => current,
+      listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
+      runOpenshell,
+      sandbox,
+      sandboxConfirmedAbsent: false,
+      sandboxName: "alpha",
+      stopInferenceResources: vi.fn(),
+      onMutationStarted: vi.fn(),
+      runtimeProviders: { mxc: bundle },
+      expectedRuntimeProviderIdentity: identity,
+      deps: {
+        deleteConvergence: { now: () => 0, sleep: () => undefined },
+        wipeAgentNativeHome: wipe,
+      },
+    });
+
+    expect(wipe).toHaveBeenCalledOnce();
+    const inputs = [
+      execute.mock.calls[0]?.[0],
+      executeAsSandboxUser.mock.calls[0]?.[0],
+      clearStoppedNativeHome.mock.calls[0]?.[0],
+    ];
+    expect(inputs.map((input) => input?.sandboxNamespace)).toEqual([
+      namespace ?? undefined,
+      namespace ?? undefined,
+      namespace ?? undefined,
+    ]);
+  });
 });

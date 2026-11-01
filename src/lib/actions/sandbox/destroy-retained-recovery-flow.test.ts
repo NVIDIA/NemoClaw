@@ -369,7 +369,7 @@ describe("destroySandbox retained recovery flow", () => {
       const sandboxContainerId = "a".repeat(64);
       const bootstrapContainerId = "b".repeat(64);
       const identityRows = [sandboxContainerId, bootstrapContainerId]
-        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha\t`)
         .join("\n");
       const harness = createDestroyHarness({
         sandboxPresent: false,
@@ -425,7 +425,7 @@ describe("destroySandbox retained recovery flow", () => {
       const bootstrapContainerId = "b".repeat(64);
       const foreignContainerId = "e".repeat(64);
       const identityRows = [sandboxContainerId, bootstrapContainerId]
-        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha\t`)
         .join("\n");
       const harness = createDestroyHarness({
         sandboxPresent: false,
@@ -498,7 +498,7 @@ describe("destroySandbox retained recovery flow", () => {
         liveListOutput: "Id: sb-alpha",
         dockerRunResult: {
           status: 0,
-          stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+          stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t`,
         },
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
@@ -720,7 +720,7 @@ describe("destroySandbox retained recovery flow", () => {
         sandboxPresent: false,
         dockerRunResult: {
           status: 0,
-          stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+          stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t`,
         },
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
@@ -766,7 +766,7 @@ describe("destroySandbox retained recovery flow", () => {
         dockerOrphanIds: [bootstrapContainerId],
         dockerRunResult: {
           status: 0,
-          stdout: `${bootstrapContainerId}\topenshell\tdefault\tsb-alpha`,
+          stdout: `${bootstrapContainerId}\topenshell\tdefault\tsb-alpha\t`,
         },
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
@@ -798,7 +798,7 @@ describe("destroySandbox retained recovery flow", () => {
         dockerOrphanIds: [bootstrapContainerId],
         dockerRunResult: {
           status: 0,
-          stdout: `${bootstrapContainerId}\topenshell\tdefault\tsb-alpha`,
+          stdout: `${bootstrapContainerId}\topenshell\tdefault\tsb-alpha\t`,
         },
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
@@ -876,7 +876,7 @@ describe("destroySandbox retained recovery flow", () => {
       const sandboxContainerId = "a".repeat(64);
       const bootstrapContainerId = "b".repeat(64);
       const identityRows = [sandboxContainerId, bootstrapContainerId]
-        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha\t`)
         .join("\n");
       const harness = createDestroyHarness({
         registryEntryPresent: false,

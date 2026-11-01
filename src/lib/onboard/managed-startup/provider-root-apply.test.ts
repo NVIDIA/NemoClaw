@@ -3,6 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("../docker-driver-gateway-config", async (original) => ({
+  ...(await original<typeof import("../docker-driver-gateway-config")>()),
+  readStateScopedSandboxNamespace: (stateDir: string) =>
+    ({ "/state/own": "ns-own" })[stateDir] ?? null,
+}));
+
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -44,7 +50,9 @@ type LifecycleFixtureProvider = RuntimeProviderBundle & {
 };
 
 function createDockerRootApplyFixture(
-  resolveTarget: (input: { readonly timeoutMs?: number }) => { resourceHandle: string },
+  resolveTarget: (input: { readonly timeoutMs?: number; readonly sandboxNamespace?: string }) => {
+    resourceHandle: string;
+  },
   agent: Parameters<typeof createManagedStartupRootApplyRequest>[0]["agent"] = "openclaw",
 ) {
   const labels = {
@@ -373,6 +381,36 @@ describe("provider-owned managed startup root application", () => {
     expect(transaction?.containerId).toBe(CONTAINER_ID);
     expect(resolveTarget).toHaveBeenCalledTimes(3);
     expect(sleep.mock.calls).toEqual([[250], [250]]);
+  });
+
+  it.each([
+    { scope: "the selected gateway namespace", gatewayStateDir: "/state/own", expected: "ns-own" },
+    {
+      scope: "an unproven gateway namespace",
+      gatewayStateDir: "/state/legacy",
+      expected: undefined,
+    },
+    { scope: "no gateway state directory", gatewayStateDir: undefined, expected: undefined },
+  ])("discovers the created container within $scope (#13895)", ({ gatewayStateDir, expected }) => {
+    const resolveTarget = vi.fn((_input: { readonly sandboxNamespace?: string }) => ({
+      resourceHandle: CONTAINER_ID,
+    }));
+    const { request, runtimeProvider } = createDockerRootApplyFixture(resolveTarget);
+
+    applyProviderManagedStartupRootRequest(
+      {
+        runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request,
+        environment: {},
+        ...(gatewayStateDir ? { gatewayStateDir } : {}),
+      },
+      { sleep: vi.fn() },
+    );
+
+    expect(resolveTarget.mock.calls[0]?.[0].sandboxNamespace).toBe(expected);
   });
 
   it("fails with bounded evidence when the exact OpenShell container stays absent", () => {
