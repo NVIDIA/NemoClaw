@@ -2302,7 +2302,7 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 | Long system prompts or sender metadata | Risky                        | Yes                       |
 | Multi-turn tool dispatch               | Risky                        | Yes                       |
 
-[Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
+[Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for an operator-run server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` whose `/v1/models` reports `owned_by: "vllm"`; for a llama.cpp server or another server on that port, or for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
 NemoClaw transfers the complete native OpenClaw configuration across rebuilds, but those edits do not change the OpenShell route, credential binding, or network policy.
 Use `$$nemoclaw inference set` when the provider change requires those host-side resources to stay aligned.
@@ -2877,6 +2877,10 @@ curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
 ```
 
 Both checks use `/health` because a managed profile can require bearer authentication for `/v1/models`.
+`/health` proves only that the server answers.
+For an operator-run server, onboarding offers **Local vLLM** only when its model list reports a model with `owned_by: "vllm"`.
+A recorded NemoClaw-managed server qualifies when its `/health` endpoint returns HTTP 200.
+For another OpenAI-compatible server on this port, select **Other OpenAI-compatible endpoint**.
 
 For an existing vLLM server, inspect its launch arguments:
 

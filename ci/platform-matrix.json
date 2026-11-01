@@ -163,7 +163,7 @@
       "name": "Local vLLM (already running)",
       "status": "caveated",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "On a qualified N1x host, this route requires explicit standard-onboarding intent and remains unvalidated. On other hosts, no explicit intent is required. It appears in the onboarding menu when NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. The model is whatever the existing server serves."
+      "notes": "On a qualified N1x host, this route requires explicit standard-onboarding intent and remains unvalidated. On other hosts, no explicit intent is required. For an operator-run server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`, `/v1/models` must report `owned_by: \"vllm\"`. For a recorded NemoClaw-managed server, its `/health` endpoint must return HTTP 200. The model is whatever the existing server serves."
     },
     {
       "name": "Local vLLM (managed install/start)",

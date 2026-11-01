@@ -150,7 +150,20 @@ function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
       ignoreError: true,
     },
   );
-  return isLocalProviderProbeOutputHealthy(endpoint, output);
+  if (!isLocalProviderProbeOutputHealthy(endpoint, output)) return false;
+  return endpoint.endsWith("/health") || reportsVllmModel(output);
+}
+
+function reportsVllmModel(body: string): boolean {
+  try {
+    const data = (JSON.parse(body) as { data?: unknown }).data;
+    return (
+      Array.isArray(data) &&
+      data.some((entry) => (entry as { owned_by?: unknown } | null)?.owned_by === "vllm")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function maybeWarnAboutDuplicateOllamaDaemons(input: {

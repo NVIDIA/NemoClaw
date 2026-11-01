@@ -108,6 +108,8 @@ describe("reportProviderSelectionFailure", () => {
     assert.deepEqual(errors, [
       "  Requested provider 'vllm' is not available in this environment.",
       "  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server, but none was detected.",
+      '  An operator-run server counts as vLLM only when its /v1/models reports owned_by "vllm".',
+      "  For a recorded NemoClaw-managed server, restore HTTP 200 from its /health endpoint.",
       "  Re-run with NEMOCLAW_PROVIDER=install-vllm to install and start the managed vLLM runtime.",
     ]);
   });
@@ -122,6 +124,8 @@ describe("reportProviderSelectionFailure", () => {
     assert.deepEqual(errors, [
       "  Requested provider 'vllm' is not available in this environment.",
       "  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server, but none was detected.",
+      '  An operator-run server counts as vLLM only when its /v1/models reports owned_by "vllm".',
+      "  For a recorded NemoClaw-managed server, restore HTTP 200 from its /health endpoint.",
       "  Start a compatible local vLLM server and retry, or choose another provider.",
     ]);
   });

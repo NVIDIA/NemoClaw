@@ -81,9 +81,9 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/2593269511c4c850a60cb2423a436be1f2fb9da9/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/2593269511c4c850a60cb2423a436be1f2fb9da9/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/2593269511c4c850a60cb2423a436be1f2fb9da9/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/daebaae653f06f74350d44b0fe831235b4ff28be/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/daebaae653f06f74350d44b0fe831235b4ff28be/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/daebaae653f06f74350d44b0fe831235b4ff28be/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
@@ -101,7 +101,7 @@ If the user selects managed vLLM and the configured port, `${NEMOCLAW_VLLM_PORT:
 If no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
-1. Existing vLLM, when a ready server is detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; native N1x requires explicit standard-onboarding intent.
+1. Existing vLLM, when an operator-run server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` reports `owned_by: "vllm"` in `/v1/models`, or a recorded NemoClaw-managed server returns HTTP 200 from `/health`; native N1x requires explicit standard-onboarding intent.
 2. Managed vLLM, optimized local inference with a large download.
 3. Local Ollama, only when the selected agent and platform support it.
 4. NVIDIA Endpoints, which requires an NVIDIA API key.
@@ -118,7 +118,7 @@ On ordinary supported macOS or Linux:
 
 - Offer Local Ollama for OpenClaw or Hermes when it is installed, running, or officially installable.
 - Do not offer Local Ollama for Deep Agents unless current official documentation adds support.
-- Offer an existing ready vLLM server when detected.
+- Offer an existing vLLM server when its operator-run `/v1/models` reports `owned_by: "vllm"`, or its recorded NemoClaw-managed `/health` returns HTTP 200.
 - Also show all applicable hosted and compatible providers.
 - Do not hide Ollama merely because the computer is not DGX or GB300.
 - Omit managed vLLM unless current official support permits it for the detected hardware.
