@@ -45,6 +45,7 @@ If that probe fails, onboarding falls back to `/v1/chat/completions` automatical
 ## Select Chat Completions Only
 
 Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate only `/v1/chat/completions`.
+`completions` and `chat-completions` are accepted aliases with the same effect.
 This setting works in interactive and non-interactive onboarding.
 
 ```bash
@@ -53,7 +54,7 @@ NEMOCLAW_PREFERRED_API=openai-completions $$nemoclaw onboard
 
 | Variable | Values | Default |
 |---|---|---|
-| `NEMOCLAW_PREFERRED_API` | `openai-completions`, `openai-responses` | Unset, which uses Chat Completions at runtime. |
+| `NEMOCLAW_PREFERRED_API` | `openai-completions` (aliases `completions` and `chat-completions`), `openai-responses` | Unset, which uses Chat Completions at runtime. |
 
 <AgentOnly variant="deepagents">
 
