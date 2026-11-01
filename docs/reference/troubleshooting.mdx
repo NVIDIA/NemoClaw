@@ -2171,6 +2171,13 @@ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $$nemoclaw onboard
 ```
 
+For a compatible endpoint, local Ollama, or local vLLM route, and for the Bedrock Runtime and OpenRouter Runtime adapters, NemoClaw also uses this value as the inference route request timeout.
+An unset, empty, negative, nonnumeric, or nonfinite value uses the default of `180` seconds.
+Finite nonnegative numeric values are rounded to the nearest integer; for those routes, the result must be from `1` to `3600` seconds.
+Whitespace-only input parses as zero and is rejected.
+Onboarding stops with an error that names the variable when the rounded value is outside that range, and `connect` stops the same way for a compatible endpoint, local Ollama, or local vLLM sandbox.
+Refer to [Configure Inference Timeouts](../inference/manage-inference/configure-inference-timeouts) for the route-specific behavior.
+
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy. If Ollama times out during a cold model load, NemoClaw retries once with a 300-second probe budget before failing. If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` covers the inference-server validation probe and each request of the native local or provider-neutral inference check that onboarding and rebuild run inside the sandbox, with a 60-second minimum for that check. The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.

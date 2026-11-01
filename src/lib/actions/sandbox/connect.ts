@@ -77,6 +77,7 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   connectInferenceRouteMutationRequest,
+  connectInferenceTimeoutRangeError,
   type ConnectInferenceRouteMutationResult,
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
@@ -2569,6 +2570,11 @@ export async function connectSandbox(
   sandboxName: string,
   options: SandboxConnectOptions = {},
 ): Promise<void> {
+  const timeoutRangeError = connectInferenceTimeoutRangeError(readConnectSandbox(sandboxName));
+  if (timeoutRangeError) {
+    console.error(`  ${timeoutRangeError}`);
+    process.exit(1);
+  }
   const probeTiming = options.probeOnly ? createProbeTimingRecorder() : undefined;
   const finishOnExit = (code: number): void => {
     probeTiming?.finishOnExit(
