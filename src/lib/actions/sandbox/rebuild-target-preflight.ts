@@ -17,6 +17,7 @@ export {
 export {
   hydrateMessagingConfigForRebuild,
   prepareRebuildRecreateOptions,
+  rebuildInferenceRouteTimeoutError,
   stageRebuildHermesDashboardConfig,
   stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-staging";

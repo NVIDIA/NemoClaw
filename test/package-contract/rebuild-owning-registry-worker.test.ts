@@ -217,7 +217,7 @@ describe("compiled rebuild owning-registry worker", () => {
   });
 
   it.runIf(process.platform === "linux")(
-    "forwards only allowlisted credentials into the delegated rebuild consumer",
+    "forwards the route timeout and only allowlisted credentials into the delegated rebuild consumer",
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-credential-"));
       const marker = path.join(home, "credential-probe.json");
@@ -231,6 +231,8 @@ describe("compiled rebuild owning-registry worker", () => {
         vi.stubEnv("HOME", home);
         vi.stubEnv("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE", "1");
         vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeCredentialProbeOpenShell(home, marker));
+        vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "3601");
+        vi.stubEnv("NEMOCLAW_UNRELATED_SECRET", "must-not-cross-worker-boundary");
         vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "nvapi-worker-test-value");
         vi.stubEnv("OPENAI_API_KEY", "openai-unrelated-test-value");
         vi.stubEnv("UNRELATED_REBUILD_SECRET", "must-not-cross-worker-boundary");
@@ -263,6 +265,10 @@ describe("compiled rebuild owning-registry worker", () => {
           .split("\0");
 
         expect(workerEnvironment).toContain("NVIDIA_INFERENCE_API_KEY=nvapi-worker-test-value");
+        expect(workerEnvironment).toContain("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=3601");
+        expect(workerEnvironment).not.toContain(
+          "NEMOCLAW_UNRELATED_SECRET=must-not-cross-worker-boundary",
+        );
         expect(workerEnvironment).not.toContain("OPENAI_API_KEY=openai-unrelated-test-value");
         expect(workerEnvironment).not.toContain(
           "UNRELATED_REBUILD_SECRET=must-not-cross-worker-boundary",

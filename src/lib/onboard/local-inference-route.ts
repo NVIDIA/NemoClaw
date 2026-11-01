@@ -3,6 +3,76 @@
 
 import type { getProbeRecovery } from "../validation-recovery";
 import type { OpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route";
+import { OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
+import { LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS, localInferenceTimeoutRangeError } from "./env";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
+
+/** Only shared routes that send the timeout own its range constraint. */
+export function localInferenceRouteTimeoutError(
+  provider: string,
+  usesBedrockRuntimeAdapter: boolean,
+): string | null {
+  return LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider) ||
+    usesBedrockRuntimeAdapter ||
+    provider === OPENROUTER_PROVIDER_NAME
+    ? localInferenceTimeoutRangeError()
+    : null;
+}
+
+export function canResumeInferenceRoute(input: {
+  needsBedrockRuntimeAdapter: boolean;
+  provider: string;
+  hasHostLocalInference: boolean;
+  forceProviderSelection: boolean;
+  forceInferenceSetup: boolean;
+  effectiveResume: boolean;
+  selectsNativeLocal: boolean;
+  nativeLocalAttached(): boolean;
+  routeReady(): boolean;
+}): boolean {
+  // A ready shared route does not prove a native local provider attachment:
+  // another sandbox on a reused gateway can own the same shared route.
+  return (
+    !input.needsBedrockRuntimeAdapter &&
+    input.provider !== OPENROUTER_PROVIDER_NAME &&
+    !input.hasHostLocalInference &&
+    !input.forceProviderSelection &&
+    !input.forceInferenceSetup &&
+    input.effectiveResume &&
+    input.routeReady() &&
+    (!input.selectsNativeLocal || input.nativeLocalAttached())
+  );
+}
+
+export function shouldRefreshCompatibleEndpointRouteForMessaging(
+  provider: string | null,
+  selectedMessagingChannels: readonly string[],
+  messagingPlan: Pick<SandboxMessagingPlan, "channels"> | null | undefined,
+  agentName: string,
+  nativeCustomSetup: boolean | undefined,
+): boolean {
+  const channels = messagingPlan?.channels;
+  return (
+    !nativeCustomSetup &&
+    provider === "compatible-endpoint" &&
+    agentName === "openclaw" &&
+    (selectedMessagingChannels.length > 0 ||
+      (Array.isArray(channels) &&
+        channels.some((channel) => channel.active === true && channel.disabled !== true)))
+  );
+}
+
+export function shouldReuseRetainedOpenRouterCredential(input: {
+  provider: string | null;
+  forceInferenceSetup: boolean;
+  hydratedCredential: string | null | undefined;
+}): boolean {
+  return (
+    input.provider === OPENROUTER_PROVIDER_NAME &&
+    !input.forceInferenceSetup &&
+    !input.hydratedCredential
+  );
+}
 
 export interface LocalInferenceRouteDeps {
   inferenceRouteMutator: OpenShellInferenceRouteMutator;
