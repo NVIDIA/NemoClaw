@@ -518,7 +518,7 @@
               "properties": {
                 "api": {
                   "additionalProperties": false,
-                  "description": "Hermes's API server, run by a gateway child. After both interfaces start, the adapter writes its bearer token to interfaces/api.token in the Hermes home: <artifact root>/.fabric/hermes/runtimes/<runtime-id>, or the agent's state folder with runtime.keep_state.",
+                  "description": "Hermes's API server, run by a gateway child. After every enabled interface starts, the adapter writes its bearer token to interfaces/api.token in the Hermes home: <artifact root>/.fabric/hermes/runtimes/<runtime-id>, or the agent's state folder with runtime.keep_state.",
                   "properties": {
                     "enabled": {
                       "default": true,
@@ -526,7 +526,7 @@
                       "type": "boolean"
                     },
                     "port": {
-                      "description": "Exact loopback port for the API server. Start fails if it is in use or equals the dashboard port.",
+                      "description": "Exact loopback port for the API server. Start fails if it is in use.",
                       "maximum": 65535,
                       "minimum": 1,
                       "type": "integer"
@@ -547,7 +547,7 @@
                       "type": "boolean"
                     },
                     "port": {
-                      "description": "Exact loopback port for the dashboard. Start fails if it is in use or equals the api port.",
+                      "description": "Exact loopback port for the dashboard. Start fails if it is in use.",
                       "maximum": 65535,
                       "minimum": 1,
                       "type": "integer"
@@ -1046,12 +1046,6 @@
               ],
               "type": "string"
             },
-            "dcode_command": {
-              "default": "dcode",
-              "description": "Deep Agents Code executable name or path. Paths containing a directory resolve from the NeMo Fabric base directory.",
-              "minLength": 1,
-              "type": "string"
-            },
             "insecure_http_model_hosts": {
               "description": "Explicitly trusted HTTP model endpoint hostnames, without schemes, ports, paths, or wildcards.",
               "items": {
@@ -1080,13 +1074,6 @@
                 }
               },
               "type": "object"
-            },
-            "startup_timeout_seconds": {
-              "default": 60,
-              "description": "Time for Deep Agents Code's ACP session to start, within NeMo Fabric's 90-second start limit.",
-              "exclusiveMinimum": 0,
-              "maximum": 75,
-              "type": "number"
             }
           },
           "required": [
@@ -1627,15 +1614,6 @@
                       "maximum": 65425,
                       "minimum": 1,
                       "type": "integer"
-                    },
-                    "public_origins": {
-                      "description": "Browser origins accepted in addition to http://127.0.0.1:<port> and http://localhost:<port>. OpenClaw accepts any loopback origin regardless.",
-                      "items": {
-                        "pattern": "^https?://[^/?#@\\s]+$",
-                        "type": "string"
-                      },
-                      "type": "array",
-                      "uniqueItems": true
                     }
                   },
                   "required": [
@@ -2358,8 +2336,8 @@
       ]
     }
   ],
-  "fabric_revision": "a3b57155593877135f2557ef37d5e18161a1ad82",
+  "fabric_revision": "88099b37c1e146faa6f70e8c8df1f6b5a288ff56",
   "schema_version": 2,
-  "source_sha256": "449bd7bc94c3effc53713f5beb1bcd559d02242da591196fa165186d8c9b7f03",
+  "source_sha256": "5adb8acba480245453c3f8b06919e7053c080f6b043d8c7c72ef883e46de12e3",
   "targets": []
 }

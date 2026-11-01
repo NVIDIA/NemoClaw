@@ -82,7 +82,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Deep Agents Code's terminal is a launcher for `dcode`'s terminal UI, which you run in the sandbox.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/a3b57155593877135f2557ef37d5e18161a1ad82/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/a3b57155593877135f2557ef37d5e18161a1ad82/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
+The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/88099b37c1e146faa6f70e8c8df1f6b5a288ff56/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/88099b37c1e146faa6f70e8c8df1f6b5a288ff56/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
 
 ### Enable an Interface
 
@@ -110,7 +110,7 @@ sandboxes:
 
 | Harness | Interface | Fields | Token | Sign-in |
 |---|---|---|---|---|
-| OpenClaw | `dashboard`, the Control UI with browser chat | `port` (required, at most 65425), `enabled`, `public_origins` | Yes | `http://127.0.0.1:PORT/#token=TOKEN` |
+| OpenClaw | `dashboard`, the Control UI with browser chat | `port` (required, at most 65425), `enabled` | Yes | `http://127.0.0.1:PORT/#token=TOKEN` |
 | Hermes | `api`, the OpenAI-compatible API server | `port` (required), `enabled` | Yes | `Authorization: Bearer TOKEN` |
 | Hermes | `dashboard`, with browser chat | `port` (required), `enabled` | No | None |
 | Deep Agents Code | `terminal`, `dcode`'s terminal UI | `enabled` | No | None beyond OpenShell's: [open it](#open-deep-agents-codes-terminal) with `openshell sandbox exec` |
@@ -150,7 +150,7 @@ The gateway selection follows [Select the Gateway and Workspace](#select-the-gat
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
 3. Sign in:
-   - OpenClaw: open `http://127.0.0.1:PORT/#token=TOKEN` in a browser. The Control UI removes the token from the address bar. OpenClaw accepts any loopback origin with the token, so a forward to another local port also works; `public_origins` lists other origins.
+   - OpenClaw: open `http://127.0.0.1:PORT/#token=TOKEN` in a browser. The Control UI removes the token from the address bar. OpenClaw accepts any loopback origin with the token, so a forward to another local port also works.
    - Hermes's API server: send `Authorization: Bearer TOKEN` with each request, for example to `http://127.0.0.1:PORT/v1/models`.
    - Hermes's dashboard: open `http://127.0.0.1:PORT/`. It has no sign-in.
 
