@@ -25,7 +25,7 @@ describe("assessHost NVIDIA GPU detection through the WSL nvidia-smi path", () =
     expect(result.hasNvidiaGpu).toBe(true);
   });
 
-  it("ignores placeholder devices from the WSL shim", () => {
+  it("keeps placeholder devices so the bounded CUDA proof decides", () => {
     const result = assessHost({
       platform: "linux",
       env: { WSL_DISTRO_NAME: "Ubuntu" },
@@ -33,6 +33,21 @@ describe("assessHost NVIDIA GPU detection through the WSL nvidia-smi path", () =
       commandExistsImpl: () => false,
       runCaptureImpl: (command) =>
         command[0] === WSL_NVIDIA_SMI ? "GPU 0: JMJWOA-Generic-GPU (UUID: GPU-1)" : "",
+    });
+
+    expect(result.hasNvidiaGpu).toBe(true);
+  });
+
+  it.each([
+    "No devices were found",
+    "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver.",
+  ])("does not count the listing %j as a GPU", (listing) => {
+    const result = assessHost({
+      platform: "linux",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      dockerInfoOutput: "",
+      commandExistsImpl: () => false,
+      runCaptureImpl: (command) => (command[0] === WSL_NVIDIA_SMI ? listing : ""),
     });
 
     expect(result.hasNvidiaGpu).toBe(false);

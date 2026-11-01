@@ -28,7 +28,7 @@ import {
   isDockerDaemonReachable,
   isSupportedGatewayDockerHost,
 } from "../domain/docker-host";
-import { captureNvidiaSmi, isDenylistedNvidiaGpuName } from "../inference/gpu-trust";
+import { captureNvidiaSmi } from "../inference/gpu-trust";
 import type { DockerAuthorityConflict } from "../platform";
 import { classifyDockerVersionIdentity, observeDockerAuthorityConflict } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
@@ -558,11 +558,10 @@ function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
 }
 
 function detectNvidiaGpu(runCaptureImpl: RunCaptureFn, isWsl: boolean): boolean {
-  // Share the PATH-then-WSL-driver lookup with GPU detection so a WSL host that
-  // reaches nvidia-smi only through its stock driver path is still recognised.
-  // The Windows-on-ARM shim lists placeholder devices; do not count those.
+  // Share the PATH-then-WSL-driver lookup with GPU detection. Placeholder names
+  // still count here: the bounded CUDA proof, not this probe, rejects them.
   const listing = captureNvidiaSmi(["-L"], { isWsl, runCaptureImpl });
-  if (listing.split("\n").some((line) => line.trim() && !isDenylistedNvidiaGpuName(line))) {
+  if (listing.split("\n").some((line) => line.trim().startsWith("GPU "))) {
     return true;
   }
   // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
