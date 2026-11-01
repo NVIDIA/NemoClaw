@@ -19,7 +19,7 @@ pub struct Capabilities {
 
 impl Capabilities {
     pub fn available() -> Self {
-        Self::from_catalog(&nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled())
+        Self::from_catalog(nemoclaw_sdk::fabric_catalog::FabricCatalog::bundled_ref())
     }
 
     pub fn from_catalog(catalog: &nemoclaw_sdk::fabric_catalog::FabricCatalog) -> Self {
