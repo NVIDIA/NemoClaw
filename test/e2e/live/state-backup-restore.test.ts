@@ -13,15 +13,21 @@ import { STOPPED_CONTAINER_STARTUP_LOG_READER } from "../fixtures/stopped-contai
 import {
   OPENCLAW_RESTORE_HOST_PROGRAM,
   OPENCLAW_RESTORE_NATIVE_PROGRAM,
+  OPENCLAW_RESTORE_SUITE_TIMEOUT_MS,
+  createOpenClawRestoreDeadline,
   openClawRestoreFixture,
   type OpenClawRestoreScenario,
 } from "../fixtures/openclaw-restore-fixture.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-state-backup";
 const DASHBOARD_PORT = 18_792;
+// Leave the existing job time for setup, both cleanup callbacks, and artifact upload.
+const restoreDeadline = createOpenClawRestoreDeadline(
+  testTimeout(OPENCLAW_RESTORE_SUITE_TIMEOUT_MS) - 60_000,
+);
 
 const restoreOptions = {
-  timeout: testTimeout(45 * 60_000),
+  timeout: testTimeout(OPENCLAW_RESTORE_SUITE_TIMEOUT_MS),
   meta: {
     e2ePhases: [
       "prepare the complete native-home compatibility fixture",
@@ -51,7 +57,7 @@ async function rebuildFixture(
   >,
 ) {
   const sandboxName = scenario === "legacy" ? SANDBOX_NAME : `${SANDBOX_NAME}-r`;
-  const deadline = performance.now() + testTimeout(45 * 60_000) - 60_000;
+  const deadline = restoreDeadline();
   const bounded = (cap: number) => {
     const remaining = Math.floor(deadline - performance.now());
     expect(remaining, "restore scenario exhausted its existing test budget").toBeGreaterThan(0);

@@ -410,6 +410,9 @@ It checks a copied JSON backup through native Doctors, canonical data and config
 unchanged backup bytes, idempotence, and refusal of downgrades or nonempty retired Telegram data.
 This isolated migration proof does not cover snapshot extraction or the full restore startup gate;
 the `state-backup-restore` live test owns that boundary.
+Its migration and refusal scenarios share one operation deadline within the existing
+45-minute test allowance, leaving time for setup, cleanup, and artifact upload in the
+unchanged 60-minute job. Each scenario retains its own assertions, artifacts, and cleanup.
 Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
 Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
 it rejects missing agents, mixed platforms, revisions, releases, and cohorts.
@@ -1190,6 +1193,13 @@ It summarizes the final 64 KiB of the router log as fixed status flags and a com
 It never copies log text, request content, or credentials into that file.
 An unavailable log is recorded explicitly; a false flag does not prove that an unlogged event did not occur.
 The cleanup registry captures diagnostics before destroying the sandbox and records capture failures separately from the test failure.
+After onboarding fails, the `router-provider-failure-diagnostics` command also records Python
+and package versions and probes the two shipped NVIDIA pool models directly from the host.
+The probes run concurrently with 60-second socket timeouts and a 75-second command cap.
+They use the existing child credential environment and never follow redirects. Retained output
+contains status, timing, and byte counts; response text, response headers,
+and exception messages are omitted. These diagnostics do not replace the onboarding or
+`inference.local` assertions.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 

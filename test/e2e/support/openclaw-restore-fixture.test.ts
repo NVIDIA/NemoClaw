@@ -8,8 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import {
   OPENCLAW_RESTORE_NATIVE_PROGRAM,
+  OPENCLAW_RESTORE_SUITE_TIMEOUT_MS,
+  createOpenClawRestoreDeadline,
   openClawRestoreFixture,
   type OpenClawRestoreScenario,
 } from "../fixtures/openclaw-restore-fixture.ts";
@@ -28,6 +31,29 @@ const originalConfig = {
 };
 const digest = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const statePath = (name: string) => path.join(stateRoot, name);
+
+it("shares the restore deadline across sequential migration and refusal scenarios", () => {
+  let now = 100;
+  const deadline = createOpenClawRestoreDeadline(OPENCLAW_RESTORE_SUITE_TIMEOUT_MS, () => now);
+  // Import and collection time must not consume the first scenario's budget.
+  now += 60_000;
+  const legacyDeadline = deadline();
+  expect(legacyDeadline - now).toBe(OPENCLAW_RESTORE_SUITE_TIMEOUT_MS);
+  now += 30 * 60_000;
+  expect(deadline()).toBe(legacyDeadline);
+  expect(deadline() - now).toBe(15 * 60_000);
+  now = legacyDeadline;
+  expect(deadline() - now).toBe(0);
+  now += 1;
+  expect(deadline() - now).toBe(-1);
+});
+
+it("fits both restore scenarios and setup, cleanup, and upload inside the existing target budget", () => {
+  const overheadMinutes = 15;
+  expect(catalogueTarget("state-backup-restore").timeoutMinutes).toBeGreaterThanOrEqual(
+    OPENCLAW_RESTORE_SUITE_TIMEOUT_MS / 60_000 + overheadMinutes,
+  );
+});
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-restore-fixture-test-"));

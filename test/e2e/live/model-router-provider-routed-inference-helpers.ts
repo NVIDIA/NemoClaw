@@ -2,11 +2,88 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { DEFAULT_GATEWAY_PORT, parsePort } from "../../../src/lib/core/ports.ts";
 import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+
+// Use only the shipped pool's public origin. HTTPSConnection does not follow redirects.
+// Never serialize credentials, response text, headers, or exception messages.
+export const ROUTER_PROVIDER_FAILURE_DIAGNOSTIC = String.raw`
+import concurrent.futures
+import http.client
+import importlib.metadata
+import json
+import os
+import re
+import sys
+import time
+
+def probe(model):
+    started = time.monotonic()
+    connection = http.client.HTTPSConnection("integrate.api.nvidia.com", timeout=60)
+    result = {"model": model}
+    try:
+        connection.request("POST", "/v1/chat/completions",
+            body=json.dumps({"model": model, "messages": [{"role": "user", "content": "What's 1 + 1?"}], "max_tokens": 1, "stream": False}),
+            headers={"Authorization": "Bearer " + os.environ["NVIDIA_INFERENCE_API_KEY"], "Content-Type": "application/json"})
+        result["requestSentMs"] = round((time.monotonic() - started) * 1000)
+        response = connection.getresponse()
+        result["status"] = response.status
+        result["responseHeadersMs"] = round((time.monotonic() - started) * 1000)
+        body = response.read(65537)
+        result.update(outcome="http-response", status=response.status, bodyBytes=len(body), truncated=len(body)>65536)
+    except TimeoutError:
+        result["outcome"] = "timeout"
+    except Exception:
+        result["outcome"] = "client-error"
+    finally:
+        connection.close()
+    result["elapsedMs"] = round((time.monotonic() - started) * 1000)
+    return result
+
+versions = {}
+for package in ["model-router-toolkit", "litellm", "openai", "httpx", "httpcore", "aiohttp", "fastapi", "starlette", "uvicorn", "pydantic"]:
+    try:
+        version = importlib.metadata.version(package)
+        versions[package] = version if re.fullmatch(r"[0-9][A-Za-z0-9.+!_-]{0,79}", version) else "nonstandard-version"
+    except Exception:
+        versions[package] = None
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    results = list(pool.map(probe, ["openai/gpt-oss-20b", "nvidia/nemotron-3-super-120b-a12b"]))
+print(json.dumps({"schemaVersion": 1, "python": list(sys.version_info[:3]), "packages": versions, "client": "stdlib-https", "socketTimeoutSeconds": 60, "results": results}))
+`;
+
+export async function recordRouterFailureDiagnostics(
+  host: HostCliClient,
+  artifacts: ArtifactSink,
+  exitCode: number | null,
+  onboardEnv: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
+  if (exitCode === 0) return;
+  const port = parsePort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, onboardEnv);
+  const stateRoot = path.dirname(path.dirname(resolveModelRouterLogPath(onboardEnv.HOME, port)));
+  try {
+    await host.command(
+      path.join(stateRoot, "model-router-venv", "bin", "python"),
+      ["-I", "-c", ROUTER_PROVIDER_FAILURE_DIAGNOSTIC],
+      {
+        artifactName: "router-provider-failure-diagnostics",
+        env: onboardEnv,
+        redactionValues,
+        captureLimitBytes: 8_192,
+        timeoutMs: 75_000,
+      },
+    );
+  } catch {
+    // Diagnostic failure must not replace the original onboarding assertion.
+    await artifacts.writeJson("router-provider-failure-diagnostics.json", { available: false });
+  }
+}
 
 export function summarizeRouterLog(text: string) {
   // Export only fixed booleans and counts. Never retain log lines or captured text.

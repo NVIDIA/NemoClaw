@@ -9,6 +9,7 @@ import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.t
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildProviderRoutedEnv,
+  recordRouterFailureDiagnostics,
   registerRouterDiagnostics,
 } from "./model-router-provider-routed-inference-helpers.ts";
 
@@ -88,6 +89,7 @@ test(
       },
     );
     await host.recordSandboxContainerDiscoveryOnFailure(SANDBOX_NAME, onboard.exitCode, [apiKey]);
+    await recordRouterFailureDiagnostics(host, artifacts, onboard.exitCode, onboardEnv, [apiKey]);
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
     progress.phase("request a routed inference.local completion");

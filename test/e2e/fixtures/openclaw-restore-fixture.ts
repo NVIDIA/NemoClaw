@@ -3,6 +3,14 @@
 
 export type OpenClawRestoreScenario = "legacy" | "retired-telegram";
 
+export const OPENCLAW_RESTORE_SUITE_TIMEOUT_MS = 45 * 60_000;
+
+/** Both sequential scenarios share one deadline, starting with the first scenario. */
+export function createOpenClawRestoreDeadline(timeoutMs: number, now = () => performance.now()) {
+  let deadline: number | undefined;
+  return () => (deadline ??= now() + timeoutMs);
+}
+
 /** Synthetic native inputs, shared by the sandbox writer and archive verifier. */
 export function openClawRestoreFixture(marker: string, stateRoot = "/sandbox/.openclaw") {
   const sessionId = `${marker}-replay`;
