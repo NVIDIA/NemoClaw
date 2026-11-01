@@ -284,7 +284,10 @@ fn container(target: &Target) -> Result<Value, Error> {
         );
     }
     if process.gpu {
-        attrs["gpus"] = json!("all");
+        attrs["gpus"] = match &process.gpu_device {
+            Some(device) => json!(format!("device={device}")),
+            None => json!("all"),
+        };
     }
     // Labels force replacement because Docker provider v4.6.0 updates limits in
     // place: its Update omits CFS quota, and lowering memory on a running

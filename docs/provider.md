@@ -708,7 +708,7 @@ Generated graphs place managed vLLM with Docker and declare:
 - `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.NAME.spec}"]`.
 - The model cache volume at `/data` and, with bearer authentication, the `vllm_credential_storage` credential volume at `/credentials`.
 - The serving port, published on the service's bind address.
-- `gpus = "all"`; `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
+- `gpus = "all"`, or `gpus = "device=GPU"` when the service sets `container.gpu`; `memory` and `memory_swap` follow `container.memoryLimitGiB`, defaulting to 106496 MiB (104 GiB); `shm_size` defaults to 8192 MiB unless the service sets another size.
 - No CPU cap unless `container.cpuLimitMillis` is supplied; Docker then enforces `cpu_quota = cpuLimitMillis × 100` microseconds per `cpu_period = 100000` (100 ms, as on Kubernetes), with a minimum quota of 1000 microseconds.
 - A `nemoclaw.nvidia.com/cpu-limit-millis` label when a CPU limit is set and a `nemoclaw.nvidia.com/memory-limit-gib` label when the memory limit differs from 104 GiB; because label changes replace the container, changing either limit is a replacement rather than an in-place `docker update`.
 - Private IPC unless the service selects host IPC, an unlimited `memlock` ulimit, and a `stack` ulimit of 67108864.
@@ -844,6 +844,7 @@ Each takes an `engine` and `contracts`, the `spec` of each of that runtime's con
 No data source combines services of different runtimes on one host.
 It reports required and observed bytes and compatibility using the selected execution host's measurements.
 The SDK's default service graph does not use it as an admission gate.
+Its host observation reads every GPU on the engine and refuses a host with two or more, even when a service names one with `container.gpu` ([#13928](https://github.com/NVIDIA/NemoClaw/issues/13928)).
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
 Operators must choose budgets appropriate for the shared host.
 

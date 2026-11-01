@@ -107,6 +107,63 @@ fn docker_model_limits_reach_opentofu_and_native_container_configuration() {
 }
 
 #[test]
+fn a_named_gpu_reaches_opentofu_and_the_native_device_request() {
+    for input in [
+        include_str!("fixtures/config/spark.yaml"),
+        include_str!("fixtures/config/managed-ollama.yaml"),
+    ] {
+        let baseline = Document::parse(input.as_bytes()).unwrap();
+        let generations = ["managed_gateway", "inference_service", "ollama_service"]
+            .map(|kind| (kind.into(), "b".repeat(32)))
+            .into();
+        for gpu in ["GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3", "1"] {
+            let mut value = serde_json::to_value(&baseline).unwrap();
+            for service in value["spec"]["services"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+            {
+                service["container"] = json!({"gpu": gpu});
+            }
+            let document = Document::parse(value.to_string().as_bytes()).unwrap();
+            let exported = serde_json::to_value(&document).unwrap();
+            assert!(
+                exported["spec"]["services"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .all(|service| service["container"]["gpu"] == gpu)
+            );
+            let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
+            for target in runtime_targets(&document, &generations)
+                .unwrap()
+                .iter()
+                .filter(|target| {
+                    matches!(target.kind.as_str(), "inference_service" | "ollama_service")
+                })
+            {
+                let (_, name) = target.address.split_once('.').unwrap();
+                let container = &graph["resource"]["docker_container"][name];
+                assert_eq!(
+                    container["gpus"],
+                    format!("device={gpu}"),
+                    "{}",
+                    target.kind
+                );
+                let spec: nemoclaw_sdk::managed::Spec =
+                    serde_json::from_str(&target.values["spec"]).unwrap();
+                let host = spec.container("/data").unwrap().host_config.unwrap();
+                let requests = host.device_requests.unwrap();
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0].device_ids, Some(vec![gpu.to_owned()]));
+                assert_eq!(requests[0].count, None);
+                assert_eq!(requests[0].capabilities, Some(vec![vec!["gpu".to_owned()]]));
+            }
+        }
+    }
+}
+
+#[test]
 fn omitted_docker_model_limits_keep_independent_legacy_defaults() {
     for input in [
         include_str!("fixtures/config/spark.yaml"),
