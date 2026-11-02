@@ -54,6 +54,8 @@ import {
   removeBaselineEntryFromPolicy,
 } from "./baseline-exclusion";
 import {
+  revokeTavilyProviders,
+  hasTavilyEgress,
   inspectGatewayPresetNames,
   inspectPresetContentGatewayState,
   recordPolicyResult,
@@ -1872,7 +1874,7 @@ async function removePreset(
   }
 
   const operation = `remove policy preset '${presetName}'`;
-  const context = await inspectLivePolicyForMutation(
+  let context = await inspectLivePolicyForMutation(
     sandboxName,
     operation,
     options.runtimeSelection?.gatewayName,
@@ -1902,6 +1904,54 @@ async function removePreset(
     return false;
   }
 
+  let revalidateTavilyIdentity: (() => void) | undefined;
+  if (!isCustom && presetName === "tavily") {
+    try {
+      revalidateTavilyIdentity = await revokeTavilyProviders(
+        sandboxName,
+        context.gatewayName,
+        registry,
+        context.runtimeSelection,
+      );
+      // Detachment changes provider composition. Capture a fresh policy boundary.
+      context = await preparePolicyMutationContext(
+        sandboxName,
+        operation,
+        context.gatewayName,
+        context.runtimeSelection,
+      );
+      revalidateTavilyIdentity();
+    } catch {
+      recordPolicyResult(sandboxName, "failed", "partial", "unavailable");
+      console.error(
+        "  Tavily removal is incomplete: provider revocation could not be verified. Inspect sandbox attachments before retrying.",
+      );
+      return false;
+    }
+  }
+  const verifyTavilyRemoval = async (): Promise<boolean> => {
+    if (!revalidateTavilyIdentity) return true;
+    try {
+      revalidateTavilyIdentity();
+      const observed = await preparePolicyMutationContext(
+        sandboxName,
+        operation,
+        context.gatewayName,
+        context.runtimeSelection,
+      );
+      revalidateTavilyIdentity();
+      if (hasTavilyEgress(observed.inspection.effectivePolicy))
+        throw new Error("Overlapping grant remains.");
+      return true;
+    } catch {
+      recordPolicyResult(sandboxName, "failed", "partial", "unavailable");
+      console.error(
+        "  Tavily removal is incomplete: effective policy is unreadable or still permits Tavily. Inspect remaining rules and attachments.",
+      );
+      return false;
+    }
+  };
+
   let openClawNpmBaseline: string | null = null;
   if (!isCustom && presetName === "npm") {
     try {
@@ -1921,12 +1971,15 @@ async function removePreset(
     classifyPresetEntries(currentPolicy, presetEntries) === "absent" &&
     policyDocumentsMatch(currentPolicy, mergePresetIntoPolicy(currentPolicy, presetEntries));
   if (supersededByPersonal) {
+    if (!(await verifyTavilyRemoval())) return false;
     console.log(`  Preset '${presetName}' is already absent from the live OpenShell policy.`);
     recordPolicyResult(sandboxName, "no_change", "unchanged");
     return true;
   }
 
-  let updated = removePresetFromPolicy(currentPolicy, presetEntries);
+  const removalPolicy = currentPolicyFromMutationContext(context);
+  if (!removalPolicy) return false;
+  let updated = removePresetFromPolicy(removalPolicy, presetEntries);
   if (!isCustom && (presetName === "teams" || presetName === "outlook")) {
     try {
       const teamsActive =
@@ -1952,6 +2005,7 @@ async function removePreset(
   updated = normalizePersonalOpenInternetPolicy(updated);
 
   if (updated === currentPolicy) {
+    if (!(await verifyTavilyRemoval())) return false;
     console.log(`  Preset '${presetName}' is already absent from the live OpenShell policy.`);
     recordPolicyResult(sandboxName, "no_change", "unchanged");
     return true;
@@ -1973,6 +2027,7 @@ async function removePreset(
   ) {
     return false;
   }
+  if (!(await verifyTavilyRemoval())) return false;
   console.log(`  Removed preset: ${presetName}`);
   return true;
 }

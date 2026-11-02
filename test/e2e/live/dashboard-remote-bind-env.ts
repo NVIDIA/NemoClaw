@@ -3,10 +3,20 @@
 
 import os from "node:os";
 
+import { NAME_MAX_LENGTH } from "../../../src/lib/name-validation.ts";
+
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
 function stripAnsi(output: string): string {
   return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+export function dashboardRemoteBindSandboxName(
+  baseName: string,
+  agent: "openclaw" | "hermes",
+): string {
+  const prefix = baseName.slice(0, NAME_MAX_LENGTH - agent.length - 1).replace(/-+$/u, "");
+  return `${prefix}-${agent}`;
 }
 
 export function buildDashboardRemoteBindEnv(
@@ -51,3 +61,11 @@ export function dashboardForwardIsRunning(forwardLine: string): boolean {
   const columns = stripAnsi(forwardLine).trim().split(/\s+/u);
   return columns.length === 5 && columns[4] === "running";
 }
+
+export const REMOTE_API_REFUSAL_PROBE = [
+  'const net = require("node:net");',
+  "const socket = net.connect({ host: process.argv[1], port: Number(process.argv[2]) });",
+  "const deadline = setTimeout(() => { socket.destroy(); process.exit(2); }, 5000);",
+  "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(1); });",
+  "socket.once('error', (error) => { clearTimeout(deadline); process.exit(error.code === 'ECONNREFUSED' ? 0 : 2); });",
+].join("\n");

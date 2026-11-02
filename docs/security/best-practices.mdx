@@ -272,7 +272,9 @@ Hermes sends the Tavily placeholder in the JSON `api_key` field, so the `tavily`
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Deep Agents uses the NemoClaw-managed Tavily opt-in path.
-The managed `dcode` launchers reject direct `TAVILY_API_KEY` injection, and the sandbox can reach `api.tavily.com` only after you apply the `tavily` preset and attach the `tavily-search` OpenShell provider.
+The managed `dcode` launchers reject direct `TAVILY_API_KEY` injection.
+The `tavily` preset and an attached Tavily provider can independently grant egress to `api.tavily.com`.
+Removing the preset also detaches this sandbox’s Tavily providers and verifies effective removal while preserving shared gateway credentials.
 Because OpenShell attributes these calls to the sandbox Python interpreter, the Tavily egress grant is process-wide for managed sandbox Python, not a `dcode`-only boundary.
 </AgentOnly>
 OpenShell replaces these placeholders only when the request reaches the matching egress policy path.

@@ -1990,7 +1990,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         requestedExtraProviders: createIntent?.extraProviders,
         resolvedIntent: createIntent?.resolved,
         planOrdinaryExtraProviders: () =>
-          planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+          planRegisteredExtraProviders(GATEWAY_NAME, {
+            runOpenshell,
+            webSearchProvider: webSearchConfig?.provider ?? null,
+          }),
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;

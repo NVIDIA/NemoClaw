@@ -227,7 +227,7 @@ export interface SandboxStateOptions<
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   compatibleEndpointReasoningEffort: string | null;
@@ -358,6 +358,10 @@ export interface SandboxStateOptions<
     listRegistrySandboxes(): { sandboxes: unknown[] };
     planRegisteredExtraProviders(
       gatewayName: string,
+      options?: Pick<
+        import("../../extra-provider-reconciliation").ReconcileExtraProvidersDeps,
+        "webSearchProvider"
+      >,
     ):
       | import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan
       | Promise<import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan>;
@@ -1348,7 +1352,10 @@ class SandboxStateFlow<
     return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };
   }
 
-  private reserveCreateRouteForSession(sandboxName: string): void {
+  private reserveCreateRouteForSession(
+    sandboxName: string,
+    preparedRoute?: import("../../inference-providers/types").DeferredInferenceRouteReservation,
+  ): void {
     reserveSandboxResumeRoute(
       sandboxName,
       this.deps.getSandboxRegistryEntry(sandboxName),
@@ -1360,10 +1367,11 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
         preferredInferenceApi: this.options.preferredInferenceApi,
         gatewayName: this.options.gatewayName,
-        reservationSessionId: this.options.session?.sessionId,
         ...(this.options.stagedNativeLocalRecreation
           ? { nativeLocalProviderAttachment: this.options.stagedNativeLocalRecreation.attachment }
           : {}),
+        ...preparedRoute,
+        reservationSessionId: this.options.session?.sessionId,
       },
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
@@ -1396,8 +1404,8 @@ class SandboxStateFlow<
           this.deps.getSandboxRegistryEntry(sandboxName),
         );
         if (this.options.deferredInferenceRoute) {
-          await this.options.deferredInferenceRoute(() =>
-            this.reserveCreateRouteForSession(sandboxName),
+          await this.options.deferredInferenceRoute((preparedRoute) =>
+            this.reserveCreateRouteForSession(sandboxName, preparedRoute),
           );
         } else {
           this.reserveCreateRouteForSession(sandboxName);
@@ -2474,6 +2482,11 @@ class SandboxStateFlow<
       );
       const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
         this.options.gatewayName,
+        {
+          webSearchProvider: state.webSearchConfig
+            ? webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig)
+            : null,
+        },
       );
       if (
         this.options.apfInterceptorRequested === true &&

@@ -97,6 +97,8 @@ function selectedNativeInference(
 }
 
 export interface ProviderInferenceSetupOptions {
+  /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
+  rebuildSandboxPolicyDocument?: string;
   agentName?: string;
   /** Resolve the policy tier before a custom provider can mutate gateway state. */
   resolvePolicyTier?: () => Promise<string>;
@@ -191,6 +193,7 @@ export interface ProviderSelectionResult {
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
+  rebuildSandboxPolicyDocument?: string;
   gatewayName: string;
   resume: boolean;
   fresh: boolean;
@@ -409,7 +412,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 
 export interface ProviderInferenceStateResult {
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   sandboxName: string | null;
   model: string;
   provider: string;
@@ -1381,6 +1384,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   authoritativeResumeConfig = false,
   providerRecoveryReceipt = null,
   providerRecoveryReceiptLedger,
+  rebuildSandboxPolicyDocument,
   initial,
   selectedMessagingChannels,
   env,
@@ -1449,7 +1453,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let stagedNativeLocalRecreation:
     | import("../../inference-providers/types").StagedNativeLocalRecreation
     | undefined;
-  let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
+  let deferredInferenceRoute:
+    | import("../../inference-providers/types").DeferredInferenceRoute
+    | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
     HostLocalInferenceStartupSelection | null
@@ -2012,6 +2018,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
             endpointSource,
+            rebuildSandboxPolicyDocument,
             ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
@@ -2368,6 +2375,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         endpointSource,
+        rebuildSandboxPolicyDocument,
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
