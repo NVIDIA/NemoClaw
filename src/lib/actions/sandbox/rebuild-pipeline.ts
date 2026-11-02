@@ -33,6 +33,7 @@ import {
   type RebuildBackupManifest,
   type RebuildBackupPhaseResult,
   releaseRebuildSourceOpenClawWindow,
+  releaseRebuildSourceAfterRecoveryMarker,
   retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
@@ -113,6 +114,31 @@ function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: str
 
 function rebuildFailureDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function completeRebuildSourceWindowCleanup(
+  window: RebuildBackupPhaseResult["sourceOpenClawDoctorWindow"] | null,
+  marker: Parameters<typeof clearRebuildRecoveryBackup>[0] | null,
+  unwinding: boolean,
+): Promise<{ complete: boolean; retainPolicyHandoff: boolean; failure?: unknown }> {
+  if (!window) return { complete: true, retainPolicyHandoff: false };
+  const released = await releaseRebuildSourceAfterRecoveryMarker(
+    window,
+    marker,
+    releaseRebuildSourceOpenClawWindow,
+  );
+  if (released.ok) return { complete: true, retainPolicyHandoff: false };
+  const error = released.error ?? new Error(released.detail);
+  if (unwinding) {
+    console.error(
+      `  Warning: OpenClaw source maintenance cleanup failed: ${rebuildFailureDetail(error)}`,
+    );
+  }
+  return {
+    complete: false,
+    retainPolicyHandoff: !released.markerInvalidated,
+    ...(unwinding ? {} : { failure: error }),
+  };
 }
 
 /**
@@ -302,6 +328,7 @@ async function rebuildSandboxUnlocked(
     let sourceOpenClawDoctorWindow: NonNullable<
       RebuildBackupPhaseResult["sourceOpenClawDoctorWindow"]
     > | null = null;
+    let preDeleteRecoveryMarker: Parameters<typeof clearRebuildRecoveryBackup>[0] | null = null;
     let unwinding = false;
 
     try {
@@ -661,6 +688,12 @@ async function rebuildSandboxUnlocked(
         transactionId: recreateJournal.id,
       };
       if (!recreateJournal.acceptedTarget && backup.backupManifest) {
+        if (sourceOpenClawDoctorWindow) {
+          preDeleteRecoveryMarker = {
+            ...rebuildRecoveryIdentity,
+            backupManifest: backup.backupManifest,
+          };
+        }
         recordRebuildRecoveryBackup({
           ...rebuildRecoveryIdentity,
           gatewayName: recreateOptions.targetGatewayName,
@@ -1125,28 +1158,17 @@ async function rebuildSandboxUnlocked(
       unwinding = true;
       throw error;
     } finally {
-      let releaseFailed = false;
-      let releaseFailure: unknown;
-      if (sourceOpenClawDoctorWindow) {
-        const window = sourceOpenClawDoctorWindow;
-        sourceOpenClawDoctorWindow = null;
-        try {
-          const released = await releaseRebuildSourceOpenClawWindow(window);
-          if (!released.ok) {
-            throw new Error("OpenClaw source maintenance cleanup did not complete.");
-          }
-        } catch (error) {
-          telemetryCleanupComplete = false;
-          if (unwinding) {
-            console.error(
-              `  Warning: OpenClaw source maintenance cleanup failed: ${rebuildFailureDetail(error)}`,
-            );
-          } else {
-            releaseFailed = true;
-            releaseFailure = error;
-          }
-        }
-      }
+      const sourceCleanup = await completeRebuildSourceWindowCleanup(
+        sourceOpenClawDoctorWindow,
+        preDeleteRecoveryMarker,
+        unwinding,
+      );
+      sourceOpenClawDoctorWindow = null;
+      telemetryCleanupComplete = sourceCleanup.complete && telemetryCleanupComplete;
+      retainPolicyHandoffForRecovery =
+        sourceCleanup.retainPolicyHandoff || retainPolicyHandoffForRecovery;
+      const releaseFailed = sourceCleanup.failure !== undefined;
+      const releaseFailure = sourceCleanup.failure;
       const handoffManifest = rebuildPolicyHandoffManifest;
       if (
         handoffManifest &&

@@ -21,7 +21,10 @@ import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-valid
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
+import {
+  clearRebuildRecoveryBackup,
+  recordRebuildRecoveryBackup,
+} from "./rebuild-recreate-journal";
 import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
 import {
   abortOpenClawPostRestoreDoctor,
@@ -116,6 +119,56 @@ export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRes
     );
   }
   return finished;
+}
+
+/** A retained source may write again only after its old backup stops being recovery authority. */
+export async function releaseRebuildSourceAfterRecoveryMarker(
+  window: OpenClawPostRestoreDoctorWindow,
+  marker: Parameters<typeof clearRebuildRecoveryBackup>[0] | null,
+  release: typeof releaseRebuildSourceOpenClawWindow,
+): Promise<{ ok: boolean; markerInvalidated: boolean; detail?: string; error?: unknown }> {
+  if (marker) {
+    try {
+      clearRebuildRecoveryBackup(marker);
+    } catch (error) {
+      console.error(
+        `  Warning: the retained backup recovery marker could not be invalidated before source release: ${redactBoundedRebuildTerminalDiagnostic(error)}`,
+      );
+      try {
+        const stopped = await abortOpenClawPostRestoreDoctor(window);
+        console.error(
+          stopped.ok
+            ? "  The retained source remains stopped; preserve its backup and recovery files."
+            : `  The retained source stop could not be verified (${stopped.stage}: ${stopped.detail}). Preserve its backup and recovery files.`,
+        );
+      } catch (abortError) {
+        console.error(
+          `  The retained source stop could not be verified (${redactBoundedRebuildTerminalDiagnostic(abortError)}). Preserve its backup and recovery files.`,
+        );
+      }
+      return {
+        ok: false,
+        markerInvalidated: false,
+        detail: "Rebuild recovery marker remained active; the source was not reopened.",
+      };
+    }
+  }
+  try {
+    const released = await release(window);
+    return released.ok
+      ? { ok: true, markerInvalidated: true }
+      : {
+          ok: false,
+          markerInvalidated: true,
+          detail: "OpenClaw source maintenance cleanup did not complete.",
+        };
+  } catch (error) {
+    return {
+      ok: false,
+      markerInvalidated: true,
+      error,
+    };
+  }
 }
 
 export function retireRebuildSourceOpenClawWindowForDelete(

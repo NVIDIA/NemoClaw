@@ -14,6 +14,7 @@ import {
   openClawLifecycle,
   rebuildBackupPhase,
   rebuildDestroyPhase,
+  rebuildRecreateJournal,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
 describe("interactive rebuild bail after backup (#12919)", () => {
@@ -149,23 +150,90 @@ describe("interactive rebuild bail after backup (#12919)", () => {
   });
 
   it("keeps the recovery handoff when MCP reattachment fails before deletion", async () => {
-    const harness = createRebuildFlowHarness();
-    vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockImplementation(async (input) => {
-      input.onMcpRecoveryFailed?.();
-      input.bail("MCP reattachment failed before deletion");
-      return null;
-    });
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Teams webhook port changed"));
+    const harness = createRebuildFlowHarness({ preflightMessagingConflicts: check });
+    harness.reattachMcpProvidersAfterRebuildAbortSpy.mockRejectedValue(
+      new Error("MCP reattachment failed before deletion"),
+    );
+    let markerPresentAtRelease = true;
+    const release = vi
+      .spyOn(openClawLifecycle, "finishOpenClawBackupQuiesce")
+      .mockImplementation(async () => {
+        markerPresentAtRelease = fs.existsSync(
+          path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"),
+        );
+        return { ok: true };
+      });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("MCP reattachment failed before deletion");
+    ).rejects.toThrow("MCP provider recovery also failed: MCP reattachment failed before deletion");
 
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(markerPresentAtRelease).toBe(false);
     const manifest = JSON.parse(
       fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
     ) as { rebuildPolicyHandoff: { file: string } };
     expect(manifest.rebuildPolicyHandoff?.file).toBeTruthy();
     expect(fs.existsSync(path.join(harness.backupPath, manifest.rebuildPolicyHandoff.file))).toBe(
       true,
+    );
+    expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the source stopped if the pre-delete recovery marker cannot be invalidated", async () => {
+    const harness = createRebuildFlowHarness();
+    vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockImplementation(async (input) => {
+      input.bail("injected pre-delete refusal");
+      return null;
+    });
+    vi.spyOn(rebuildRecreateJournal, "clearRebuildRecoveryBackup").mockImplementation(() => {
+      throw new Error("injected marker retirement failure");
+    });
+    const abort = vi.spyOn(openClawLifecycle, "abortOpenClawPostRestoreDoctor");
+    const release = vi.spyOn(openClawLifecycle, "finishOpenClawBackupQuiesce");
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("injected pre-delete refusal");
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(release).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "the retained backup recovery marker could not be invalidated before source release",
+    );
+    expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+  });
+
+  it("reports an unverified source stop if marker invalidation and abort both fail", async () => {
+    const harness = createRebuildFlowHarness();
+    vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockImplementation(async (input) => {
+      input.bail("injected pre-delete refusal");
+      return null;
+    });
+    vi.spyOn(rebuildRecreateJournal, "clearRebuildRecoveryBackup").mockImplementation(() => {
+      throw new Error("injected marker retirement failure");
+    });
+    vi.spyOn(openClawLifecycle, "abortOpenClawPostRestoreDoctor").mockRejectedValue(
+      new Error("source stop was not verified"),
+    );
+    const release = vi.spyOn(openClawLifecycle, "finishOpenClawBackupQuiesce");
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("injected pre-delete refusal");
+
+    expect(release).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "The retained source stop could not be verified (source stop was not verified).",
     );
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
   });
