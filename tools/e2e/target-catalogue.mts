@@ -830,7 +830,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/fixtures/native-local-chat.ts"],
+    owningPaths: [
+      "test/e2e/fixtures/native-local-chat.ts",
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
@@ -851,6 +855,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
       "test/e2e/fixtures/native-local-chat.ts",
       "test/e2e/live/hermes-cli-adapter-live.ts",
       "src/lib/inference/ollama/proxy.ts",

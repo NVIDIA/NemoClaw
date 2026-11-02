@@ -14,9 +14,25 @@ import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import { cleanupOllama, ollamaCleanupScript } from "../live/gpu-e2e-helpers.ts";
 
-it.each([0, 17])(
-  "preserves Ollama service cleanup status %i without running logout hooks",
-  async (status) => {
+it.each<{
+  name: string;
+  service?: number;
+  proxy?: number;
+  daemon?: number;
+  sudo?: number;
+  status: number;
+}>([
+  { name: "successful cleanup", status: 0 },
+  { name: "service stop failure", service: 17, status: 17 },
+  { name: "successful process termination", proxy: 0, daemon: 0, status: 0 },
+  { name: "proxy termination syntax failure", proxy: 2, status: 2 },
+  { name: "proxy termination failure", proxy: 17, status: 17 },
+  { name: "daemon termination failure", daemon: 17, status: 17 },
+  { name: "privileged daemon termination failure", sudo: 17, status: 17 },
+  { name: "no privileged daemon process", sudo: 1, status: 0 },
+])(
+  "preserves $name status without running logout hooks",
+  async ({ service = 0, proxy = 1, daemon = 1, sudo, status }) => {
     const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-logout-"));
     const bin = path.join(root, "bin");
     mkdirSync(bin);
@@ -32,12 +48,22 @@ it.each([0, 17])(
       // Inert commands isolate the fixture from host services and processes.
       writeFileSync(
         path.join(bin, "systemctl"),
-        `#!/bin/sh\ncase "$*" in "stop ollama.service") exit ${status} ;; *) exit 0 ;; esac\n`,
+        `#!/bin/sh\ncase "$*" in "stop ollama.service") exit ${service} ;; *) exit 0 ;; esac\n`,
         { mode: 0o755 },
       );
       writeFileSync(path.join(bin, "id"), "#!/bin/sh\nprintf '0\\n'\n", { mode: 0o755 });
-      writeFileSync(path.join(bin, "sudo"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      writeFileSync(path.join(bin, "pkill"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      writeFileSync(
+        path.join(bin, "sudo"),
+        sudo === undefined
+          ? "#!/bin/sh\nexit 1\n"
+          : `#!/bin/sh\ncase "$*" in "-n true") exit 0 ;; "-n pkill -f [o]llama serve") exit ${sudo} ;; *) exit 1 ;; esac\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        path.join(bin, "pkill"),
+        `#!/bin/sh\ncase "$*" in "-f [o]llama-auth-proxy") exit ${proxy} ;; "-f [o]llama serve") exit ${daemon} ;; *) exit 99 ;; esac\n`,
+        { mode: 0o755 },
+      );
       writeFileSync(path.join(bin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
       writeFileSync(path.join(bin, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       const host = new HostCliClient({
@@ -45,7 +71,7 @@ it.each([0, 17])(
           await new Promise((resolve) => {
             execFile(
               command,
-              // Skip host profiles while retaining the helper's login-shell selection.
+              // Skip host profiles while retaining the helper's shell arguments.
               ["--noprofile", ...args.map((arg) => arg.replaceAll("11434", String(port)))],
               {
                 env: { HOME: root, PATH: `${bin}:/usr/bin:/bin` },

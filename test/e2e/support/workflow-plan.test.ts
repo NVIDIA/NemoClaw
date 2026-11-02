@@ -684,6 +684,22 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each(["test/e2e/live/gpu-e2e-helpers.ts", "test/e2e/live/gpu-e2e-ollama.ts"])(
+    "selects every live Ollama cleanup consumer when %s changes",
+    (file) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(
+        expect.arrayContaining(["gpu-e2e", "gpu-double-onboard"]),
+      );
+      expect(selectedWorkflowJobs(plan)).toEqual(
+        expect.arrayContaining([
+          "managed-image-protected-runtime",
+          "managed-image-multiarch-startup",
+        ]),
+      );
+    },
+  );
+
   it("selects Hermes GPU startup when its output proof changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
