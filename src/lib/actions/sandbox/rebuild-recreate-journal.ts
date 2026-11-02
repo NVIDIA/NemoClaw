@@ -396,6 +396,14 @@ export function findRebuildRecoveryBackup(
 }
 
 /** Retire the bounded recovery record after restore and post-restore succeed. */
+export class RebuildRecoveryMarkerSyncError extends Error {
+  constructor(cause: unknown) {
+    super("The rebuild recovery marker was removed, but its directory could not be synchronized.", {
+      cause,
+    });
+  }
+}
+
 export function clearRebuildRecoveryBackup(
   input: RebuildRecoveryBackupIdentity & {
     readonly backupManifest: RebuildManifest;
@@ -408,7 +416,11 @@ export function clearRebuildRecoveryBackup(
     throw new Error("Rebuild recovery backup record is missing or changed.");
   }
   fs.unlinkSync(recoveryPath(manifest.backupPath));
-  syncDirectory(manifest.backupPath);
+  try {
+    syncDirectory(manifest.backupPath);
+  } catch (error) {
+    throw new RebuildRecoveryMarkerSyncError(error);
+  }
 }
 
 export type RetiredRebuildRecovery = Readonly<{

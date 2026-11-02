@@ -227,6 +227,42 @@ describe("interactive rebuild bail after backup (#12919)", () => {
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
   });
 
+  it("does not suggest a same-transaction retry after marker removal but failed sync", async () => {
+    const harness = createRebuildFlowHarness();
+    vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockImplementation(async (input) => {
+      input.bail("injected pre-delete refusal");
+      return null;
+    });
+    vi.spyOn(rebuildRecreateJournal, "clearRebuildRecoveryBackup").mockImplementation((marker) => {
+      fs.unlinkSync(path.join(marker.backupManifest.backupPath, ".nemoclaw-rebuild-recovery.json"));
+      throw new rebuildRecreateJournal.RebuildRecoveryMarkerSyncError(
+        new Error("injected directory sync failure"),
+      );
+    });
+    const abort = vi.spyOn(openClawLifecycle, "abortOpenClawPostRestoreDoctor");
+    const release = vi.spyOn(openClawLifecycle, "finishOpenClawBackupQuiesce");
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("injected pre-delete refusal");
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(release).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      false,
+    );
+    const warnings = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(warnings).toContain("source maintenance cleanup failed after the marker was removed");
+    expect(warnings).not.toContain("could not be invalidated before source release");
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
+    ) as { rebuildPolicyHandoff: { file: string } };
+    expect(fs.existsSync(path.join(harness.backupPath, manifest.rebuildPolicyHandoff.file))).toBe(
+      true,
+    );
+    expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+  });
+
   it("reports an unverified source stop if marker invalidation and abort both fail", async () => {
     const harness = createRebuildFlowHarness();
     vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockImplementation(async (input) => {

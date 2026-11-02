@@ -23,6 +23,7 @@ import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuil
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
   clearRebuildRecoveryBackup,
+  RebuildRecoveryMarkerSyncError,
   recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
@@ -131,8 +132,11 @@ export async function releaseRebuildSourceAfterRecoveryMarker(
     try {
       clearRebuildRecoveryBackup(marker);
     } catch (error) {
+      const markerRemoved = error instanceof RebuildRecoveryMarkerSyncError;
       console.error(
-        `  Warning: the retained backup recovery marker could not be invalidated before source release: ${redactBoundedRebuildTerminalDiagnostic(error)}`,
+        markerRemoved
+          ? `  Warning: source maintenance cleanup failed after the marker was removed; its directory could not be synchronized: ${redactBoundedRebuildTerminalDiagnostic(error)}`
+          : `  Warning: the retained backup recovery marker could not be invalidated before source release: ${redactBoundedRebuildTerminalDiagnostic(error)}`,
       );
       try {
         const stopped = await abortOpenClawPostRestoreDoctor(window);
@@ -148,8 +152,10 @@ export async function releaseRebuildSourceAfterRecoveryMarker(
       }
       return {
         ok: false,
-        markerInvalidated: false,
-        detail: "Rebuild recovery marker remained active; the source was not reopened.",
+        markerInvalidated: markerRemoved,
+        detail: markerRemoved
+          ? "Rebuild recovery marker was removed without confirmed directory synchronization; the source was not reopened."
+          : "Rebuild recovery marker remained active; the source was not reopened.",
       };
     }
   }
