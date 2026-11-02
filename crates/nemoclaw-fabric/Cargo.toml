@@ -20,7 +20,7 @@ nemoclaw-docker = { path = "../nemoclaw-docker", optional = true }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 jsonschema.workspace = true
-nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "a3b57155593877135f2557ef37d5e18161a1ad82" }
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "ddf59e875d50d925991cd40c44dc63facf391bac" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
