@@ -3,7 +3,9 @@
 
 # Manual PR E2E
 
-Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
+Use this mode when the task authorizes E2E for a pull request, including continued qualification
+after in-scope upgrade repairs. Apply [execution authorization](../SKILL.md#carry-execution-authorization-through-the-task);
+do not require a new request after each run ends. The trusted workflow stays on
 `main` and first checks out the latest commit of an open PR. It rejects an arbitrary or historical
 commit SHA. Replay the same selector against the exact PR base only after a candidate failure remains
 unresolved. The result is advisory and does not create a required PR check.
@@ -39,7 +41,7 @@ Before dispatch, review the complete candidate diff. After a failure:
 receives the NVIDIA inference API key. The protected managed-image and native-runtime qualification
 jobs define narrower trusted-host boundaries in the workflow.
 
-## Resolve and Authorize the Revision
+## Resolve the Revision and Recheck Execution Scope
 
 ```bash
 set -euo pipefail
@@ -68,6 +70,13 @@ Empty selectors run every default-enabled E2E. Any supported job or target selec
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
 [Jetson Dispatch Controller](../../../../test/e2e/docs/jetson-dispatch.md).
+
+Before dispatch, inspect the trusted controller's required image-publication and execution gates.
+Verify those gates against the candidate; unrelated advisory reviews may continue in parallel.
+Record active candidate and baseline runs in the task record. Reuse an existing matching run instead of dispatching a duplicate.
+Candidate and baseline runs use separate concurrency groups. A candidate retry cannot cancel the baseline.
+Baseline replay also disables active-run cancellation; retain its run ID through completion or explicit cancellation.
+For timing comparisons, avoid overlapping work on shared resources when it would confound the measurement.
 
 Set the requested selectors and flags, or leave them empty. Record them once so an exact-base replay
 cannot silently change the selected behavior:
@@ -204,16 +213,22 @@ Classify a failed base job with the same read-only CI classification skill when 
 
 Report exactly one outcome:
 
-- `candidate regression`: the unresolved head run failed and the exact-base run passed.
+- `candidate regression`: the candidate shows a product failure absent on the base, with evidence tying it to the changed contract.
 - `base already broken`: both runs show the same reproducible product failure.
 - `infrastructure`: the read-only classifier identifies a known infrastructure failure in either
   run.
 - `unresolved`: the base run fails differently, a run or identity is incomplete, or the available
   evidence does not support one of the outcomes above.
 
+A timeout on the candidate and a pass on the base establish different outcomes, not their cause.
+Compare the reached assertions, phase durations, effective budgets, image identities, caches, and available resource-pressure evidence.
+Matching runner labels do not establish equivalent execution conditions. Keep causal classification unresolved when material differences remain uncontrolled.
+Report the dominant measured delay separately from any proven candidate overhead.
+
 The report must include both workflow URLs, `HEAD_SHA`, `BASE_SHA`, `WORKFLOW_SHA`, the identical
-selectors, and the classifier result. Do not automatically dispatch the base run, retry either run,
-or publish a custom commit status.
+selectors, and the classifier result. Dispatch a base comparison only within the user's existing execution authorization and the audit's diagnostic procedure.
+When that authority is established, continue without requesting routine confirmation.
+Do not automatically retry either run or publish a custom commit status. Preserve separate candidate retry and comparison trial counts.
 
 Return:
 

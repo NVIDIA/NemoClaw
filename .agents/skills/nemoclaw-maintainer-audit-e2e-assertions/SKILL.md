@@ -53,6 +53,36 @@ Find the first causal failure. Separate it from later cleanup errors and failure
 outputs. Mark the last completed assertion and the first unreached assertion.
 An unreached assertion has supplied no execution evidence.
 
+For a timeout, distinguish the deadline that terminated execution from the cause of increased runtime.
+Record effective runner, job, harness, and command budgets, including setup time and cleanup reserve.
+Compare phase durations and retained resource evidence before attributing a regression to the candidate.
+Use existing semantic-phase, runner-comparison, and runner-pressure evidence where the selected job produces it.
+Missing telemetry leaves the cause unresolved. A base pass alone does not establish causality for a timing-sensitive failure.
+
+## Reuse completed review
+
+Keep the ledger and log-review progress in the [task record](../_shared/task-continuation.md).
+Bind reviewed logs to their artifact identity and source conclusions to their code, concrete inputs, and runtime assumptions.
+On continuation, verify those bindings and resume at the first incomplete obligation.
+Do not reread unchanged logs or rebuild completed ledger rows solely because context was compacted.
+
+After a change, trace its affected callers and inputs. Revisit affected rows and link unchanged conclusions to their original evidence.
+Changed helper inputs can invalidate a row even when its assertion source is unchanged.
+New execution evidence does not overwrite the original failure. Read each new failed log completely.
+Keep historical runtime results separate from evidence qualifying the current candidate.
+
+## Resolve a runtime unknown
+
+A bounded diagnostic comparison may precede completion of the remaining assertion ledger when source inspection cannot resolve a named runtime unknown.
+Before dispatch, read the failed log and inspect the proposed diagnostic's setup, execution, cleanup, credentials, and cost boundaries.
+State the hypothesis, distinguishing observation, identities, controlled inputs, trial limit, and stopping condition.
+Confirm that no known deterministic defect makes the comparison uninformative.
+Use only the execution workflow's supported selectors and existing user authorization.
+Preserve required assertions, deadlines, cleanup, and retry accounting. This procedure does not authorize new environments or extra retries.
+
+Use the result to update the affected ledger rows. Record confounding differences and missing observations explicitly.
+A diagnostic result is not full qualification. Complete the remaining in-scope review before publishing a repair or claiming suite completion.
+
 ## Enumerate the Entire Remaining Contract
 
 Read each in-scope test from setup through final cleanup. Follow its helpers, fixtures, wrappers,
@@ -129,7 +159,7 @@ Do not start a live environment or an expensive CI run merely to discover the ne
 
 ## Finish the Review Before the Next Push or Run
 
-Before any repair push or expensive rerun, establish all of these conditions:
+Before a repair push or qualification rerun, establish all of these conditions:
 
 - Every in-scope assertion and prerequisite has a ledger entry, including unreached paths and cleanup.
 - Each entry has concrete inputs, producing code, and a supported conclusion or precisely named runtime dependency.

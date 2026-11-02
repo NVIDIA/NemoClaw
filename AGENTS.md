@@ -78,8 +78,14 @@ their own authorization boundaries. Use `./scripts/dev-setup.sh --expose-cli` on
 For every E2E triage, diagnosis, debugging, or repair task, first use
 [`nemoclaw-maintainer-audit-e2e-assertions`](.agents/skills/nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
 This also applies when E2E failures emerge during broader PR or CI work. Complete its itemized
-source audit before a repair push or expensive rerun. Status-only and dispatch-only requests
+source audit before a repair push or qualification rerun. Reuse applicable evidence and follow the skill's
+bounded diagnostic procedure when a runtime observation is needed to finish diagnosis. Status-only and dispatch-only requests
 continue through the existing E2E execution skill without an assertion audit.
+
+### Long-running work
+
+Follow [Task Continuation](.agents/skills/_shared/task-continuation.md) when work spans external waits, compaction, or handoff.
+Keep one task record and reuse active watchers. Preserve scope, authorization, evidence, and retry accounting across continuations.
 
 ### E2E Selection and Authoring
 
