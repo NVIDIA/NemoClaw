@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Runs each scenario in `hcl/integration/tests` under `tofu test`. A scenario
-//! is `hcl/cases/<scenario>.yaml`, shared with the live E2E suites, and
-//! `hcl/integration/tests/<scenario>.tftest.hcl`. The runner compiles the YAML
-//! with the SDK against the fixtures into `cases/<scenario>` of a work copy of
-//! the integration root, beside a copy of `harness/main.tf`, then runs each test file with
-//! fixtures reset and checks what teardown leaves, which no run block sees.
+//! Runs each scenario in `tests/integration/hcl/tests` under `tofu test`. A
+//! scenario is `cases/<scenario>.yaml`, shared with the live E2E suites, and
+//! `tests/integration/hcl/tests/<scenario>.tftest.hcl`. The runner compiles
+//! the YAML with the SDK against the fixtures into `cases/<scenario>` of a work
+//! copy of the integration root, beside a copy of `harness/main.tf`, then runs
+//! each test file with fixtures reset and checks what teardown leaves, which no
+//! run block sees.
 
 mod fixtures;
 
@@ -20,7 +21,10 @@ use std::{
     time::Duration,
 };
 
-const HCL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/hcl");
+/// The shared NemoClaw documents.
+const CASES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/cases");
+/// The integration `tofu test` root.
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/integration/hcl");
 const GENERATIONS: [&str; 7] = [
     "workspace",
     "provider",
@@ -66,15 +70,15 @@ async fn scenarios_in_shard_4() {
     run_shard(3).await;
 }
 
-/// Every live E2E and integration test file names a document in `hcl/cases`,
+/// Every live E2E and integration test file names a document in `cases`,
 /// so a renamed or removed case fails with the unit tests, before a bundle
 /// is built.
 #[test]
 fn every_scenario_test_names_a_case() {
-    let missing: Vec<String> = ["tests", "integration/tests"]
+    let missing: Vec<String> = ["tests/e2e/hcl/tests", "tests/integration/hcl/tests"]
         .into_iter()
         .flat_map(|directory| {
-            fs::read_dir(Path::new(HCL).join(directory))
+            fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(directory))
                 .unwrap()
                 .map(move |entry| {
                     (
@@ -85,21 +89,19 @@ fn every_scenario_test_names_a_case() {
         })
         .filter_map(|(directory, name)| {
             let scenario = name.strip_suffix(".tftest.hcl")?;
-            let case = Path::new(HCL)
-                .join("cases")
-                .join(format!("{scenario}.yaml"));
+            let case = Path::new(CASES).join(format!("{scenario}.yaml"));
             (!case.is_file()).then(|| format!("{directory}/{name}"))
         })
         .collect();
     assert!(
         missing.is_empty(),
-        "hcl test files without hcl/cases/<name>.yaml: {missing:?}"
+        "hcl test files without cases/<name>.yaml: {missing:?}"
     );
 }
 
 async fn run_shard(shard: usize) {
     let bundle = Bundle::from_env();
-    let root = Path::new(HCL).join("integration");
+    let root = Path::new(ROOT);
     let mut tests: Vec<String> = fs::read_dir(root.join("tests"))
         .unwrap()
         .filter_map(|entry| {
@@ -113,7 +115,7 @@ async fn run_shard(shard: usize) {
     let fixtures = Fixtures::start().await;
     let directory = tempfile::tempdir().unwrap();
     let work = directory.path().join("integration");
-    copy(&root, &work);
+    copy(root, &work);
     let manifest: Value =
         serde_json::from_slice(&fs::read(bundle.root().join("manifest.json")).unwrap()).unwrap();
     let version = manifest["Version"].as_str().unwrap();
@@ -124,7 +126,7 @@ async fn run_shard(shard: usize) {
     let scenarios: Vec<Scenario> = tests
         .into_iter()
         .map(|name| {
-            let yaml = Path::new(HCL).join("cases").join(format!("{name}.yaml"));
+            let yaml = Path::new(CASES).join(format!("{name}.yaml"));
             let source =
                 fs::read(&yaml).unwrap_or_else(|_| panic!("{} is missing", yaml.display()));
             let mut document = Document::parse(source.as_slice()).unwrap();

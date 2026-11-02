@@ -207,14 +207,23 @@ fn uses_independent_inference(document: &Document) -> bool {
 #[test]
 fn apply_exit_test_requires_independent_inference() {
     for (input, accepted) in [
-        (include_str!("../../../examples/fabric-openclaw.yaml"), true),
         (
-            include_str!("../../../examples/inline-inference.yaml"),
+            include_str!("../../../../examples/fabric-openclaw.yaml"),
             true,
         ),
-        (include_str!("../../../examples/managed-ollama.yaml"), false),
-        (include_str!("../../../examples/spark/vllm.yaml"), false),
-        (include_str!("../../../examples/fabric-hermes.yaml"), true),
+        (
+            include_str!("../../../../examples/inline-inference.yaml"),
+            true,
+        ),
+        (
+            include_str!("../../../../examples/managed-ollama.yaml"),
+            false,
+        ),
+        (include_str!("../../../../examples/spark/vllm.yaml"), false),
+        (
+            include_str!("../../../../examples/fabric-hermes.yaml"),
+            true,
+        ),
     ] {
         assert_eq!(
             uses_independent_inference(&Document::parse(input.as_bytes()).unwrap()),

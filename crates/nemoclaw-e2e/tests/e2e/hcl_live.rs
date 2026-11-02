@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Live HCL scenarios. `case` applies `hcl/cases/<case>.yaml` with the bundled
-//! CLI, then runs `hcl/tests/<case>.tftest.hcl`, whose verifier runs `probe`
-//! from this binary once per target. The caller destroys the deployment, so
-//! cleanup also runs after a cancelled or timed-out job:
+//! Live HCL scenarios. `case` applies `cases/<case>.yaml` with the bundled
+//! CLI, then runs `tests/e2e/hcl/tests/<case>.tftest.hcl`, whose verifier runs
+//! `probe` from this binary once per target. The caller destroys the
+//! deployment, so cleanup also runs after a cancelled or timed-out job:
 //! `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 
 use fabric_provider::AgentBridge as _;
@@ -22,7 +22,7 @@ fn case() {
     let run = PathBuf::from(var("NEMOCLAW_HCL_RUN").unwrap());
     let (state, reports) = (run.join("deployment"), run.join("reports"));
     fs::create_dir_all(&reports).unwrap();
-    let config = fs::canonicalize(format!("hcl/cases/{case}.yaml")).unwrap();
+    let config = fs::canonicalize(format!("cases/{case}.yaml")).unwrap();
     let cli = bundle
         .root()
         .join("bin")
@@ -48,7 +48,7 @@ fn case() {
     for args in [&["get", "-no-color"][..], &["test", "-no-color", &filter]] {
         let status = Command::new(bundle.tofu())
             .args(args)
-            .current_dir("hcl")
+            .current_dir("tests/e2e/hcl")
             .env("TF_DATA_DIR", run.join("tofu"))
             .env("TF_VAR_context", context.to_string())
             .status()
@@ -59,7 +59,7 @@ fn case() {
 
 /// Invoke one target's agent and record the outcome, never the request or reply.
 #[tokio::test]
-#[ignore = "run by hcl/verifier for one target"]
+#[ignore = "run by tests/e2e/hcl/verifier for one target"]
 async fn probe() {
     let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
     let (state, agent) = (PathBuf::from(input("STATE")), input("AGENT"));

@@ -69,7 +69,7 @@ To render the pinned chart through the bundled provider without cluster access:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-e2e --test integration \
+  cargo test --locked -p nemoclaw-e2e --test e2e \
     kubernetes_chart::the_pinned_chart_renders_with_the_sdk_values -- --ignored --exact
 ```
 
@@ -88,7 +88,7 @@ Supply the cluster's kubeconfig and context, and a verified immutable bundle bui
 NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
 NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-e2e --test integration \
+  cargo test --locked -p nemoclaw-e2e --test e2e \
     kubernetes_live::the_gateway_installs_authenticates_and_is_removed_keeping_storage \
     -- --ignored --exact --nocapture
 ```
@@ -149,7 +149,7 @@ NEMOCLAW_UPGRADE_CONFIG=/absolute/path/to/owned-deployment.yaml \
 NEMOCLAW_UPGRADE_STATE=/absolute/path/to/new-state \
 NEMOCLAW_UPGRADE_INPUT=/absolute/path/to/adapter-input.json \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
-  cargo test -p nemoclaw-e2e --test integration \
+  cargo test -p nemoclaw-e2e --test e2e \
     fabric_live::dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
 ```
 
@@ -189,7 +189,7 @@ From the repository root, with absolute paths:
 NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/deepagents-team.yaml \
 NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test -p nemoclaw-e2e --test integration spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
+  cargo test -p nemoclaw-e2e --test e2e spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
 ```
 
 The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
@@ -269,7 +269,7 @@ Supply a fresh, owned OpenClaw or Hermes deployment configuration with a free ga
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_LIVE_MODEL_CONFIG=/absolute/path/to/vllm.yaml \
 NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
-  cargo test -p nemoclaw-e2e --test integration \
+  cargo test -p nemoclaw-e2e --test e2e \
     model_live::selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
 ```
 
@@ -305,7 +305,7 @@ To refresh a fixture, run the public v0 `nemoclaw config export` against a repre
 Run the comparisons without Docker or a credential:
 
 ```sh
-cargo test -p nemoclaw-e2e --test integration hosted_parity::
+cargo test -p nemoclaw-e2e --test e2e hosted_parity::
 ```
 
 The live tests then check the public deployment operations:
@@ -329,7 +329,7 @@ NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
 NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
 NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
-  cargo test -p nemoclaw-e2e --test integration \
+  cargo test -p nemoclaw-e2e --test e2e \
   hosted_parity::live::authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
   -- --ignored
 ```
@@ -372,7 +372,7 @@ Run from the repository root:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
 NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE=repository@sha256:YOUR_REPLACEMENT_DIGEST \
-  cargo test -p nemoclaw-e2e --test integration docker_provider_proxy:: -- --ignored
+  cargo test -p nemoclaw-e2e --test e2e docker_provider_proxy:: -- --ignored
 ```
 
 This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
@@ -390,10 +390,10 @@ From the repository root:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_CACHE_ENGINE=unix:///var/run/docker.sock \
 NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-  cargo test -p nemoclaw-e2e --test integration cache_provider:: -- --ignored
+  cargo test -p nemoclaw-e2e --test e2e cache_provider:: -- --ignored
 ```
 
-The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
+The [hand-written HCL](../../crates/nemoclaw-e2e/tests/e2e/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
 The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
 Missing or substituted credential volumes must stop apply before compute creation and preserve state.
 Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.
@@ -414,7 +414,7 @@ Supply a verified bundle and an owned document like the gateway tests', with a f
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_DUMMY_DOCUMENT=/absolute/path/to/dummy.yaml \
-cargo test -p nemoclaw-e2e --test integration \
+cargo test -p nemoclaw-e2e --test e2e \
   dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle -- --ignored --exact
 ```
 
@@ -452,7 +452,7 @@ The test sets that variable itself:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_INTERFACES_DOCUMENT=/absolute/path/to/interfaces.yaml \
 NEMOCLAW_TEST_OPENSHELL=/absolute/path/to/openshell \
-cargo test -p nemoclaw-e2e --test integration \
+cargo test -p nemoclaw-e2e --test e2e \
   interfaces_live::openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports -- --ignored --exact
 ```
 
@@ -474,7 +474,7 @@ From the repository root:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/gateway.yaml \
 NEMOCLAW_TEST_GATEWAY_STATE=/absolute/path/to/new-state \
-cargo test -p nemoclaw-e2e --test integration \
+cargo test -p nemoclaw-e2e --test e2e \
   managed_gateway::managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu \
   -- --ignored --exact
 ```
