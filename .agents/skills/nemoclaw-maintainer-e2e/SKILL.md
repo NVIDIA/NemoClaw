@@ -56,6 +56,12 @@ Return:
 
 A focused run supplements the reported full-run status; it does not become a full run.
 
+Report selected, skipped, failed, and unreached scenarios separately, with the selection or prerequisite reason for each relevant gap.
+Use the trusted planner's result and retained receipts; empty selectors do not select every opt-in job.
+For timeouts, report the terminating deadline, last completed phase, first unreached check, and available timing evidence.
+Distinguish the observed failure mechanism from a demonstrated cause of increased runtime.
+Keep run identities, active comparisons, and trial counts in the [task record](../_shared/task-continuation.md).
+
 Do not ask for release confirmation or decide whether a release can proceed. The release-tag skill
 owns the general E2E decision and records any reason for proceeding with an exceptional general E2E
 status.
