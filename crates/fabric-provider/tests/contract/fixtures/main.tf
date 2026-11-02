@@ -4,12 +4,14 @@ terraform {
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
     fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
+    fixture   = { source = "registry.opentofu.org/nvidia/fixture" }
   }
 }
 variable "endpoint" { type = string }
 variable "launch_json" { type = string }
 variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
+variable "agent" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
 provider "fabric" {
@@ -21,7 +23,7 @@ provider "openshell" {
 locals {
   gateway = {
     type                = "openshell_gateway"
-    endpoint = var.endpoint
+    endpoint            = var.endpoint
     credential_env      = ""
     tls_ca_env          = ""
     tls_certificate_env = ""
@@ -34,10 +36,9 @@ resource "openshell_workspace" "example" {
   name       = "standalone"
   owner      = "standalone-owner"
   generation = "workspace-generation"
-  lifecycle { prevent_destroy = true }
 }
 resource "openshell_inference" "inference" {
-  gateway = local.gateway
+  gateway    = local.gateway
   count      = var.enabled ? 1 : 0
   workspace  = openshell_workspace.example.ref
   name       = "local"
@@ -53,15 +54,15 @@ resource "openshell_inference" "inference" {
   binaries = var.binaries
 }
 resource "openshell_sandbox" "agent" {
-  gateway = local.gateway
-  count               = var.enabled ? 1 : 0
-  workspace           = openshell_workspace.example.ref
-  name                = "assistant"
-  owner               = openshell_workspace.example.owner
-  generation          = "sandbox-generation"
-  image               = var.image
-  launch_json         = var.launch_json
-  providers      = [openshell_inference.inference[0].ref]
+  gateway     = local.gateway
+  count       = var.enabled ? 1 : 0
+  workspace   = openshell_workspace.example.ref
+  name        = "assistant"
+  owner       = openshell_workspace.example.owner
+  generation  = "sandbox-generation"
+  image       = var.image
+  launch_json = var.launch_json
+  providers   = [openshell_inference.inference[0].ref]
   # A changed agent needs a new sandbox.
   lifecycle {
     replace_triggered_by = [terraform_data.agent_configuration]
@@ -69,12 +70,12 @@ resource "openshell_sandbox" "agent" {
   policy {
     managed {
       endpoints {
-        access = "full"
+        access      = "full"
         allowed_ips = ["127.0.0.1/32"]
-        host = "127.0.0.1"
-        path = "/v1/**"
-        port = 11434
-        protocol = "rest"
+        host        = "127.0.0.1"
+        path        = "/v1/**"
+        port        = 11434
+        protocol    = "rest"
       }
       name = "nemoclaw-inference-local-fcb7b1f1af3733764900def4"
     }
@@ -98,7 +99,7 @@ locals {
 }
 resource "fabric_agent" "agent" {
   gateway = local.gateway
-  count   = var.enabled ? 1 : 0
+  count   = var.enabled && var.agent ? 1 : 0
   sandbox = openshell_sandbox.agent[0].ref
   harness = local.harness
   name    = "assistant"

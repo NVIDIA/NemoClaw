@@ -21,24 +21,57 @@ use http_fixture as transport;
 mod image_runtime;
 
 mod discovery;
-mod endpoint_readiness;
-mod host_container_health;
-mod host_image;
+mod host;
 mod provider_protocol;
 mod readiness_refs;
 mod references;
 // Unix only for the same reason as vllm_runtime, whose workspace it uses.
+// The bundled Docker provider reaches its engine with its own ssh arguments,
+// which the relay does not accept.
 #[cfg(unix)]
 mod replacement_cleanup;
 mod service_capacity;
 mod service_readiness;
 mod service_storage;
-// The bundled Docker provider reaches its engine with its own ssh arguments,
-// which the relay does not accept.
-#[cfg(unix)]
-mod vllm_runtime;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};
+
+/// Modules whose scenarios are native `tests/*.tftest.hcl` files.
+pub const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract");
+
+/// Run each native test file of `module` under `CONTRACT`.
+pub fn native(module: &str, environment: &[(&str, &str)]) {
+    let root = workspace();
+    root.copy(std::path::Path::new(CONTRACT).join(module));
+    for file in root.test_files() {
+        root.test(&file, environment);
+    }
+}
+
+/// The configuration of every module with native tests.
+fn native_sources() -> String {
+    let mut sources = String::new();
+    for module in std::fs::read_dir(CONTRACT).unwrap() {
+        let module = module.unwrap().path();
+        if !module.join("tests").is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(module).unwrap() {
+            let file = file.unwrap().path();
+            if file.extension().is_some_and(|extension| extension == "tf") {
+                sources += &std::fs::read_to_string(file).unwrap();
+            }
+        }
+    }
+    sources
+}
+
+/// The runtime contracts in `runtime/tests`, computed without any service.
+#[test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
+fn runtime_contracts_carry_their_typed_settings() {
+    native("runtime", &[]);
+}
 
 /// A workspace with this package's providers under test (vllm, ollama, and
 /// host), and OpenTofu and the openshell and fabric providers from the bundle.
@@ -61,6 +94,10 @@ pub fn workspace() -> tofu::TofuWorkspace {
             ),
             ("openshell", &bundle.provider("openshell")),
             ("fabric", &bundle.provider("fabric")),
+            (
+                "fixture",
+                &nemoclaw_test_fixtures::fixture_executable("nemoclaw-fixture-control"),
+            ),
         ],
     )
 }
@@ -114,17 +151,15 @@ fn every_type_has_a_contract_test() {
         ))
         .chain(served("host", nemoclaw_provider::HostProvider::default()))
         .collect();
+    let native = native_sources();
     let sources = [
         include_str!("discovery.rs"),
-        include_str!("endpoint_readiness.rs"),
         include_str!("readiness_refs.rs"),
         include_str!("provider_protocol.rs"),
-        include_str!("host_container_health.rs"),
-        include_str!("host_image.rs"),
         include_str!("service_capacity.rs"),
         include_str!("service_readiness.rs"),
         include_str!("service_storage.rs"),
-        include_str!("vllm_runtime.rs"),
+        native.as_str(),
     ]
     .concat();
     let missing: Vec<_> = types

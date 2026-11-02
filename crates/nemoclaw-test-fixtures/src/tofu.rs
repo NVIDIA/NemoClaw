@@ -111,6 +111,57 @@ impl TofuWorkspace {
             .env("CHECKPOINT_DISABLE", "1");
         command
     }
+
+    /// Copy an authored module directory, its `tests` included, into the
+    /// workspace.
+    pub fn copy(&self, module: impl AsRef<Path>) {
+        fn copy(from: &Path, to: &Path) {
+            fs::create_dir_all(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let target = to.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    copy(&entry.path(), &target);
+                } else {
+                    fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        copy(module.as_ref(), self.path());
+    }
+
+    /// The workspace's native test files, such as `tests/lifecycle.tftest.hcl`.
+    #[must_use]
+    pub fn test_files(&self) -> Vec<String> {
+        let mut files: Vec<String> = fs::read_dir(self.path().join("tests"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tftest.hcl"))
+            .map(|name| format!("tests/{name}"))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "{} has no tests", self.path().display());
+        files
+    }
+
+    /// Run one native test file with `tofu test` and `environment`, and
+    /// return OpenTofu's output. Panics with that output unless every run
+    /// passed and the file's state was destroyed.
+    pub fn test(&self, file: &str, environment: &[(&str, &str)]) -> String {
+        let output = self
+            .command()
+            .args(["test", "-no-color", &format!("-filter={file}")])
+            .envs(environment.iter().copied())
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "tofu test {file}\n{text}");
+        text
+    }
 }
 
 #[cfg(all(test, unix))]

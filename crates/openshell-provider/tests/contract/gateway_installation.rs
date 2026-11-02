@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Gateway installation types through pinned OpenTofu: the Podman gateway's
-//! prerequisite checks and the Docker gateway launch.
+//! prerequisite checks before a saved plan applies, and the settings in
+//! `gateway/main.tf`.
 
 use crate::tofu::TofuWorkspace;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{fs, process::Output};
 
 /// A workspace with the openshell provider under test.
@@ -30,22 +31,6 @@ impl Installation {
             String::from_utf8_lossy(&output.stderr)
         );
         output
-    }
-    /// Declare `body` beside the openshell provider.
-    fn configure(&self, body: &str) {
-        fs::write(
-            self.dir.path().join("main.tf"),
-            format!(
-                r#"terraform {{
-  required_providers {{
-    openshell = {{ source = "registry.opentofu.org/nvidia/openshell" }}
-  }}
-}}
-provider "openshell" {{}}
-{body}"#
-            ),
-        )
-        .unwrap();
     }
 }
 
@@ -156,12 +141,9 @@ resource "openshell_podman_gateway" "gateway" {{
     }
 }
 
-/// Whether an engine can host a gateway with each compute driver: a Docker
-/// engine serves the Docker driver but not the Podman one.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn gateway_prerequisites_report_whether_an_engine_can_host_a_gateway() {
-    let fixture = crate::http_fixture::Fixture::engine(|request| {
+/// A Docker engine that answers reads only.
+async fn docker_engine() -> crate::http_fixture::Fixture {
+    crate::http_fixture::Fixture::engine(|request| {
         assert_eq!(request.method, "GET", "a prerequisite read mutated the engine");
         let path = request.path.split('?').next().unwrap();
         let body = if path.ends_with("/libpod/info") {
@@ -175,130 +157,58 @@ async fn gateway_prerequisites_report_whether_an_engine_can_host_a_gateway() {
         };
         Some((200, serde_json::to_vec(&body).unwrap()))
     })
-    .await;
+    .await
+}
+
+/// `gateway/tests`: the Docker gateway launch, engine prerequisites, and the
+/// Kubernetes resources plan from typed settings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn gateway_settings_plan_without_contacting_a_host() {
+    let engine = docker_engine().await;
+    crate::native("gateway", &[("TF_VAR_engine", &engine.endpoint)]).await;
+}
+
+/// Invalid settings in `gateway/main.tf` fail planning at each resource.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn invalid_gateway_settings_are_rejected_at_their_resources() {
+    let engine = docker_engine().await;
     let e = Installation::new();
-    e.configure(&format!(
-        r#"data "openshell_gateway_prerequisites" "docker" {{
-  engine         = "{engine}"
-  compute_driver = "docker"
-}}
-data "openshell_gateway_prerequisites" "podman" {{
-  engine         = "{engine}"
-  compute_driver = "podman"
-}}
-output "docker" {{
-  value = data.openshell_gateway_prerequisites.docker.status
-}}
-output "podman" {{
-  value = data.openshell_gateway_prerequisites.podman.observation_json
-}}
-"#,
-        engine = fixture.endpoint
-    ));
-    e.success(&[
-        "plan",
-        "-input=false",
-        "-no-color",
-        "-out=prerequisites.plan",
+    fs::copy(
+        std::path::Path::new(crate::CONTRACT).join("gateway/main.tf"),
+        e.dir.path().join("main.tf"),
+    )
+    .unwrap();
+    let plan = |variables: &[&str]| {
+        let output = e.run(
+            &[
+                ["plan", "-input=false", "-no-color"].as_slice(),
+                &[&format!("-var=engine={}", engine.endpoint)],
+                variables,
+            ]
+            .concat(),
+        );
+        assert!(!output.status.success(), "{variables:?} was accepted");
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let stderr = plan(&[
+        "-var=gateway_endpoint=http://127.0.0.1:80",
+        "-var=data_path=relative",
     ]);
-    let plan: Value =
-        serde_json::from_slice(&e.success(&["show", "-json", "prerequisites.plan"]).stdout)
-            .unwrap();
-    let outputs = &plan["planned_values"]["outputs"];
-    assert_eq!(outputs["docker"]["value"], "available");
-    let podman: Value = serde_json::from_str(outputs["podman"]["value"].as_str().unwrap()).unwrap();
-    assert_eq!(podman["status"], "unavailable");
-    assert_eq!(
-        podman["reason"],
-        "Podman sandbox driver requires a Podman engine socket"
-    );
-}
-
-#[test]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
-fn docker_gateway_launch_comes_from_typed_settings() {
-    let e = Installation::new();
-    let data = "/var/lib/docker/volumes/nc-0123456789abcdef-gateway-data/_data";
-    e.configure(&format!(
-        r#"data "openshell_docker_gateway_runtime" "gateway" {{
-  name      = "nc-0123456789abcdef-gateway"
-  endpoint  = "http://127.0.0.1:17670"
-  data_path = "{data}"
-  config    = jsonencode({{ "openshell.gateway" = {{ log_level = "debug" }} }})
-}}
-output "config_file" {{
-  value = data.openshell_docker_gateway_runtime.gateway.config_file
-}}
-output "entrypoint" {{
-  value = data.openshell_docker_gateway_runtime.gateway.entrypoint
-}}
-output "command" {{
-  value = data.openshell_docker_gateway_runtime.gateway.command
-}}
-output "env" {{
-  value = data.openshell_docker_gateway_runtime.gateway.env
-}}
-"#
-    ));
-    // The launch is computed without contacting any host, so it is known
-    // while planning.
-    e.success(&["plan", "-input=false", "-no-color", "-out=runtime.plan"]);
-    let plan: Value =
-        serde_json::from_slice(&e.success(&["show", "-json", "runtime.plan"]).stdout).unwrap();
-    let outputs = &plan["planned_values"]["outputs"];
-    assert_eq!(
-        outputs["entrypoint"]["value"],
-        json!(["/usr/local/bin/openshell-gateway"])
-    );
-    let file = outputs["config_file"]["value"].as_str().unwrap();
-    for line in [
-        "log_level = \"debug\"".to_owned(),
-        "sandbox_label = \"nc-0123456789abcdef-gateway\"".to_owned(),
-        format!("kid_path = \"{data}/tls/jwt/kid\""),
-    ] {
-        assert!(file.contains(&line), "{line}: {file}");
-    }
-    assert_eq!(
-        outputs["command"]["value"],
-        json!([
-            "--config",
-            format!("{data}/gateway.toml"),
-            "--name",
-            "nc-0123456789abcdef-gateway",
-            "--bind-address",
-            "0.0.0.0",
-            "--port",
-            "17670"
-        ])
-    );
-    let mut environment: Vec<_> = outputs["env"]["value"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| value.as_str().unwrap().to_owned())
-        .collect();
-    environment.sort();
-    assert_eq!(
-        environment,
-        [
-            format!("OPENSHELL_DB_URL=sqlite:{data}/gateway.db"),
-            format!("XDG_STATE_HOME={data}/state"),
-        ]
-    );
-
-    e.configure(
-        r#"data "openshell_docker_gateway_runtime" "gateway" {
-  name      = "nc-0123456789abcdef-gateway"
-  endpoint  = "http://127.0.0.1:80"
-  data_path = "relative"
-}
-"#,
-    );
-    let output = e.run(&["plan", "-input=false", "-no-color"]);
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("Invalid Docker gateway settings"),
+        "{stderr}"
+    );
+    // The Kubernetes types share their attribute checks. OpenTofu skips the
+    // resources that take the storage's owner once its validation fails.
+    let stderr = plan(&["-var=namespace=Not A Namespace"]);
+    assert!(
+        stderr.contains("openshell_kubernetes_storage.platform"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("namespace must be a Kubernetes namespace name"),
         "{stderr}"
     );
 }

@@ -182,6 +182,138 @@ impl Fixture {
         }
     }
 }
+impl Fixture {
+    /// Serve this gateway's `fixture_state` control endpoint, which
+    /// `nemoclaw-fixture-control` reads at `NEMOCLAW_FIXTURE_CONTROL`: each
+    /// read applies its `declare` JSON with [`State::declare`] and returns
+    /// [`State::observations`].
+    pub async fn control(&self) -> crate::http::Fixture {
+        let state = self.state.clone();
+        crate::http::Fixture::start_tcp(move |request| {
+            let declare: serde_json::Value =
+                serde_json::from_slice(&request.body).unwrap_or_default();
+            let mut state = state.lock().unwrap();
+            state.declare(&declare);
+            Some((200, state.observations().to_string().into_bytes()))
+        })
+        .await
+    }
+}
+impl State {
+    /// Remove the object kinds that `{"remove": [...]}` names, such as
+    /// `"providers"`, as though they were deleted behind OpenTofu.
+    pub fn declare(&mut self, declare: &serde_json::Value) {
+        for kind in declare["remove"].as_array().into_iter().flatten() {
+            match kind.as_str() {
+                Some("profiles") => self.profiles.clear(),
+                Some("providers") => self.providers.clear(),
+                Some("sandboxes") => self.sandboxes.clear(),
+                other => panic!("the fixture cannot remove {other:?}"),
+            }
+        }
+    }
+
+    /// The gateway's live objects by `workspace/name` key, with the fields
+    /// contracts check, and the Fabric runtime writes it received.
+    pub fn observations(&self) -> serde_json::Value {
+        use serde_json::json;
+        let id = |metadata: &Option<p::ObjectMeta>| metadata.as_ref().map(|m| m.id.clone());
+        let profiles: serde_json::Map<_, _> = self
+            .profiles
+            .iter()
+            .map(|(key, profile)| {
+                let credentials: Vec<_> = profile
+                    .credentials
+                    .iter()
+                    .map(|credential| {
+                        json!({
+                            "env_vars": credential.env_vars,
+                            "auth_style": credential.auth_style,
+                            "header_name": credential.header_name,
+                        })
+                    })
+                    .collect();
+                let endpoints: Vec<_> = profile
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| format!("{}:{}{}", endpoint.host, endpoint.port, endpoint.path))
+                    .collect();
+                let binaries: Vec<_> = profile.binaries.iter().map(|binary| &binary.path).collect();
+                let profile = json!({
+                    "id": profile.id,
+                    "inference_capable": profile.inference_capable,
+                    "credentials": credentials,
+                    "endpoints": endpoints,
+                    "binaries": binaries,
+                });
+                (key.clone(), profile)
+            })
+            .collect();
+        let providers: serde_json::Map<_, _> = self
+            .providers
+            .iter()
+            .map(|(key, provider)| {
+                let provider = json!({
+                    "id": id(&provider.metadata),
+                    "type": provider.r#type,
+                    "config": provider.config,
+                    "credentials": provider.credentials,
+                });
+                (key.clone(), provider)
+            })
+            .collect();
+        let sandboxes: serde_json::Map<_, _> = self
+            .sandboxes
+            .iter()
+            .map(|(key, sandbox)| {
+                let spec = sandbox.spec.clone().unwrap_or_default();
+                let driver_config = spec
+                    .template
+                    .and_then(|template| template.driver_config)
+                    .map(|config| openshell_core::proto_struct::struct_to_json_value(&config));
+                let sandbox = json!({
+                    "id": id(&sandbox.metadata),
+                    "providers": spec.providers,
+                    "driver_config": driver_config,
+                });
+                (key.clone(), sandbox)
+            })
+            .collect();
+        let writes = self
+            .exec_calls
+            .iter()
+            .filter(|command| {
+                command
+                    .get(1)
+                    .is_some_and(|arg| arg == "start" || arg == "stop")
+            })
+            .count();
+        json!({
+            "effects": self.effects,
+            "workspaces": self.workspaces.keys().collect::<Vec<_>>(),
+            "profiles": profiles,
+            "providers": providers,
+            "sandboxes": sandboxes,
+            // Objects ever created, so replacements show after deletion.
+            "created": {
+                "providers": self.created_providers.len(),
+                "sandboxes": self.created_sandboxes.len(),
+            },
+            "exposures": self.sandbox_exposures.iter().map(|exposures| {
+                exposures.iter().map(|exposure| json!({
+                    "service": exposure.service,
+                    "target_port": exposure.target_port,
+                    "authorization_mode": exposure.authorization_mode().as_str_name(),
+                })).collect::<Vec<_>>()
+            }).collect::<Vec<_>>(),
+            "fabric": {
+                "writes": writes,
+                "configured": self.fabric_configurations.keys().collect::<Vec<_>>(),
+                "stopped": self.fabric_stopped,
+            },
+        })
+    }
+}
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.task.abort();

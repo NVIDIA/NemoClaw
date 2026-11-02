@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Authored HCL for retained service storage through pinned OpenTofu.
+//! Retained service storage through pinned OpenTofu. `storage/tests` covers
+//! its identity; these tests cover what fails planning or applying.
 
 use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
@@ -108,69 +109,49 @@ fn success(workspace: &TofuWorkspace, args: &[&str]) -> std::process::Output {
     output
 }
 
+/// `storage/tests`: storage keeps the identity it is created with.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn authored_service_storage_applies_refreshes_and_names_invalid_attributes() {
-    for (kind, name) in [(
+async fn retained_storage_keeps_its_identity() {
+    let (engine, volumes) = volume_engine().await;
+    let control = Fixture::start_tcp(move |_| {
+        let volumes = volumes.lock().unwrap();
+        let observed = json!({"volumes": volumes.volumes, "creates": volumes.creates});
+        Some((200, observed.to_string().into_bytes()))
+    })
+    .await;
+    crate::native(
+        "storage",
+        &[
+            ("TF_VAR_engine", &engine.endpoint),
+            ("NEMOCLAW_FIXTURE_CONTROL", &control.endpoint),
+        ],
+    );
+}
+
+/// An invalid owner fails planning at its attribute, before any volume.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn invalid_storage_identity_is_rejected_at_its_attribute() {
+    let (engine, volumes) = volume_engine().await;
+    let workspace = workspace();
+    configure(
+        &workspace,
         "vllm_credential_storage",
         "nc-0123456789abcdef-inference-qwen-auth",
-    )] {
-        let (engine, volumes) = volume_engine().await;
-        let workspace = workspace();
-        let generation = "b".repeat(32);
-        configure(
-            &workspace,
-            kind,
-            name,
-            Some(("not-an-owner", &generation)),
-            &engine.endpoint,
-        );
-        let output = run(&workspace, &["plan", "-input=false", "-no-color"]);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!output.status.success(), "{kind}: {stderr}");
-        assert!(
-            stderr.contains("Error: Invalid owner")
-                && stderr.contains("owner      = \"not-an-owner\"")
-                && stderr.contains("owner must be a lowercase UUID"),
-            "{kind}: the diagnostic must point at the owner attribute: {stderr}"
-        );
-        assert_eq!(volumes.lock().unwrap().creates, 0, "{kind}");
-
-        configure(
-            &workspace,
-            kind,
-            name,
-            Some((OWNER, &generation)),
-            &engine.endpoint,
-        );
-        success(
-            &workspace,
-            &["apply", "-input=false", "-auto-approve", "-no-color"],
-        );
-        let volume = volumes.lock().unwrap().volumes[name].clone();
-        assert_eq!(volume["Labels"]["nemoclaw.nvidia.com/uid"], OWNER, "{kind}");
-        let state: Value =
-            serde_json::from_slice(&success(&workspace, &["show", "-json"]).stdout).unwrap();
-        let attributes = &state["values"]["root_module"]["resources"][0]["values"];
-        assert_eq!(attributes["name"], name, "{kind}");
-        assert_eq!(attributes["owner"], OWNER, "{kind}");
-        assert_eq!(
-            attributes["id"],
-            format!("engine/{name}/2026-10-08T00:00:00Z"),
-            "{kind}"
-        );
-        let output = run(
-            &workspace,
-            &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
-        );
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "{kind}: refresh must find no changes: {}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        assert_eq!(volumes.lock().unwrap().creates, 1, "{kind}");
-    }
+        Some(("not-an-owner", &"b".repeat(32))),
+        &engine.endpoint,
+    );
+    let output = run(&workspace, &["plan", "-input=false", "-no-color"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("Error: Invalid owner")
+            && stderr.contains("owner      = \"not-an-owner\"")
+            && stderr.contains("owner must be a lowercase UUID"),
+        "the diagnostic must point at the owner attribute: {stderr}"
+    );
+    assert_eq!(volumes.lock().unwrap().creates, 0);
 }
 
 // Retained storage is never recreated: refresh refuses a volume that is
@@ -260,61 +241,6 @@ fn state_attributes(workspace: &TofuWorkspace) -> Value {
     state["values"]["root_module"]["resources"][0]["values"].clone()
 }
 
-fn lowercase_hex(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn omitted_storage_identity_is_generated_once_and_kept() {
-    for kind in KINDS {
-        let (engine, volumes) = volume_engine().await;
-        let workspace = workspace();
-        configure(
-            &workspace,
-            kind,
-            "authored-credentials",
-            None,
-            &engine.endpoint,
-        );
-        success(
-            &workspace,
-            &["apply", "-input=false", "-auto-approve", "-no-color"],
-        );
-        let attributes = state_attributes(&workspace);
-        let owner = attributes["owner"].as_str().unwrap().to_owned();
-        let generation = attributes["generation"].as_str().unwrap().to_owned();
-        let groups: Vec<_> = owner.split('-').map(str::len).collect();
-        assert_eq!(groups, [8, 4, 4, 4, 12], "{kind}: {owner}");
-        assert!(lowercase_hex(&owner.replace('-', "")), "{kind}: {owner}");
-        assert_eq!(&owner[14..15], "4", "{kind}: {owner} is not a random UUID");
-        assert!(
-            generation.len() == 32 && lowercase_hex(&generation),
-            "{kind}: {generation}"
-        );
-        let labels = volumes.lock().unwrap().volumes["authored-credentials"]["Labels"].clone();
-        assert_eq!(labels["nemoclaw.nvidia.com/uid"], owner, "{kind}");
-        assert_eq!(
-            labels["nemoclaw.nvidia.com/generation"], generation,
-            "{kind}"
-        );
-        let output = run(
-            &workspace,
-            &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
-        );
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "{kind}: generated identity must not change: {}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        assert_eq!(state_attributes(&workspace)["owner"], owner, "{kind}");
-        assert_eq!(volumes.lock().unwrap().creates, 1, "{kind}");
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn lost_reply_with_omitted_identity_stops_until_its_identity_is_supplied() {
@@ -362,45 +288,6 @@ async fn lost_reply_with_omitted_identity_stops_until_its_identity_is_supplied()
         );
         assert_eq!(volumes.lock().unwrap().creates, 1, "{kind}");
     }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn omitted_proxy_storage_identity_is_generated_and_labels_its_credential_volume() {
-    let (engine, volumes) = volume_engine().await;
-    let workspace = workspace();
-    configure(
-        &workspace,
-        "ollama_proxy_credential_storage",
-        "authored-proxy",
-        None,
-        &engine.endpoint,
-    );
-    success(
-        &workspace,
-        &["apply", "-input=false", "-auto-approve", "-no-color"],
-    );
-    let attributes = state_attributes(&workspace);
-    let owner = attributes["owner"].as_str().unwrap().to_owned();
-    let generation = attributes["generation"].as_str().unwrap().to_owned();
-    assert_eq!(owner.len(), 36, "{owner}");
-    assert!(
-        generation.len() == 32 && lowercase_hex(&generation),
-        "{generation}"
-    );
-    let labels = volumes.lock().unwrap().volumes["authored-proxy-auth"]["Labels"].clone();
-    assert_eq!(labels["nemoclaw.nvidia.com/uid"], owner);
-    assert_eq!(labels["nemoclaw.nvidia.com/generation"], generation);
-    let output = run(
-        &workspace,
-        &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "generated identity must not change: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
 }
 
 /// An Ollama upstream that lists one model with the digest it holds.

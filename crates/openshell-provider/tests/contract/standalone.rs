@@ -14,7 +14,7 @@ struct Standalone {
 }
 impl Standalone {
     fn new(endpoint: &str) -> Self {
-        let root = TofuWorkspace::with_providers(tofu(), &[("openshell", &provider())]);
+        let root = workspace();
         fs::copy(
             Path::new(STANDALONE).join("main.tf"),
             root.path().join("main.tf"),
@@ -68,18 +68,12 @@ impl Standalone {
     fn apply(&self) {
         self.run(&["apply", "-auto-approve", "-input=false"], true);
     }
+    /// Declare the inference registration without its sandbox.
     fn registrations_only(&self) {
-        let path = self.root.path().join("main.tf");
-        let source = fs::read_to_string(&path).unwrap();
-        let (registrations, _) = source
-            .split_once("resource \"openshell_sandbox\" \"agent\"")
-            .unwrap();
-        fs::write(
-            path,
-            registrations.replace("\"http://127.0.0.1:11434/v1\"", "var.inference_endpoint")
-                + "\nvariable \"inference_endpoint\" { default = \"http://127.0.0.1:11434/v1\" }\n",
-        )
-        .unwrap();
+        let path = self.root.path().join("terraform.tfvars.json");
+        let mut variables: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        variables["sandbox"] = json!(false);
+        fs::write(path, variables.to_string()).unwrap();
     }
     fn noop(&self) {
         self.run(&["plan", "-input=false", "-out=noop.plan"], true);
@@ -89,125 +83,6 @@ impl Standalone {
             assert_eq!(change["change"]["actions"], json!(["no-op"]));
         }
     }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn standalone_registrations_recreate_confirmed_absence_without_replacing_sandboxes() {
-    let fixture = Fixture::start().await;
-    let tofu = Standalone::new(&fixture.endpoint);
-    tofu.apply();
-    let sandbox = fixture.state.lock().unwrap().sandboxes.clone();
-    for kind in ["provider", "provider_profile"] {
-        {
-            let mut state = fixture.state.lock().unwrap();
-            if kind == "provider" {
-                state.providers.clear();
-            } else {
-                state.profiles.clear();
-            }
-        }
-        let effects = fixture.state.lock().unwrap().effects;
-        tofu.run(&["plan", "-input=false", "-out=recover.plan"], true);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        let plan: Value =
-            serde_json::from_slice(&tofu.run(&["show", "-json", "recover.plan"], true).stdout)
-                .unwrap();
-        for change in plan["resource_changes"].as_array().unwrap() {
-            assert_eq!(
-                change["change"]["actions"],
-                // A missing registration replaces the inference resource; a
-                // missing profile is recreated in place, because replacing
-                // would delete the registration the sandbox attaches.
-                if change["type"] != "openshell_inference" {
-                    json!(["no-op"])
-                } else if kind == "provider" {
-                    json!(["delete", "create"])
-                } else {
-                    json!(["update"])
-                },
-                "{change}"
-            );
-        }
-        tofu.run(&["apply", "-input=false", "recover.plan"], true);
-        tofu.noop();
-        let state = fixture.state.lock().unwrap();
-        assert_eq!(state.sandboxes, sandbox);
-        assert_eq!(state.providers.len(), 1);
-        assert_eq!(state.profiles.len(), 1);
-        // Replacement deletes the surviving profile, then creates both; an
-        // update recreates the profile.
-        assert_eq!(
-            state.effects,
-            effects + if kind == "provider" { 2 } else { 1 }
-        );
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn standalone_registrations_replace_and_remove_without_destroy_mode() {
-    let fixture = Fixture::start().await;
-    let tofu = Standalone::new(&fixture.endpoint);
-    tofu.registrations_only();
-    tofu.apply();
-    let before = fixture.state.lock().unwrap().providers.clone();
-    let effects = fixture.state.lock().unwrap().effects;
-    tofu.run(
-        &[
-            "plan",
-            "-input=false",
-            "-var=inference_endpoint=http://127.0.0.1:11435/v1",
-            "-out=change.plan",
-        ],
-        true,
-    );
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let plan: Value =
-        serde_json::from_slice(&tofu.run(&["show", "-json", "change.plan"], true).stdout).unwrap();
-    for change in plan["resource_changes"].as_array().unwrap() {
-        assert_eq!(
-            change["change"]["actions"],
-            match change["type"].as_str().unwrap() {
-                "openshell_inference" => json!(["delete", "create"]),
-                "openshell_workspace" => json!(["no-op"]),
-                other => panic!("unexpected resource {other}"),
-            }
-        );
-    }
-    tofu.run(&["apply", "-input=false", "change.plan"], true);
-    {
-        let state = fixture.state.lock().unwrap();
-        let provider = state.providers.values().next().unwrap();
-        assert_ne!(
-            provider.metadata.as_ref().unwrap().id,
-            before
-                .values()
-                .next()
-                .unwrap()
-                .metadata
-                .as_ref()
-                .unwrap()
-                .id
-        );
-        assert_eq!(
-            provider.config["OPENAI_BASE_URL"],
-            "http://127.0.0.1:11435/v1"
-        );
-        assert_eq!(state.profiles.len(), 1);
-    }
-    tofu.run(
-        &[
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-var=enabled=false",
-        ],
-        true,
-    );
-    let state = fixture.state.lock().unwrap();
-    assert_eq!(state.workspaces.len(), 1);
-    assert!(state.providers.is_empty() && state.profiles.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -267,108 +142,6 @@ async fn standalone_registrations_recover_lost_create_response_without_duplicate
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn standalone_registration_authentication_mode_replaces_but_secret_reference_rotation_updates()
- {
-    let fixture = Fixture::start().await;
-    let tofu = Standalone::new(&fixture.endpoint);
-    tofu.registrations_only();
-    let path = tofu.root.path().join("main.tf");
-    fs::write(
-        &path,
-        fs::read_to_string(&path).unwrap().replace(
-            "    credential_env    = \"\"",
-            "    credential_env    = var.credential_env",
-        ) + "\nvariable \"credential_env\" { default = \"\" }\n",
-    )
-    .unwrap();
-    tofu.apply();
-    let id = || {
-        fixture
-            .state
-            .lock()
-            .unwrap()
-            .providers
-            .values()
-            .next()
-            .unwrap()
-            .metadata
-            .as_ref()
-            .unwrap()
-            .id
-            .clone()
-    };
-    let anonymous_id = id();
-    tofu.run(
-        &[
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-var=credential_env=NEMOCLAW_TEST_REGISTRATION_KEY",
-        ],
-        true,
-    );
-    let authenticated_id = id();
-    assert_ne!(anonymous_id, authenticated_id);
-    let profiles = fixture.state.lock().unwrap().profiles.clone();
-    tofu.run(
-        &[
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            "-var=credential_env=NEMOCLAW_TEST_ROTATED_KEY",
-        ],
-        true,
-    );
-    assert_eq!(id(), authenticated_id);
-    assert_eq!(fixture.state.lock().unwrap().profiles, profiles);
-    tofu.apply();
-    assert_ne!(id(), authenticated_id);
-    tofu.noop();
-}
-
-/// Planning new objects reaches no gateway, so one configuration can plan a
-/// gateway installation together with the objects it will serve. Ownership of
-/// an existing name is checked when applying them.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn new_objects_plan_without_reaching_the_gateway() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("https://{}", listener.local_addr().unwrap());
-    drop(listener);
-    let tofu = Standalone::new(&endpoint);
-    let output = tofu.run(&["plan", "-input=false"], true);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("openshell_workspace.example will be created"),
-        "{stdout}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn standalone_hcl_applies_resources_without_sdk_encoding_or_coordination() {
-    let fixture = Fixture::start().await;
-    let tofu = Standalone::new(&fixture.endpoint);
-    tofu.run(&["plan", "-input=false"], true);
-    assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    tofu.apply();
-    tofu.noop();
-    let state = fixture.state.lock().unwrap();
-    assert_eq!(
-        (
-            state.workspaces.len(),
-            state.profiles.len(),
-            state.providers.len(),
-            state.sandboxes.len()
-        ),
-        (1, 1, 1, 1)
-    );
-    let sandbox = state.sandboxes.values().next().unwrap();
-    assert_eq!(sandbox.spec.as_ref().unwrap().providers, vec!["local"]);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_workspace() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -424,15 +197,12 @@ async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_work
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn standalone_hcl_recreates_a_missing_sandbox_but_not_a_missing_workspace() {
+async fn standalone_hcl_refuses_a_missing_workspace() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
     tofu.apply();
-    // A sandbox is replaceable: a missing one is created again.
-    fixture.state.lock().unwrap().sandboxes.clear();
-    tofu.apply();
-    assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
-    // A retained workspace that is missing is refused, changing nothing.
+    // Unlike a missing sandbox, which standalone/tests recreates, a retained
+    // workspace that is missing is refused, changing nothing.
     let prior = tofu.state();
     let workspaces = fixture.state.lock().unwrap().workspaces.clone();
     fixture.state.lock().unwrap().workspaces.clear();
@@ -452,36 +222,6 @@ async fn standalone_hcl_recreates_a_missing_sandbox_but_not_a_missing_workspace(
         ],
         true,
     );
-    assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
-async fn standalone_hcl_replaces_and_removes_sandboxes_without_teardown_mode() {
-    let fixture = Fixture::start().await;
-    let tofu = Standalone::new(&fixture.endpoint);
-    tofu.apply();
-    let id = || {
-        let state = fixture.state.lock().unwrap();
-        let sandbox = state.sandboxes.values().next().unwrap();
-        sandbox.metadata.as_ref().unwrap().id.clone()
-    };
-    let first = id();
-    let image = "-var=image=fixture@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    tofu.run(&["apply", "-auto-approve", "-input=false", image], true);
-    assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
-    assert_ne!(id(), first);
-    tofu.run(
-        &[
-            "apply",
-            "-auto-approve",
-            "-input=false",
-            image,
-            "-var=enabled=false",
-        ],
-        true,
-    );
-    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
     assert_eq!(fixture.state.lock().unwrap().workspaces.len(), 1);
 }
 

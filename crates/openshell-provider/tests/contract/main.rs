@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Contract tests: each fixture in `fixtures/` applies through pinned
-//! OpenTofu against the fake OpenShell gateway, reads back unchanged, and is
-//! removed by destroy. The fixtures are the OpenShell resources the SDK
-//! compiles for each example; nemoclaw-e2e regenerates them.
+//! Contract tests: OpenShell types through pinned OpenTofu against the fake
+//! OpenShell gateway.
+//!
+//! Authored modules, such as `standalone/`, keep their scenarios in native
+//! `tests/*.tftest.hcl` files. Each generated fixture in `fixtures/`, the
+//! OpenShell resources the SDK compiles for an example, applies, reads back
+//! unchanged, and is removed by destroy. The Rust tests in the other files
+//! check what `tofu test` cannot express: a failed command, a saved plan,
+//! planned actions, or the state file.
 
 use nemoclaw_test_fixtures::{openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::Value;
@@ -25,7 +30,6 @@ pub use nemoclaw_test_fixtures::{openshell, tofu};
 
 mod api;
 mod capabilities;
-mod driver_config;
 // Gateway installation: Docker gateway reads, the Podman gateway and its
 // storage, and the Kubernetes gateway types.
 // A managed gateway needs a local engine, which only Unix clients reach.
@@ -36,13 +40,9 @@ mod gateway_readiness;
 // clients reach.
 #[cfg(unix)]
 mod gateway_storage;
-mod inference;
-mod kubernetes_hcl;
 mod kubernetes_lifecycle;
-mod sandbox_providers;
-mod services;
+mod sandbox;
 mod standalone;
-mod web_search;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
 
@@ -56,8 +56,9 @@ fn provider() -> std::path::PathBuf {
     nemoclaw_test_fixtures::package_executable!("terraform-provider-openshell")
 }
 
-/// A workspace with the openshell provider under test, and OpenTofu and the
-/// other providers from the bundle.
+/// A workspace with the openshell provider under test, OpenTofu and the
+/// fabric provider from the bundle, and the fixture provider that observes the
+/// fake gateway.
 pub fn workspace() -> TofuWorkspace {
     let bundle = nemoclaw_test_fixtures::Bundle::from_env();
     TofuWorkspace::with_providers(
@@ -65,8 +66,99 @@ pub fn workspace() -> TofuWorkspace {
         &[
             ("openshell", &provider()),
             ("fabric", &bundle.provider("fabric")),
+            (
+                "fixture",
+                &nemoclaw_test_fixtures::fixture_executable("nemoclaw-fixture-control"),
+            ),
         ],
     )
+}
+
+pub const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract");
+
+/// The credential variables authored modules name, and their secret values.
+const SECRETS: [(&str, &str); 5] = [
+    (
+        "NEMOCLAW_TEST_REGISTRATION_KEY",
+        "registration-fixture-secret",
+    ),
+    ("NEMOCLAW_TEST_ROTATED_KEY", "rotated-fixture-secret"),
+    ("NEMOCLAW_TEST_BRAVE_KEY", "brave-fixture-secret"),
+    ("NEMOCLAW_TEST_BOOKING_KEY", "booking-fixture-secret"),
+    ("NEMOCLAW_TEST_BOOKING_NEXT", "next-booking-fixture-secret"),
+];
+
+/// Run the native test files of `module` side by side, each against a new
+/// fake gateway and with `extra` environment, and require that OpenTofu's
+/// output repeats no secret.
+pub async fn native(module: &str, extra: &[(&str, &str)]) {
+    let root = std::sync::Arc::new(workspace());
+    root.copy(Path::new(CONTRACT).join(module));
+    let mut runs = Vec::new();
+    for file in root.test_files() {
+        let gateway = Fixture::start().await;
+        let control = gateway.control().await;
+        let root = root.clone();
+        let extra: Vec<(String, String)> = extra
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        runs.push(tokio::task::spawn_blocking(move || {
+            let mut environment = vec![
+                ("TF_VAR_endpoint", gateway.endpoint.as_str()),
+                ("NEMOCLAW_FIXTURE_CONTROL", control.endpoint.as_str()),
+            ];
+            environment.extend(SECRETS);
+            environment.extend(
+                extra
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+            );
+            let output = root.test(&file, &environment);
+            for (_, secret) in SECRETS {
+                assert!(!output.contains(secret), "{file}:\n{output}");
+            }
+        }));
+    }
+    for run in runs {
+        run.await.unwrap();
+    }
+}
+
+/// The configuration of every authored module with native tests.
+fn native_sources() -> String {
+    let mut sources = String::new();
+    for module in fs::read_dir(CONTRACT).unwrap() {
+        let module = module.unwrap().path();
+        if !module.join("tests").is_dir() {
+            continue;
+        }
+        for file in fs::read_dir(module).unwrap() {
+            let file = file.unwrap().path();
+            if file.extension().is_some_and(|extension| extension == "tf") {
+                sources += &fs::read_to_string(file).unwrap();
+            }
+        }
+    }
+    sources
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn standalone_resources() {
+    native("standalone", &[]).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn sandbox_settings() {
+    native("sandbox", &[]).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+async fn tool_credentials() {
+    native("credentials", &[]).await;
 }
 
 /// Failed apply may record new data-source observations and condition
@@ -202,17 +294,15 @@ fn every_type_has_a_contract_test() {
                 .into_keys(),
         )
         .collect();
-    let mut sources = [
+    let mut sources = native_sources();
+    sources += &[
         include_str!("api.rs"),
         include_str!("capabilities.rs"),
         include_str!("gateway_installation.rs"),
         include_str!("gateway_readiness.rs"),
         include_str!("gateway_storage.rs"),
-        include_str!("kubernetes_hcl.rs"),
         include_str!("kubernetes_lifecycle.rs"),
-        include_str!("inference.rs"),
         include_str!("standalone.rs"),
-        include_str!("web_search.rs"),
     ]
     .concat();
     for entry in fs::read_dir(FIXTURES).unwrap() {
@@ -228,81 +318,104 @@ fn every_type_has_a_contract_test() {
     );
 }
 
-macro_rules! fixtures {
-    ($($test:ident => $name:literal,)*) => {
-        $(
-            #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-            #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
-            async fn $test() {
-                reads_back_unchanged($name).await;
-            }
-        )*
-
-        /// Every fixture file has a test, and every OpenShell type has a fixture.
-        #[test]
-        fn every_fixture_runs_and_every_type_is_covered() {
-            let listed: BTreeSet<&str> = [$($name),*].into();
-            let files: BTreeSet<String> = fs::read_dir(FIXTURES)
-                .unwrap()
-                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-                .filter_map(|file| file.strip_suffix(".tf.json").map(str::to_owned))
-                .collect();
-            assert_eq!(
-                files.iter().map(String::as_str).collect::<BTreeSet<_>>(),
-                listed
-            );
-            let used: BTreeSet<String> = files
+/// A fixture's resource and data types, their attributes, and which values
+/// are set, without the values or generated names. Examples that differ only
+/// in values, such as the harness a sandbox launches or a model's address,
+/// exercise the same provider contract.
+fn shape(fixture: &Value) -> Value {
+    fn skeleton(value: &Value) -> Value {
+        match value {
+            Value::Object(fields) => fields
                 .iter()
-                .flat_map(|file| {
-                    let fixture: Value = serde_json::from_slice(
-                        &fs::read(Path::new(FIXTURES).join(format!("{file}.tf.json"))).unwrap(),
-                    )
-                    .unwrap();
-                    ["resource", "data"]
-                        .into_iter()
-                        .flat_map(|block| {
-                            fixture[block]
-                                .as_object()
-                                .map(|types| types.keys().cloned().collect::<Vec<_>>())
-                                .unwrap_or_default()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-            for kind in [
-                "openshell_workspace",
-                "openshell_inference",
-                "openshell_web_search",
-                "openshell_sandbox",
-                "openshell_gateway",
-            ] {
-                assert!(used.contains(kind), "no fixture uses {kind}");
-            }
+                .map(|(name, value)| (name.clone(), skeleton(value)))
+                .collect(),
+            Value::Array(items) => items.iter().map(skeleton).collect(),
+            Value::String(text) if text.is_empty() => Value::Null,
+            Value::Null => Value::Null,
+            _ => Value::Bool(true),
         }
-    };
+    }
+    ["resource", "data"]
+        .into_iter()
+        .flat_map(|block| fixture[block].as_object().into_iter().flatten())
+        .map(|(kind, bodies)| {
+            let mut bodies: Vec<String> = bodies
+                .as_object()
+                .unwrap()
+                .values()
+                .map(|body| skeleton(body).to_string())
+                .collect();
+            bodies.sort();
+            (kind.clone(), Value::from(bodies))
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
 }
 
-fixtures! {
-    explicit_policy => "explicit-policy",
-    fabric => "fabric",
-    fabric_claude => "fabric-claude",
-    fabric_codex => "fabric-codex",
-    fabric_deepagents_code => "fabric-deepagents-code",
-    fabric_hermes => "fabric-hermes",
-    fabric_mini_swe_agent => "fabric-mini-swe-agent",
-    fabric_nooa => "fabric-nooa",
-    fabric_nooa_bench => "fabric-nooa-bench",
-    fabric_opencode => "fabric-opencode",
-    fabric_openclaw => "fabric-openclaw",
-    fabric_pi => "fabric-pi",
-    fabric_remote_agent => "fabric-remote-agent",
-    hermes_auth => "hermes-auth",
-    inference_tuning => "inference-tuning",
-    inline_inference => "inline-inference",
-    local => "local",
-    multiple_models => "multiple-models",
-    multiple_providers => "multiple-providers",
-    multiple_sandboxes => "multiple-sandboxes",
-    openclaw => "openclaw",
-    web_search => "web-search",
+/// The first generated fixture of each shape applies, reads back unchanged,
+/// and is torn down, side by side, each against its own fake gateway.
+#[test]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
+fn each_generated_fixture_shape_reads_back_unchanged() {
+    let mut names: Vec<String> = fs::read_dir(FIXTURES)
+        .unwrap()
+        .filter_map(|entry| {
+            let file = entry.unwrap().file_name().to_string_lossy().into_owned();
+            file.strip_suffix(".tf.json").map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    let mut shapes = BTreeSet::new();
+    names.retain(|name| {
+        let fixture: Value = serde_json::from_slice(
+            &fs::read(Path::new(FIXTURES).join(format!("{name}.tf.json"))).unwrap(),
+        )
+        .unwrap();
+        shapes.insert(shape(&fixture).to_string())
+    });
+    assert!(names.len() > 1);
+    // Each lifecycle blocks on OpenTofu while its gateway serves, so each
+    // takes its own runtime.
+    std::thread::scope(|scope| {
+        for name in &names {
+            scope.spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(reads_back_unchanged(name));
+            });
+        }
+    });
+}
+
+/// Every OpenShell type the SDK compiles has a generated fixture.
+#[test]
+fn every_compiled_type_has_a_fixture() {
+    let used: BTreeSet<String> = fs::read_dir(FIXTURES)
+        .unwrap()
+        .flat_map(|entry| {
+            let fixture: Value =
+                serde_json::from_slice(&fs::read(entry.unwrap().path()).unwrap()).unwrap();
+            ["resource", "data"]
+                .into_iter()
+                .flat_map(|block| {
+                    fixture[block]
+                        .as_object()
+                        .map(|types| types.keys().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    for kind in [
+        "openshell_workspace",
+        "openshell_inference",
+        "openshell_web_search",
+        "openshell_sandbox",
+        "openshell_gateway",
+    ] {
+        assert!(used.contains(kind), "no fixture uses {kind}");
+    }
 }
