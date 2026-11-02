@@ -157,7 +157,10 @@ $$nemoclaw <sandbox-name> start
 
 <AgentOnly variant="openclaw,hermes">
 After OpenShell accepts the start, NemoClaw waits for it to report the sandbox in the `Ready` or `Running` state.
-NemoClaw recovers missing agent processes and host forwards only after that phase, so a slow sandbox start does not need a separate `recover` command.
+The startup wait observes the agent gateway without relaunching it.
+If the gateway does not respond before that wait expires, `start` exits nonzero.
+After startup observation, NemoClaw verifies gateway health and checks or restores host-side port forwards.
+If the gateway remains stopped, follow the [native gateway restart procedure](recover-and-rebuild-sandboxes#recover-the-agent-runtime) before retrying `start`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 After OpenShell accepts the start, NemoClaw waits for it to report the sandbox in the `Ready` or `Running` state, then verifies the managed terminal runtime before the command reports success.

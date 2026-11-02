@@ -1050,6 +1050,8 @@ To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNOR
 ### Generated Sandbox Image Build Requires the Selected Local Engine
 
 On a local Docker gateway, NemoClaw builds each generated OpenClaw, Hermes, or Deep Agents Code sandbox image with host-side BuildKit.
+When `DOCKER_HOST` and `DOCKER_CONTEXT` are unset, NemoClaw can use Docker's saved current context.
+For a reachable supported local Unix socket that differs from Docker's default socket, NemoClaw exports the endpoint as `DOCKER_HOST`.
 NemoClaw stops before sandbox creation in these cases:
 
 - The local build is disabled.
@@ -1058,7 +1060,7 @@ NemoClaw stops before sandbox creation in these cases:
 - The build exits with an error.
 - The local build exceeds 20 minutes.
 - On the Docker path, `DOCKER_HOST` names an unsupported endpoint instead of an absolute local `unix://` socket.
-- On the Docker path, a non-default Docker context is selected while `DOCKER_HOST` is unset.
+- On the Docker path, `DOCKER_CONTEXT` selects a non-default context while `DOCKER_HOST` remains unset after endpoint resolution.
 
 It does not send that generated Dockerfile to the OpenShell gateway's classic Docker API builder because that builder cannot enforce the same instructions.
 
@@ -1078,7 +1080,10 @@ Repair Docker access or the Docker Buildx plugin when either Docker command fail
 $$nemoclaw onboard --resume
 ```
 
-A passing Docker recovery completes the local BuildKit build before sandbox creation starts. If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile. Rerun the command so NemoClaw creates a new private staged context. If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
+A passing Docker recovery completes the local BuildKit build before sandbox creation starts.
+If NemoClaw rejects the staged build context trust boundary, do not change its permissions or move its Dockerfile.
+Rerun the command so NemoClaw creates a new private staged context.
+If the new context is also rejected, preserve the complete error and stop instead of forcing the gateway builder.
 
 The same build and image check applies to a user-supplied `--from` context on a local Docker gateway.
 NemoClaw does not send a Dockerfile to the gateway builder after a local build failure.
@@ -1939,12 +1944,8 @@ $$nemoclaw <name> rebuild
 
 On networks where a corporate proxy re-signs external TLS, endpoints such as `api.telegram.org` can fail certificate verification even when network policy allows the connection. Logs show the request opening as `NET:OPEN ... api.telegram.org:443` followed by `NET:FAIL` because the corporate root is not in the OpenShell trust path.
 
-Provide the corporate CA before onboarding, then onboard or rebuild the sandbox.
-
-```bash
-export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
-$$nemoclaw onboard
-```
+For a new sandbox, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
+Managed-image rebuilds preserve the recorded CA profile and do not import a newly exported bundle.
 
 Refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) for source precedence, host anchor discovery, image and runtime trust, custom Dockerfile requirements, import validation, and `NEMOCLAW_CORPORATE_CA_IMPORT=0`. If the import does not occur, check onboarding output for `baking corporate proxy CA from ...` or a warning that the selected source was skipped.
 

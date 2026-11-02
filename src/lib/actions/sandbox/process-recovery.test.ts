@@ -14,6 +14,7 @@ import {
   resolveGatewayRecoveryWaitSeconds,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
+  waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
 
 const OPENSHELL_SANDBOX_NOT_READY_STDERR = `Error:   × code: 'The system is not in a state required for the operation's
@@ -78,6 +79,38 @@ function sequencedExecutor(
   });
   return { runBuffered };
 }
+
+describe("native gateway startup budget", () => {
+  it.each([
+    { fallback: undefined, override: undefined, seconds: 30 },
+    { fallback: 120, override: undefined, seconds: 120 },
+    { fallback: 120, override: "invalid", seconds: 120 },
+    { fallback: 120, override: "4.5", seconds: 4.5 },
+    { fallback: 120, override: "0", seconds: 0 },
+  ])(
+    "bounds startup to $seconds seconds with fallback $fallback and override $override",
+    async ({ fallback, override, seconds }) => {
+      let elapsedMs = 0;
+      const probe = vi.fn(async () => false);
+      const delay = vi.fn(async (delayMs: number) => {
+        elapsedMs += delayMs;
+      });
+
+      await expect(
+        waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+          defaultTimeoutSeconds: fallback,
+          environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: override },
+          probe,
+          delay,
+          now: () => elapsedMs,
+        }),
+      ).resolves.toBe(false);
+
+      expect(elapsedMs).toBe(seconds * 1_000);
+      expect(probe).toHaveBeenCalledTimes(Math.ceil(seconds / 2));
+    },
+  );
+});
 
 describe("recreated sandbox OpenShell readiness", () => {
   it("preserves the final OpenShell error for onboarding diagnostics without another probe", async () => {

@@ -106,6 +106,7 @@ vi.mock("./vllm-api-key", () => ({
 }));
 
 import { detectVllmProfile, installVllm, persistConfiguredManagedVllmRuntimeReceipt } from "./vllm";
+import { mockDockerSpawnWithLogs } from "./vllm-install.test-support";
 import { DUAL_STATION_VLLM_RUNTIME, type DualStationVllmPlan } from "./vllm-station-cluster";
 import {
   createDualStationSshBindingFixture,
@@ -898,6 +899,61 @@ describe("dual DGX Station vLLM install orchestration", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "  vLLM install failed: dual-Station topology changed during download; rerun setup against a stable pair.",
     );
+  });
+
+  it("prints the redacted prior startup error before rolling back a crash loop (#14017)", async () => {
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    const startedAt = "2026-10-31T10:00:00.123456789Z";
+    const pipTail = Array.from(
+      { length: 79 },
+      (_, index) => `Requirement already satisfied: package-${String(index)}`,
+    ).concat("WARNING: Running pip as the 'root' user");
+    mocks.runCurlProbe.mockReturnValue({ ok: false, httpStatus: 503, message: "loading" });
+    mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
+      switch (args[0]) {
+        case "ps":
+          return profile.containerName;
+        case "inspect":
+          return args[2]?.includes(".State.StartedAt") ? startedAt : "3";
+        case "logs":
+          return pipTail.join("\n");
+        default:
+          return "";
+      }
+    });
+    mocks.dockerSpawn.mockImplementation(
+      mockDockerSpawnWithLogs(
+        "2026-10-31T09:59:59.999999999Z \u001b[31mvllm: error: unrecognized arguments: --disable-log-requests\u001b[0m\n" +
+          `2026-10-31T09:59:59.999999999Z VLLM_API_KEY=${API_KEY}\u0007\u0000\n`,
+      ),
+    );
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let diagnosticsAtRollback = "";
+    mocks.cleanup.mockImplementation(() => {
+      diagnosticsAtRollback = stderrSpy.mock.calls.map(([text]) => String(text)).join("");
+      return { ok: true, removedContainerIds: [HEAD_ID, WORKER_ID] };
+    });
+
+    try {
+      await expect(
+        installVllm(profile, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+      ).resolves.toEqual({ ok: false });
+
+      expect(mocks.cleanup).toHaveBeenCalledWith(plan());
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  vLLM install failed: vLLM container restarted 3 times before readiness",
+      );
+      expect(diagnosticsAtRollback).toContain(
+        "vllm: error: unrecognized arguments: --disable-log-requests",
+      );
+      expect(diagnosticsAtRollback).toContain("Requirement already satisfied: package-78");
+      expect(diagnosticsAtRollback).toContain("WARNING: Running pip as the 'root' user");
+      expect(diagnosticsAtRollback).toContain("VLLM_API_KEY=");
+      expect(diagnosticsAtRollback).not.toContain(API_KEY);
+      expect(diagnosticsAtRollback).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 
   it("commits legacy retirement only after readiness, auth, and final pair validation", async () => {

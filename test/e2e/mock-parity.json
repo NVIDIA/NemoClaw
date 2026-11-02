@@ -64,9 +64,11 @@
         "test/e2e/lib/issue-4462-admin-request-selector.py",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/gpu-e2e-ollama.ts",
         "test/e2e/fixtures/llama-cpp-runtime-diagnostics.ts"
       ],
       "fast": [
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/inference/llama-cpp/index.test.ts",
         "src/lib/onboard/llama-cpp-selection/index.test.ts",
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
@@ -98,6 +100,7 @@
         "test/e2e/live/managed-image-protected-runtime-budget.ts"
       ],
       "fast": [
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-readiness.test.ts",
@@ -636,8 +639,14 @@
     },
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
-      "liveSources": ["test/e2e/fixtures/native-local-chat.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/native-local-chat.ts",
+        "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/gpu-e2e-ollama.ts"
+      ],
       "fast": [
+        "test/e2e/support/gpu-double-onboard-cleanup.test.ts",
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
@@ -648,10 +657,12 @@
       "live": "test/e2e/live/gpu-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/gpu-e2e-ollama.ts",
         "test/e2e/live/hermes-cli-adapter-live.ts",
         "test/e2e/fixtures/native-local-chat.ts"
       ],
       "fast": [
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
         "src/lib/adapters/config/live-export-source-vllm.test.ts",
         "src/lib/domain/config/export-document.test.ts",
