@@ -113,6 +113,10 @@ A context that resolves to an absolute local `unix://` socket becomes the select
 A context that does not resolve, or that names any other endpoint, is reported through `host.docker.host_invalid` and the `invalid_docker_host` advisory instead of falling back to the default Docker socket.
 
 When neither variable is set, NemoClaw first probes the Docker CLI's selected authority, including its `DOCKER_CONFIG` directory when set, without a host override.
+When that authority is reachable, NemoClaw inspects Docker's saved current context.
+For a supported non-default context, NemoClaw accepts a local Unix socket only when its path resolves and does not identify Docker's default socket.
+The CLI then sets `DOCKER_HOST` for later child commands and removes `DOCKER_CONTEXT` from their environment.
+If those checks fail, NemoClaw keeps the selected authority.
 If that authority completes with an unreachable result, NemoClaw probes a bounded set of local Unix sockets and accepts only an endpoint with valid server-version evidence.
 On Linux, the set includes the rootless Docker socket at `/run/user/<UID>/docker.sock`.
 If the probe times out or cannot start, NemoClaw keeps the selected authority. `host probe` reports `host.docker.probe_inconclusive`; onboarding reports the `docker_probe_inconclusive` advisory with a command to verify that authority.

@@ -434,7 +434,20 @@ describe("sandbox oclif command adapters", () => {
     expect(DestroyCliCommand.id).toBe("sandbox:destroy");
     expect(usage(DestroyCliCommand)).toContain("[--yes|-y|--force]");
     expect(RecoverCliCommand.id).toBe("sandbox:recover");
-    expect(RecoverCliCommand.summary).toMatch(/Repair a stopped sandbox gateway/);
+    expect(RecoverCliCommand.summary).toBe(
+      "Verify sandbox gateway health and repair host forwards",
+    );
+    expect(RecoverCliCommand.description).not.toContain("repair stopped gateways");
+    expect(RecoverCliCommand.description).toContain(
+      "A stopped native gateway is reported without relaunching it",
+    );
+    expect(RecoverCliCommand.description).not.toContain("supervised gateway relaunch");
+    expect(RecoverCliCommand.description).toContain(
+      "Use `gateway restart` when you need a forced runtime reload",
+    );
+    expect(RecoverCliCommand.description).toContain(
+      "validate and release a NemoClaw cron restore gate",
+    );
     expect(RecoverCliCommand.description).toContain("A healthy gateway is not restarted");
     expect(RecoverCliCommand.description).toContain("gateway restart");
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);

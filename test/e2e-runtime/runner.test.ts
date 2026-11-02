@@ -119,6 +119,8 @@ describe("runner helpers", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run, runInteractive } = require(runnerPath);
+      // Start command recording after the runner's authority initialization.
+      calls.length = 0;
       run(["echo", "noninteractive"]);
       runInteractive(["echo", "interactive"]);
     } finally {
@@ -146,6 +148,7 @@ describe("runner helpers", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runFile } = require(runnerPath);
+      calls.length = 0;
       runFile("bash", ["/tmp/setup.sh", "safe;name", "$(id)"]);
     } finally {
       childProcess.spawnSync = originalSpawnSync;
@@ -532,6 +535,7 @@ describe("runner env merging", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
+      calls.length = 0;
       process.env.PATH = "/usr/local/bin:/usr/bin";
       run(["echo", "test"], {
         env: {
@@ -571,6 +575,7 @@ describe("runner env merging", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runFile } = require(runnerPath);
+      calls.length = 0;
       process.env.PATH = "/usr/local/bin:/usr/bin";
       runFile("bash", ["/tmp/setup.sh"], {
         env: {
@@ -617,6 +622,7 @@ describe("runner env merging", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runCaptureEx } = require(runnerPath);
+      calls.length = 0;
       process.env.http_proxy = "http://127.0.0.1:8118";
       delete process.env.NO_PROXY;
       delete process.env.no_proxy;
@@ -1037,6 +1043,7 @@ describe("regression guards", () => {
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runInteractive } = require(runnerPath);
+      calls.length = 0;
       runInteractive(["echo", "interactive"]);
       const firstCall = requireCall(withoutDockerAuthorityProbe(calls), 0);
       expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
