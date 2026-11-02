@@ -106,13 +106,15 @@ On Unix, the `capabilities` test reads `fabric_harnesses` from a fake Docker eng
 
 ## System Tests
 
-The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module.
+The system tests are the ignored tests in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which the `lifecycle` profile selects whole.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts.
 
-Choose the layer by what the behavior needs:
+Choose the directory by what the behavior needs:
 
-- A graph outcome goes in a [`tofu test` scenario](#tofu-test-cases): registrations, bindings, policy, agent configuration, isolation between agents or deployments, unchanged reconciliation, recovery of what the gateway lost, replacement, and cleanup.
-- A Rust test is for what OpenTofu's test framework cannot observe: the SDK's stage order, saved state and intent, the CLI's output and exit status, export, interrupted and cancelled operations, saved plans, and provider errors, which `expect_failures` cannot expect.
+- `hcl/`: a [`tofu test` scenario](#tofu-test-cases) for a graph outcome: registrations, bindings, policy, agent configuration, isolation between agents or deployments, unchanged reconciliation, recovery of what the gateway lost, replacement, and cleanup.
+- `failure_cases/`: a Rust test for what OpenTofu's test framework cannot observe: the SDK's stage order, saved state and intent, the CLI's output and exit status, export, interrupted and cancelled operations, saved plans, and provider errors, which `expect_failures` cannot expect.
+
+The binary's other modules are offline checks of the fixtures and clients these tests use, and run with the unit tests.
 
 To run the Rust system tests:
 
@@ -134,7 +136,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
-| `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/hcl/integration/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
+| `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
@@ -151,7 +153,7 @@ In `multi_agent`:
 
 ### `tofu test` Cases
 
-`hcl_integration` runs each scenario in `crates/nemoclaw-e2e/hcl/integration/tests` against the fixtures, with one shared runner:
+`hcl_integration` runs each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` against the fixtures, with one shared runner:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
@@ -159,12 +161,12 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=1 hcl_integration::
 ```
 
-A scenario is an integration test file, `hcl/integration/tests/<scenario>.tftest.hcl`, whose runs name the modules they apply.
+A scenario is an integration test file, `tests/integration/hcl/tests/<scenario>.tftest.hcl`, whose runs name the modules they apply.
 The runner prepares each module a test file names, in the same path of a work copy of the integration root:
 
 | Module source | Input | What the runner writes |
 |---|---|---|
-| `./cases/<name>` | `hcl/cases/<name>.yaml`, shared with the live E2E scenarios that `hcl_live::case` runs from `hcl/tests` | The document compiled by the SDK as `nemoclaw.tf.json`, beside a copy of `integration/harness/main.tf` |
+| `./cases/<name>` | `cases/<name>.yaml`, shared with the live E2E scenarios that `hcl_live::case` runs from `tests/e2e/hcl/tests` | The document compiled by the SDK as `nemoclaw.tf.json`, beside a copy of `tests/integration/hcl/harness/main.tf` |
 | `./examples/<path>` | A NemoClaw document, `examples/<path>.yaml` | The same, so an example is tested unchanged |
 | `./examples/<path>` | An authored HCL directory, `examples/<path>` | A copy, with the bundle's version pinned on each NVIDIA provider, which a development bundle's pre-release providers need |
 
@@ -177,8 +179,8 @@ The harness declares the fixtures through the `fixture` provider's one data sour
 
 | Module | Purpose |
 |---|---|
-| `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. Outputs the owner, the engine object prefix, and each service's container. |
-| `integration/modules/observed` | Outputs the registrations and `agents` the gateway holds, by name, each agent with its latest Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records: current sandbox IDs, gateway effects, Fabric starts, and the most sandboxes created at once. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. A test file for an authored example applies it with `declare` to declare the fixtures and read their endpoints. |
+| `tests/integration/hcl/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. Outputs the owner, the engine object prefix, and each service's container. |
+| `tests/integration/hcl/modules/observed` | Outputs the registrations and `agents` the gateway holds, by name, each agent with its latest Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records: current sandbox IDs, gateway effects, Fabric starts, and the most sandboxes created at once. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. A test file for an authored example applies it with `declare` to declare the fixtures and read their endpoints. |
 
 Harness variables change what the fixtures do:
 
@@ -218,7 +220,7 @@ Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tf
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, naming any it finds, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
 In CI / Bundle, each `Lifecycle` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
-An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/hcl_integration/fixtures.rs`.
+An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/integration/tofu_test/fixtures.rs`.
 
 Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:
 

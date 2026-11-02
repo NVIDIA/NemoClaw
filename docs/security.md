@@ -85,7 +85,7 @@ SDK stage progress, operation results, and known remaining-state guidance remain
 Protected values include resolved environment references passed to the child, including gateway TLS file paths, and nonempty values in the SDK process environment whose names contain `KEY`, `TOKEN`, `SECRET`, or `PASSWORD`, ignoring case.
 The environment scan includes values subsequently excluded from the child environment or overridden.
 If withholding is unexpected, check those references and remove unrelated credential-like environment variables from the invocation.
-The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](../crates/nemoclaw-e2e/tests/deployment.rs) exercise these boundaries.
+The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](../crates/nemoclaw-e2e/tests/integration/failure_cases/deployment.rs) exercise these boundaries.
 
 ### Separate the TLS Connections
 

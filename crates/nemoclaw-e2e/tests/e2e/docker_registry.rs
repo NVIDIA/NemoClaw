@@ -187,7 +187,7 @@ async fn a_listed_registry_pulls_with_the_hosts_login_without_credentials_in_sta
     // The Docker provider block NemoClaw generates for a configuration that
     // lists the registry.
     let mut document: Value =
-        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama.yaml")).unwrap();
+        serde_saphyr::from_str(include_str!("../../../../examples/managed-ollama.yaml")).unwrap();
     let config_file = home.path().join(".docker").join("config.json");
     let config_file = config_file.to_str().unwrap();
     document["spec"]["registries"] = json!([{ "address": authority, "configFile": config_file }]);

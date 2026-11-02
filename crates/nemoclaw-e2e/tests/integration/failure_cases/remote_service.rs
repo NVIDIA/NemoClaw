@@ -100,13 +100,13 @@ impl Scenario {
         gateway.state.lock().unwrap().driver = Some("podman".into());
         gateway.state.lock().unwrap().inference_exit = 1;
         let document = Document::parse(
-            include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
+            include_bytes!("../../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
         )
         .unwrap();
         let mut value = serde_json::to_value(document).unwrap();
         if kind == "ollama" {
             let source: Value = serde_saphyr::from_str(include_str!(
-                "../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"
+                "../../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"
             ))
             .unwrap();
             value["spec"]["services"]["qwen"] = source["spec"]["services"]["ollama-server"].clone();

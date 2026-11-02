@@ -88,13 +88,14 @@ Put each test in the cheapest layer that can check its behavior, and assert only
 |---|---|---|---|
 | Unit | One crate's rules, with in-process fakes | Each crate's library tests and `integration` binary, and every other test not marked `#[ignore]` | `test` |
 | Contract | Each provider type through pinned OpenTofu | The ignored tests in `nemoclaw-provider::contract`, `openshell-provider::contract`, and `fabric-provider::contract` | `lifecycle` |
-| System | SDK and CLI orchestration over a bundle | The ignored `nemoclaw-e2e::integration` modules that the `lifecycle` profile selects | `lifecycle` |
-| Live | Real Docker engines, kind clusters, and owned remote hosts | Ignored tests that the `live-docker` and `live-kind` profiles select, and the opt-in tests in [live tests](live-tests.md) | `live-docker`, `live-kind`, or none |
+| System | SDK and CLI orchestration over a bundle | The ignored tests in `nemoclaw-e2e::integration`, which the `lifecycle` profile selects | `lifecycle` |
+| Live | Real Docker engines, kind clusters, and owned remote hosts | Ignored tests that the `live-docker` and `live-kind` profiles select, and the other opt-in tests in `nemoclaw-e2e::e2e` and [live tests](live-tests.md) | `live-docker`, `live-kind`, or none |
 
 ### Unit
 
 Unit tests check one crate's rules: configuration parsing and validation, compilation, planning, provider backends, CLI argument and output handling, and the build tool.
 They live in each crate's `src` modules and in its `integration` test binary, `tests/main.rs`; the providers' `schema` binaries also belong here.
+In `nemoclaw-e2e` alone, `integration` names the system-test binary instead; the tests it and the `e2e` binary don't ignore still run here.
 They use in-process fakes and temporary files and need no bundle; `openshell-provider` and `fabric-provider`, for example, test their backends against the fake OpenShell gateway in `src/fake_gateway_tests.rs` without OpenTofu.
 On Unix, the SDK's `integration` binary also runs `Deployment` over a [scripted OpenTofu](../../crates/nemoclaw-sdk/tests/support/scripted_tofu.rs): a shell script in a temporary directory with a bundle's layout and manifest, which logs its calls and replays canned plans and states.
 The SDK alone decides the stage order and the unfinished-apply and unfinished-destroy state it saves when an operation stops, so those tests need neither OpenTofu nor `NEMOCLAW_TEST_BUNDLE`.
@@ -117,8 +118,9 @@ A coverage test in each binary requires a contract test for every type the provi
 ### System
 
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
-System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, `helm_recovery`, and `hcl_integration` modules.
-`hcl_integration` runs shared NemoClaw documents, unchanged examples, and authored HCL examples under `tofu test` against the same fixtures; the other modules keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#system-tests) says which layer a check belongs in.
+System tests live in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which holds only tests against local fixtures; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects the whole binary.
+Its `hcl/` directory holds the `tofu test` scenarios, which the `hcl_integration` module in `tofu_test/` runs: shared NemoClaw documents, unchanged examples, and authored HCL examples.
+Its `failure_cases/` directory holds the `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, and `helm_recovery` modules, which keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#system-tests) says which a check belongs in.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.
@@ -126,7 +128,8 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 ### Live
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
-The `live-docker` profile selects the Docker tests in `nemoclaw-build`, `nemoclaw-e2e`, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects `nemoclaw-e2e`'s `kubernetes_live` and `kubernetes_chart` tests.
+`nemoclaw-e2e`'s live tests live in its `e2e` binary, `crates/nemoclaw-e2e/tests/e2e`.
+The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` and `kubernetes_chart` tests.
 The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.

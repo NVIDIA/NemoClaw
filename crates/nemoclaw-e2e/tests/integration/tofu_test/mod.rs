@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Runs each scenario in `hcl/integration/tests` under `tofu test`. A
+//! Runs each scenario in `tests/integration/hcl/tests` under `tofu test`. A
 //! scenario is a test file whose runs name the modules they apply:
-//! `./cases/<name>`, a document in `hcl/cases` shared with the live E2E
-//! suites; `./examples/<path>`, a NemoClaw document `examples/<path>.yaml`;
+//! `./cases/<name>`, a document in the crate's `cases`, shared with the live
+//! E2E suites; `./examples/<path>`, a NemoClaw document `examples/<path>.yaml`;
 //! or `./examples/<path>`, an authored HCL directory `examples/<path>`. The
 //! runner compiles each document with the SDK against the fixtures into that
 //! module path of a work copy of the integration root, beside a copy of
@@ -24,7 +24,12 @@ use std::{
     time::Duration,
 };
 
-const HCL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/hcl");
+/// The shared NemoClaw documents.
+const CASES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/cases");
+/// The integration `tofu test` root.
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/integration/hcl");
+/// The live E2E test files, which name their documents by file name.
+const LIVE_TESTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/hcl/tests");
 const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
 const GENERATIONS: [&str; 7] = [
     "workspace",
@@ -81,33 +86,29 @@ async fn scenarios_in_shard_4() {
     run_shard(3).await;
 }
 
-/// Every live E2E test file names a document in `hcl/cases`, and every
+/// Every live E2E test file names a document in `cases`, and every
 /// integration test file applies at least one document or authored example
 /// that exists, so a renamed or removed input fails with the unit tests,
 /// before a bundle is built.
 #[test]
 fn every_scenario_test_names_its_inputs() {
-    let mut missing: Vec<String> = fs::read_dir(Path::new(HCL).join("tests"))
+    let mut missing: Vec<String> = fs::read_dir(LIVE_TESTS)
         .unwrap()
         .filter_map(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
-            let case = Path::new(HCL)
-                .join("cases")
-                .join(format!("{scenario}.yaml"));
-            (!case.is_file()).then(|| format!("tests/{name}"))
+            let case = Path::new(CASES).join(format!("{scenario}.yaml"));
+            (!case.is_file()).then(|| format!("e2e/hcl/tests/{name}"))
         })
         .collect();
     for (name, text) in test_files() {
         let modules = references(&text);
         if modules.is_empty() {
-            missing.push(format!(
-                "integration/tests/{name}.tftest.hcl applies nothing"
-            ));
+            missing.push(format!("hcl/tests/{name}.tftest.hcl applies nothing"));
         }
         for module in modules {
             if input(&module).is_none() {
-                missing.push(format!("integration/tests/{name}.tftest.hcl: {module}"));
+                missing.push(format!("hcl/tests/{name}.tftest.hcl: {module}"));
             }
         }
     }
@@ -116,7 +117,7 @@ fn every_scenario_test_names_its_inputs() {
 
 /// Each integration test file's name and text, sorted by name.
 fn test_files() -> Vec<(String, String)> {
-    let mut tests: Vec<(String, String)> = fs::read_dir(Path::new(HCL).join("integration/tests"))
+    let mut tests: Vec<(String, String)> = fs::read_dir(Path::new(ROOT).join("tests"))
         .unwrap()
         .filter_map(|entry| {
             let path = entry.unwrap().path();
@@ -175,7 +176,7 @@ enum Input {
 
 fn input(module: &str) -> Option<Input> {
     if let Some(name) = module.strip_prefix("cases/") {
-        let path = Path::new(HCL).join("cases").join(format!("{name}.yaml"));
+        let path = Path::new(CASES).join(format!("{name}.yaml"));
         return path.is_file().then_some(Input::Document(path));
     }
     let path = Path::new(EXAMPLES).join(module.strip_prefix("examples/")?);
@@ -251,7 +252,7 @@ fn prepare(
     fs::write(target.join("nemoclaw.yaml"), &source).unwrap();
     // The harness names the shared modules relative to the integration root.
     let depth = module.split('/').count();
-    let harness = fs::read_to_string(Path::new(HCL).join("integration/harness/main.tf"))
+    let harness = fs::read_to_string(Path::new(ROOT).join("harness/main.tf"))
         .unwrap()
         .replace(
             "\"../../modules/",
@@ -283,7 +284,7 @@ fn pin_versions(text: &str, version: &str) -> String {
 
 async fn run_shard(shard: usize) {
     let bundle = Bundle::from_env();
-    let root = Path::new(HCL).join("integration");
+    let root = Path::new(ROOT).to_path_buf();
     let tests = test_files();
     assert!(tests.len() >= SHARDS, "every shard needs a scenario");
 

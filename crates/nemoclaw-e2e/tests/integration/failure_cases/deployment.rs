@@ -18,7 +18,7 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -111,7 +111,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -177,7 +177,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -262,7 +262,8 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn authored_settings_survive_cli_export_and_drift_stops_plan_and_export() {
     let mut document =
-        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
     document.spec.integrations = serde_json::from_value(serde_json::json!({
         "search": {"kind":"webSearch", "provider":"tavily", "credential":{"env":"SEARCH_KEY"}},
         "bookings": {"kind":"api", "endpoint":"https://bookings.example.com/mcp",
@@ -601,7 +602,7 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -702,7 +703,7 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -729,7 +730,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
         let directory = tempfile::tempdir().unwrap();
         let fixture = Fixture::start().await;
         let mut document = Document::parse(
-            include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+            include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
         )
         .unwrap();
         *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -803,7 +804,7 @@ async fn failed_first_configuration_accepts_corrected_intent_by_replacing_the_sa
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -843,7 +844,7 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -970,9 +971,10 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
     for recover in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let fixture = Fixture::start().await;
-        let mut document =
-            Document::parse(include_str!("../../../examples/explicit-policy.yaml").as_bytes())
-                .unwrap();
+        let mut document = Document::parse(
+            include_str!("../../../../../examples/explicit-policy.yaml").as_bytes(),
+        )
+        .unwrap();
         *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
         let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
         let name = "assistant";
@@ -1082,7 +1084,7 @@ async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() 
         let directory = tempfile::tempdir().unwrap();
         let fixture = Fixture::start().await;
         let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-            "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+            "../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
         ))
         .unwrap();
         input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
@@ -1179,7 +1181,7 @@ async fn scoped_provider_labels_preserve_authored_identity() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-        "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+        "../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
     ))
     .unwrap();
     input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();

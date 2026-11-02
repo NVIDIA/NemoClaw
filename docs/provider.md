@@ -648,7 +648,7 @@ After correcting compatibility or access, reapply the same configuration with it
 Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
 
 [OpenShell contract tests](../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
-[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
+[Deployment fixtures](../crates/nemoclaw-e2e/tests/integration/failure_cases/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/integration/failure_cases/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
 Starting and stopping agent runtimes is owned by `fabric_agent`; an unchanged apply leaves the running runtime alone.
 Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
