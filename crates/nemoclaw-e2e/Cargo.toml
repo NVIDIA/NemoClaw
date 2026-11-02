@@ -5,18 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-# System tests against local fixtures and live end-to-end tests are separate
-# binaries, so each suite's commands and archives name only its own tests. The
-# Brev test stays separate because its workflow copies that one executable to a
-# VM.
+# One integration-test binary links the SDK and provider once. The Brev test
+# stays separate because its workflow copies that one executable to a VM.
 autotests = false
 
 [[test]]
-name = "system"
-path = "tests/system/main.rs"
-
-[[test]]
-name = "e2e"
+name = "integration"
 path = "tests/main.rs"
 
 [[test]]

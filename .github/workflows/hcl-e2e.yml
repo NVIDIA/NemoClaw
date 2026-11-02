@@ -43,10 +43,10 @@ jobs:
       - name: Build the bundle, test executable, and OpenClaw image
         run: |
           cargo ci bundle
-          executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
-            jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
+          executable=$(cargo test --locked -p nemoclaw-e2e --test integration --no-run --message-format=json |
+            jq -r 'select(.reason == "compiler-artifact" and .target.name == "integration" and .profile.test) | .executable' | tail -1)
           mkdir candidate
-          cp "$executable" candidate/e2e
+          cp "$executable" candidate/integration
           cp -a "dist/$TEST_PLATFORM" candidate/bundle
           cargo images build --platform linux/amd64 openclaw
           docker save nc-fabric:openclaw -o candidate/openclaw.tar
@@ -110,7 +110,7 @@ jobs:
           NEMOCLAW_HCL_RUN: ${{ runner.temp }}/hcl
           # Only the hosted case receives the inference credential.
           NVIDIA_INFERENCE_API_KEY: ${{ secrets[matrix.secret] }}
-        run: '"$GITHUB_WORKSPACE/candidate/e2e" hcl_live::case --exact --ignored --nocapture'
+        run: '"$GITHUB_WORKSPACE/candidate/integration" hcl_live::case --exact --ignored --nocapture'
       # A cancelled or timed-out job still runs this step; the test's process does not survive.
       - name: Destroy
         if: always()

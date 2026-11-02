@@ -15,7 +15,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -65,7 +65,7 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();

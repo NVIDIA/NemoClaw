@@ -80,7 +80,7 @@ pub struct Timing {
 /// One test's result.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Test {
-    /// Test binary, as nextest names it, such as `nemoclaw-e2e::system`.
+    /// Test binary, as nextest names it, such as `nemoclaw-e2e::integration`.
     pub binary: String,
     /// Test path within the binary, such as `deployment::applies`.
     pub name: String,

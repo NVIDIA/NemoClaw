@@ -38,7 +38,13 @@ default-filter = '''
 ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
 | (package(nemoclaw-fixture-provider) & binary(=archive))
-| (package(nemoclaw-e2e) & binary(=system))
+| (package(nemoclaw-e2e) & binary(=integration) & (
+    test(/^deployment::/)
+    | test(/^export_observations::/) | test(/^fabric_deployment::/)
+    | test(/^multi_agent::/)
+    | test(/^remote_service::/) | test(/^helm_recovery::/)
+    | test(/^hcl_integration::/)
+))
 '''
 
 [profile.lifecycle.junit]
@@ -74,7 +80,7 @@ test-threads = 2
 slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 (package(nemoclaw-build) & test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core))
-| (package(nemoclaw-e2e) & binary(=e2e) & (
+| (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/) | test(/^docker_registry::/)
     | test(/^managed_gateway::/) | test(/^dummy_agent::/) | test(/^interfaces_live::/)
 ))
@@ -87,7 +93,7 @@ inherits = "ci"
 test-threads = 4
 slow-timeout = { period = "150s", terminate-after = 2 }
 default-filter = '''
-package(nemoclaw-e2e) & binary(=e2e) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
+package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
 '''
 
 # The cluster tests use separate namespaces, releases and ports, so they run
