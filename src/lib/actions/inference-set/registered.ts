@@ -12,6 +12,49 @@ import {
 } from "../../inference/native-provider/registered";
 import type { RegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 import { readNativeCredentialHandle } from "../inference-set-provider";
+import { createRegisteredSandboxIdentityRevalidation } from "../../onboard/sandbox-recreate-transaction";
+import { observeSandboxOnGateway } from "../../onboard/sandbox-recreate-probe";
+import type { InferenceSetDeps } from "../inference-set";
+import type { SandboxEntry } from "../../state/registry";
+export type { SandboxRecreateObservation } from "../../onboard/sandbox-recreate-transaction";
+
+export function captureRegisteredSelectionIdentity(entry: SandboxEntry, deps: InferenceSetDeps) {
+  return createRegisteredSandboxIdentityRevalidation(entry, {
+    readRegistration: deps.getSandbox,
+    observe:
+      deps.observeSandboxIdentity ??
+      ((sandboxName, gatewayName) =>
+        observeSandboxOnGateway({ sandboxName, gatewayName }, undefined, undefined, 15_000)),
+  });
+}
+
+// Registered transitions also detach and restore NemoClaw-owned provider access.
+export function registeredSelectionProviderAdapter(
+  adapter: OpenShellProviderAdapter,
+  revalidateSandboxIdentity: (operation: string) => void,
+): OpenShellProviderAdapter {
+  return {
+    ...adapter,
+    async ensureProviderPolicyComposition(request) {
+      revalidateSandboxIdentity("compose provider policy for registered inference selection");
+      const result = await adapter.ensureProviderPolicyComposition(request);
+      revalidateSandboxIdentity("verify provider policy for registered inference selection");
+      return result;
+    },
+    async attachProvider(request) {
+      revalidateSandboxIdentity("attach provider for registered inference selection");
+      const result = await adapter.attachProvider(request);
+      revalidateSandboxIdentity("verify provider attachment for registered inference selection");
+      return result;
+    },
+    async detachProvider(request) {
+      revalidateSandboxIdentity("detach provider for registered inference selection");
+      const result = await adapter.detachProvider(request);
+      revalidateSandboxIdentity("verify provider detachment for registered inference selection");
+      return result;
+    },
+  };
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -141,6 +184,7 @@ export {
 } from "../../inference/native-provider/registered";
 
 export async function readVerifiedRegisteredCredentialHandle(input: {
+  revalidateSandboxIdentity?: (operation: string) => void;
   attachment: RegisteredInferenceProviderAttachment;
   adapter: OpenShellProviderAdapter;
   read?: typeof readRegisteredInferenceCredentialHandle;
@@ -148,11 +192,13 @@ export async function readVerifiedRegisteredCredentialHandle(input: {
 }): Promise<string> {
   const expected = input.attachment;
   const revision = await registeredInferenceProviderRevision({ adapter: input.adapter, expected });
+  input.revalidateSandboxIdentity?.("read registered inference credential handle");
   const handle = await (input.read ?? readRegisteredInferenceCredentialHandle)(
     expected,
     input.sleep,
   );
-  await verifyRegisteredInferenceProviderAttachment({ adapter: input.adapter, expected });
+  input.revalidateSandboxIdentity?.("verify registered inference credential handle");
+  await verifyRegisteredInferenceProviderAttachment({ ...input, expected });
   if (
     revision !== (await registeredInferenceProviderRevision({ adapter: input.adapter, expected }))
   )
@@ -161,15 +207,17 @@ export async function readVerifiedRegisteredCredentialHandle(input: {
 }
 
 export async function detachPreviousRegisteredSelection(input: {
+  revalidateSandboxIdentity?: (operation: string) => void;
   adapter: OpenShellProviderAdapter;
   previous?: RegisteredInferenceProviderAttachment;
   next?: RegisteredInferenceProviderAttachment;
 }): Promise<boolean> {
   if (!input.previous || input.previous.providerId === input.next?.providerId) return false;
-  return detachRegisteredInferenceProvider({ adapter: input.adapter, expected: input.previous });
+  return detachRegisteredInferenceProvider({ ...input, expected: input.previous });
 }
 
 export async function rollbackRegisteredSelection(input: {
+  revalidateSandboxIdentity?: (operation: string) => void;
   adapter: OpenShellProviderAdapter;
   committed: boolean;
   attachment?: RegisteredInferenceProviderAttachment;
@@ -177,10 +225,11 @@ export async function rollbackRegisteredSelection(input: {
 }): Promise<void> {
   if (input.committed) return;
   if (input.changed && input.attachment)
-    await detachRegisteredInferenceProvider({ adapter: input.adapter, expected: input.attachment });
+    await detachRegisteredInferenceProvider({ ...input, expected: input.attachment });
 }
 
 export async function restorePreviousRegisteredSelection(input: {
+  revalidateSandboxIdentity?: (operation: string) => void;
   adapter: OpenShellProviderAdapter;
   committed: boolean;
   previous?: RegisteredInferenceProviderAttachment;
@@ -191,7 +240,7 @@ export async function restorePreviousRegisteredSelection(input: {
   if (input.committed || !input.previousDetached || !input.previous) return;
   // A failed cleanup cannot establish that its credential environment is free.
   if (input.cleanupError !== input.originalError) throw input.cleanupError;
-  await attachRegisteredInferenceProvider({ adapter: input.adapter, expected: input.previous });
+  await attachRegisteredInferenceProvider({ ...input, expected: input.previous });
 }
 
 /** Capture only the selected operator model; prior model limits are not defaults. */

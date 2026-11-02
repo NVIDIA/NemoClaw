@@ -61,6 +61,12 @@ The profile's existing rules, access mode, and IP restrictions remain operator-c
 NemoClaw verifies the provider identity and its declared profile against the selected endpoint and authentication method before attaching it to the sandbox.
 Missing or conflicting metadata stops the switch.
 
+Before changing a registered provider attachment, NemoClaw verifies the sandbox's recorded lifecycle identity against the live sandbox.
+Missing lifecycle metadata, a changed identity, or an unsuccessful identity check stops the operation.
+These checks also apply when removing a new attachment or restoring the previous attachment after failure.
+If identity verification fails, NemoClaw stops further attachment changes and preserves the remaining resources.
+Inspect the reported sandbox and resolve the identity failure before retrying.
+
 The credential value remains with OpenShell.
 NemoClaw reads the selected sandbox's OpenShell credential handle, verifies the attachment again, and writes that handle into the agent configuration.
 It does not import raw credentials or accept authentication-header overrides from the native configuration.

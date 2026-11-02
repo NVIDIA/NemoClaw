@@ -229,10 +229,16 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
           name: "alpha",
           agent: "openclaw",
           gatewayName: f.binding.gatewayName,
+          lifecycleGeneration: "test-generation",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
           provider: "nvidia-prod",
           model: "nvidia/model-a",
         },
       });
+      deps.observeSandboxIdentity = vi.fn(() => ({
+        state: "ready" as const,
+        liveIdentityFingerprint: "a".repeat(64),
+      }));
       deps.readRegisteredInferenceCredentialHandle = vi.fn(async () => f.handle);
       await expect(
         runInferenceSet({ provider, model: "vendor/model-b", noVerify: true }, deps),

@@ -1564,7 +1564,11 @@ export function createProviderEffectBoundary(input: {
           context.revalidateSandboxIdentity(
             "removing newly attached registered inference provider",
           );
-          await detachRegisteredInferenceProvider({ adapter, expected: receipt.attachment });
+          await detachRegisteredInferenceProvider({
+            adapter,
+            expected: receipt.attachment,
+            revalidateSandboxIdentity: context.revalidateSandboxIdentity,
+          });
           rollbackRegisteredAttachment = undefined;
         };
       }

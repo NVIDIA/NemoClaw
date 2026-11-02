@@ -13,6 +13,9 @@ import {
   detachPreviousRegisteredSelection,
   rollbackRegisteredSelection,
   restorePreviousRegisteredSelection,
+  captureRegisteredSelectionIdentity,
+  registeredSelectionProviderAdapter,
+  type SandboxRecreateObservation,
 } from "./inference-set/native";
 
 import type { NativeLocalProviderAttachment } from "../inference/config";
@@ -232,6 +235,7 @@ function providerCommitFailureAfterSelection(options: {
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+  observeSandboxIdentity?: (sandboxName: string, gatewayName: string) => SandboxRecreateObservation;
   sandboxPolicyReader?: Pick<
     import("../adapters/openshell/sandbox-policy").OpenShellSandboxPolicyReader,
     "readSandboxPolicy"
@@ -1369,6 +1373,29 @@ function unavailableSandboxInferenceProbe(
   };
 }
 
+function registeredSelectionDependencies(
+  deps: InferenceSetDeps,
+  active: boolean,
+  revalidateSandboxIdentity: ((operation: string) => void) | undefined,
+) {
+  if (!active) return { deps, revalidateSandboxIdentity: undefined };
+  if (!revalidateSandboxIdentity)
+    throw new InferenceSetError(
+      "Registered inference selection requires recorded sandbox lifecycle identity.",
+    );
+  revalidateSandboxIdentity("prepare registered inference selection");
+  return {
+    revalidateSandboxIdentity,
+    deps: {
+      ...deps,
+      providerAdapter: registeredSelectionProviderAdapter(
+        deps.providerAdapter,
+        revalidateSandboxIdentity,
+      ),
+    },
+  };
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1386,6 +1413,7 @@ async function runInferenceSetWithoutHostLock(
   assertInferenceModelId(model);
 
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
+  const capturedRegisteredSandboxIdentity = captureRegisteredSelectionIdentity(entry, deps);
   const priorHttpsPinRouteId = parseHttpsPinRouteId(entry.endpointUrl);
   assertInferenceSetAgent(agentName, sandboxName);
   const gatewayPort = registryEntryGatewayPort(entry);
@@ -1400,6 +1428,13 @@ async function runInferenceSetWithoutHostLock(
       agentName,
       expectedGatewayName,
     });
+  const registeredBoundary = registeredSelectionDependencies(
+    deps,
+    Boolean(registered || previousRegistered),
+    capturedRegisteredSandboxIdentity,
+  );
+  deps = registeredBoundary.deps;
+  const revalidateRegisteredSandboxIdentity = registeredBoundary.revalidateSandboxIdentity;
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1752,6 +1787,7 @@ async function runInferenceSetWithoutHostLock(
   };
   try {
     previousRegisteredDetached = await detachPreviousRegisteredSelection({
+      revalidateSandboxIdentity: revalidateRegisteredSandboxIdentity,
       adapter: deps.providerAdapter,
       previous: previousRegistered,
       next: registered,
@@ -1800,12 +1836,14 @@ async function runInferenceSetWithoutHostLock(
     });
     if (registered) {
       const selected = await attachRegisteredInferenceProvider({
+        revalidateSandboxIdentity: revalidateRegisteredSandboxIdentity,
         adapter: deps.providerAdapter,
         expected: registered,
       });
       registeredAttachment = selected.attachment;
       registeredAttachmentChanged = selected.changed;
       nativeCredentialHandle = await readVerifiedRegisteredCredentialHandle({
+        revalidateSandboxIdentity: revalidateRegisteredSandboxIdentity,
         attachment: registeredAttachment,
         adapter: deps.providerAdapter,
         read: deps.readRegisteredInferenceCredentialHandle,
@@ -2086,6 +2124,7 @@ async function runInferenceSetWithoutHostLock(
           ? { endpointUrl: nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl }
           : {}),
     });
+    revalidateRegisteredSandboxIdentity?.("publish registered inference selection");
     if (
       !deps.updateSandbox(
         sandboxName,
@@ -2343,6 +2382,7 @@ async function runInferenceSetWithoutHostLock(
       openClawConfigSyncPending: inSandboxConfigSynced && openClawConfigSyncPending,
     };
   } catch (error) {
+    revalidateRegisteredSandboxIdentity?.("recover registered inference selection");
     recordInferenceSetFailure(
       sandboxName,
       Boolean(appliedInferenceSelection || appliedProvider || providerCommitResidual),
@@ -2350,6 +2390,7 @@ async function runInferenceSetWithoutHostLock(
       expectedGatewayName,
     );
     await rollbackRegisteredSelection({
+      revalidateSandboxIdentity: revalidateRegisteredSandboxIdentity,
       adapter: deps.providerAdapter,
       committed: registeredCommitted,
       attachment: registeredAttachment,
@@ -2399,6 +2440,7 @@ async function runInferenceSetWithoutHostLock(
       error: hermesLocalFailure,
     });
     await restorePreviousRegisteredSelection({
+      revalidateSandboxIdentity: revalidateRegisteredSandboxIdentity,
       adapter: deps.providerAdapter,
       committed: registeredCommitted,
       previous: previousRegistered,

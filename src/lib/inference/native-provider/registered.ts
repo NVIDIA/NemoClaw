@@ -262,6 +262,7 @@ export async function resolveRegisteredInferenceProvider(input: {
 }
 
 export async function verifyRegisteredInferenceProviderAttachment(input: {
+  revalidateSandboxIdentity?: (operation: string) => void;
   adapter: OpenShellProviderAdapter;
   expected: RegisteredInferenceProviderAttachment;
 }): Promise<void> {
@@ -274,6 +275,7 @@ export async function verifyRegisteredInferenceProviderAttachment(input: {
   });
   if (!attachments.ok || !attachments.value.names.includes(expected.providerName))
     throw new Error("Registered inference provider is not attached to the selected sandbox");
+  input.revalidateSandboxIdentity?.("verify registered inference attachment");
 }
 
 export async function attachRegisteredInferenceProvider(input: {
@@ -295,6 +297,7 @@ export async function attachRegisteredInferenceProvider(input: {
     await verifyRegisteredInferenceProviderAttachment({ ...input, expected });
     return { attachment: expected, changed: false };
   }
+  input.revalidateSandboxIdentity?.("compose registered inference provider policy");
   const policy = await input.adapter.ensureProviderPolicyComposition(request);
   if (!policy.ok) throw new Error("Registered provider policy composition could not be verified");
   input.revalidateSandboxIdentity?.("attaching registered inference provider");
@@ -320,6 +323,7 @@ export async function attachRegisteredInferenceProvider(input: {
 
 /** Remove only selection-created access; the operator provider is never mutated. */
 export async function detachRegisteredInferenceProvider(input: {
+  revalidateSandboxIdentity?: (operation: string) => void;
   adapter: OpenShellProviderAdapter;
   expected: RegisteredInferenceProviderAttachment;
 }): Promise<boolean> {
@@ -334,11 +338,13 @@ export async function detachRegisteredInferenceProvider(input: {
   const before = await input.adapter.listProviderAttachments(request);
   if (!before.ok) throw new Error("Registered provider attachments could not be inspected");
   if (!before.value.names.includes(expected.providerName)) return false;
+  input.revalidateSandboxIdentity?.("detach registered inference provider");
   const detached = await input.adapter.detachProvider(request);
   if (!detached.ok) throw new Error("Registered provider attachment removal was not confirmed");
   const after = await input.adapter.listProviderAttachments(request);
   if (!after.ok || after.value.names.includes(expected.providerName))
     throw new Error("Registered provider attachment absence was not confirmed");
+  input.revalidateSandboxIdentity?.("verify registered inference provider detach");
   return true;
 }
 

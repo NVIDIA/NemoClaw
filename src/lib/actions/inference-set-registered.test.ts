@@ -20,6 +20,8 @@ function fixture(agent = "openclaw", attached = false) {
         };
   const entry: SandboxEntry = {
     name: "alpha",
+    lifecycleGeneration: "test-generation",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
     agent,
     gatewayName: f.binding.gatewayName,
     provider: "nvidia-prod",
@@ -35,6 +37,8 @@ function fixture(agent = "openclaw", attached = false) {
       return true;
     },
   });
+  const observation = { state: "ready" as const, liveIdentityFingerprint: "a".repeat(64) };
+  Object.assign(deps, { observeSandboxIdentity: vi.fn(() => ({ ...observation })) });
   deps.readRegisteredInferenceCredentialHandle = vi.fn(async () => f.handle);
   const options = {
     provider: "native-extra",
@@ -43,7 +47,7 @@ function fixture(agent = "openclaw", attached = false) {
     credentialEnv: f.binding.credentialEnv,
     inferenceApi: f.binding.inferenceApi,
   };
-  return { ...f, deps, options, config, entry };
+  return { ...f, deps, options, config, entry, observation };
 }
 
 function collisionFixture() {
@@ -132,10 +136,137 @@ function collisionFixture() {
     httpStatus: 401,
     detail: "rejected",
   });
-  return { ...f, binding, events };
+  return { ...f, binding, events, ownedAdapter: adapter };
 }
 
 describe("registered inference selection transaction", () => {
+  it.each(["openclaw", "hermes"])(
+    "refuses registered attachment when %s is replaced during provider inspection",
+    async (agent) => {
+      const f = fixture(agent);
+      f.adapter.listProviderAttachments.mockImplementation(async () => {
+        f.observation.liveIdentityFingerprint = "b".repeat(64);
+        return { ok: true, value: { names: [] } };
+      });
+      await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(/live identity.*changed/);
+      expect(f.adapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+      expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+      expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+      expect(f.deps.readRegisteredInferenceCredentialHandle).not.toHaveBeenCalled();
+      expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not detach a replacement sandbox after a registered route probe fails", async () => {
+    const f = fixture();
+    f.deps.calls.probeSandboxRoute.mockImplementation(async () => {
+      f.observation.liveIdentityFingerprint = "b".repeat(64);
+      return { ok: false, httpStatus: 401, detail: "rejected" };
+    });
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(/live identity.*changed/);
+    expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not roll back an unverified attachment after sandbox replacement", async () => {
+    const f = fixture();
+    f.adapter.attachProvider.mockImplementation(async () => {
+      f.state.attached = true;
+      f.state.revision++;
+      f.observation.liveIdentityFingerprint = "b".repeat(64);
+      return { ok: true };
+    });
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(/live identity.*changed/);
+    expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not publish a selection after replacement during credential retrieval", async () => {
+    const f = fixture();
+    f.deps.readRegisteredInferenceCredentialHandle = vi.fn(async () => {
+      f.observation.liveIdentityFingerprint = "b".repeat(64);
+      return f.handle;
+    });
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(/live identity.*changed/);
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(f.deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not detach the previous registered provider after sandbox replacement", async () => {
+    const f = collisionFixture();
+    const list = f.deps.providerAdapter.listProviderAttachments;
+    f.deps.providerAdapter.listProviderAttachments = async (request) => {
+      const result = await list(request);
+      f.observation.liveIdentityFingerprint = "b".repeat(64);
+      return result;
+    };
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "vendor/model-b" }, f.deps),
+    ).rejects.toThrow(/live identity.*changed/);
+    expect(f.events).toEqual([]);
+    expect(f.state.attached).toBe(true);
+  });
+
+  it("does not restore a registered attachment after replacement during owned-provider cleanup", async () => {
+    const f = collisionFixture();
+    const detach = f.ownedAdapter.detachProvider;
+    f.ownedAdapter.detachProvider = async (request) => {
+      const result = await detach(request);
+      f.observation.liveIdentityFingerprint = "b".repeat(64);
+      return result;
+    };
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "vendor/model-b" }, f.deps),
+    ).rejects.toThrow(/live identity.*changed/);
+    expect(f.events).toEqual([
+      "detach:native-extra",
+      "attach:nemoclaw-nvidia-prod-v1",
+      "detach:nemoclaw-nvidia-prod-v1",
+    ]);
+    expect(f.state.attached).toBe(false);
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not detach owned access after replacement during a switch to registered access", async () => {
+    const f = collisionFixture();
+    f.deps.calls.probeSandboxRoute.mockResolvedValueOnce({
+      ok: true,
+      httpStatus: 200,
+      detail: "ok",
+    });
+    await runInferenceSet({ provider: "nvidia-prod", model: "vendor/model-b" }, f.deps);
+    const committed = structuredClone(f.entry);
+    f.events.length = 0;
+    vi.clearAllMocks();
+    const getProvider = f.ownedAdapter.getProvider;
+    f.ownedAdapter.getProvider = async (request) => {
+      const result = await getProvider(request);
+      f.observation.liveIdentityFingerprint = "b".repeat(64);
+      return result;
+    };
+    await expect(
+      runInferenceSet({ ...f.options, credentialEnv: "NVIDIA_API_KEY" }, f.deps),
+    ).rejects.toThrow(/live identity.*changed/);
+    expect(f.events).toEqual([]);
+    expect(f.entry).toEqual(committed);
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.deps.readRegisteredInferenceCredentialHandle).not.toHaveBeenCalled();
+  });
+
+  it("refuses registered selection without recorded lifecycle identity", async () => {
+    const f = fixture();
+    delete f.entry.lifecycleLiveIdentityFingerprint;
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(/lifecycle identity/);
+    expect(f.adapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       inventory: "missing",

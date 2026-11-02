@@ -486,4 +486,7 @@ export {
   detachPreviousRegisteredSelection,
   rollbackRegisteredSelection,
   restorePreviousRegisteredSelection,
+  captureRegisteredSelectionIdentity,
+  registeredSelectionProviderAdapter,
+  type SandboxRecreateObservation,
 } from "./registered";
