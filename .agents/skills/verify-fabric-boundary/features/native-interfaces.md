@@ -32,10 +32,10 @@ Preconditions: `inference` passed in this phase, the phase's [fresh phase input]
 Drive the terminal UI with the pseudo-terminal driver from [deepagents-code-terminal](../../verify-yaml-deployment/features/deepagents-code-terminal.md) and the web UI with the Playwright Chromium driver from [openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md), extended to type each saved prompt in turn and wait for its answer before the next.
 Never send these prompts through `ask`: a headless request isn't a UI turn.
 
-1. **Read the entry points** from the latest apply's output: `$EVIDENCE/apply.txt` in the Initial phase, and after a transition the apply output that [lifecycle-and-retention](lifecycle-and-retention.md) saved for it:
+1. **Read the entry points** from the latest apply's output, `$APPLY_OUT`: [lifecycle-and-retention](lifecycle-and-retention.md) sets it after each transition, and the Initial phase uses the launch's apply output:
 
    ```sh
-   APPLY_OUT=$EVIDENCE/apply.txt  # Initial only; after a transition, use the apply output it saved
+   APPLY_OUT=${APPLY_OUT:-$EVIDENCE/apply.txt}
    mkdir -p "$EVIDENCE/$PHASE"
    sed -n '/^Agent interfaces:/,/^$/p' "$APPLY_OUT" | tee "$EVIDENCE/$PHASE/interfaces.txt"
    ```
