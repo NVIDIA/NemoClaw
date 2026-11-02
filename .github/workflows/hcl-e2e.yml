@@ -81,6 +81,12 @@ jobs:
             # This NVIDIA GPU runner is already used by the main E2E workflow.
             runner: linux-amd64-gpu-rtxpro6000-latest-1
             secret: ""
+          - case: docker-openclaw-hermes-vllm
+            runner: linux-amd64-gpu-rtxpro6000-latest-1
+            secret: ""
+          - case: docker-openclaw-hermes-ollama
+            runner: linux-amd64-gpu-rtxpro6000-latest-1
+            secret: NVIDIA_API_KEY
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     # These cases use fixed gateway ports; finish cleanup before another run starts.
@@ -103,12 +109,15 @@ jobs:
         run: |
           tar -xf "$RUNNER_TEMP/candidate.tar"
           docker load -i candidate/agents.tar
-          if [[ $NEMOCLAW_HCL_CASE == *vllm ]]; then docker buildx bake vllm; fi
+          # A case builds the model runtime image it serves.
+          if [[ $NEMOCLAW_HCL_CASE == *vllm* ]]; then docker buildx bake vllm; fi
+          if [[ $NEMOCLAW_HCL_CASE == *ollama* ]]; then docker buildx bake ollama; fi
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
           sed -i -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
             -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
             -e "s#nc-prototype-vllm@sha256:0\{64\}#nc-prototype-vllm@$(id nc-prototype-vllm:rust-v1)#" \
+            -e "s#nc-prototype-ollama@sha256:a\{64\}#nc-prototype-ollama@$(id nc-prototype-ollama:rust-v1)#" \
             -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
             "crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
       - name: Run the scenario
