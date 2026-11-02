@@ -235,40 +235,56 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
   });
 
-  it("changes the selected model without touching the shared gateway route", async () => {
-    const deps = fixture();
-    const result = await runInferenceSet(
-      {
-        provider: "ollama-local",
-        model: "new-model",
-        sandboxName: "alpha",
-      },
-      deps,
-    );
-    expect(result.provider).toBe("ollama-local");
-    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        nativeProvider: true,
-        nativeLocalProviderAttachment: attachment,
-        agentName: "openclaw",
-        model: "new-model",
-      }),
-    );
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        model: "new-model",
-        nativeLocalProviderAttachment: attachment,
-      }),
-    );
-    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalled();
-    expect(
-      deps.calls.captureOpenshell.mock.calls.some(
-        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
-      ),
-    ).toBe(false);
-  });
+  it.each(["ollama-local", "nvidia-router"] as const)(
+    "changes the %s model without touching the shared gateway route",
+    async (provider) => {
+      const selectedBinding =
+        provider === "nvidia-router"
+          ? {
+              ...attachment,
+              provider,
+              authMode: "authenticated" as const,
+              endpointUrl: "http://host.openshell.internal:4000/v1",
+            }
+          : attachment;
+      const selected = { ...selectedBinding, ...nativeLocalIdentity(selectedBinding) };
+      const deps = fixture(selected);
+      const result = await runInferenceSet(
+        {
+          provider,
+          model: "new-model",
+          sandboxName: "alpha",
+        },
+        deps,
+      );
+      expect(result.provider).toBe(provider);
+      expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nativeProvider: true,
+          nativeLocalProviderAttachment: selected,
+          agentName: "openclaw",
+          model: "new-model",
+        }),
+      );
+      expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          model: "new-model",
+          nativeLocalProviderAttachment: selected,
+        }),
+      );
+      expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
+      expect(JSON.stringify(deps.calls.setOpenClawConfigValues.mock.calls)).toContain(
+        "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      );
+      expect(deps.calls.restartSandboxGateway).toHaveBeenCalled();
+      expect(
+        deps.calls.captureOpenshell.mock.calls.some(
+          ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("retries exact provider retirement after a committed route switch", async () => {
     const deps = fixture();

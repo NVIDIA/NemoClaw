@@ -1412,6 +1412,12 @@ export function createSetupInference(
                 sandboxName,
               },
               credentialValue: value,
+              ...(name === "nvidia-router"
+                ? {
+                    ownedModelRouterPort:
+                      deps.getModelRouterPort?.() ?? Number(new URL(hostReachableEndpoint).port),
+                  }
+                : {}),
               ownedProxy:
                 (name === "ollama-local" && !hostLocalRoute && deps.shouldFrontOllamaWithProxy()) ||
                 (name === "compatible-endpoint" &&
@@ -1419,6 +1425,10 @@ export function createSetupInference(
               readAuthority: deps.getNativeLocalProviderAuthority,
               writeAuthority: deps.setNativeLocalProviderAuthority,
             });
+            if (name === "nvidia-router") {
+              nativeProviderEndpoint = hostReachableEndpoint;
+              nativeHostedCredentialEnv = sourceCredentialEnv;
+            }
             return { ok: true };
           }
           const reused = routeStager.reusePublishedProvider(args[0]);
@@ -1998,16 +2008,25 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
-          if (nativeLocalRecreationSource && nativeLocalProviderAttachment) {
-            return {
-              ok: true,
-              stagedNativeLocalRecreation: {
-                source: nativeLocalRecreationSource,
-                attachment: nativeLocalProviderAttachment,
+          const result =
+            nativeLocalRecreationSource && nativeLocalProviderAttachment
+              ? {
+                  ok: true as const,
+                  stagedNativeLocalRecreation: {
+                    source: nativeLocalRecreationSource,
+                    attachment: nativeLocalProviderAttachment,
+                  },
+                }
+              : routeStager.successResult();
+          return {
+            ...result,
+            ...(nativeLocalProviderAttachment?.provider === "nvidia-router" && {
+              nativeInference: {
+                endpointUrl: nativeLocalProviderAttachment.endpointUrl,
+                credentialEnv: nativeHostedCredentialEnv!,
               },
-            };
-          }
-          return routeStager.successResult();
+            }),
+          };
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) {
             return rejectNativeLocalSetupFailure({

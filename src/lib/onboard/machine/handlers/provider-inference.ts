@@ -613,6 +613,8 @@ function canResumeInferenceRoute(input: {
   // another sandbox on a reused gateway can own the same shared route.
   return (
     !input.needsBedrockRuntimeAdapter &&
+    // Reconcile the managed router and reverify its native profile on resume.
+    !(input.provider === "nvidia-router" && input.selectsNativeLocal) &&
     input.provider !== OPENROUTER_PROVIDER_NAME &&
     !input.hasHostLocalInference &&
     !input.forceProviderSelection &&

@@ -58,6 +58,9 @@ export async function resolveOpenClawLocalSwitch(input: {
       expected: previous,
     });
   }
+  // A model-only change must preserve the native router selected during onboarding.
+  if (provider === "nvidia-router" && previous?.provider === provider)
+    return { selected: previous, previous };
   if (!isLocalInferenceProvider(provider) || (provider === "vllm-local" && entry.nimContainer))
     return { previous };
   // A retained OpenClaw row may still own the historical shared route.
