@@ -149,6 +149,8 @@ Run blocks call these modules:
 | `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
+| `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
+| `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply. |
 
 Every scenario checks the same successful path:
@@ -177,43 +179,15 @@ NVIDIA_INFERENCE_API_KEY=... \
 
 Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
-## Retained Storage Observations
-
-The read-only live storage test requires an explicit OpenTofu state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
-
-```sh
-NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/deployment-state/terraform.tfstate \
-  cargo test -p nemoclaw-sdk --test integration \
-  managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
-```
-
-The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
-Neither read-only test creates resources or establishes live agent inference.
-
 ## Spark and Fabric
 
-The Spark test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes, and asserts the public plan and apply results.
+The `docker-openclaw-hermes-vllm` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
+Spark hardware has no CI runner yet.
+
+The Spark image-change test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes.
 Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
-Choose a fresh deployment UID, available gateway port and subnet, and a new state-directory path whose parent exists.
-The test derives the expected resources from the YAML's provider and sandbox names.
 
-From the repository root, with absolute paths:
-
-```sh
-NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/deepagents-team.yaml \
-NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test -p nemoclaw-e2e --test e2e spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
-```
-
-The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
-Apply must create those resources plus the provider profile, provider registration, sandbox, and workspace.
-A second plan and apply must report no changes.
-The test checks readiness without requesting a model response and leaves workloads running.
-It writes no separate test report.
-After failure, retain state for [explicit recovery](../usage.md#updates-and-recovery); use [destroy](../usage.md#destroy) when finished.
-
-Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
+Run `spark::spark_image_change_plans_and_applies_replacement` with `NEMOCLAW_LIVE_SPARK_CONFIG`, `NEMOCLAW_LIVE_SPARK_STATE`, and `NEMOCLAW_TEST_BUNDLE` set to absolute paths, against an established, running deployment.
 Change only the inference image pin in the YAML.
 The test compares the input with exported configuration, then requires plan and apply to replace the service's `docker_container.inference_service_inference_<service>` and reconcile its image resource while retaining storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).

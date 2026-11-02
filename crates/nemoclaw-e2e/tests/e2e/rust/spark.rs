@@ -47,87 +47,11 @@ fn vllm_mut(document: &mut Document) -> &mut Service {
     service
 }
 
-fn creates(resources: &[&str]) -> Vec<Change> {
-    resources
-        .iter()
-        .map(|resource| Change {
-            resource: (*resource).into(),
-            actions: vec!["create".into()],
-            reason: None,
-        })
-        .collect()
-}
-
 fn assert_applied(result: &OperationResult, expected_changes: &[Change]) {
     assert_eq!(result.outcome, Outcome::Succeeded);
     assert_eq!(result.changes, expected_changes);
     assert!(result.deferred.is_empty());
     assert!(result.retained.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires owned Spark YAML, an unused NEMOCLAW_LIVE_SPARK_STATE path, and NEMOCLAW_TEST_BUNDLE; leaves workloads running"]
-async fn spark_yaml_plans_and_applies_expected_resources() {
-    // Use a copy of examples/spark/deepagents-team.yaml with this host's image
-    // pins, a fresh deployment UID, and available gateway port and subnet.
-    let document =
-        Document::parse(fs::File::open(explicit_path("NEMOCLAW_LIVE_SPARK_CONFIG")).unwrap())
-            .unwrap();
-    let directory = explicit_path("NEMOCLAW_LIVE_SPARK_STATE");
-    let bundle = explicit_path("NEMOCLAW_TEST_BUNDLE");
-    fs::create_dir(&directory).expect("Spark test requires a new state directory");
-    let deployment = Deployment::new(&directory, &bundle);
-    let cancel = CancellationToken::new();
-
-    let generations = [
-        "workspace",
-        "provider",
-        "sandbox",
-        "managed_gateway",
-        "inference_service",
-    ]
-    .map(|kind| (kind.into(), "a".repeat(32)))
-    .into();
-    let runtime = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
-    // One plan creates the runtime and the objects it serves, in address order.
-    let mut addresses: Vec<String> = runtime
-        .iter()
-        .filter(|target| !target.address.starts_with("data."))
-        .map(|target| target.address.clone())
-        .chain(
-            document
-                .spec
-                .inference_providers
-                .keys()
-                .map(|name| format!("openshell_inference.inference_{name}")),
-        )
-        .chain(
-            document
-                .spec
-                .sandboxes
-                .keys()
-                .map(|name| format!("openshell_sandbox.{name}")),
-        )
-        .chain(["openshell_workspace.deployment".to_owned()])
-        .collect();
-    addresses.sort();
-    let expected = creates(&addresses.iter().map(String::as_str).collect::<Vec<_>>());
-    let plan = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(plan.outcome, Outcome::Planned);
-    assert_eq!(plan.changes, expected);
-    assert!(plan.retained.is_empty());
-    assert!(!plan.discovery.resources.is_empty());
-
-    let applied = deployment.apply(&document, &cancel).await.unwrap();
-    assert_applied(&applied, &expected);
-
-    let unchanged = deployment.plan(&document, &cancel).await.unwrap();
-    assert_eq!(unchanged.outcome, Outcome::Planned);
-    assert!(unchanged.changes.is_empty());
-    assert!(unchanged.retained.is_empty());
-    assert!(!unchanged.discovery.resources.is_empty());
-    let reapplied = deployment.apply(&document, &cancel).await.unwrap();
-    assert_applied(&reapplied, &[]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

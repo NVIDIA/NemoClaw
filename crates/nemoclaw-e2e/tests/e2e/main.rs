@@ -29,8 +29,6 @@ mod interfaces_live;
 mod kubernetes_chart;
 #[path = "rust/kubernetes_live.rs"]
 mod kubernetes_live;
-#[path = "rust/managed.rs"]
-mod managed;
 #[cfg(unix)]
 #[path = "rust/managed_gateway.rs"]
 mod managed_gateway;
@@ -42,17 +40,8 @@ mod registry_fixture;
 mod spark;
 
 #[cfg(target_os = "linux")]
-#[path = "rust/existing_ollama.rs"]
-mod existing_ollama;
-#[cfg(target_os = "linux")]
-#[path = "rust/managed_ollama.rs"]
-mod managed_ollama;
-#[cfg(target_os = "linux")]
 #[path = "rust/remote_models.rs"]
 mod remote_models;
 #[cfg(target_os = "linux")]
 #[path = "rust/service_images/mod.rs"]
 mod service_images;
-#[cfg(target_os = "linux")]
-#[path = "rust/shared_service.rs"]
-mod shared_service;
