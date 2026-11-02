@@ -34,6 +34,8 @@ function runSupervisor(
     "finalize_count=0",
     "refresh_count=0",
     "recovery_count=0",
+    // Unsetting SECONDS removes Bash's live clock so only the mocks advance time.
+    "unset SECONDS",
     "SECONDS=0",
     "sleep_count=0",
     "sleep_seconds=0",
@@ -303,8 +305,23 @@ describe("Hermes native service restart supervision", () => {
       "status=9 waits=10 launches=9 marks=9 prepares=9 ready=9 auxiliaries=9 finalize=9 refresh=9 recoveries=0 gateway=109",
     );
     expect(result.stderr).toContain("service-managed restart rate limit");
+    // Each burst must pass the inclusive 60-second window: 2 * 61 simulated seconds.
     expect(result.stderr).toContain("cooldown:sleeps=2 seconds=122");
   });
+
+  it.each([
+    { elapsedPerGateway: 15, sleeps: 1, seconds: 1 },
+    { elapsedPerGateway: 16, sleeps: 0, seconds: 0 },
+  ])(
+    "applies the rolling-window boundary with $elapsedPerGateway seconds between restart requests",
+    ({ elapsedPerGateway, sleeps, seconds }) => {
+      const result = runSupervisor(75, 9, 5, { elapsedPerGateway });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("status=9 waits=6 launches=5");
+      expect(result.stderr).toContain(`cooldown:sleeps=${sleeps} seconds=${seconds}`);
+    },
+  );
 
   it("does not delay restart requests outside the rolling window", () => {
     const result = runSupervisor(75, 9, 9, { elapsedPerGateway: 61 });
