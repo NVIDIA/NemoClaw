@@ -23,9 +23,11 @@ import { parseJsonFromText } from "./json-envelope.ts";
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
-// Keep the OpenClaw test bounded at 60 minutes. The shared target also runs
-// Hermes and reserves additional time for cleanup and workflow finalization.
-const TEST_TIMEOUT_MS = 60 * 60_000;
+// main's WSL shard timing contract budgets this value inside shard 1
+// (test/automation/e2e/platform-vitest-main-workflow.test.ts), so it stays at 50
+// minutes. The per-step budgets below are ceilings, not expected durations;
+// live runs on this target finish in 6 to 8 minutes.
+const TEST_TIMEOUT_MS = 50 * 60_000;
 const REBUILD_TIMEOUT_MS = 25 * 60_000;
 const EXTRA_DASHBOARD_ORIGIN = "https://launchpad.example.test:8443";
 // Rebuild must ignore these exported values and replay the recorded origins (#13177).
