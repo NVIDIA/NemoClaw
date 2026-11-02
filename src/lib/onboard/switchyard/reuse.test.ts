@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
@@ -15,7 +15,10 @@ import {
   encodeManagedStartupProfile,
   type ManagedStartupHermesConfig,
 } from "../managed-startup/profile";
-import { assertHermesSwitchyardRoutingReusable } from "../sandbox-reuse";
+import {
+  assertHermesSwitchyardRoutingReusable,
+  restoreReusedSandboxDashboardState,
+} from "../sandbox-reuse";
 
 const ROUTING = createHermesSwitchyardRoutingIntent({
   efficient: { provider: "nvidia-prod", model: "efficient-model" },
@@ -56,6 +59,51 @@ function entry(routing: HermesSwitchyardRoutingIntent | null) {
 }
 
 describe("Hermes Switchyard sandbox reuse", () => {
+  it("rejects changed routing before restoring an accepted replacement (#13862)", async () => {
+    const releaseDashboardPort = vi.fn(async () => undefined);
+    const updateReusedSandboxMetadata = vi.fn();
+    const updateSandbox = vi.fn();
+    const input = {
+      sandboxName: "hermes",
+      chatUiUrl: "",
+      env: {},
+      agent: { name: "hermes" } as never,
+      model: "switchyard",
+      provider: "nvidia-prod",
+      selectionVerified: true,
+      sandboxGpuConfig: {
+        hostGpuDetected: false,
+        hostGpuPlatform: null,
+        sandboxGpuEnabled: false,
+        mode: "auto" as const,
+        sandboxGpuDevice: null,
+        errors: [],
+      },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      getSandbox: () => entry(ROUTING),
+      manageDashboard: false,
+      releaseDashboardPort,
+      ensureDashboardForward: vi.fn(() => 0),
+      hermesDashboardForwarding: {
+        resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+        ensureForState: vi.fn(),
+      },
+      updateSandbox,
+      updateReusedSandboxMetadata,
+    };
+    await expect(restoreReusedSandboxDashboardState(input)).rejects.toThrow(
+      "routing configuration changed",
+    );
+    expect(releaseDashboardPort).not.toHaveBeenCalled();
+    expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    await expect(
+      restoreReusedSandboxDashboardState({ ...input, env: environment(ROUTING) }),
+    ).resolves.toMatchObject({ dashboardPort: 0 });
+    expect(releaseDashboardPort).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["enabled", ROUTING],
     ["disabled", null],

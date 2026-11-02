@@ -18,7 +18,10 @@ import {
 } from "../../../tool-disclosure";
 import { validateResourceValue } from "../../../resources-cmd";
 
-export { assertHermesSwitchyardRoutingReusable } from "../../sandbox-reuse";
+export {
+  assertHermesSwitchyardRoutingReusable,
+  hermesSwitchyardRoutingCreateIntentFields,
+} from "../../sandbox-reuse";
 
 /** Return true when a saved resource profile is null or has valid CPU and memory values. */
 export function isValidSavedResourceProfile(

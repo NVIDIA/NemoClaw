@@ -2408,6 +2408,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           toolDisclosure: effectiveToolDisclosure,
           dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          ...sandboxReuse.hermesSwitchyardRoutingCreateIntentFields(
+            getRequestedSandboxAgentName(agent),
+            process.env,
+          ),
         },
       });
     let pendingStateRestoreBackupPath: string | null = null,

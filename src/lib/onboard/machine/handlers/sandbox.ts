@@ -126,6 +126,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  hermesSwitchyardRoutingCreateIntentFields,
   initialOpenClawToolDisclosure,
   isValidSavedResourceProfile,
   replacesSameNameSandbox,
@@ -1007,6 +1008,12 @@ class SandboxStateFlow<
       this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
+      ...Object.values(
+        hermesSwitchyardRoutingCreateIntentFields(
+          (this.options.agent as { name?: string } | null)?.name,
+          this.options.env,
+        ),
+      ).map((routing) => JSON.stringify(routing)),
     ].join("|");
     if (!createIntent) return lightFingerprint;
     // Extra providers are live gateway attachments, not durable build intent.

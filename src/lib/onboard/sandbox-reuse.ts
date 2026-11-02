@@ -34,6 +34,15 @@ interface SandboxCaptureResult {
   signal?: NodeJS.Signals | null;
 }
 
+/** Keep ordinary create fingerprints unchanged when Hermes routing is disabled. */
+export function hermesSwitchyardRoutingCreateIntentFields(
+  agentName: string | null | undefined,
+  env: NodeJS.ProcessEnv,
+) {
+  const routing = agentName === "hermes" ? readHermesSwitchyardRoutingEnvironment(env) : null;
+  return routing ? { switchyardRouting: routing } : {};
+}
+
 /** Require explicit recreation before changing an existing sandbox's routing files. */
 export function assertHermesSwitchyardRoutingReusable(input: {
   agentName: string | null | undefined;
@@ -285,6 +294,13 @@ export async function applyReusedSandboxDashboardState(
 export async function restoreReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput & { releaseDashboardPort(): Promise<void> },
 ): Promise<ReusedSandboxDashboardStateResult> {
+  assertHermesSwitchyardRoutingReusable({
+    agentName: input.agent?.name,
+    entry: (input.getSandbox ?? registry.getSandbox)(input.sandboxName),
+    env: input.env,
+    recreate: false,
+    sandboxState: "ready",
+  });
   await input.releaseDashboardPort();
   const reusesRegisteredPort = canReuseDashboardForwardForAgent(input.agent);
   const registeredPort = (input.getSandbox ?? registry.getSandbox)(
