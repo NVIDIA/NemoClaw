@@ -42,7 +42,7 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
     // Fabric rejects a model field an adapter doesn't accept, so values the
     // deployment generates follow the adapter's descriptor. A base URL also goes
     // to adapters outside the bundled catalog; an API goes only where declared.
-    let catalog = crate::fabric_catalog::FabricCatalog::bundled();
+    let catalog = crate::fabric_catalog::FabricCatalog::bundled_ref();
     let descriptor = catalog
         .adapters
         .iter()
@@ -61,6 +61,15 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         .iter()
         .any(|schema| schema["properties"].get("api").is_some())
     });
+    // Fabric gives every runtime of an agent one state folder only when asked,
+    // and rejects the request for an adapter that doesn't accept it.
+    if descriptor.is_some_and(|descriptor| {
+        descriptor["config"]["accepts"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "runtime.keep_state"))
+    }) {
+        result["runtime"]["keep_state"] = true.into();
+    }
     for route in &selection.inference.routes {
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
@@ -116,8 +125,9 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
             result["models"]["default"] = projected;
         }
     }
-    // Fabric's OpenCode adapter refuses a plain-HTTP model endpoint outside
-    // loopback unless its settings list the host. The deployment names each
+    // Fabric's adapters that declare the setting (OpenCode, and Claude, Codex
+    // and Pi under Relay) refuse a plain-HTTP model endpoint outside loopback
+    // unless their settings list the host. The deployment names each
     // endpoint, so an adapter that declares the setting trusts their hosts.
     let lists_trusted_hosts = descriptor.is_some_and(|descriptor| {
         descriptor["settings_schema"]["properties"]

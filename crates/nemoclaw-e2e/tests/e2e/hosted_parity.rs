@@ -1,0 +1,505 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Historical intent and deployment lifecycle parity; native inference is not qualified here.
+
+use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
+use serde_json::json;
+
+/// A v0 list of named entries as a v1 map keyed by name.
+fn keyed_by_name(list: serde_json::Value, collection: &str) -> serde_json::Value {
+    list.as_array()
+        .unwrap_or_else(|| panic!("raw v0 export requires its historical {collection} list"))
+        .iter()
+        .map(|entry| {
+            let mut entry = entry.clone();
+            let name = entry.as_object_mut().unwrap().remove("name").unwrap();
+            (name.as_str().unwrap().to_owned(), entry)
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+// This scenario compares separately authored current intent with a test-only
+// projection. The raw export remains unchanged and never reaches deployment.
+fn authored_document(raw: &[u8], current: &[u8]) -> Document {
+    let document =
+        Document::parse(current).expect("authored v1 input must use current agent syntax");
+    let mut projected: serde_json::Value =
+        serde_saphyr::from_str(std::str::from_utf8(raw).unwrap()).unwrap();
+    // v0 listed providers and sandboxes with their names; v1 keys them by name.
+    for collection in ["inferenceProviders", "sandboxes"] {
+        projected["spec"][collection] =
+            keyed_by_name(projected["spec"][collection].take(), collection);
+    }
+    let sandboxes = projected["spec"]["sandboxes"].as_object_mut().unwrap();
+    assert_eq!(sandboxes.len(), 1, "hosted parity requires one sandbox");
+    let sandbox = sandboxes
+        .values_mut()
+        .next()
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    let agents = sandbox
+        .remove("agents")
+        .expect("raw v0 export requires its historical agents list");
+    assert_eq!(agents.as_array().unwrap().len(), 1);
+    assert!(!sandbox.contains_key("agent"));
+    sandbox.insert("agent".into(), agents[0].clone());
+    // Migration is explicit test-only authoring, never production alias dispatch.
+    let harness = sandbox["harness"].as_object_mut().unwrap();
+    harness["kind"] = match harness["kind"].as_str().unwrap() {
+        "openclaw" => json!("nvidia.fabric.openclaw"),
+        "hermes" => json!("nvidia.fabric.hermes"),
+        other => panic!("unexpected historical fixture adapter {other}"),
+    };
+    // v0 declared Hermes's native API under the harness; v1 passes it to
+    // Fabric's Hermes adapter as an adapter setting.
+    let interfaces = harness.remove("interfaces");
+    assert_eq!(
+        interfaces.is_some(),
+        harness["kind"] == "nvidia.fabric.hermes",
+        "only the Hermes export declares native interfaces"
+    );
+    if let Some(interfaces) = interfaces {
+        harness.insert("settings".into(), json!({ "interfaces": interfaces }));
+    }
+    // v0 images ran agents as 1000:1000; v1 images use 10001:10001.
+    if let Some(process) = sandbox
+        .get_mut("network")
+        .and_then(|network| network.pointer_mut("/policy/explicit/process"))
+    {
+        for field in ["run_as_user", "run_as_group"] {
+            if process[field] == "1000" {
+                process[field] = json!("10001");
+            }
+        }
+    }
+    if !sandbox.contains_key("image") {
+        let image = match sandbox["harness"]["kind"].as_str().unwrap() {
+            "nvidia.fabric.hermes" => {
+                "nc-fabric@sha256:f7a96a028a031048e6b3919b85cad253ec584e0df86011a5937ae8ff5c1125d8"
+            }
+            "nvidia.fabric.openclaw" => {
+                "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0"
+            }
+            other => panic!("unexpected fixture image {other}"),
+        };
+        sandbox.insert("image".into(), json!({"ref":image}));
+    }
+
+    assert_eq!(
+        Document::parse(projected.to_string().as_bytes()).unwrap(),
+        document,
+        "authored v1 configuration must preserve the raw export's portable intent"
+    );
+    document
+}
+
+#[test]
+fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
+    for (raw, current) in [
+        (
+            include_bytes!("../../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice(),
+        ),
+        (
+            include_bytes!("../../fixtures/hermes-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../../fixtures/hermes-nvidia-hosted/v1.yaml").as_slice(),
+        ),
+    ] {
+        let document = authored_document(raw, current);
+        assert_eq!(document, Document::parse(current).unwrap());
+        let mut changed = document.clone();
+        changed
+            .spec
+            .sandboxes
+            .get_mut("assistant")
+            .unwrap()
+            .agent
+            .name = "different-agent".into();
+        assert!(
+            std::panic::catch_unwind(|| authored_document(raw, changed.yaml().unwrap().as_bytes()))
+                .is_err()
+        );
+    }
+}
+
+fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_root: &str) {
+    let gateway = &document.spec.gateway;
+    assert!(matches!(gateway, Gateway::Managed(_)));
+    let gateway = gateway.as_managed().unwrap();
+    assert_eq!(gateway.engine, "unix:///var/run/docker.sock");
+
+    let provider = &document.spec.inference_providers["hosted-nvidia-prod"];
+    assert_eq!(provider.provider, InferenceProviderKind::Openai);
+    assert_eq!(provider.endpoint, "https://integrate.api.nvidia.com/v1");
+    assert_eq!(
+        provider.credential.as_ref().unwrap().env,
+        "NVIDIA_INFERENCE_API_KEY"
+    );
+    assert!(provider.service_ref.is_none());
+
+    let sandbox = document.sandbox("assistant").unwrap();
+    assert!(sandbox.image.ref_.contains("@sha256:"));
+    assert_eq!(sandbox.image.ref_.rsplit(':').next().unwrap().len(), 64);
+    assert_eq!(
+        document.spec.gateway.runtime().provider,
+        ComputeDriver::Docker
+    );
+    let nemoclaw_sdk::config::NetworkPolicy::Explicit(explicit) = &sandbox.network.policy else {
+        panic!("expected explicit policy");
+    };
+    let process = explicit.process.as_ref().unwrap();
+    assert_eq!(process.run_as_user.as_deref(), Some("10001"));
+    assert_eq!(process.run_as_group.as_deref(), Some("10001"));
+    let read_only = explicit
+        .filesystem_policy
+        .as_ref()
+        .unwrap()
+        .read_only
+        .as_ref()
+        .unwrap();
+    for root in [runtime_root, "/opt/fabric", "/opt/nemoclaw"] {
+        assert!(
+            read_only.iter().any(|path| path == root),
+            "raw export policy must grant the v1 runtime root {root}"
+        );
+    }
+    assert_eq!(document.sandbox_harness(sandbox).unwrap().kind, harness);
+    let inference = document.sandbox_inference(sandbox).unwrap();
+    assert_eq!(
+        inference.routes[0].provider_ref.as_deref(),
+        Some("hosted-nvidia-prod")
+    );
+    assert_eq!(
+        inference.routes[0].overrides.model,
+        "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    );
+}
+
+#[test]
+fn hosted_openclaw_scenario_preserves_authored_intent() {
+    let raw = include_bytes!("../../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
+    let v1 = authored_document(
+        raw,
+        include_bytes!("../../fixtures/openclaw-nvidia-hosted/v1.yaml"),
+    );
+    assert_hosted_document(&v1, "nvidia.fabric.openclaw".parse().unwrap(), "/app");
+}
+
+#[test]
+fn hosted_hermes_scenario_preserves_authored_intent() {
+    let export = include_bytes!("../../fixtures/hermes-nvidia-hosted/v0-export.yaml");
+    let v1 = authored_document(
+        export,
+        include_bytes!("../../fixtures/hermes-nvidia-hosted/v1.yaml"),
+    );
+    assert_hosted_document(&v1, "nvidia.fabric.hermes".parse().unwrap(), "/opt/hermes");
+    let harness = v1
+        .sandbox_harness(v1.sandbox("assistant").unwrap())
+        .unwrap();
+    assert_eq!(
+        harness.settings,
+        serde_json::json!({"interfaces": {"api": {"port": 8643}}})
+            .as_object()
+            .cloned(),
+        "the v0 export's API interface becomes a Hermes adapter setting"
+    );
+}
+
+#[cfg(target_os = "linux")]
+mod live {
+    use nemoclaw_sdk::{
+        CancellationToken, Change, Deployment, OperationResult, Outcome, backend::Row,
+        config::Document,
+    };
+    use serde_json::Value;
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    fn explicit_path(name: &str) -> PathBuf {
+        let path = PathBuf::from(std::env::var_os(name).expect(name));
+        assert!(path.is_absolute(), "{name} must be absolute");
+        path
+    }
+
+    fn changes(resources: &[&str], action: &str) -> Vec<Change> {
+        resources
+            .iter()
+            .map(|resource| Change {
+                resource: (*resource).into(),
+                actions: vec![action.into()],
+                reason: None,
+            })
+            .collect()
+    }
+
+    fn state_bindings(directory: &Path) -> (BTreeMap<String, String>, Option<Row>) {
+        let mut ids = BTreeMap::new();
+        let mut sandbox = None;
+        for relative in ["terraform.tfstate"] {
+            let path = directory.join(relative);
+            if !path.exists() {
+                continue;
+            }
+            let state: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            for resource in state["resources"].as_array().into_iter().flatten() {
+                if resource["mode"] == "data" {
+                    continue;
+                }
+                let instances = resource["instances"].as_array().unwrap();
+                assert_eq!(instances.len(), 1);
+                let attributes = &instances[0]["attributes"];
+                let address = format!(
+                    "{}.{}",
+                    resource["type"].as_str().unwrap(),
+                    resource["name"].as_str().unwrap()
+                );
+                assert!(
+                    ids.insert(address, attributes["id"].as_str().unwrap().into())
+                        .is_none()
+                );
+                if resource["type"] == "openshell_sandbox" {
+                    assert!(sandbox.is_none(), "scenario must have exactly one sandbox");
+                    sandbox = Some(serde_json::from_value(attributes.clone()).unwrap());
+                }
+            }
+        }
+        (ids, sandbox)
+    }
+
+    fn runtime_resources(document: &Document) -> Vec<String> {
+        let generations = ["workspace", "provider", "sandbox", "managed_gateway"]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+        let mut runtime: Vec<_> = nemoclaw_sdk::compile::runtime_targets(document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
+            .map(|target| target.address)
+            .collect();
+        runtime.sort();
+        runtime
+    }
+
+    fn initial_plan(document: &Document) -> OperationResult {
+        OperationResult {
+            outcome: Outcome::Planned,
+            connection: Some(nemoclaw_sdk::DeploymentConnection {
+                gateway_endpoint: document.spec.gateway.endpoint().into(),
+                workspace: document.workspace(),
+            }),
+            changes: initial_changes(document),
+            deferred: vec![],
+            resource_sources: Default::default(),
+            unverified: vec![],
+            retained: vec![],
+            discovery: Default::default(),
+            service_urls: Default::default(),
+            interfaces: Vec::new(),
+        }
+    }
+
+    fn removed_resources(document: &Document) -> Vec<Change> {
+        let mut removed = changes(
+            &[
+                "fabric_agent.assistant",
+                "openshell_inference.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
+            ],
+            "delete",
+        );
+        let runtime = runtime_resources(document);
+        removed.extend(changes(
+            &runtime
+                .iter()
+                .filter(|address| address.as_str() != "openshell_gateway_storage.runtime")
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            "delete",
+        ));
+        removed
+    }
+
+    fn retained_resources() -> Vec<String> {
+        // Destroy deletes the workspace; only gateway storage remains.
+        vec!["openshell_gateway_storage.runtime".into()]
+    }
+
+    /// One plan creates the runtime and the objects it serves, in address order.
+    fn initial_changes(document: &Document) -> Vec<Change> {
+        let mut addresses = runtime_resources(document);
+        addresses.extend(
+            [
+                "fabric_agent.assistant",
+                "openshell_inference.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
+            ]
+            .map(String::from),
+        );
+        addresses.sort();
+        changes(
+            &addresses.iter().map(String::as_str).collect::<Vec<_>>(),
+            "create",
+        )
+    }
+
+    async fn apply_initial(
+        deployment: &Deployment,
+        document: &Document,
+        cancel: &CancellationToken,
+    ) {
+        let plan = deployment.plan(document, cancel).await.unwrap();
+        assert!(!plan.discovery.resources.is_empty());
+        let mut expected = initial_plan(document);
+        expected.discovery = plan.discovery.clone();
+        // Optional capability observations may remain unresolved before deployment.
+        expected.deferred = plan.deferred.clone();
+        expected.unverified = plan.unverified.clone();
+        assert_eq!(plan, expected);
+        let applied = deployment.apply(document, cancel).await.unwrap();
+        assert_eq!(applied.outcome, Outcome::Succeeded);
+        let expected = initial_changes(document);
+        assert_eq!(applied.changes, expected);
+        assert!(applied.deferred.is_empty());
+        assert!(applied.retained.is_empty());
+    }
+
+    async fn destroy(
+        deployment: &Deployment,
+        document: &Document,
+        cancel: &CancellationToken,
+    ) -> Vec<String> {
+        let removed = removed_resources(document);
+        let retained = retained_resources();
+        assert_eq!(
+            deployment.plan_destroy(cancel).await.unwrap(),
+            OperationResult {
+                outcome: Outcome::Planned,
+                connection: None,
+                changes: removed.clone(),
+                deferred: vec![],
+                resource_sources: Default::default(),
+                unverified: vec![],
+                retained: retained.clone(),
+                discovery: Default::default(),
+                service_urls: Default::default(),
+                interfaces: Vec::new(),
+            }
+        );
+        assert_eq!(
+            deployment.destroy(cancel).await.unwrap(),
+            OperationResult {
+                outcome: Outcome::Destroyed,
+                connection: None,
+                changes: removed,
+                deferred: vec![],
+                resource_sources: Default::default(),
+                unverified: vec![],
+                retained: retained.clone(),
+                discovery: Default::default(),
+                service_urls: Default::default(),
+                interfaces: Vec::new(),
+            }
+        );
+        retained
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires NEMOCLAW_LIVE_V0_EXPORT, NEMOCLAW_LIVE_V1_CONFIG, an unused NEMOCLAW_LIVE_HOSTED_STATE path, NEMOCLAW_TEST_BUNDLE, and NVIDIA_INFERENCE_API_KEY; creates and destroys this owned deployment"]
+    async fn authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle() {
+        let raw = fs::read(explicit_path("NEMOCLAW_LIVE_V0_EXPORT")).unwrap();
+        let yaml = fs::read(explicit_path("NEMOCLAW_LIVE_V1_CONFIG")).unwrap();
+        let document = super::authored_document(&raw, &yaml);
+        let directory = explicit_path("NEMOCLAW_LIVE_HOSTED_STATE");
+        let bundle = explicit_path("NEMOCLAW_TEST_BUNDLE");
+        fs::create_dir(&directory).expect("test requires a new state directory");
+        let deployment = Deployment::new(&directory, &bundle);
+        let cancel = CancellationToken::new();
+
+        apply_initial(&deployment, &document, &cancel).await;
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert_eq!(plan.outcome, Outcome::Planned);
+        assert!(plan.changes.is_empty());
+        assert!(plan.retained.is_empty());
+        assert!(!plan.discovery.resources.is_empty());
+        let exported = deployment.export(&cancel).await.unwrap();
+        assert_eq!(exported, document);
+        let reapplied = deployment.apply(&exported, &cancel).await.unwrap();
+        assert_eq!(reapplied.outcome, Outcome::Succeeded);
+        assert!(reapplied.changes.is_empty());
+        assert!(reapplied.deferred.is_empty());
+        destroy(&deployment, &document, &cancel).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires the curated Hermes hosted inputs, an unused NEMOCLAW_LIVE_HOSTED_STATE path, NEMOCLAW_TEST_BUNDLE, and NVIDIA_INFERENCE_API_KEY; creates and destroys this owned deployment"]
+    async fn authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle() {
+        let raw = fs::read(explicit_path("NEMOCLAW_LIVE_V0_EXPORT")).unwrap();
+        let yaml = fs::read(explicit_path("NEMOCLAW_LIVE_V1_CONFIG")).unwrap();
+        let document = super::authored_document(&raw, &yaml);
+        super::assert_hosted_document(
+            &document,
+            "nvidia.fabric.hermes".parse().unwrap(),
+            "/opt/hermes",
+        );
+        let directory = explicit_path("NEMOCLAW_LIVE_HOSTED_STATE");
+        let bundle = explicit_path("NEMOCLAW_TEST_BUNDLE");
+        fs::create_dir(&directory).expect("test requires a new state directory");
+        let deployment = Deployment::new(&directory, &bundle);
+        let cancel = CancellationToken::new();
+
+        apply_initial(&deployment, &document, &cancel).await;
+        let (before, _) = state_bindings(&directory);
+        let mut expected = runtime_resources(&document);
+        expected.extend(
+            [
+                "fabric_agent.assistant",
+                "openshell_inference.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
+            ]
+            .map(String::from),
+        );
+        expected.sort();
+        assert_eq!(
+            before.keys().map(String::as_str).collect::<Vec<_>>(),
+            expected.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        let plan = deployment.plan(&document, &cancel).await.unwrap();
+        assert_eq!(plan.outcome, Outcome::Planned);
+        assert!(plan.changes.is_empty());
+        assert!(plan.retained.is_empty());
+        assert!(!plan.discovery.resources.is_empty());
+        let unchanged = deployment.apply(&document, &cancel).await.unwrap();
+        assert_eq!(unchanged.outcome, Outcome::Succeeded);
+        assert!(unchanged.changes.is_empty());
+        assert!(unchanged.deferred.is_empty());
+        assert_eq!(state_bindings(&directory).0, before);
+
+        let exported = deployment.export(&cancel).await.unwrap();
+        assert_eq!(exported, document);
+        let reapplied = deployment.apply(&exported, &cancel).await.unwrap();
+        assert_eq!(reapplied.outcome, Outcome::Succeeded);
+        assert!(reapplied.changes.is_empty());
+        assert!(reapplied.deferred.is_empty());
+        assert_eq!(state_bindings(&directory).0, before);
+
+        let retained = destroy(&deployment, &document, &cancel).await;
+        let (after, sandbox) = state_bindings(&directory);
+        assert!(sandbox.is_none());
+        assert_eq!(
+            after,
+            before
+                .into_iter()
+                .filter(|(address, _)| retained.contains(address))
+                .collect()
+        );
+    }
+}

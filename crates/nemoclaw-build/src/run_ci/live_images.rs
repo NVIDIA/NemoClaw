@@ -34,9 +34,33 @@ pub(super) fn agent() -> (&'static str, &'static str) {
     nemoclaw_build::ci::LIVE_AGENT
 }
 
-/// The platform's agent image, the reference dummy, then the two proxy images.
-pub(super) fn names() -> [&'static str; 4] {
-    [agent().0, DUMMY, "proxy-a", "proxy-b"]
+/// The platform's agent image, Hermes, Deep Agents Code, the reference dummy,
+/// then the two proxy images.
+pub(super) fn names() -> [&'static str; 6] {
+    [
+        agent().0,
+        HERMES,
+        DEEPAGENTS_CODE,
+        DUMMY,
+        "proxy-a",
+        "proxy-b",
+    ]
+}
+
+/// The Deep Agents Code agent image, whose terminal the interface test opens.
+pub(super) const DEEPAGENTS_CODE: &str = nemoclaw_build::ci::LIVE_DEEPAGENTS_CODE;
+
+/// Build the platform's Deep Agents Code image as `PREFIX:deepagents-code`.
+pub(super) fn build_deepagents_code(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, DEEPAGENTS_CODE)
+}
+
+/// The Hermes agent image, which the Docker live suite's interface test runs.
+pub(super) const HERMES: &str = nemoclaw_build::ci::LIVE_HERMES;
+
+/// Build the platform's Hermes image as `PREFIX:hermes`.
+pub(super) fn build_hermes(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, HERMES)
 }
 
 /// The platform's archive images that `used` does not name.
@@ -122,6 +146,8 @@ pub(super) fn build(platform: &str) -> Result<()> {
         return Err("the live images are built on Linux only".into());
     }
     build_agent(platform, SHARED)?;
+    build_hermes(platform, SHARED)?;
+    build_deepagents_code(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
     build_proxies(platform, SHARED)?;
     let tags = names().map(|name| format!("{SHARED}:{name}"));
@@ -376,7 +402,10 @@ mod tests {
     #[test]
     fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
         let target = agent().0;
-        assert_eq!(unused(&[target]), [DUMMY, "proxy-a", "proxy-b"]);
+        assert_eq!(
+            unused(&[target]),
+            [HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a", "proxy-b"]
+        );
         assert!(unused(&names()).is_empty());
     }
 }

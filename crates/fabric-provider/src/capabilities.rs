@@ -568,6 +568,14 @@ mod tests {
                 digest.as_str(),
                 "supported",
             ),
+            // Except interfaces, which the descriptor must declare; this
+            // adapter declares none.
+            (
+                serde_json::json!({"interfaces":{"dashboard":{"port":9119}}}),
+                "aarch64",
+                digest.as_str(),
+                "unsupported",
+            ),
             (
                 serde_json::json!({}),
                 "amd64",
@@ -593,6 +601,20 @@ mod tests {
             let observation: serde_json::Value =
                 serde_json::from_str(known(&output.observation_json).unwrap()).unwrap();
             assert_eq!(observation["compatibility"]["status"], expected);
+            if settings.get("interfaces").is_some() {
+                assert!(
+                    observation["compatibility"]["checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|check| check["status"] == "unsupported"
+                            && check["reason"]
+                                .as_str()
+                                .unwrap()
+                                .starts_with("harness.settings.interfaces.dashboard:")),
+                    "{observation}"
+                );
+            }
             if image == "missing:image" {
                 assert_eq!(known(&output.runtime_json), Some(""));
                 assert_eq!(known(&output.binaries_json), Some("[]"));

@@ -96,7 +96,7 @@ impl From<JourneyScope> for JourneySelector {
 /// A deployment seed and deliberate prompt or omission guidance.
 /// Starts a single-sandbox run and supports a bounded preview through the same
 /// resolver. Unsupported SDK structure remains an explicit frontier.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct JourneyDefinition {
     pub(crate) id: String,
     pub(crate) base: PartialDocument,

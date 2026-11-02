@@ -27,6 +27,10 @@
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_arm64.zip",
         "sha256": "77515e5576f4ea3d8d9e404237882de62518950ccd7b312371f5c03580f22fb0"
+      },
+      "openshell": {
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.6/openshell-aarch64-unknown-linux-musl.tar.gz",
+        "sha256": "259452a6065c4f76e71884b84e8696cc0fec2f8a832891d333f268ca7bb55a21"
       }
     },
     "linux_amd64": {
@@ -53,6 +57,10 @@
       "helmProvider": {
         "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
         "sha256": "24a942352667cf49bed467c51a951f17a6c13e0cdf1c505b01b41f75a1a60d0f"
+      },
+      "openshell": {
+        "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.6/openshell-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "2951c67366f3e3584ed9cec8d49b9f0b0eefc8cacea8b0582ac164590492f136"
       }
     },
     "darwin_arm64": {

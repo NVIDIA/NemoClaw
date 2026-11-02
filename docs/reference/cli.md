@@ -86,6 +86,7 @@ Text output also summarizes advertised models and credential-reference availabil
 JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
 Apply summarizes actual changes; a successful operation does not establish working model or agent responses.
+For each enabled agent interface, apply text also prints the commands that forward it and read its token, and how to sign in; it never prints a token.
 Destroy distinguishes removed resources from retained storage.
 The retained list describes tracked resources, not every surviving host file or external service.
 See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply) and [retention](../state.md#deletion-and-retention).
@@ -123,11 +124,13 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `warnings` | Operator-action messages collected during the operation; also present on failures, omitted when empty; does not change `complete` |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
+| `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint; the URLs carry no credential, so the service must authenticate its own clients; omitted when empty, and when apply can't read them, `warnings` says so |
 | `deferred` | Unresolved planning prerequisites; omitted when empty |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |
 | `discovery` | Plan query targets, typed observations, credential-reference availability, and resource inventory; see the [SDK report contract](../sdk.md#read-plan-discovery-and-resource-inventory); omitted when empty |
 | `retained` | Retained resource addresses reported by the operation; omitted when empty and not an inventory of every surviving file or external service |
+| `interfaces` | After apply, each enabled agent interface: `sandbox`, `interface`, its loopback `port` for an HTTP interface, the `tokenPath` in the sandbox for an interface with a token, the `launcher` in the sandbox for a terminal interface, and `signIn` (`token_in_url_fragment`, `bearer_token`, `none`, `sandbox_exec` or `adapter_documented`); never a token; omitted when empty; see [agent interfaces](../interfaces.md#reach-an-agent-interface) |
 
 Handled operation errors use the selected format: text on stderr, or one JSON result on stdout with `outcome: failed` or `outcome: interrupted`.
 The failure object includes `operation`, `stateDirectory`, optional `input`, and `error.message`.

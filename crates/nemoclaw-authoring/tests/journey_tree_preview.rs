@@ -101,6 +101,7 @@ fn supplied_document_with_explicit_optional_omissions_has_no_preview_questions()
         "adapter:nvidia.fabric.openclaw:/agent_id",
         "adapter:nvidia.fabric.openclaw:/channel_config",
         "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/interfaces",
         "adapter:nvidia.fabric.openclaw:/openclaw_command",
         "adapter:nvidia.fabric.openclaw:/port_range",
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -300,10 +301,11 @@ fn invalid_fabric_setting_is_labeled_without_printing_its_value() {
         "{tree}"
     );
     assert!(tree.contains("invalid supplied value"), "{tree}");
-    // Schema and catalog digests can contain the digits by chance.
+    // Schema and catalog digests and the Fabric revision can contain the
+    // digits by chance.
     assert!(
         tree.lines()
-            .filter(|line| !line.contains("sha256:"))
+            .filter(|line| !line.contains("sha256:") && !line.contains("Fabric revision:"))
             .all(|line| !line.contains("42")),
         "{tree}"
     );

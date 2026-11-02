@@ -245,6 +245,7 @@
       "nvidia.fabric.codex": "Codex",
       "nvidia.fabric.hermes": "Hermes",
       "nvidia.fabric.langchain.deepagents": "LangChain Deep Agents",
+      "nvidia.fabric.langchain.deepagents-code": "LangChain Deep Agents Code",
       "nvidia.fabric.mini-swe-agent": "mini-SWE-agent",
       "nvidia.fabric.nooa": "NOOA",
       "nvidia.fabric.nooa.bench-agent": "NOOA bench agent",

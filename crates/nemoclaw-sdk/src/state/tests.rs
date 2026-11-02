@@ -167,6 +167,24 @@ fn documented_state_json_preserves_full_instance_addresses() {
 }
 
 #[test]
+fn sandbox_service_urls_bind_and_a_null_or_absent_map_is_empty() {
+    let urls =
+        serde_json::json!({"": "http://ws--a.example/", "api": "http://ws--a--api.example/"});
+    let observed = read(&state(serde_json::json!([
+        {"address": "openshell_sandbox.a", "mode": "managed", "values": {"id": "a", "service_urls": urls}},
+        {"address": "openshell_sandbox.b", "mode": "managed", "values": {"id": "b", "service_urls": null}},
+        object("openshell_sandbox.c", "c")
+    ])))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&observed["openshell_sandbox.a"].service_urls).unwrap(),
+        urls
+    );
+    assert!(observed["openshell_sandbox.b"].service_urls.is_empty());
+    assert!(observed["openshell_sandbox.c"].service_urls.is_empty());
+}
+
+#[test]
 fn native_helm_state_preserves_its_namespace_and_immutable_chart_binding() {
     let address = "helm_release.gateway";
     let chart = crate::kubernetes::gateway::CHART;

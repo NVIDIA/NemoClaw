@@ -527,9 +527,13 @@ mod tests {
         let path = dir.join("hermes-amd64.spdx.json");
         let mut sbom: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         change(&mut sbom);
-        let bytes = serde_json::to_vec(&sbom).unwrap();
-        fs::write(&path, &bytes).unwrap();
-        mapping[0]["sha256"] = json!(crate::hex(&Sha256::digest(&bytes)));
+        replace(dir, mapping, &serde_json::to_vec(&sbom).unwrap());
+    }
+
+    /// Replace the first SBOM with `bytes`, keeping its mapping's digest.
+    fn replace(dir: &Path, mapping: &mut Value, bytes: &[u8]) {
+        fs::write(dir.join("hermes-amd64.spdx.json"), bytes).unwrap();
+        mapping[0]["sha256"] = json!(crate::hex(&Sha256::digest(bytes)));
     }
 
     #[test]
@@ -555,9 +559,15 @@ mod tests {
     fn release_sized_sboms_are_admissible() {
         // Each vLLM platform's SPDX document is about 65 MB.
         let (dir, inventory, mut mapping) = fixture();
-        rewrite(dir.path(), &mut mapping, |sbom| {
-            sbom["comment"] = json!("x".repeat(70_000_000));
-        });
+        // Write the large comment into the document's text: serializing it
+        // takes longer than the assessment it feeds.
+        let sbom = fs::read(dir.path().join("hermes-amd64.spdx.json")).unwrap();
+        let fields = sbom.strip_prefix(b"{").unwrap();
+        let mut bytes = br#"{"comment":""#.to_vec();
+        bytes.resize(bytes.len() + 70_000_000, b'x');
+        bytes.extend_from_slice(b"\",");
+        bytes.extend_from_slice(fields);
+        replace(dir.path(), &mut mapping, &bytes);
         assert!(run(dir.path(), &inventory, &mapping).is_ok());
     }
 

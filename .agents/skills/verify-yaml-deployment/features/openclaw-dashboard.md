@@ -1,92 +1,83 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# OpenClaw Dashboard Through a Service Exposure
+# OpenClaw Dashboard
 
-The author declares `serviceExposures` on the sandbox, so OpenShell's gateway serves OpenClaw's Control UI at a URL with no client-side forward.
-With a Control UI-enabled image, a browser at that URL signs in with the gateway token and chats with the agent.
+The author declares the Control UI under `harness.settings.interfaces.dashboard`, as [docs/interfaces.md](../../../../docs/interfaces.md#reach-an-agent-interface) documents.
+Apply then prints how to forward it, the command that reads its sign-in token, and the sign-in URL; with a service exposure on the same port, it also lists the URL the gateway serves it at.
+A browser at the forwarded loopback address signs in with the token and chats with the agent.
+The adapter accepts only loopback browser origins ([NVIDIA/NeMo-Fabric#573](https://github.com/NVIDIA/NeMo-Fabric/pull/573)), so a browser at the exposure's URL can't sign in; the exposure is checked with curl only.
 
 ## Sub-features
 
-- **DB1:** Apply creates the declared exposure, with its port and authorization mode, with no `openshell service expose`.
-- **DB2:** The gateway's service URL serves the Control UI page.
-- **DB3:** A request through the exposure without the gateway token is rejected, and one with it gets a reply from the chat endpoint (`BEARER_PASSTHROUGH`).
-- **DB4:** A browser at the URL signs in and gets a chat reply.
+- **DB1:** Apply lists `assistant/dashboard on port PORT` under **Agent interfaces** with `Forward`, `Token`, and `Sign in` lines, and the exposure's URL under **Service URLs**; it prints no token.
+- **DB2:** The URL apply lists serves the Control UI page.
+- **DB3:** The `Token` command reads the token, and through the exposure `/control-ui-config.json` returns 401 without a token or with a wrong one, and the configuration with it.
+- **DB4:** The `Forward` command gives DB3's results on `127.0.0.1:PORT`.
+- **DB5:** A browser at the forwarded address signs in and gets a chat reply.
 
 ## How to get to it (user POV)
 
-- The service URL from `openshell service list`, opened in a browser on the Spark; `*.openshell.localhost` resolves to loopback.
-- From another machine, an SSH tunnel to the gateway port: `ssh -N -L PORT:127.0.0.1:PORT USER@SPARK`, then the same URL.
-- `openshell forward service` to a local port, which skips the exposure; this map doesn't drive it.
+- The `Forward` command apply prints, then `http://127.0.0.1:PORT/#token=TOKEN`; the gateway authorizes each forwarded connection, and the docs prefer it.
+- The URL apply lists under **Service URLs** serves the page and its API to clients that send the token, but a browser there can't sign in. It skips the gateway's authorization, so the token is the only protection.
+- From another machine, an SSH tunnel to the forwarded port: `ssh -N -L PORT:127.0.0.1:PORT USER@HOST`.
 
 ## Driving it with curl, the OpenShell CLI, and Chromium
 
-Preconditions: the Control UI-enabled image, built before writing the YAML so `image.ref` uses its digest.
-The allowed origin is the exposure's URL, which derives from the workspace, sandbox, service name, and gateway port:
+Preconditions: [deploy-and-answer](deploy-and-answer.md)'s DA1 passed with the agent file's YAML edits, which declare the interface and the exposure.
+The exposure's URL derives from the workspace, sandbox, service name, and gateway port:
 
 ```sh
 HOST=$WORKSPACE--assistant--dashboard.openshell.localhost
 URL=http://$HOST:$GATEWAY_PORT
-ADAPTER=/opt/fabric/lib/python3.14/site-packages/nemo_fabric_adapters/openclaw/adapter.py
-C=$(docker create nc-fabric:openclaw)
-docker cp "$C:$ADAPTER" "$RUN_DIR/adapter.py"
-sudo chown "$USER" "$RUN_DIR/adapter.py"
-grep -c '"controlUi": {"enabled": False},' "$RUN_DIR/adapter.py"
 ```
-
-The count must be 1; otherwise the adapter changed and this patch doesn't apply.
-
-```sh
-sed -i "s|\"controlUi\": {\"enabled\": False},|\"controlUi\": {\"enabled\": True, \"allowedOrigins\": [\"$URL\"]},|" "$RUN_DIR/adapter.py"
-docker cp "$RUN_DIR/adapter.py" "$C:$ADAPTER"
-docker commit "$C" "nc-fabric:openclaw-ui-$RUN" > /dev/null
-docker rm "$C" > /dev/null
-IMAGE=$(docker image inspect "nc-fabric:openclaw-ui-$RUN" --format '{{index .RepoDigests 0}}')
-echo "$IMAGE (patched)" > "$EVIDENCE/image.txt"
-docker run --rm --entrypoint cat nc-fabric:openclaw "$ADAPTER" | diff - "$RUN_DIR/adapter.py" > "$EVIDENCE/adapter.diff"
-```
-
-`docker commit` keeps the Fabric catalog labels NemoClaw reads.
-`adapter.diff` must show only the `controlUi` line.
 
 1. **DB1:**
    ```sh
+   sed -n '/^Agent interfaces:/,/^$/p' "$EVIDENCE/apply.txt" | tee "$EVIDENCE/interfaces.txt"
+   APPLY_URL=$(sed -n 's|^  assistant/dashboard: \(http[^ ]*\)/$|\1|p' "$EVIDENCE/apply.txt")
+   echo "$APPLY_URL" | tee "$EVIDENCE/service-url.txt"
+   [ "$APPLY_URL" = "$URL" ] && echo matches
    openshell service list assistant | tee "$EVIDENCE/services.txt"
    ```
-   Result: `dashboard`, target `127.0.0.1:43000`, `bearer_passthrough`, and `$URL/`.
+   Result: the block shows `assistant/dashboard on port 43000` with `Forward:`, `Token:`, and `Sign in:` lines; then the URL and `matches`; `openshell service list` shows `dashboard`, `127.0.0.1:43000`, and `bearer_passthrough`.
+   Apply doesn't print the mode, so the mode check uses the OpenShell CLI.
 2. **DB2:**
    ```sh
-   curl -s -m 10 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" "$URL/" | grep -c 'data-openclaw-control-ui-base-path=' | tee "$EVIDENCE/ui-page.txt"
+   curl -s -m 10 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" -o "$RUN_DIR/ui.html" -w '%{http_code}\n' "$URL/" | tee "$EVIDENCE/ui-page.txt"
+   grep -c 'data-openclaw-control-ui-base-path=' "$RUN_DIR/ui.html"
    ```
-   Result: `1`, the attribute on the Control UI's root element.
-3. Read the token from the OpenClaw gateway process in this run's sandbox ([#13973](https://github.com/NVIDIA/NemoClaw/issues/13973)):
+   Result: `200`, then `1`.
+3. **DB3:** read the token with the command apply printed, then check sign-in through the exposure:
    ```sh
-   CID=$(docker inspect -f '{{.Id}}' "$SANDBOX_CONTAINER")
-   GPID=$(for p in $(pgrep -f '^openclaw-gateway'); do sudo grep -q "$CID" "/proc/$p/cgroup" && echo "$p"; done | head -1)
-   TOKEN=$(sudo cat "/proc/$GPID/environ" | tr '\0' '\n' | sed -n 's/^OPENCLAW_GATEWAY_TOKEN=//p')
+   TOKEN_PATH=$(sed -n 's|^    Token:    openshell sandbox exec -n assistant --no-tty -- cat \(/sandbox/[^ ]*/dashboard\.token\)$|\1|p' "$EVIDENCE/apply.txt")
+   echo "$TOKEN_PATH" | tee "$EVIDENCE/token-path.txt"
+   TOKEN=$(openshell sandbox exec -n assistant --no-tty -- cat "$TOKEN_PATH")
    echo "${#TOKEN}"
+   for h in "" "Authorization: Bearer wrong$RANDOM"; do
+     curl -s -m 10 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" -o /dev/null -w '%{http_code}\n' ${h:+-H "$h"} "$URL/control-ui-config.json"
+   done | tee "$EVIDENCE/no-token.txt"
+   curl -s -m 10 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" -H "Authorization: Bearer $TOKEN" "$URL/control-ui-config.json" | jq -c '{basePath: has("basePath")}' | tee "$EVIDENCE/with-token.txt"
    ```
-   Result: a length such as 64; never print the token.
-4. **DB3:**
+   Result: a path ending in `/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token`; a nonzero length, never the token; `401` twice; then `{"basePath":true}`.
+4. **DB4:** run the `Forward` command in the background and repeat DB3's sign-in checks on loopback; leave the forward running for DB5:
    ```sh
-   curl -s -m 10 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"model":"openclaw/default","messages":[{"role":"user","content":"x"}]}' "$URL/v1/chat/completions" | tee "$EVIDENCE/no-token.txt"
+   openshell forward service assistant --target-port 43000 --local 127.0.0.1:43000 > "$RUN_DIR/forward.log" 2>&1 &
+   FORWARD=$!
+   sleep 4
+   for h in "" "Authorization: Bearer wrong$RANDOM"; do
+     curl -s -m 10 -o /dev/null -w '%{http_code}\n' ${h:+-H "$h"} http://127.0.0.1:43000/control-ui-config.json
+   done | tee "$EVIDENCE/forward-no-token.txt"
+   curl -s -m 10 -H "Authorization: Bearer $TOKEN" http://127.0.0.1:43000/control-ui-config.json | jq -c '{basePath: has("basePath")}' | tee "$EVIDENCE/forward-with-token.txt"
    ```
-   Result: `401`.
-   With the token, ask the chat endpoint for a reply:
-   ```sh
-   curl -s -m 180 --resolve "$HOST:$GATEWAY_PORT:127.0.0.1" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-     -d '{"model":"openclaw/default","messages":[{"role":"user","content":"Reply with exactly CHAT_HTTP."}]}' \
-     "$URL/v1/chat/completions" > "$EVIDENCE/chat-http.json"
-   jq -r '.choices[0].message.content' "$EVIDENCE/chat-http.json"
-   ```
-   Result: `CHAT_HTTP`.
-5. **DB4:** with Playwright's Chromium installed outside the checkout, open the page with the token in the URL fragment, send a prompt with a new word, and save a screenshot:
+   Result: `401` twice, then `{"basePath":true}`.
+5. **DB5:** with Playwright's Chromium installed outside the checkout, open the forwarded page with the token in the URL fragment, send a prompt with a new word, save a screenshot, then stop the forward:
    ```sh
    mkdir -p "$RUN_DIR/pw" && cd "$RUN_DIR/pw" && npm init -y > /dev/null && npm i playwright > /dev/null && npx playwright install chromium > /dev/null
    cat > ui.mjs <<'JS'
    import { chromium } from "playwright";
    const [url, token, word, shot] = process.argv.slice(2);
-   const b = await chromium.launch({ args: ["--host-resolver-rules=MAP *.openshell.localhost 127.0.0.1"] });
+   const b = await chromium.launch();
    const p = await (await b.newContext({ viewport: { width: 1000, height: 600 } })).newPage();
    await p.goto(url + "/#token=" + token, { waitUntil: "load" });
    await p.waitForTimeout(6000);
@@ -101,8 +92,9 @@ docker run --rm --entrypoint cat nc-fabric:openclaw "$ADAPTER" | diff - "$RUN_DI
    await b.close();
    JS
    WORD=DASH_$(date +%s)
-   node ui.mjs "$URL" "$TOKEN" "$WORD" "$EVIDENCE/dashboard.png" | tee "$EVIDENCE/dashboard.txt"
+   node ui.mjs http://127.0.0.1:43000 "$TOKEN" "$WORD" "$EVIDENCE/dashboard-$WORD.png" | tee "$EVIDENCE/dashboard.txt"
    cd - > /dev/null
+   kill "$FORWARD"
    unset TOKEN
    ```
    Result: `reply`, and the screenshot shows the prompt and the agent's reply with `$WORD`.
@@ -110,10 +102,11 @@ docker run --rm --entrypoint cat nc-fabric:openclaw "$ADAPTER" | diff - "$RUN_DI
 
 ## Gotchas
 
-- Without the patched image, DB2 finds no Control UI page and DB4 can't pass; that is the Fabric gap ([NVIDIA/NeMo-Fabric#541](https://github.com/NVIDIA/NeMo-Fabric/issues/541)), not a NemoClaw failure.
-- The allowed origin must match the URL exactly, including the gateway port; a different origin loads a "Browser origin not allowed" page. Build the patched image after choosing the UID and port.
-- The default `STRIP` mode removes the UI's `Authorization` header, so its side requests return 401; this map declares `BEARER_PASSTHROUGH`.
-- With `BEARER_PASSTHROUGH`, the avatar and workspace-icon requests still return 404; they don't affect the feature.
-- After a sandbox replacement, reuse neither a screenshot file name nor a browser profile: a cached page can show the previous conversation.
+- Run this feature before [exposure-change](exposure-change.md): its `STRIP` mode removes the UI's `Authorization` header, so side requests fail through the exposure; the forward isn't affected.
+- A browser at the exposure's URL can't sign in: the adapter accepts only loopback origins, and OpenClaw reports "Browser origin not allowed" for the exposure's. Use the forward.
+- The `Token` line names the runtime ID. After a runtime restart or sandbox replacement, read the new line from the latest apply; the old path is gone.
+- `interfaces.dashboard.port` can't be combined with `port_range`, and OpenClaw reserves `port` through `port + 110`.
+- Planning rejects an interface name or field the image's adapter doesn't declare, naming `harness_interfaces`; rebuild the image when the error mentions an interface the docs list.
+- With `BEARER_PASSTHROUGH`, the avatar and workspace-icon requests return 404; they don't affect the feature.
+- After a sandbox replacement, use a new screenshot file name and a fresh browser context: a cached page can show the previous conversation.
 - Snap Firefox can't use a profile outside `~/snap` and has captured blank pages before rendering; use Chromium.
-- Two OpenClaw sandboxes on one host each run an `openclaw-gateway`; select the process by the sandbox container's cgroup, never by name alone.
