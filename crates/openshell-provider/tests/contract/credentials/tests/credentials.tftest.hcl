@@ -2,29 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Web search and API credentials: each resource owns a profile and the
 # registration that holds the key, and recovers either one without replacing
-# the sandbox that attaches it. Each observe_ run applies the previous run's
-# configuration again and reads the fake gateway.
+# the sandbox that attaches it.
 
-run "deploy" {}
-
-run "observe_deployed" {
+run "deploy" {
   assert {
     condition = [
-      for registration in values(local.gateway_state.providers) : keys(registration.credentials)
+      for registration in local.openshell.created_providers : keys(registration.credentials)
       if startswith(registration.type, "nemoclaw-brave")
     ] == [["BRAVE_SEARCH_API_KEY"]]
-    error_message = "The web search registration must take a Brave profile and hold the key."
+    error_message = "The web search registration must take a Brave profile and hold the key under the variable sandboxes see."
   }
   assert {
-    condition = [for profile in values(local.gateway_state.profiles) : profile.credentials[0].env_vars] == [
-      ["NEMOCLAW_API_BOOKING_KEY"],
-      ["BRAVE_SEARCH_API_KEY"],
-    ]
-    error_message = "Sandboxes must see each key under its named variable."
-  }
-  assert {
-    condition = local.gateway_state.profiles["credentials/nemoclaw-api-booking"] == {
-      id                = "nemoclaw-api-booking"
+    condition = local.openshell.profiles["nemoclaw-api-booking"] == {
       inference_capable = false
       credentials       = [{ env_vars = ["NEMOCLAW_API_BOOKING_KEY"], auth_style = "bearer", header_name = "Authorization" }]
       endpoints         = ["booking.example.com:443/mcp/**"]
@@ -33,8 +22,8 @@ run "observe_deployed" {
     error_message = "The API profile must bind its bearer key to its endpoint and binaries."
   }
   assert {
-    condition     = local.gateway_state.providers["credentials/booking"].type == "nemoclaw-api-booking" && local.gateway_state.providers["credentials/booking"].credentials == { NEMOCLAW_API_BOOKING_KEY = "booking-fixture-secret" }
-    error_message = "The API registration must take its profile and hold the key."
+    condition     = local.openshell.registration_credentials["booking"] == { NEMOCLAW_API_BOOKING_KEY = "env:NEMOCLAW_TEST_BOOKING_KEY" }
+    error_message = "The API registration must hold the key."
   }
   assert {
     condition     = !strcontains(jsonencode(openshell_api.booking[0]), "booking-fixture-secret")
@@ -42,56 +31,38 @@ run "observe_deployed" {
   }
 }
 
-run "rotate_api_key" {
-  variables { api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT" }
-}
-
-run "observe_rotated" {
-  variables { api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT" }
-  assert {
-    condition     = local.gateway_state.providers["credentials/booking"].credentials == { NEMOCLAW_API_BOOKING_KEY = "next-booking-fixture-secret" } && local.gateway_state.created.providers == 2
-    error_message = "Rotating the key's variable must update the registration in place."
-  }
-}
-
 run "lose_profiles" {
-  variables {
-    api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT"
-    fixture            = { remove = ["profiles"] }
-  }
+  variables { fixture = { change = { forget_profiles = true } } }
   plan_options { target = [data.fixture_state.gateway] }
 }
 
-run "recreate_profiles" {
-  variables { api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT" }
-}
+run "recreate_profiles" {}
 
 run "lose_registrations" {
-  variables {
-    api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT"
-    fixture            = { remove = ["providers"] }
-  }
+  variables { fixture = { change = { forget_registrations = true } } }
   plan_options { target = [data.fixture_state.gateway] }
 }
 
 run "recreate_registrations" {
-  variables { api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT" }
-}
-
-run "observe_recreated" {
-  variables { api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT" }
   assert {
-    condition     = length(local.gateway_state.profiles) == 2 && local.gateway_state.created.providers == 4
-    error_message = "Missing profiles must be recreated in place, and missing registrations created again: ${local.gateway_state.created.providers} registrations created."
+    condition     = length(local.openshell.profiles) == 2 && length(local.openshell.created_providers) == 4
+    error_message = "Missing profiles must be recreated in place, and missing registrations created again."
   }
   assert {
-    condition     = local.gateway_state.created.sandboxes == 1
+    condition     = length(local.openshell.created_sandboxes) == 1
     error_message = "Recovering credentials must keep the sandbox that attaches them."
   }
 }
 
-# Removing a sandbox is a teardown. Removing credentials needs no destroy
-# mode once no sandbox attaches them.
+run "rotate_api_key" {
+  variables { api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT" }
+  assert {
+    condition     = local.openshell.registration_credentials["booking"] == { NEMOCLAW_API_BOOKING_KEY = "env:NEMOCLAW_TEST_BOOKING_NEXT" } && length(local.openshell.created_providers) == 4
+    error_message = "Rotating the key's variable must update the registration in place."
+  }
+}
+
+# Removing a sandbox is a teardown.
 run "remove_sandbox" {
   variables {
     api_credential_env = "NEMOCLAW_TEST_BOOKING_NEXT"
@@ -108,34 +79,28 @@ run "custom_header" {
     auth_style  = "header"
     header_name = "X-Booking-Key"
   }
-}
-
-run "observe_custom_header" {
-  variables {
-    sandbox     = false
-    auth_style  = "header"
-    header_name = "X-Booking-Key"
-  }
   assert {
-    condition     = local.gateway_state.profiles["credentials/nemoclaw-api-booking"].credentials[0].header_name == "X-Booking-Key"
+    condition     = local.openshell.profiles["nemoclaw-api-booking"].credentials[0].header_name == "X-Booking-Key"
     error_message = "The key must be sent in the named header."
   }
 }
 
+# Removing credentials needs no destroy mode once no sandbox attaches them.
 run "remove" {
   variables {
     sandbox = false
     enabled = false
   }
+  assert {
+    condition     = length(local.openshell.registrations) + length(local.openshell.profiles) + length(local.openshell.sandboxes) == 0 && local.openshell.workspaces == ["credentials"]
+    error_message = "Removal must delete every object but the workspace."
+  }
 }
 
-run "observe_removed" {
+# Teardown mode lets the test's cleanup delete the workspace.
+run "teardown" {
   variables {
     enabled    = false
     destroying = true
-  }
-  assert {
-    condition     = length(local.gateway_state.providers) + length(local.gateway_state.profiles) + length(local.gateway_state.sandboxes) == 0 && local.gateway_state.workspaces == ["credentials"]
-    error_message = "Removal must delete every object but the workspace."
   }
 }

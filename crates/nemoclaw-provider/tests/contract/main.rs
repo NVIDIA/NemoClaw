@@ -40,7 +40,10 @@ pub use nemoclaw_test_fixtures::{openshell, tofu};
 pub const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract");
 
 /// Run each native test file of `module` under `CONTRACT`.
-pub fn native(module: &str, environment: &[(&str, &str)]) {
+pub fn native<K: AsRef<std::ffi::OsStr>, V: AsRef<std::ffi::OsStr>>(
+    module: &str,
+    environment: &[(K, V)],
+) {
     let root = workspace();
     root.copy(std::path::Path::new(CONTRACT).join(module));
     root.test_all(environment);
@@ -50,7 +53,7 @@ pub fn native(module: &str, environment: &[(&str, &str)]) {
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn runtime_contracts_carry_their_typed_settings() {
-    native("runtime", &[]);
+    native::<&str, &str>("runtime", &[]);
 }
 
 /// A workspace with this package's providers under test (vllm, ollama, and
@@ -131,17 +134,7 @@ fn every_type_has_a_contract_test() {
         ))
         .chain(served("host", nemoclaw_provider::HostProvider::default()))
         .collect();
-    let native = tofu::native_sources(CONTRACT);
-    let sources = [
-        include_str!("discovery.rs"),
-        include_str!("readiness_refs.rs"),
-        include_str!("provider_protocol.rs"),
-        include_str!("service_capacity.rs"),
-        include_str!("service_readiness.rs"),
-        include_str!("service_storage.rs"),
-        native.as_str(),
-    ]
-    .concat();
+    let sources = tofu::contract_sources(CONTRACT);
     let missing: Vec<_> = types
         .iter()
         .filter(|name| {

@@ -253,20 +253,7 @@ fn every_type_has_a_contract_test() {
                 .into_keys(),
         )
         .collect();
-    let mut sources = nemoclaw_test_fixtures::tofu::native_sources(CONTRACT);
-    sources += &[
-        include_str!("api.rs"),
-        include_str!("capabilities.rs"),
-        include_str!("gateway_installation.rs"),
-        include_str!("gateway_readiness.rs"),
-        include_str!("gateway_storage.rs"),
-        include_str!("kubernetes_lifecycle.rs"),
-        include_str!("standalone.rs"),
-    ]
-    .concat();
-    for entry in fs::read_dir(FIXTURES).unwrap() {
-        sources.push_str(&fs::read_to_string(entry.unwrap().path()).unwrap());
-    }
+    let sources = nemoclaw_test_fixtures::tofu::contract_sources(CONTRACT);
     let missing: Vec<_> = types
         .iter()
         .filter(|kind| !sources.contains(&format!("openshell_{kind}")))

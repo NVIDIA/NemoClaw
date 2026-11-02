@@ -4,6 +4,7 @@
 
 use crate::Bundle;
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -28,6 +29,16 @@ fn stage(executable: &Path, staged: &Path) {
     std::os::unix::fs::symlink(std::path::absolute(executable).unwrap(), staged).unwrap();
     #[cfg(not(unix))]
     fs::copy(executable, staged).unwrap();
+}
+
+/// A provider's registry address: `nvidia/NAME` unless `name` names its
+/// namespace.
+pub(crate) fn provider_address(name: &str) -> String {
+    if name.contains('/') {
+        format!("registry.opentofu.org/{name}")
+    } else {
+        format!("registry.opentofu.org/nvidia/{name}")
+    }
 }
 
 pub struct TofuWorkspace {
@@ -67,15 +78,17 @@ impl TofuWorkspace {
     }
 
     /// A workspace whose OpenTofu uses only the given `(name, executable)`
-    /// providers from `registry.opentofu.org/nvidia`.
+    /// providers: `registry.opentofu.org/nvidia/NAME`, or another namespace's
+    /// when `name` names it, such as `kreuzwerker/docker`.
     pub fn with_providers(tofu: impl AsRef<Path>, providers: &[(&str, &Path)]) -> Self {
         let directory = tempfile::tempdir().unwrap();
         for (name, executable) in providers {
+            let kind = name.rsplit('/').next().unwrap();
             stage(
                 executable,
                 &directory
                     .path()
-                    .join(crate::executable(&format!("terraform-provider-{name}"))),
+                    .join(crate::executable(&format!("terraform-provider-{kind}"))),
             );
         }
         if !providers.is_empty() {
@@ -84,7 +97,7 @@ impl TofuWorkspace {
         let path = serde_json::to_string(directory.path()).unwrap();
         let overrides = providers
             .iter()
-            .map(|(name, _)| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
+            .map(|(name, _)| format!("\"{}\" = {path}", provider_address(name)))
             .collect::<Vec<_>>()
             .join(" ");
         fs::write(
@@ -146,7 +159,10 @@ impl TofuWorkspace {
 
     /// Run each native test file in turn with `environment`, and return
     /// OpenTofu's outputs.
-    pub fn test_all(&self, environment: &[(&str, &str)]) -> Vec<String> {
+    pub fn test_all<K: AsRef<OsStr>, V: AsRef<OsStr>>(
+        &self,
+        environment: &[(K, V)],
+    ) -> Vec<String> {
         self.test_files()
             .iter()
             .map(|file| self.test(file, environment))
@@ -156,11 +172,15 @@ impl TofuWorkspace {
     /// Run one native test file with `tofu test` and `environment`, and
     /// return OpenTofu's output. Panics with that output unless every run
     /// passed and the file's state was destroyed.
-    pub fn test(&self, file: &str, environment: &[(&str, &str)]) -> String {
+    pub fn test<K: AsRef<OsStr>, V: AsRef<OsStr>>(
+        &self,
+        file: &str,
+        environment: &[(K, V)],
+    ) -> String {
         let output = self
             .command()
             .args(["test", "-no-color", &format!("-filter={file}")])
-            .envs(environment.iter().copied())
+            .envs(environment.iter().map(|(name, value)| (name, value)))
             .output()
             .unwrap();
         let text = format!(
@@ -173,21 +193,17 @@ impl TofuWorkspace {
     }
 }
 
-/// The configuration of every module under `contract` with native tests,
-/// for a contract binary's coverage test.
+/// The text of every file under `directory`: a contract binary's Rust
+/// tests, authored modules, and generated fixtures, for its coverage test.
 #[must_use]
-pub fn native_sources(contract: impl AsRef<Path>) -> String {
+pub fn contract_sources(directory: impl AsRef<Path>) -> String {
     let mut sources = String::new();
-    for module in fs::read_dir(contract).unwrap() {
-        let module = module.unwrap().path();
-        if !module.join("tests").is_dir() {
-            continue;
-        }
-        for file in fs::read_dir(module).unwrap() {
-            let file = file.unwrap().path();
-            if file.extension().is_some_and(|extension| extension == "tf") {
-                sources += &fs::read_to_string(file).unwrap();
-            }
+    for entry in fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            sources += &contract_sources(&path);
+        } else {
+            sources += &fs::read_to_string(&path).unwrap_or_default();
         }
     }
     sources

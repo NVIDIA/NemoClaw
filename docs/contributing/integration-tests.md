@@ -49,8 +49,9 @@ Its coverage test is not ignored and runs with the unit tests; the remaining tes
 Scenarios live in authored modules beside the binary: a directory under `tests/contract` with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.12/cli/commands/test/) files in its `tests` directory.
 A Rust test starts the module's fixtures and runs its test files with `TofuWorkspace`; `openshell::test_against_gateways` runs them side by side, each against its own fake OpenShell gateway.
 To run one module, name its Rust test, for example `cargo test -p openshell-provider --test contract standalone_resources -- --ignored`.
-A module that observes a fixture reads `data.fixture_state` from `nemoclaw-fixture-control`, which reports what the fixture holds and can remove objects as though they were deleted outside OpenTofu.
-An `observe_` run applies the previous run's configuration again, so it changes nothing, and checks what the fixture holds.
+A module that observes the fake gateway reads `data.fixture_state` from `nemoclaw-fixture-control`; the system tests read the same observations, from `openshell::State::observations`.
+The data source depends on the module's resources, so OpenTofu reads it after they change and each run checks its own result.
+A run that only targets the data source can change the gateway outside OpenTofu, such as `{ change = { forget_registrations = true } }`, before the run that should meet the change.
 `tofu test` keeps the state in memory and fails a run on any provider error, so Rust tests keep the checks that need a failed command, a saved plan or its planned actions, or the state file.
 A run's outputs are available to later runs only as planned values, so a test compares identities within one run instead.
 

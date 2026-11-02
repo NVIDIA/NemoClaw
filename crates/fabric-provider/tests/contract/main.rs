@@ -58,13 +58,14 @@ fn catalog_json() -> String {
     .unwrap()
 }
 
-/// Every Fabric type is used by a module with native tests.
+/// Every Fabric type is declared by a configuration under `tests/contract`.
 #[test]
 fn every_fabric_type_has_a_contract_test() {
-    let sources = nemoclaw_test_fixtures::tofu::native_sources(CONTRACT);
+    let sources = nemoclaw_test_fixtures::tofu::contract_sources(CONTRACT);
+    // A block's type and name, such as `resource "fabric_agent" "agent"`.
     let used: BTreeSet<&str> = ["fabric_agent", "fabric_harnesses"]
         .into_iter()
-        .filter(|kind| sources.contains(&format!("\"{kind}\"")))
+        .filter(|kind| sources.contains(&format!("\"{kind}\" \"")))
         .collect();
     assert_eq!(used.len(), 2, "types with a contract test: {used:?}");
 }
@@ -133,10 +134,14 @@ fn diagnostic(output: &Output) -> String {
 }
 
 /// Runtime starts and stops the fake gateway received.
-fn writes(fixture: &Fixture) -> u64 {
-    fixture.state.lock().unwrap().observations()["fabric"]["writes"]
-        .as_u64()
-        .unwrap()
+fn writes(fixture: &Fixture) -> usize {
+    let state = fixture.state.lock().unwrap();
+    let write = |command: &&Vec<String>| {
+        command
+            .get(1)
+            .is_some_and(|operation| operation == "start" || operation == "stop")
+    };
+    state.exec_calls.iter().filter(write).count()
 }
 
 /// A rejected configuration, a lost start reply, and an unobserved runtime

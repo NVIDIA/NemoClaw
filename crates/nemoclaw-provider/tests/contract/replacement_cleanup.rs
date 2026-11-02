@@ -6,11 +6,9 @@
 //! SDK reads. The SDK's `replacement_cleanup` test drives `Deployment` with
 //! canned copies of these shapes, so a change here must change it too.
 
+use crate::tofu::TofuWorkspace;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 const KEY: &str = "deadbeef";
 const OLD: &str = "old-container";
@@ -31,76 +29,35 @@ fn save(root: &Path, name: &str, value: &Value) {
     fs::write(root.join(name), value.to_string()).unwrap();
 }
 
-/// An OpenTofu workspace that installs the bundle's Docker provider from its
-/// provider mirror, with `body` beside it.
-struct Workspace {
-    directory: tempfile::TempDir,
-    tofu: PathBuf,
-}
-
-impl Workspace {
-    fn with(engine: &str, body: &str) -> Self {
-        let bundle = nemoclaw_test_fixtures::Bundle::from_env();
-        let workspace = Self {
-            directory: tempfile::tempdir().unwrap(),
-            tofu: bundle.tofu(),
-        };
-        fs::write(
-            workspace.path().join("providers.tfrc"),
-            format!(
-                "provider_installation {{ filesystem_mirror {{ path = {} }} }}\n",
-                json!(bundle.root().join("providers"))
-            ),
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join("main.tf"),
-            format!(
-                r#"terraform {{
+/// A workspace with the bundle's Docker provider, reaching an engine over
+/// SSH, and `body`.
+fn workspace(body: &str) -> TofuWorkspace {
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
+    let docker = "kreuzwerker/docker";
+    let workspace =
+        TofuWorkspace::with_providers(bundle.tofu(), &[(docker, &bundle.provider(docker))]);
+    fs::write(
+        workspace.path().join("main.tf"),
+        format!(
+            r#"terraform {{
   required_providers {{
-    docker = {{ source = "registry.opentofu.org/kreuzwerker/docker", version = "= 4.6.0" }}
+    docker = {{ source = "registry.opentofu.org/kreuzwerker/docker" }}
   }}
 }}
 
 provider "docker" {{
-  host = "{engine}"
+  host = "ssh://operator@gpu-box"
 }}
 
 {body}"#
-            ),
-        )
-        .unwrap();
-        let init = workspace
-            .command()
-            .args(["init", "-input=false", "-no-color"])
-            .output()
-            .unwrap();
-        assert!(
-            init.status.success(),
-            "{}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        workspace
-    }
-
-    fn path(&self) -> &Path {
-        self.directory.path()
-    }
-
-    /// OpenTofu in this workspace, with its provider mirror.
-    fn command(&self) -> std::process::Command {
-        let mut command = std::process::Command::new(&self.tofu);
-        command
-            .current_dir(self.path())
-            .env("TF_CLI_CONFIG_FILE", self.path().join("providers.tfrc"))
-            .env("TF_IN_AUTOMATION", "1")
-            .env("CHECKPOINT_DISABLE", "1");
-        command
-    }
+        ),
+    )
+    .unwrap();
+    workspace
 }
 
 struct Scenario {
-    workspace: Workspace,
+    workspace: TofuWorkspace,
     remote: tempfile::TempDir,
 }
 
@@ -122,7 +79,7 @@ impl Scenario {
             &json!({"effects":0, "creates":0, "network":{"Name":"bridge"}}),
         );
         save(root, "control.json", &json!({}));
-        let workspace = Workspace::with("ssh://operator@gpu-box", &container());
+        let workspace = workspace(&container());
         Self { workspace, remote }
     }
 

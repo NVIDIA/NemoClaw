@@ -98,12 +98,7 @@ impl Host {
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated host fixtures"]
 async fn host_checks_pass_for_a_healthy_host() {
     let host = Host::start().await;
-    let environment: Vec<(&str, &str)> = host
-        .variables
-        .iter()
-        .map(|(name, value)| (*name, value.as_str()))
-        .collect();
-    crate::native("host", &environment);
+    crate::native("host", &host.variables);
 }
 
 /// An incompatible image, an unhealthy container, and a server that stops

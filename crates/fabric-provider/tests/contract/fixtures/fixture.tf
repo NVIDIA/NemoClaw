@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Observations for the native tests: each plan reads what the fake gateway
-# holds, and `fixture` declares a change made behind OpenTofu, such as
-# { remove = ["sandboxes"] }.
+# What the fake gateway received and holds, read after this module's
+# resources change, so a run's assertions see that run's result. `fixture`
+# changes the gateway outside OpenTofu, such as
+# { change = { forget_sandboxes = true } }, in a run targeting this data source.
 variable "fixture" { default = null }
 data "fixture_state" "gateway" {
-  declare = var.fixture == null ? null : jsonencode(var.fixture)
+  declare    = var.fixture == null ? null : jsonencode(var.fixture)
+  depends_on = [openshell_workspace.example, openshell_inference.inference, openshell_sandbox.agent, fabric_agent.agent]
 }
 locals {
-  gateway_state = jsondecode(data.fixture_state.gateway.observations)
+  openshell = jsondecode(data.fixture_state.gateway.observations).openshell
+  # Pi runtimes Fabric stopped.
+  stops = length([for exec in local.openshell.execs : exec if try(exec.command[1], "") == "stop"])
 }

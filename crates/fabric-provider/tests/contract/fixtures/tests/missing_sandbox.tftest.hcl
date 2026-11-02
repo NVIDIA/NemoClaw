@@ -5,11 +5,13 @@
 
 run "deploy" {}
 
-run "remove_agent_after_its_sandbox" {
-  variables {
-    agent   = false
-    fixture = { remove = ["sandboxes"] }
-  }
+run "lose_sandbox" {
+  variables { fixture = { change = { forget_sandboxes = true } } }
+  plan_options { target = [data.fixture_state.gateway] }
+}
+
+run "remove_agent" {
+  variables { agent = false }
   plan_options { refresh = false }
 }
 

@@ -165,8 +165,7 @@ impl Shared {
             let list = |key: &str| declared[key].as_array().cloned().unwrap_or_default();
             *self.images.lock().unwrap() = list("images");
             *self.containers.lock().unwrap() = list("containers");
-            self.gateway.lock().unwrap().driver =
-                declared["compute_driver"].as_str().map(str::to_owned);
+            self.gateway.lock().unwrap().declare(&declared);
         }
         (
             200,
@@ -179,7 +178,7 @@ impl Shared {
     pub fn observations(&self) -> Value {
         let containers = self.containers.lock().unwrap().clone();
         let credentials = self.credentials.lock().unwrap().clone();
-        let source = |value: &String| {
+        let source = |value: &str| {
             let file = containers.iter().find_map(|container| {
                 let (path, _) = container["files"]
                     .as_object()?
@@ -194,42 +193,10 @@ impl Shared {
                 .or(file)
                 .unwrap_or_else(|| "unrecognized".into())
         };
-        let state = self.gateway.lock().unwrap();
-        let providers: Vec<Value> = state.created_providers.iter().map(|provider| {
-            let meta = provider.metadata.clone().unwrap_or_default();
-            json!({"name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
-                "config": provider.config,
-                "credentials": provider.credentials.iter()
-                    .map(|(name, value)| (name.clone(), source(value))).collect::<BTreeMap<_, _>>()})
-        }).collect();
-        let sandboxes: Vec<Value> = state.created_sandboxes.iter().map(|sandbox| {
-            let meta = sandbox.metadata.clone().unwrap_or_default();
-            let spec = sandbox.spec.clone().unwrap_or_default();
-            let endpoints: Vec<String> = spec.policy.iter()
-                .flat_map(|policy| policy.network_policies.values())
-                .flat_map(|rule| &rule.endpoints)
-                .map(|endpoint| format!("{}:{}{}", endpoint.host, endpoint.port, endpoint.path))
-                .collect();
-            json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
-                "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints})
-        }).collect();
-        let execs: Vec<Value> = state.exec_calls.iter().zip(&state.exec_sandboxes).zip(&state.exec_stdin)
-            .map(|((command, sandbox), stdin)| {
-                json!({"sandbox": sandbox, "command": command, "stdin": String::from_utf8_lossy(stdin)})
-            })
-            .collect();
-        let rpcs: Vec<&str> = state
-            .rpcs
-            .iter()
-            .map(|rpc| rpc.trim_start_matches("/openshell.v1.OpenShell/"))
-            .collect();
+        let mut openshell = self.gateway.lock().unwrap().observations(source);
+        openshell["endpoint"] = json!(self.gateway_endpoint);
         json!({
-            "openshell": {
-                "endpoint": self.gateway_endpoint, "rpcs": rpcs,
-                "created_providers": providers, "created_sandboxes": sandboxes, "execs": execs,
-                "fabric_starts": state.fabric_starts,
-                "workspaces": state.workspaces.keys().collect::<Vec<_>>(),
-            },
+            "openshell": openshell,
             "engine": {
                 "endpoint": self.engine_endpoint,
                 "requests": *self.engine_requests.lock().unwrap(),
