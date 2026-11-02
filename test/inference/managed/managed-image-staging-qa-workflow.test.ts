@@ -200,6 +200,11 @@ describe("managed-image staging QA workflow", () => {
           "candidate native support\n",
         );
       });
+      npmSupportFiles.forEach((supportFile) => {
+        expect(fs.readFileSync(path.join(stagingRoot, supportFile), "utf8")).toBe(
+          "candidate npm support\n",
+        );
+      });
     } finally {
       fs.rmSync(overlayFixture, { recursive: true, force: true });
     }
