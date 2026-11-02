@@ -4,10 +4,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  type GpuSandboxInferenceRoute,
   enforceDockerGpuPatchPreserveNetwork,
   getSandboxRuntimeInferenceEndpoint,
   printDockerGpuSandboxInferenceVerificationFailure,
@@ -30,6 +33,7 @@ afterEach(() => vi.restoreAllMocks());
 function gpuPatchOptions(extra: Record<string, unknown> = {}) {
   return {
     sandboxName: "alpha",
+    resolveInferenceRoute: () => ({ kind: "shared" as const }),
     dockerDriverGateway: true,
     selectedRoute: "compatibility" as const,
     platform: "linux" as NodeJS.Platform,
@@ -44,6 +48,141 @@ function gpuPatchOptions(extra: Record<string, unknown> = {}) {
 function execEmitting(stdout: string, { status = 0, stderr = "" } = {}) {
   return vi.fn(async (_sandboxName: string, _script: string) => ({ status, stdout, stderr }));
 }
+
+const NATIVE_BINDING: NativeLocalBinding = {
+  provider: "ollama-local",
+  agent: "openclaw",
+  endpointUrl: "http://host.openshell.internal:11435/v1",
+  gatewayName: "gpu-gateway",
+  sandboxName: "alpha",
+  authMode: "authenticated",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+};
+const NATIVE_ROUTE: GpuSandboxInferenceRoute = {
+  kind: "native-local",
+  gatewayName: NATIVE_BINDING.gatewayName,
+  attachment: {
+    ...NATIVE_BINDING,
+    ...nativeLocalIdentity(NATIVE_BINDING),
+    schemaVersion: 1,
+    providerId: "native-provider",
+  },
+};
+const SCOPED_HANDLE = "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+
+describe("native GPU inference probe script (#14069)", { timeout: 15_000 }, () => {
+  async function runScript(token: string, httpCode = "200", curlStatus = 0) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gpu-native-probe-"));
+    const argsPath = path.join(dir, "curl-args");
+    try {
+      fs.writeFileSync(
+        path.join(dir, "curl"),
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$CURL_ARGS"\nprintf "%s" "$HTTP_CODE"\nexit "$CURL_STATUS"\n',
+        { mode: 0o755 },
+      );
+      const execInSandbox = vi.fn(async (_name: string, script: string) => {
+        const result = spawnSync("/bin/sh", ["-c", script], {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            PATH: `${dir}:/usr/bin:/bin`,
+            NEMOCLAW_LOCAL_INFERENCE_TOKEN: token,
+            CURL_ARGS: argsPath,
+            HTTP_CODE: httpCode,
+            CURL_STATUS: String(curlStatus),
+          },
+        });
+        expect(result.error).toBeUndefined();
+        return {
+          status: result.status ?? 1,
+          stdout: result.stdout ?? "",
+          stderr: result.stderr ?? "",
+        };
+      });
+      const sleep = vi.fn();
+      const result = await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
+        ...gpuPatchOptions(),
+        resolveInferenceRoute: () => NATIVE_ROUTE,
+        deps: { execInSandbox, sleep },
+      });
+      expect(execInSandbox).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+      return { result, args: fs.existsSync(argsPath) ? fs.readFileSync(argsPath, "utf8") : null };
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    SCOPED_HANDLE,
+    `openshell:resolve:env:s${"a".repeat(64)}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`,
+  ])("uses an opaque scoped handle to verify the selected endpoint", async (handle) => {
+    const { result, args } = await runScript(handle);
+    expect(result).toMatchObject({
+      status: "ok",
+      endpoint: `${NATIVE_BINDING.endpointUrl}/models`,
+      httpCode: "200",
+    });
+    expect(args?.split("\n")).toEqual([
+      "-q",
+      "-so",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "-H",
+      `Authorization: Bearer ${handle}`,
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "10",
+      `${NATIVE_BINDING.endpointUrl}/models`,
+      "",
+    ]);
+    expect(JSON.stringify(result)).not.toContain(handle);
+  });
+
+  it.each([
+    "",
+    "raw-test-secret",
+    "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    `${SCOPED_HANDLE}\nraw-test-secret`,
+    `${SCOPED_HANDLE}; echo unsafe`,
+  ])("rejects missing, raw, and malformed credentials before making a request", async (token) => {
+    const { result, args } = await runScript(token);
+    expect(result.status).toBe("failed");
+    expect(args).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("raw-test-secret");
+  });
+
+  it.each(["401", "403", "503", "000", "200\nHTTP_200"])(
+    "rejects unusable HTTP or malformed responses without shared fallback",
+    async (code) => {
+      const { result, args } = await runScript(SCOPED_HANDLE, code);
+      expect(result.status).toBe("failed");
+      expect(args).not.toContain("inference.local");
+      expect(JSON.stringify(result)).not.toContain("inference set");
+    },
+  );
+
+  it("rejects a failed curl even when it prints a successful HTTP code", async () => {
+    expect((await runScript(SCOPED_HANDLE, "200", 28)).result.status).toBe("failed");
+  });
+
+  it.each([
+    { status: 1, stdout: "HTTP_200", stderr: "raw-test-secret" },
+    { status: 1, stdout: "NO_CURL", stderr: "raw-test-secret" },
+    { status: 0, stdout: "noise HTTP_200", stderr: "raw-test-secret" },
+    { status: 0, stdout: "HTTP_200\nHTTP_503", stderr: "raw-test-secret" },
+  ])("rejects misleading exec output without disclosing it", async (response) => {
+    const result = await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
+      ...gpuPatchOptions(),
+      resolveInferenceRoute: () => NATIVE_ROUTE,
+      deps: { execInSandbox: vi.fn(async () => response), sleep: vi.fn() },
+    });
+    expect(result.status).toBe("failed");
+    expect(JSON.stringify(result)).not.toContain("raw-test-secret");
+  });
+});
 
 describe("shouldUseDockerGpuPatchHostNetwork", () => {
   it("is true only on the Linux Docker-driver host-network path", () => {
@@ -165,13 +304,13 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
 
 describe("getSandboxRuntimeInferenceEndpoint", () => {
   it("uses the OpenShell inference route, not a host loopback or gateway alias", () => {
-    expect(getSandboxRuntimeInferenceEndpoint("ollama-local")).toBe(
+    expect(getSandboxRuntimeInferenceEndpoint("ollama-local", { kind: "shared" })).toBe(
       "https://inference.local/v1/models",
     );
-    expect(getSandboxRuntimeInferenceEndpoint("vllm-local")).toBe(
+    expect(getSandboxRuntimeInferenceEndpoint("vllm-local", { kind: "shared" })).toBe(
       "https://inference.local/v1/models",
     );
-    expect(getSandboxRuntimeInferenceEndpoint("build")).toBeNull();
+    expect(getSandboxRuntimeInferenceEndpoint("build", { kind: "shared" })).toBeNull();
   });
 });
 
@@ -304,7 +443,7 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
       expect(result.kind).toBe("exec");
-      expect(result.detail).toContain("exec denied");
+      expect(result.detail).toContain("credential or transport error");
     }
   });
 });
@@ -313,6 +452,7 @@ describe("verifyGpuSandboxAfterReady", () => {
   function baseOptions(extra: Record<string, unknown> = {}) {
     return {
       sandboxName: "alpha",
+      resolveInferenceRoute: () => ({ kind: "shared" as const }),
       dockerDriverGateway: true,
       selectedRoute: "compatibility" as const,
       platform: "linux" as NodeJS.Platform,
