@@ -100,12 +100,12 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
 fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
     for (raw, current) in [
         (
-            include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
-            include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice(),
+            include_bytes!("../../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../../fixtures/openclaw-nvidia-hosted/v1.yaml").as_slice(),
         ),
         (
-            include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml").as_slice(),
-            include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml").as_slice(),
+            include_bytes!("../../fixtures/hermes-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../../fixtures/hermes-nvidia-hosted/v1.yaml").as_slice(),
         ),
     ] {
         let document = authored_document(raw, current);
@@ -180,20 +180,20 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
 
 #[test]
 fn hosted_openclaw_scenario_preserves_authored_intent() {
-    let raw = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
+    let raw = include_bytes!("../../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
     let v1 = authored_document(
         raw,
-        include_bytes!("../fixtures/openclaw-nvidia-hosted/v1.yaml"),
+        include_bytes!("../../fixtures/openclaw-nvidia-hosted/v1.yaml"),
     );
     assert_hosted_document(&v1, "nvidia.fabric.openclaw".parse().unwrap(), "/app");
 }
 
 #[test]
 fn hosted_hermes_scenario_preserves_authored_intent() {
-    let export = include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml");
+    let export = include_bytes!("../../fixtures/hermes-nvidia-hosted/v0-export.yaml");
     let v1 = authored_document(
         export,
-        include_bytes!("../fixtures/hermes-nvidia-hosted/v1.yaml"),
+        include_bytes!("../../fixtures/hermes-nvidia-hosted/v1.yaml"),
     );
     assert_hosted_document(&v1, "nvidia.fabric.hermes".parse().unwrap(), "/opt/hermes");
     let harness = v1

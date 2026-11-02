@@ -19,7 +19,7 @@ async fn sandbox_with_runtime(
 ) -> (Fixture, OpenShell, nemoclaw_sdk::backend::Row) {
     let fixture = Fixture::start().await;
     let mut doc = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();

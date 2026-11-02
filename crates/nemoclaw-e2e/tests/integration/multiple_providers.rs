@@ -30,7 +30,7 @@ async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_s
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let fixture = Fixture::start().await;
     let mut first =
-        Document::parse(include_str!("../../../examples/multiple-providers.yaml").as_bytes())
+        Document::parse(include_str!("../../../../examples/multiple-providers.yaml").as_bytes())
             .unwrap();
     *first.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     // A closed loopback port fails the same way on every runner, so repeated

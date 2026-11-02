@@ -11,7 +11,7 @@ async fn export_refreshes_through_opentofu_without_applying_or_losing_bindings()
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -95,7 +95,7 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -225,7 +225,7 @@ async fn export_ignores_a_pi_model_changed_inside_the_sandbox() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -295,7 +295,7 @@ async fn mixed_search_export_preserves_scopes_shared_registrations_and_state_on_
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document =
-        Document::parse(include_bytes!("../../../examples/fabric-openclaw.yaml").as_slice())
+        Document::parse(include_bytes!("../../../../examples/fabric-openclaw.yaml").as_slice())
             .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
