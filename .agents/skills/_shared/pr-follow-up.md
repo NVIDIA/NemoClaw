@@ -37,7 +37,9 @@ Missing required review still blocks readiness or approval under its owning poli
 
 ## Bounded retry policy
 
-An authorized PR repair workflow includes one retry per candidate, workflow, and failure class.
+An authorized PR repair workflow includes one automatic retry per candidate, workflow, and failure class,
+after the initial attempt. Do not ask for routine confirmation for that retry within existing authorization.
+A skill supplies the procedure; the executing agent performs and records the retry.
 Record the failed run, diagnosis, retry count, and result across continuations.
 Do not reset the count because a conversation resumed or another agent took over.
 

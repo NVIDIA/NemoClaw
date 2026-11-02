@@ -7,6 +7,25 @@ Use this contract when work spans external waits, context compaction, or a hando
 Reuse the existing task record. Do not create a second record for each skill or monitor.
 Keep private operational evidence outside tracked repository files. Never store credentials in the record.
 
+## Establish the record
+
+The invoking lifecycle workflow owns creation, discovery, handoff, and final cleanup of the record.
+Before the first external wait or write, reuse the task's supplied record reference. If none exists,
+create a task directory with mode `0700` under `${XDG_STATE_HOME:-$HOME/.local/state}/nemoclaw/tasks/<task-id>/`
+and initialize `state.json` there using the helper below. Use the harness task ID when available or
+create a unique ID once. Resolve and retain the absolute path; do not recompute it after handoff.
+
+Save that absolute path in durable task metadata or the invoking workflow's saved handoff before
+proceeding. Pass the same path and current revision to every delegated skill and watcher.
+A successor reads this reference first. If the reference is missing, inspect the invoking workflow's
+saved handoff and private task directory; do not create a replacement while external state is uncertain.
+Reconcile any active runs or writes before reconstructing missing state, and mark unavailable evidence unknown.
+A service-owned journal remains authoritative and supplies its own stable reference and initialization procedure.
+
+After completion, the lifecycle owner records the final outcome and resolves pending operations and
+cleanup obligations. Retain the record through the final handoff; remove it only under the task's
+existing retention policy; retain it when none is defined. Never delete it merely because a chat compacted or a watcher ended.
+
 ## Save the next transition
 
 Retain the information needed to continue without replaying the conversation:
@@ -50,3 +69,49 @@ End the watcher when the operation completes, is cancelled, or only an external 
 
 Report implementation, publication, CI, qualification, review, and merge as separate outcomes.
 State the next unmet requirement instead of treating a successful intermediate step as task completion.
+
+## Validate a local checkpoint
+
+Use `node tools/task-continuation/checkpoint.mts` when this workflow owns the private task record.
+An existing service-owned journal remains authoritative; do not create a parallel checkpoint for it.
+The helper performs no GitHub writes, dispatches, or authorization checks.
+It validates local state and generates the continuation view from that same state.
+
+Keep the record in a private directory outside tracked files. Initialize revision `0` with expected revision `-1`:
+
+```sh
+node tools/task-continuation/checkpoint.mts save /private/task/state.json -1 upgrade-owner < /private/task/proposed.json
+node tools/task-continuation/checkpoint.mts resume /private/task/state.json
+```
+
+The input is a version `1` JSON object with these fields:
+
+- `revision`: increment by one for each save; supply the previous revision on the command line.
+- `objective`, `scope`, `authorization`, `owner`, `nextAction`: nonempty descriptions from the accepted task.
+- `identities`: named source, candidate, base, PR, artifact, active-run, and watcher identities relevant to the next action.
+- `evidence`: `{ "path": "/absolute/evidence/file", "sha256": "<64 lowercase hex characters>" }` entries.
+- `limits`: operation-budget keys and their authorized integer limits.
+- `operations`: initially empty; append `{ "id", "action", "budget", "state": "pending", "observation": "" }` before each external write.
+
+Follow the [bounded retry policy](pr-follow-up.md#bounded-retry-policy): one automatic transient retry
+within existing authorization requires no routine confirmation. A retry limit of `1` means one retry
+after the initial attempt; record the initial attempt under its own budget key.
+Use candidate/workflow/failure-class keys for retries and different keys for baseline comparisons.
+Keep those keys and spent counts across compaction and handoff. Repair deterministic defects before rerunning;
+do not spend a transient retry on unchanged broken code or reset its allowance by renaming the key.
+Persist the intent before executing it. A pending intent already consumes its budget, including after interruption.
+After reading external state, change the entry to `observed` and record the evidence location in `observation`.
+An observed failure is not a successful result; the owning publication or execution contract decides what follows.
+The helper rejects lost history, budget resets, stale revisions, and new writes while an earlier write remains unresolved.
+
+For handoff, save with the outgoing owner and a new `owner` value.
+Include fresh `handoff` evidence identifying the receiving owner's acknowledgement.
+The old owner then fails subsequent saves. These names prevent accidental stale writes; they do not authenticate actors.
+
+Use `resume` output directly for continuation and monitor instructions.
+Reconcile pending operations first, refresh changed or missing evidence, then check mutable external state.
+File hashes establish byte equality only; recheck runtime assumptions and identities before reusing a result.
+A leftover `.lock` means a writer might still own the record.
+Confirm that it stopped and inspect the saved revision before removing that lock; never remove it on a timer.
+A successful save uses a private temporary file, file and directory synchronization, and atomic replacement on a local POSIX filesystem.
+Do not use a network filesystem or treat the journal as an exactly-once remote execution guarantee.

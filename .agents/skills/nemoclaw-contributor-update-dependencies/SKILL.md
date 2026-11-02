@@ -103,6 +103,9 @@ source and runtime evidence satisfy its recorded removal condition. Preserve his
 
 ## Verify the result
 
+Run `npm run test:changed -- --changed=origin/main` for early source and integration feedback.
+It combines import relationships with the existing opaque-input mappings. Inspect unmapped inputs before claiming coverage.
+Load the affected component's `AGENTS.md` for artifact validators and lifecycle boundaries.
 Run cheap compatibility checks before expensive image or live qualification when they can establish the required behavior.
 Resolve the target's dependency graph during initial preparation; do not defer consistency and security checks until CI fails.
 Exercise affected consumers against the distributed artifact, including downstream patches and existing-install paths when relevant.
