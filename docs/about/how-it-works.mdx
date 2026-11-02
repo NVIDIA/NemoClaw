@@ -118,7 +118,7 @@ This separation keeps host orchestration, agent-specific assets, and the sandbox
 ## Inspect an External OpenShell Gateway
 
 NemoClaw packages the experimental `nemoclaw-blueprint-runner` command for infrastructure that already owns an external OpenShell gateway.
-This path supports target planning and one credential-free public health request for OpenShell `0.0.116`.
+This path supports target planning and one credential-free public health request for OpenShell `0.1.5`.
 It does not manage the gateway or establish support for another OpenShell release.
 
 Create a blueprint directory with a `blueprint.yaml` file that contains one external target.
@@ -132,12 +132,12 @@ Neither operation creates or removes either administrator-owned file.
 
 ```yaml
 version: 1.0.0
-min_openshell_version: 0.0.116
-max_openshell_version: 0.0.116
+min_openshell_version: 0.1.5
+max_openshell_version: 0.1.5
 openshell_target:
   endpoint: https://openshell.example.test:8443
   workspace: default
-  expected_release: 0.0.116
+  expected_release: 0.1.5
   lifecycle: external
   trust:
     ca_file: /var/run/openshell-target/ca.pem
@@ -166,7 +166,7 @@ It makes one public health request through the official OpenShell SDK.
 NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner status --external-target
 ```
 
-A successful status result reports `healthy`, release `0.0.116`, and `compatible` in JSON.
+A successful status result reports `healthy`, release `0.1.5`, and `compatible` in JSON.
 The command does not access the authentication file or authenticate.
 The command supplies the validated CA bundle to the SDK and uses normal TLS hostname verification.
 
@@ -174,7 +174,7 @@ The command supplies the validated CA bundle to the SDK and uses normal TLS host
   This experimental path does not create, update, delete, or list gateways, workspaces, sandboxes, credentials, or policies.
   It does not establish workspace readiness or support machine authentication or Kubernetes.
   A failed status request makes no remote change, so correct the endpoint, CA bundle or its file metadata, gateway health, or release mismatch before you retry.
-  If status reports that the approved OpenShell SDK is unavailable, restore a NemoClaw installation that includes `@nvidia/openshell-sdk` `0.0.116` before retrying.
+  If status reports that the approved OpenShell SDK is unavailable, restore a NemoClaw installation that includes `@nvidia/openshell-sdk` `0.1.5` before retrying.
 </Warning>
 
 ## Readiness and Sandbox Creation
@@ -212,17 +212,17 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
 The agent calls the selected provider API hostname, and OpenShell permits only the approved destination and request paths.
-New hosted compatible selections outside the Personal tier use attached providers for OpenClaw, Hermes, and Deep Agents Code, and for Pi when its native route is activated.
-New Deep Agents Code and Hermes selections also use native providers for Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible endpoints.
-That Personal path creates no native provider attachment and retains `inference.local`.
-New OpenClaw Ollama, standalone vLLM, and llama.cpp selections also use sandbox-attached native providers.
-Owned Local NVIDIA NIM, compatible endpoints without a native attachment, retained shared local selections, and Model Router retain `inference.local`.
+Qualifying custom hosted endpoints use sandbox-attached providers.
+New Deep Agents Code, Hermes, and OpenClaw selections also use sandbox-attached native providers for Ollama, standalone vLLM, Local NVIDIA NIM, llama.cpp, and qualifying host-local compatible endpoints.
+Retained shared custom endpoints, unchanged published Pi shared local selections, and retained OpenClaw shared local selections retain `inference.local` on OpenShell `0.0.x`.
 Hermes live qualification for the new local lifecycle remains pending.
-Legacy Deep Agents Code standalone local sandboxes require backup and fresh recreation before native-provider onboarding; NemoClaw blocks their resume and rebuild. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without an attachment can retain its supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. Owned Local NIM sandboxes retain the shared route and can resume or rebuild without a native attachment.
+Legacy Deep Agents Code standalone local sandboxes require backup and fresh recreation before native-provider onboarding; NemoClaw blocks their resume and rebuild. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without an attachment can retain its supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. New Local NVIDIA NIM sandboxes also use their recorded native attachment for resume and rebuild. Back up and recreate older shared-route NIM sandboxes before upgrading OpenShell.
 Refer to [About Inference Routing](../inference/about-inference-routing) for endpoints and route inspection.
 During onboarding, NemoClaw validates the selected provider and model, configures the applicable OpenShell route or provider attachment, and writes the matching model reference into the managed agent configuration.
-In both paths, provider credentials stay outside the sandbox and OpenShell mediates the requests. Bedrock AWS credentials stay in the host-local adapter.
-When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from a configured model pool available through NVIDIA Endpoints for each request.
+In both paths, provider credentials stay outside the sandbox and OpenShell mediates the requests.
+Bedrock AWS credentials stay in the host-local adapter.
+When you select Model Router, OpenShell attaches a native provider to the sandbox for the host router endpoint.
+The router chooses a model from the configured NVIDIA Endpoints pool for each request.
 
 <AgentOnly variant="hermes">
   For Hermes, `$$nemoclaw inference set` updates `/sandbox/.hermes/config.yaml` at runtime without

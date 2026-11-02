@@ -31,6 +31,7 @@ export interface ForwardCleanupOptions extends ShellProbeRunOptions {
 
 export interface SandboxCleanupOptions extends ShellProbeRunOptions {
   preserveGatewayRegistration?: boolean;
+  cleanupGateway?: boolean;
 }
 
 export interface ForwardListenerEvidence {
@@ -345,9 +346,14 @@ export class HostCliClient {
     sandboxName: string,
     options: SandboxCleanupOptions = {},
   ): Promise<ShellProbeResult> {
-    const { preserveGatewayRegistration = false, ...probeOptions } = options;
+    const {
+      preserveGatewayRegistration = false,
+      cleanupGateway = false,
+      ...probeOptions
+    } = options;
     const args = [sandboxName, "destroy", "--yes"];
     if (preserveGatewayRegistration) args.push("--no-cleanup-gateway");
+    else if (cleanupGateway) args.push("--cleanup-gateway");
     return await this.nemoclaw(args, {
       artifactName: `destroy-sandbox-${artifactLabel(sandboxName)}`,
       env: buildAvailabilityProbeEnv(),

@@ -515,78 +515,32 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("omits the Discord token from generated config", async () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = await runMessagingConfig(channels);
-    expect(config.proxy).toMatchObject({
-      enabled: true,
-      proxyUrl: "http://10.200.0.1:3128",
-      loopbackMode: "gateway-only",
-    });
+    expect(config.proxy).toBeUndefined();
     expect(config.channels.telegram.accounts.default.botToken).toBeUndefined();
     expect(config.channels.discord.accounts.default.token).toBeUndefined();
-    expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
+    expect(config.channels.telegram.accounts.default.proxy).toBeUndefined();
     expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
-  it("routes Discord gateway traffic through OpenClaw's managed proxy (#3894)", async () => {
-    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
-    const config = await runMessagingConfig(channels, {
-      NEMOCLAW_PROXY_HOST: "10.201.0.9",
-      NEMOCLAW_PROXY_PORT: "43128",
-    });
-
-    expect(config.proxy).toEqual({
-      enabled: true,
-      proxyUrl: "http://10.201.0.9:43128",
-      loopbackMode: "gateway-only",
-    });
-    expect(config.channels.discord.accounts.default).toMatchObject({
-      enabled: true,
-    });
-    expect(config.channels.discord.accounts.default.token).toBeUndefined();
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
-  });
-
-  it("does not write a Discord account proxy when the managed proxy is configured", async () => {
-    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
-    const config = await runMessagingConfig(channels, {
-      NEMOCLAW_PROXY_PORT: "43128",
-    });
-
-    expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
-  });
-
-  it("can defer OpenClaw managed proxy config for build-time doctor", async () => {
-    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
-    const config = await runMessagingConfig(channels, {
-      NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
-    });
-
-    expect(config.proxy).toBeUndefined();
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
-  });
-
-  it("ignores the OpenShell loopback proxy env var when using OpenClaw managed proxy", async () => {
-    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
-    const config = await runMessagingConfig(channels, {
-      OPENSHELL_LOOPBACK_PROXY_URL: "http://127.0.0.1:45211",
-      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
-    });
-
-    expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
-  });
-
-  it("keeps Telegram on the OpenShell proxy while Discord relies on the managed proxy", async () => {
-    const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
-    const config = await runMessagingConfig(channels, {
-      NEMOCLAW_PROXY_HOST: "10.201.0.9",
-      NEMOCLAW_PROXY_PORT: "43128",
-    });
-
-    expect(config.proxy.proxyUrl).toBe("http://10.201.0.9:43128");
-    expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.201.0.9:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
-  });
+  it.each([
+    {},
+    { NEMOCLAW_PROXY_HOST: "10.201.0.9", NEMOCLAW_PROXY_PORT: "43128" },
+    { NEMOCLAW_PROXY_HOST: "", NEMOCLAW_PROXY_PORT: "" },
+    { NEMOCLAW_OPENCLAW_MANAGED_PROXY: "1" },
+    { OPENSHELL_LOOPBACK_PROXY_URL: "http://127.0.0.1:45211" },
+  ] as Record<string, string>[])(
+    "uses native messaging egress despite obsolete proxy inputs %#",
+    async (env) => {
+      const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
+      const config = await runMessagingConfig(channels, env);
+      expect(config.proxy).toBeUndefined();
+      expect(config.tools.web.fetch.useTrustedEnvProxy).toBe(false);
+      expect(config.channels.telegram.accounts.default.proxy).toBeUndefined();
+      expect(config.channels.discord.accounts.default).toMatchObject({ enabled: true });
+      expect(config.channels.discord.accounts.default.token).toBeUndefined();
+      expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    },
+  );
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", async () => {
     const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
@@ -689,7 +643,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript();
     expect(config.tools?.web?.fetch).toEqual({
       enabled: true,
-      useTrustedEnvProxy: true,
+      useTrustedEnvProxy: false,
     });
     expect(config.tools?.web?.search).toEqual({ enabled: false });
   });
@@ -704,7 +658,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       enabled: true,
       config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
     });
-    expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
+    expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: false });
   });
 
   it("propagates the agent timeout to the run and provider request (#8468)", () => {
@@ -1747,22 +1701,6 @@ describe("generate-openclaw-config.mts: empty-string env vars fall back to defau
     const config = runConfigScript({ CHAT_UI_URL: "" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBeUndefined();
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
-  });
-
-  it("treats empty NEMOCLAW_PROXY_HOST as unset and uses the documented default", async () => {
-    const channelB64 = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
-    const cfg = await runMessagingConfig(channelB64, {
-      NEMOCLAW_PROXY_HOST: "",
-    });
-    expect(cfg.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
-  });
-
-  it("treats empty NEMOCLAW_PROXY_PORT as unset and uses the documented default", async () => {
-    const channelB64 = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
-    const cfg = await runMessagingConfig(channelB64, {
-      NEMOCLAW_PROXY_PORT: "",
-    });
-    expect(cfg.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
   });
 
   it("treats empty NEMOCLAW_CONTEXT_WINDOW as unset and uses the documented default", () => {

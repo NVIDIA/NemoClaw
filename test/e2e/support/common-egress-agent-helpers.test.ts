@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it, vi } from "vitest";
+import { nestedFetchEvidence } from "../../helpers/openclaw-nested-fetch-evidence.ts";
 
 import {
   agentReplyContainsToken,
@@ -490,6 +491,35 @@ describe("common-egress agent parsing and classification helpers", () => {
       qualifyingWebFetchResults: 1,
       unexpectedWebFetchExecutions: 1,
     });
+  });
+
+  it.each([
+    "valid",
+    "wrong run",
+    "wrong parent",
+    "wrong generated ID",
+    "wrong wrapper target",
+    "tool failure",
+    "missing error flag",
+    "missing result",
+    "omitted result",
+    "oversized request",
+    "wrong URL",
+    "wrong role",
+    "context-visible record",
+    "duplicate record",
+    "hidden forbidden tool",
+    "parent outside snapshot",
+  ])("validates nested web_fetch evidence: %s", (variant) => {
+    const fixture = nestedFetchEvidence(variant);
+    const evidence = reduceOpenClawToolEvidence(
+      fixture.session,
+      fixture.trajectory,
+      fixture.expectation,
+    );
+    expect(assessPersonalPublicFetchToolEvidence(evidence).matches).toBe(variant === "valid");
+    expect(JSON.stringify(evidence)).not.toContain("must-not-remain");
+    expect(JSON.stringify(evidence)).not.toContain("United States");
   });
 
   it("accepts a progressive Tool Search wrapper only with projected web_fetch proof", () => {

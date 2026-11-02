@@ -13,6 +13,9 @@ import {
 import type { GatewayRestartResult } from "./sandbox/gateway-restart";
 import {
   observeOpenClawPairingSettlement,
+  OpenClawPairingQualificationError,
+  OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES,
+  type OpenClawPairingObservationFailureCategory,
   type OpenClawPairingSettlementObservation,
 } from "./sandbox/launch-readiness/openclaw-pairing-qualification";
 
@@ -36,6 +39,7 @@ export type InferenceSetOpenClawPairingResult =
   | {
       readonly ok: false;
       readonly failureLayer: InferenceSetOpenClawPairingFailureLayer;
+      readonly failureCategory?: OpenClawPairingObservationFailureCategory;
     };
 
 export type InferenceSetOpenClawPairingDeps = {
@@ -48,6 +52,13 @@ export type InferenceSetOpenClawPairingDeps = {
     deviceIdentitySha256: string,
   ) => PortableOpenClawPairingApprovalReceipt;
 };
+
+function observationFailureCategory(error: unknown): OpenClawPairingObservationFailureCategory {
+  return error instanceof OpenClawPairingQualificationError &&
+    OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES.includes(error.failureCategory)
+    ? error.failureCategory
+    : "unclassified";
+}
 
 const defaultOpenClawPairingDeps: InferenceSetOpenClawPairingDeps = {
   observePairing: (target) =>
@@ -82,8 +93,12 @@ export function settleInferenceSetOpenClawPairing(
   let initial: OpenClawPairingSettlementObservation;
   try {
     initial = deps.observePairing(target);
-  } catch {
-    return { ok: false, failureLayer: "initial-state-unavailable" };
+  } catch (error) {
+    return {
+      ok: false,
+      failureLayer: "initial-state-unavailable",
+      failureCategory: observationFailureCategory(error),
+    };
   }
   if (initial.state === "settled") return { ok: true };
 
@@ -98,8 +113,12 @@ export function settleInferenceSetOpenClawPairing(
   let final: OpenClawPairingSettlementObservation;
   try {
     final = deps.observePairing(target);
-  } catch {
-    return { ok: false, failureLayer: "final-state-unavailable" };
+  } catch (error) {
+    return {
+      ok: false,
+      failureLayer: "final-state-unavailable",
+      failureCategory: observationFailureCategory(error),
+    };
   }
   if (final.state === "settled") return { ok: true };
   return {
@@ -322,16 +341,19 @@ export async function completeInferencePostCommit<T extends InferenceResultForGa
     }
   }
   if (!pairing.ok) {
+    const failure = pairing.failureCategory
+      ? `${pairing.failureLayer}; observation: ${pairing.failureCategory}`
+      : pairing.failureLayer;
     appendPostCommitInferenceAudit(deps, {
       action: "inference_set",
       sandbox: result.sandboxName,
       timestamp: new Date().toISOString(),
       reason: `inference set openclaw:${result.provider}:${result.model} (config committed; ${
         mutation.openClawGatewayRestartRequired ? "gateway restart completed; " : ""
-      }pairing convergence failed: ${pairing.failureLayer})`,
+      }pairing convergence failed: ${failure})`,
     });
     throw new InferenceSetError(
-      `Inference route and config were updated for '${result.sandboxName}', but OpenClaw gateway pairing did not converge (${pairing.failureLayer}). ` +
+      `Inference route and config were updated for '${result.sandboxName}', but OpenClaw gateway pairing did not converge (${failure}). ` +
         `The committed route was not rolled back. Run '${CLI_NAME} ${result.sandboxName} doctor --fix', then retry the agent turn.`,
     );
   }

@@ -18,10 +18,16 @@ import {
 } from "../../../src/lib/inference/vllm-models.ts";
 import { detectVllmProfile, resolveVllmModelRuntime } from "../../../src/lib/inference/vllm.ts";
 import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/profile.ts";
+import {
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript, type SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 export const STATION_SMOKE_SANDBOX = "e2e-station-express";
 export const STATION_SMOKE_MODEL = "nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4";
@@ -246,10 +252,34 @@ export function assertStationInference(output: string): void {
   );
 }
 
+export function stationNativeInferenceCommand(value: unknown) {
+  const entry = record(record(record(value).sandboxes)[STATION_SMOKE_SANDBOX]);
+  const route = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  requireCondition(
+    route?.sandboxName === STATION_SMOKE_SANDBOX &&
+      route.gatewayName === "nemoclaw" &&
+      route.agent === "openclaw" &&
+      route.provider === "vllm-local" &&
+      route.authMode === "authenticated" &&
+      route.credentialEnv === NATIVE_LOCAL_CREDENTIAL_ENV &&
+      route.endpointUrl === "http://host.openshell.internal:8000/v1",
+    "Station inference requires its authenticated native vLLM attachment",
+  );
+  const payload = JSON.stringify({
+    model: STATION_SMOKE_MODEL,
+    messages: [{ role: "user", content: "Reply with one word: PONG" }],
+    max_tokens: 8192,
+    parallel_tool_calls: false,
+  });
+  return trustedSandboxShellScript(
+    `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; exec curl -q --fail --silent --show-error --max-time 90 ${shellQuote(`${route.endpointUrl}/chat/completions`)} -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data-raw ${shellQuote(payload)}`,
+  );
+}
+
 export async function runStationExpressSmoke(options: {
   host: Pick<HostCliClient, "command">;
   cleanup: Pick<CleanupRegistry, "add" | "runAll">;
-  sandbox: Pick<SandboxClient, "exec">;
+  sandbox: Pick<SandboxClient, "execShell">;
   environment: NodeJS.ProcessEnv;
   repoRoot: string;
   phases: { inspect(): void; install(): void; assert(): void; cleanup(): void };
@@ -391,31 +421,13 @@ export async function runStationExpressSmoke(options: {
       initialImages.includes(vllmImage),
       "The selected Station vLLM image was not pre-pulled",
     );
-    assertStationWorkload(
-      parseJson(fs.readFileSync(path.join(env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8")),
-      env.E2E_MANAGED_IMAGE_REVISION!,
+    const registry = parseJson(
+      fs.readFileSync(path.join(env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
     );
-    const response = await options.sandbox.exec(
+    assertStationWorkload(registry, env.E2E_MANAGED_IMAGE_REVISION!);
+    const response = await options.sandbox.execShell(
       STATION_SMOKE_SANDBOX,
-      [
-        "curl",
-        "-q",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "90",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        JSON.stringify({
-          model: STATION_SMOKE_MODEL,
-          messages: [{ role: "user", content: "Reply with one word: PONG" }],
-          max_tokens: 8192,
-          parallel_tool_calls: false,
-        }),
-      ],
+      stationNativeInferenceCommand(registry),
       { env, artifactName: "station-routed-inference", timeoutMs: 120_000 },
     );
     requireCondition(

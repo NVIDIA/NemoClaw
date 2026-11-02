@@ -67,7 +67,7 @@ export const HTTPS_PIN_RUNTIME_ADAPTER_PORT = parseServicePortOverride(
 export function isProtectedNemoClawHostPort(
   port: number,
   retainedModelRouterPorts: readonly number[] = [],
-  options: { allowLegacyProxyDefault?: boolean } = {},
+  options: { allowLegacyProxyDefault?: boolean; ownedModelRouterPort?: number } = {},
 ): boolean {
   return (
     port === DEFAULT_GATEWAY_PORT ||
@@ -76,9 +76,10 @@ export function isProtectedNemoClawHostPort(
     port === DASHBOARD_PORT ||
     (port >= DASHBOARD_PORT_RANGE_START && port <= DASHBOARD_PORT_RANGE_END) ||
     isHermesApiPort(port) ||
-    port === DEFAULT_MODEL_ROUTER_PORT ||
-    port === CONFIGURED_MODEL_ROUTER_PORT ||
-    retainedModelRouterPorts.includes(port) ||
+    (port !== options.ownedModelRouterPort &&
+      (port === DEFAULT_MODEL_ROUTER_PORT ||
+        port === CONFIGURED_MODEL_ROUTER_PORT ||
+        retainedModelRouterPorts.includes(port))) ||
     port === OLLAMA_PROXY_PORT ||
     (port === DEFAULT_OLLAMA_PROXY_PORT && options.allowLegacyProxyDefault !== true) ||
     port === BEDROCK_RUNTIME_ADAPTER_PORT ||

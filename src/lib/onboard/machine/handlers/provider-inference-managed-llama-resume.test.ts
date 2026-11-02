@@ -192,12 +192,15 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
   });
 
   it.each([
-    { resume: false, reachable: false, result: "exit 1" },
-    { resume: true, reachable: false, result: "exit 1" },
-    { resume: false, reachable: true, result: "complete" },
+    { resume: false, reachable: false, result: "exit 1", networkName: "openshell" },
+    { resume: true, reachable: false, result: "exit 1", networkName: "openshell" },
+    { resume: false, reachable: true, result: "complete", networkName: "openshell" },
+    { resume: false, reachable: false, result: "exit 1", networkName: "host" },
+    { resume: true, reachable: false, result: "exit 1", networkName: "host" },
+    { resume: false, reachable: true, result: "complete", networkName: "host" },
   ])(
-    "requires a reachable operator llama.cpp route (resume=$resume, reachable=$reachable)",
-    async ({ resume, reachable, result }) => {
+    "requires a reachable operator llama.cpp route (resume=$resume, reachable=$reachable, network=$networkName)",
+    async ({ resume, reachable, result, networkName }) => {
       const route = {
         provider: "llama-cpp-local",
         model: "team/model-alias",
@@ -219,8 +222,8 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       const probeLlamaCppSandboxReachability = vi.fn(async () => ({
         ok: reachable,
         reason: reachable ? ("ok" as const) : ("tcp_failed" as const),
-        networkName: "openshell",
-        gatewayIp: "172.18.0.1",
+        networkName,
+        gatewayIp: networkName === "host" ? "127.0.0.1" : "172.18.0.1",
       }));
       const setupNim = vi.fn(async () => ({ ...baseSelection, ...route }));
       const { deps, calls } = createDeps({
@@ -245,6 +248,9 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
           message.includes("host.openshell.internal:8081"),
         ),
       ).toBe(!reachable);
+      expect(calls.error.mock.calls.some(([message]) => message.includes("bind or publish"))).toBe(
+        !reachable && networkName !== "host",
+      );
       expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
       expect(setupNim).toHaveBeenCalledTimes(resume ? 0 : 1);
     },

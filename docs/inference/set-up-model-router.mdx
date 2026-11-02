@@ -10,13 +10,14 @@ content:
   type: "how_to"
 ---
 Model Router runs on the host and selects a model from a configured pool for each request.
-OpenShell registers it as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+OpenShell attaches an OpenAI-compatible provider to each sandbox for the configured Model Router endpoint.
 
 ## How the Router Fits
 
 The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
-During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and registers the `nvidia-router` provider with OpenShell.
-The sandbox does not call port `4000` directly.
+During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and prepares the sandbox-owned native provider for the `nvidia-router` selection.
+The agent addresses `http://host.openshell.internal:4000/v1` through the OpenShell supervisor.
+The supervisor permits the selected provider’s model-list and Chat Completions requests.
 On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
 NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
 Routed OpenClaw setup then waits for the selected sandbox gateway to accept connections before requesting its native restart.
@@ -71,8 +72,16 @@ Review the uninstall scope before you use it for log removal.
 Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API
 ```
 
-Credentials flow through the OpenShell provider system.
-The sandbox never sees raw API keys.
+The host router uses the configured NVIDIA credential for its upstream model pool.
+OpenShell stores the provider credential and gives the sandbox an endpoint-bound resolver reference.
+The sandbox never receives the raw API key.
+Before provider registration, NemoClaw verifies the recorded router process, port, and credential identity.
+It stops without publishing the selection if ownership cannot be verified.
+
+Existing sandboxes that use the retired shared `inference.local` route require explicit recreation.
+Back up the sandbox before re-onboarding with `--fresh --name <sandbox> --recreate-sandbox`.
+NemoClaw preserves legacy volumes and does not automatically copy their contents.
+A native Model Router resume revalidates the router and provider ownership before publishing the selection.
 
 ## Configure the Model Pool
 

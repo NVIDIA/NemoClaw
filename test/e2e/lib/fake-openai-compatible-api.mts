@@ -89,19 +89,19 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   res.end(body);
 }
 
-function sendChatSse(res: ServerResponse, content: string): void {
+function sendChatSse(res: ServerResponse, content: string, responseModel: string): void {
   const chunk = JSON.stringify({
     id: "chatcmpl-fake-openai-compatible",
     object: "chat.completion.chunk",
     created: 0,
-    model,
+    model: responseModel,
     choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
   });
   const doneChunk = JSON.stringify({
     id: "chatcmpl-fake-openai-compatible",
     object: "chat.completion.chunk",
     created: 0,
-    model,
+    model: responseModel,
     choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
   });
   const body = `data: ${chunk}\n\ndata: ${doneChunk}\n\ndata: [DONE]\n\n`;
@@ -337,6 +337,10 @@ const server = createServer(async (req, res) => {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
       return;
     }
+    const responseModel =
+      typeof payload.model === "string" && additionalModels.includes(payload.model)
+        ? payload.model
+        : model;
     const content = requestedPromptReply(payload) ?? chatContent;
     const toolCall = requestedCanaryToolCall(payload, raw);
     if (toolCall && payload.stream) {
@@ -344,7 +348,7 @@ const server = createServer(async (req, res) => {
         id: "chatcmpl-fake-openai-compatible",
         object: "chat.completion.chunk",
         created: 0,
-        model,
+        model: responseModel,
         choices: [
           { index: 0, delta: { role: "assistant", tool_calls: [toolCall] }, finish_reason: null },
         ],
@@ -353,7 +357,7 @@ const server = createServer(async (req, res) => {
         id: "chatcmpl-fake-openai-compatible",
         object: "chat.completion.chunk",
         created: 0,
-        model,
+        model: responseModel,
         choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
       });
       const body = `data: ${chunk}\n\ndata: ${done}\n\ndata: [DONE]\n\n`;
@@ -365,14 +369,14 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (payload.stream) {
-      sendChatSse(res, content);
+      sendChatSse(res, content, responseModel);
       return;
     }
     sendJson(res, 200, {
       id: "chatcmpl-fake-openai-compatible",
       object: "chat.completion",
       created: 0,
-      model,
+      model: responseModel,
       choices: [
         {
           index: 0,

@@ -492,6 +492,38 @@ describe("managed workload onboard orchestration", () => {
     expect(ensurePreparedProfile).not.toHaveBeenCalled();
   });
 
+  it.each(["openclaw", "hermes"] as const)(
+    "refuses legacy %s state before returning the recreation lifecycle",
+    (agent) => {
+      const roots = managedStartupStateRoots({
+        agent,
+        sandboxName: "alpha",
+        agentIdentity: { uid: 1000, gid: 1000 },
+      });
+      const root = roots[0]!;
+      const docker = createHermesStateVolumeDockerHarness({
+        name: root.resourceIdentity,
+        labels: { ...root.ownershipLabels },
+      });
+      const before = JSON.stringify(docker.volume);
+      expect(() =>
+        createManagedStateVolumeOnboardLifecycle(
+          {
+            roots,
+            workspace: "default",
+            runtimeProvider: {
+              workload: { managedStateMountDriverId: "docker" },
+              containerEngine: { supported: true },
+            } as never,
+          },
+          { runContainerEngine: docker.runDocker as never },
+        ),
+      ).toThrow("lacks OpenShell attachment approval");
+      expect(JSON.stringify(docker.volume)).toBe(before);
+      expect(docker.calls.every((args) => args[0] === "inspect")).toBe(true);
+    },
+  );
+
   it("preserves prepared named state when exit cleanup runs before registration", () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
@@ -831,6 +863,47 @@ describe("managed workload onboard orchestration", () => {
         runtimeImageContentId,
         shared: true,
       },
+    });
+  });
+
+  it("managed receipts retain shared ownership and catalog provenance", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw-openclaw@sha256:${"a".repeat(64)}`;
+    const source = { release: "v0.0.100", revision: "b".repeat(40), cohort: "ghrun-123-1" };
+    const { workloadReceipt } = resolveOnboardSandboxWorkloadReceipt({
+      runtime: {
+        ensurePreparedProfile: () => ({
+          encodedProfile: "fixture-profile",
+          startupProfileSha256: "c".repeat(64),
+          credentialProxyReplayRequired: false,
+        }),
+      },
+      workload: {
+        source: {
+          kind: "managed-image",
+          reference,
+          contract: {
+            platform: "linux/amd64",
+            source,
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+          },
+        },
+      },
+      registryImageRef: null,
+      prebuildImageRef: null,
+      firstCreateOutput: "",
+      createOutput: "",
+      buildId: "unused",
+      extractBuiltImageRef: vi.fn(),
+      resolveSandboxImageTagFromCreateOutput: vi.fn(),
+    } as never);
+    expect(workloadReceipt).toMatchObject({
+      kind: "managed-image",
+      reference,
+      shared: true,
+      release: source.release,
+      sourceRevision: source.revision,
+      sourceCohort: source.cohort,
     });
   });
 

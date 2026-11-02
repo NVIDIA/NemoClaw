@@ -321,6 +321,7 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "src/lib/core/endpoint-url-safety.ts",
   "src/lib/inference/native-local/agent-config.ts",
   "src/lib/inference/native-provider/agent-config.ts",
+  "src/lib/inference/native-provider/catalog.ts",
   "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/contract.ts",
   "src/lib/inference/native-provider/hosted.ts",
@@ -383,7 +384,7 @@ const GATEWAY_UPGRADE_OWNING_PATHS = Object.freeze([
 
 const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-89-x86-64", {
   targetId: "openshell-gateway-upgrade",
-  displayName: `Upgrade: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} sandbox on x86-64`,
+  displayName: `Cutover: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} gateway with sandboxes on x86-64`,
   agentRuntime: "openclaw",
   environmentOrInferenceEndpoint:
     "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
@@ -405,8 +406,8 @@ const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
     NEMOCLAW_OLD_OPENSHELL_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
     NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
-    // This target upgrades only the host gateway. Its survivor intentionally
-    // keeps the reviewed historical OpenClaw image and state format.
+    // The attempted cutover must leave this historical gateway and its
+    // reviewed OpenClaw sandbox state intact.
     OPENSHELL_GATEWAY: "nemoclaw",
   },
 });
@@ -415,7 +416,7 @@ const GATEWAY_REGISTRATION_UPGRADE_TARGET = dockerOnlyTarget(
   "openshell-gateway-upgrade-v0-0-123-x86-64",
   {
     targetId: "openshell-gateway-upgrade",
-    displayName: `Upgrade: restores ${REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef} gateway registration and sandboxes on x86-64`,
+    displayName: `Cutover: preserves ${REVIEWED_GATEWAY_REGISTRATION_UPGRADE_FIXTURE.nemoclawRef} gateway registration and sandboxes on x86-64`,
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
       "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
@@ -977,6 +978,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
       NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      NEMOCLAW_SWITCH_NATIVE_CUSTOM: "1",
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),

@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
 import {
+  recordedRegisteredInferenceProviderAttachment,
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
@@ -29,6 +30,7 @@ import { load, save } from "./registry/persistence";
 import {
   normalizeNativeLocalProviderAttachment,
   retainedNativeLocalProviderAttachment,
+  retainedRegisteredInferenceProviderAttachment,
   nativeHostedReservationAttachment,
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
@@ -517,6 +519,8 @@ export function registerSandbox(
       entry.nativeHostedProviderAttachment,
       entry.provider,
     );
+    const registeredInferenceProviderAttachment =
+      recordedRegisteredInferenceProviderAttachment(entry);
     const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -577,6 +581,7 @@ export function registerSandbox(
       ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+      ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -814,6 +819,10 @@ export function reserveSandboxInferenceRoute(
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,
+      registeredInferenceProviderAttachment: retainedRegisteredInferenceProviderAttachment(
+        existing ?? undefined,
+        { ...normalized, gatewayName: route.gatewayName },
+      ),
       ...(route.hostLocalInferenceReceipt !== undefined
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
         : {}),

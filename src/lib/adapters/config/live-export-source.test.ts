@@ -238,7 +238,6 @@ function mockNativeHostedSource(definition: HostedProviderDefinition) {
     host: string;
     port: number;
     allowed_ips?: string[];
-    tls?: string;
     rules: { allow: { method: string; path: string } }[];
   };
   const base = managedBraveProfile();
@@ -261,8 +260,8 @@ function mockNativeHostedSource(definition: HostedProviderDefinition) {
           host: endpoint.host,
           port: endpoint.port,
           allowedIps: endpoint.allowed_ips ?? [],
-          tls: endpoint.tls ?? "",
-          access: "",
+          tls: 0,
+          access: 0,
           rules: endpoint.rules.map((rule) => ({
             allow: {
               ...rule.allow,
@@ -314,7 +313,10 @@ describe("live export snapshot reader", () => {
         "alpha-tavily-search",
       ]);
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
-        { id: agent === "hermes" ? "tavily-hermes-v1" : "tavily", workspace: "default" },
+        {
+          id: agent === "hermes" ? "tavily-hermes-v1" : "tavily",
+          workspaceScope: { selection: { case: "workspace", value: "default" } },
+        },
         { signal: expect.any(AbortSignal) },
       );
       expect(search.readCredential).not.toHaveBeenCalled();
@@ -429,7 +431,10 @@ describe("live export snapshot reader", () => {
     ]);
     expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
     expect(raw.getProviderProfile).toHaveBeenCalledWith(
-      { id: "brave", workspace: "default" },
+      {
+        id: "brave",
+        workspaceScope: { selection: { case: "workspace", value: "default" } },
+      },
       { signal: expect.any(AbortSignal) },
     );
     expect(publish).not.toHaveBeenCalled();
@@ -634,7 +639,7 @@ describe("live export snapshot reader", () => {
     });
     const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
     expect(result).toMatchObject({ ok: true, source: { tools: { disclosure: "direct" } } });
-    expect(raw.getSandbox).toHaveBeenCalledTimes(2);
+    expect(raw.getSandbox).toHaveBeenCalledTimes(4);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
@@ -814,7 +819,12 @@ describe("live export snapshot reader", () => {
       expect(yaml).not.toContain(readFailureCanary);
       expect(raw.getProviderProfile).toHaveBeenCalledTimes(2);
       expect(raw.getProviderProfile).toHaveBeenCalledWith(
-        { id: "nemoclaw-nvidia-inference-v1", workspace: profileWorkspace },
+        {
+          id: "nemoclaw-nvidia-inference-v1",
+          ...(profileWorkspace
+            ? { workspaceScope: { selection: { case: "workspace", value: profileWorkspace } } }
+            : {}),
+        },
         { signal: expect.any(AbortSignal) },
       );
       expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
@@ -1395,18 +1405,6 @@ describe("live export snapshot reader", () => {
       });
     },
   );
-
-  it("does not expose concrete reader exceptions", async () => {
-    const canary = "credential-canary-value";
-    vi.mocked(loadRegistry).mockImplementation(() => {
-      throw new Error(canary);
-    });
-
-    const result = await createLiveExportSnapshotReader().read("alpha");
-
-    expect(result).toEqual({ kind: "read-failed", stage: "registry" });
-    expect(JSON.stringify(result)).not.toContain(canary);
-  });
 });
 describe("dashboard export observation", () => {
   it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {

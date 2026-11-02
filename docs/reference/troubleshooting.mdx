@@ -477,7 +477,10 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.116 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+NemoClaw compares the installed OpenShell gateway binary's required glibc version with the Linux host's glibc version.
+If the host's version is older, startup stops and requires an explicit compatibility choice.
+On a trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` opts into NemoClaw's compatibility container.
+Leave it unset when the host meets the installed binary's requirements.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See [Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions.
 
@@ -520,6 +523,11 @@ $$nemoclaw list
 A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, can belong to a second environment.
 
 Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Gateway-lifecycle commands such as `$$nemoclaw onboard`, `$$nemoclaw uninstall`, and the deprecated `$$nemoclaw stop` act on the state root that their own `NEMOCLAW_GATEWAY_PORT` selects, while sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `$$nemoclaw <name> exec` and `$$nemoclaw <name> status`, resolve the named sandbox across every per-port registry root and address its recorded gateway binding. A gateway-lifecycle command without that variable uses port `8080` unless the installer recorded an automatic alternate-port selection; in that case, the CLI restores the recorded port. Clearing an explicitly supplied variable does not move an existing sandbox back to the default port.
+
+`status` prints `Recorded gateway` from the sandbox registry: the gateway name, a recorded port when no name exists, or `not recorded`.
+`recover` and `connect --probe-only` print `Target gateway` for the selected target.
+Use these labels to identify the gateway involved in a failed operation.
+Neither label proves gateway reachability; `Target gateway` alone does not establish registered sandbox ownership.
 
 List the gateways the host still has:
 
@@ -580,24 +588,27 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ## Onboarding
 
-### Enable Native Local Inference on a Reused Gateway
+### Resume Native Local Inference on a Reused Gateway
 
-If onboarding reports that native local inference requires `providers_v2_enabled=true`, ask the gateway administrator to review attached providers and run the command printed in the error.
-For a gateway named `nemoclaw`, that command is:
+OpenShell `0.1.5` composes attached-provider policies automatically when no active global policy overrides them.
+The `providers_v2_enabled` setting no longer exists.
+If onboarding reports a global policy override, ask the gateway administrator to review it before resuming.
+For a gateway named `nemoclaw`, inspect its policy history with:
 
 ```bash
-openshell settings set -g nemoclaw --global --key providers_v2_enabled --value true --yes
+openshell policy list -g nemoclaw --global --page-size 1 --output json
 ```
 
-NemoClaw does not change this setting on an existing gateway.
-After the administrator enables it, resume the failed onboarding session:
+NemoClaw requires verified empty history or a superseded current global revision.
+It does not remove an override or change gateway settings.
+After the administrator resolves the reported policy condition, resume the failed onboarding session:
 
 ```bash
 $$nemoclaw onboard --resume
 ```
 
 Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
-If the setting is still missing, onboarding stops before creating the sandbox and retains the session for another attempt.
+An active override or an unverified policy response stops onboarding before sandbox creation and retains the session for another attempt.
 
 ### Cgroup v2 errors during onboard
 
@@ -857,7 +868,12 @@ Rerunning onboarding with a different provider recreates the sandbox because the
 
 ### Sandbox containers cannot reach the gateway
 
-On native Linux Docker-driver hosts, `$$nemoclaw onboard` verifies the route that sandbox containers use to reach the OpenShell gateway. If a host firewall blocks that path, onboarding exits with output like:
+OpenShell `0.1.5` Docker supervisors use host networking by default, and their workloads have no direct network interface.
+Onboarding skips the legacy bridge-to-gateway probe for this runtime, even when an old `openshell-docker` network remains.
+This check does not remove the retained network or change firewall rules.
+
+For runtimes that use bridge-based gateway access, a host firewall can block the route.
+Apply the following guidance only when onboarding reports this bridge diagnostic:
 
 ```text
 ✗ Sandbox containers cannot reach the gateway at host.openshell.internal:8080.
@@ -1684,8 +1700,10 @@ credential projection, but must not add the retired NemoClaw gateway controller.
 
 ### Hermes config reports a mutation already in progress
 
-Hermes host config writes and lifecycle seals use the same root-only mutation lock.
-A host-side config write binds to the SHA-256 digest of the matching read, installs fresh config inodes, refreshes both config hashes, and restores mutable access before releasing that lock.
+This diagnostic applies to legacy root-owned configuration and lifecycle transactions.
+Current host-side Hermes `config set` uses a guarded transaction as the sandbox user through the recorded OpenShell gateway.
+It binds the write to the matching read, refreshes the integrity hashes, and verifies a gateway reload; it does not use the legacy root-only seal.
+For transaction failure and rollback checks, refer to [Hermes Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes#hermes-runtime-changes).
 If a concurrent command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
 Wait for the active config, recovery, or restart command to finish, then retry.
 
@@ -1968,7 +1986,7 @@ When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-
 ```text
 curl: (56) CONNECT tunnel failed, response 403
 $$nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
-  The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
+  Match the denial's destination and time to the failed request before changing policy.
   See the denied flow:    $$nemoclaw oc-fresh logs --tail 50
   Review applied presets: $$nemoclaw oc-fresh policy list
   Allow the host:         $$nemoclaw oc-fresh policy add <preset>
@@ -1977,6 +1995,9 @@ $$nemoclaw: recent network policy denial detected for example.com:443 inside san
 
 If the log probe fails, no breadcrumb is added. Unsafe endpoint data is omitted from the breadcrumb, and an invalid sandbox name is shown as `<name>`.
 The breadcrumb reports a recent denial. Match its destination and time to the failed request before treating policy as the cause.
+
+On OpenShell `0.1.5`, a fresh `NET:REFUSE` audit event with `policy_dns_ineligible` also produces the hint, without a destination.
+A DNS resolution error alone does not confirm a policy denial.
 
 An IPv6 target is named in its RFC 3986 bracketed form:
 
@@ -2144,11 +2165,29 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-On a normal status read with verified gateway and sandbox state, the main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the reachable path the agent uses. If gateway or sandbox state is not verified, status reports `Inference: not verified (gateway/sandbox state not verified)` and sends no inference request. For shared-route providers, including owned Local NVIDIA NIM, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, fixed hosted selections, new hosted compatible selections outside the Personal tier, and qualified new local selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If a verified native NVIDIA attachment returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout after bounded retries, `status` reports `degraded` and exits `0`. The model response remains unverified. Run `$$nemoclaw <name> connect --probe-only` to require a successful inference request before accepting readiness. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+On a normal status read with verified gateway and sandbox state, the main `Inference` line checks the provider path from inside the sandbox.
+It sends an inference request over the reachable path the agent uses.
+If gateway or sandbox state is not verified, status reports `Inference: not verified (gateway/sandbox state not verified)` and sends no inference request.
+For shared-route providers, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`.
+For NVIDIA Endpoints, fixed hosted selections, qualifying custom hosted endpoints, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`.
+When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure.
+Shared-route retries repeat the route probe and request, while native providers retry only the native request.
+It prints the next attempt and two-second delay to stderr before each retry.
+Each inference request attempt has a 90-second request timeout.
+If a verified native NVIDIA attachment returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout after bounded retries, `status` reports `degraded` and exits `0`.
+The model response remains unverified.
+Run `$$nemoclaw <name> connect --probe-only` to require a successful inference request before accepting readiness.
+If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop.
+An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
-If status reports `Inference: not probed (another lifecycle operation is in progress)`, the unlocked read skipped provider-path and inference probes; JSON output sets `inferenceProbeSuppressed: true`. Wait for the lifecycle operation to finish and run status again before diagnosing the route or credential.
+If status reports `Inference: not probed (another lifecycle operation is in progress)`, the unlocked read skipped provider-path and inference probes; JSON output sets `inferenceProbeSuppressed: true`.
+Wait for the lifecycle operation to finish and run status again before diagnosing the route or credential.
 
-For Hermes native NVIDIA routes, status also checks the managed credential reference in the Hermes configuration. If this check reports an invalid or stale credential, run `$$nemoclaw <name> rebuild --yes` to refresh it. Then rerun `$$nemoclaw <name> status` and confirm inference is healthy. If status reports that the installed image lacks the credential verifier, rebuild to install it, then rerun status. For other unavailable-verification results, follow the printed sandbox health and access recovery guidance.
+For Hermes native NVIDIA routes, status also checks the managed credential reference in the Hermes configuration.
+If this check reports an invalid or stale credential, run `$$nemoclaw <name> rebuild --yes` to refresh it.
+Then rerun `$$nemoclaw <name> status` and confirm inference is healthy.
+If status reports that the installed image lacks the credential verifier, rebuild to install it, then rerun status.
+For other unavailable-verification results, follow the printed sandbox health and access recovery guidance.
 
 Hermes live qualification for the new local lifecycle remains pending.
 
@@ -2274,7 +2313,10 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 <AgentOnly variant="openclaw">
 
-OpenClaw onboarding sends a validation request over the selected inference path from inside the sandbox, even when you select no messaging channel. New hosted custom endpoints outside the Personal tier use the attached native provider; a fresh Personal-tier hosted selection and custom endpoints without an attachment use `inference.local`.
+OpenClaw onboarding validates a custom OpenAI-compatible endpoint from inside the sandbox, even when you select no messaging channel.
+For a qualifying custom hosted selection, validation uses its sandbox-attached native provider.
+Custom loopback and `host.openshell.internal` selections do not qualify for that hosted path.
+Retained shared-route selections use `inference.local` on OpenShell `0.0.x`; their migration to `0.1.5` is incomplete and blocks upgrade qualification.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
 
@@ -2587,25 +2629,49 @@ NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hos
 
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address. If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address. Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly. For the full endpoint rules, refer to [Meet Custom Endpoint Security Requirements](../inference/custom-endpoints/custom-endpoint-security).
 
-### Agent cannot reach external hosts through a proxy
+<a id="agent-cannot-reach-external-hosts-through-a-proxy"></a>
 
-NemoClaw uses a default proxy address of `10.200.0.1:3128` (the OpenShell-injected gateway). If your environment uses a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+### Agent Cannot Reach External Hosts
 
-```bash
-export NEMOCLAW_PROXY_HOST=proxy.example.com
-export NEMOCLAW_PROXY_PORT=8080
-$$nemoclaw onboard
-```
+<AgentOnly variant="deepagents">
 
-These are build-time settings baked into the sandbox image. Changing them after onboarding requires re-running `$$nemoclaw onboard` to rebuild the image.
+For managed Deep Agents Code on OpenShell `0.1.5`, check the sandbox network policy and recent denial logs when an external request fails.
+The launchers clear inherited proxy variables, and OpenShell mediates the request.
+Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
+Rebuild an older Deep Agents sandbox to install the updated launchers.
 
-When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`. This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts. For the local provider validation probe, NemoClaw removes `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` from the probe process and sets `NO_PROXY=*` instead. A host proxy therefore cannot answer for the local endpoint, including the `host.docker.internal` alias used for Windows-host Ollama. Inside the running sandbox, processes continue to use the OpenShell L7 proxy for `inference.local` so OpenShell's internal routing, DNS, and audit boundaries stay intact.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+For managed OpenClaw on OpenShell `0.1.5`, check the sandbox network policy and recent denial logs when an external request fails.
+OpenClaw starts without application proxy settings, and OpenShell mediates outbound requests.
+Normal sandbox startup clears inherited proxy variables and removes obsolete global and Telegram proxy settings from restored configuration.
+Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
+If the gateway already runs OpenShell `0.1.5`, rebuild the OpenClaw sandbox to remove previous proxy settings.
+Rebuilding a registered sandbox on an OpenShell `0.0.x` gateway does not upgrade that gateway; follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning replacement.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+For managed Hermes on OpenShell `0.1.5`, check the sandbox network policy and recent denial logs when an external request fails.
+Hermes startup and managed connect shells clear inherited proxy variables, and OpenShell mediates outbound requests.
+Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
+If the gateway already runs OpenShell `0.1.5`, rebuild the Hermes sandbox to install the updated startup and shell environment.
+Rebuilding a registered sandbox on an OpenShell `0.0.x` gateway does not upgrade that gateway; follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning replacement.
+
+Corporate certificate authority (CA) trust remains separate from application proxy settings.
+If an enterprise proxy re-signs TLS, follow [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) before onboarding or rebuilding.
+On a successful merge, Hermes appends the validated corporate CA without replacing the OpenShell trust bundle.
+
+When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`. This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts. For the local provider validation probe, NemoClaw removes `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` from the probe process and sets `NO_PROXY=*` instead. A host proxy therefore cannot answer for the local endpoint, including the `host.docker.internal` alias used for Windows-host Ollama.
+
+</AgentOnly>
 
 ### Agent cannot reach a host-side HTTP service
 
 When a sandbox needs to call an HTTP service running on the host, use the normal OpenShell network policy path. Expose the service on a host IP address that the OpenShell gateway can reach, create a custom NemoClaw policy preset for that IP and port, and apply it with `$$nemoclaw <sandbox> policy add --from-file`. The sandbox request then flows through the OpenShell proxy while NemoClaw preserves the existing live policy entries.
 
-Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path. Those names may appear in the sandbox's `/etc/hosts`, but in OpenShell's sandbox network they are not guaranteed to point at a reachable host gateway. Bypassing the proxy with `--noproxy '*'` also bypasses network policy enforcement and audit.
+Do not rely on `host.docker.internal` or `host.openshell.internal` as a general-purpose host-service path. Those names may appear in the sandbox's `/etc/hosts`, but in OpenShell's sandbox network they are not guaranteed to point at a reachable host gateway.
 
 First, make sure the host-side service listens on a non-loopback address. For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
 
@@ -2779,7 +2845,10 @@ Only an accepted Windows-host Ollama route uses direct Docker Desktop access to 
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
-Configuring an inference provider with a base URL like `http://host.docker.internal:11434/v1` does not reliably reach a host Ollama service from inside the OpenShell sandbox. OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is not a reliable host-service route. Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded. The sandbox then sees a DNS failure or `connection refused`:
+Configuring an inference provider with a base URL like `http://host.docker.internal:11434/v1` does not reliably reach a host Ollama service from inside the OpenShell sandbox.
+The sandbox runtime network determines how `host.docker.internal` reaches host services.
+Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded.
+The sandbox then sees a DNS failure or `connection refused`:
 
 ```bash
 getent hosts host.docker.internal
@@ -2794,6 +2863,20 @@ A native Linux Docker bridge can return an address such as this example:
 With Docker Desktop WSL integration, the aliases can instead resolve to an IPv6 unique-local address in `fc00::/7`, such as `fdc4:f303:9324::254`.
 New native-local host-alias profiles admit private IPv4 and IPv6 unique-local addresses while retaining the selected hostname and port restrictions.
 Public, link-local, and loopback IPv6 addresses remain excluded.
+Existing IPv4-only attachments retain their permissions during resume and rebuild.
+Do not edit or delete an attached profile to add IPv6 access.
+
+<AgentOnly variant="openclaw,hermes">
+To replace an IPv4-only attachment, reselect the recorded local provider and model:
+
+```bash
+$$nemoclaw <sandbox-name> inference set --provider <provider> --model <model>
+```
+
+The command checks ownership, creates the replacement attachment, and verifies the route before reporting success.
+If verification fails, follow the printed recovery guidance before retrying.
+</AgentOnly>
+
 A valid DNS result does not prove that the host service is reachable.
 In the IPv4 example, this request still fails if the host service is not forwarded to port `11434`:
 
@@ -3428,7 +3511,7 @@ Confirm a real Hermes search after rebuilding.
 Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
 That workaround bypasses the sandbox credential boundary.
 
-OpenShell 0.0.116 resolves static credentials only at endpoints declared by their provider profile.
+Since OpenShell 0.1.2, static credentials resolve only at endpoints declared by their provider profile.
 Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
 
 For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:

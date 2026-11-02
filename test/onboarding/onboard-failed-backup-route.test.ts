@@ -63,7 +63,7 @@ runner.run = (command, options = {}) => {
   if (cmd.includes("provider update") && cmd.includes("nvidia-prod")) {
     providerConfig.credential = options.env?.NVIDIA_INFERENCE_API_KEY ?? "";
   }
-  const profile = mocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
+  const profile = mocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-messaging-v1", false);
   if (profile !== null) return profile;
   if (cmd.includes("sandbox delete")) throw new Error("unexpected sandbox delete");
   return live.run(command) ?? { status: 0 };
@@ -229,7 +229,7 @@ runner.run = (command) => {
   const cmd = commandText(command);
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox delete")) throw new Error("unexpected sandbox delete");
-  const profile = mocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
+  const profile = mocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-messaging-v1", false);
   if (profile !== null) return profile;
   return live.run(command) ?? { status: 0 };
 };

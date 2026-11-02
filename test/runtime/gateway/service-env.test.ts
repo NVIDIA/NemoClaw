@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
 const ENTRYPOINT_ENV_WRAPPER = join(
@@ -83,13 +83,13 @@ function extractToolRedirectsSnippet() {
 
 function extractProxyVarsSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
-  const start = src.indexOf("PROXY_HOST=");
-  const endMarker = 'export no_proxy="$_NO_PROXY_VAL"';
+  const start = src.indexOf("unset HTTP_PROXY HTTPS_PROXY NO_PROXY");
+  const endMarker = "unset NODE_USE_ENV_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT";
   const end = src.indexOf(endMarker, start);
   if (start === -1 || end === -1 || end <= start) {
     throw new Error(
       "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
-        "the PROXY_HOST..no_proxy block may have been moved or renamed",
+        "the native egress block may have been moved or renamed",
     );
   }
   return src.slice(start, end + endMarker.length);
@@ -198,7 +198,7 @@ describe("service environment", () => {
       const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
       const src = readFileSync(scriptPath, "utf-8");
       const start = src.indexOf("# Git TLS CA bundle fix");
-      const end = src.indexOf("# HTTP library + NODE_USE_ENV_PROXY", start);
+      const end = src.indexOf("# Node runtime preload modules", start);
       if (start === -1 || end === -1 || end <= start) {
         throw new Error("Failed to extract SSL_CERT_FILE handling block");
       }
@@ -432,93 +432,42 @@ describe("service environment", () => {
     // shared library. Wrappers that execute the extracted block must source it.
     const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
 
-    function extractProxyVars(env: Record<string, string> = {}) {
-      const proxyBlock = extractProxyVarsSnippet();
-      const wrapper = [
-        "#!/usr/bin/env bash",
-        proxyBlock.trimEnd(),
-        'echo "HTTP_PROXY=${HTTP_PROXY}"',
-        'echo "HTTPS_PROXY=${HTTPS_PROXY}"',
-        'echo "NO_PROXY=${NO_PROXY}"',
-        'echo "http_proxy=${http_proxy}"',
-        'echo "https_proxy=${https_proxy}"',
-        'echo "no_proxy=${no_proxy}"',
-      ].join("\n");
-      const tmpFile = join(tmpdir(), `nemoclaw-proxy-test-${process.pid}.sh`);
-      try {
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        const out = execFileSync("bash", [tmpFile], {
-          encoding: "utf-8",
-          env: { ...process.env, ...env },
-        }).trim();
-        return Object.fromEntries(
-          out.split("\n").map((l) => {
-            const idx = l.indexOf("=");
-            return [l.slice(0, idx), l.slice(idx + 1)];
-          }),
-        );
-      } finally {
-        try {
-          unlinkSync(tmpFile);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+    const proxyNames = [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "NO_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "no_proxy",
+      "ALL_PROXY",
+      "all_proxy",
+      "OPENAI_PROXY",
+      "grpc_proxy",
+      "GRPC_PROXY",
+      "NODE_USE_ENV_PROXY",
+      "NEMOCLAW_PROXY_HOST",
+      "NEMOCLAW_PROXY_PORT",
+    ];
 
-    let defaultProxyVars: Record<string, string>;
-    let hostOverrideProxyVars: Record<string, string>;
-    let portOverrideProxyVars: Record<string, string>;
-
-    beforeAll(() => {
-      defaultProxyVars = extractProxyVars();
-      hostOverrideProxyVars = extractProxyVars({ NEMOCLAW_PROXY_HOST: "192.168.64.1" });
-      portOverrideProxyVars = extractProxyVars({ NEMOCLAW_PROXY_PORT: "8080" });
-    });
-
-    it("sets HTTP_PROXY to default gateway address", () => {
-      const vars = defaultProxyVars;
-      expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:3128");
-    });
-
-    it("sets HTTPS_PROXY to default gateway address", () => {
-      const vars = defaultProxyVars;
-      expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:3128");
-    });
-
-    it("NEMOCLAW_PROXY_HOST overrides default gateway IP", () => {
-      const vars = hostOverrideProxyVars;
-      expect(vars.HTTP_PROXY).toBe("http://192.168.64.1:3128");
-      expect(vars.HTTPS_PROXY).toBe("http://192.168.64.1:3128");
-    });
-
-    it("NEMOCLAW_PROXY_PORT overrides default proxy port", () => {
-      const vars = portOverrideProxyVars;
-      expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:8080");
-      expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
-    });
-
-    it("NO_PROXY includes loopback only, not inference.local", () => {
-      const vars = defaultProxyVars;
-      const noProxy = vars.NO_PROXY.split(",");
-      expect(noProxy).toContain("localhost");
-      expect(noProxy).toContain("127.0.0.1");
-      expect(noProxy).toContain("::1");
-      expect(noProxy).not.toContain("inference.local");
-    });
-
-    it("NO_PROXY includes OpenShell gateway IP", () => {
-      const vars = defaultProxyVars;
-      expect(vars.NO_PROXY).toContain("10.200.0.1");
-    });
-
-    it("exports lowercase proxy variants for undici/gRPC compatibility", () => {
-      const vars = defaultProxyVars;
-      expect(vars.http_proxy).toBe("http://10.200.0.1:3128");
-      expect(vars.https_proxy).toBe("http://10.200.0.1:3128");
-      const noProxy = vars.no_proxy.split(",");
-      expect(noProxy).not.toContain("inference.local");
-      expect(noProxy).toContain("10.200.0.1");
+    it("clears all obsolete proxy inputs before startup and preserves CA settings", () => {
+      const seed = Object.fromEntries(proxyNames.map((name) => [name, "obsolete-proxy-value"]));
+      const out = execFileSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -eu",
+            extractProxyVarsSnippet(),
+            ...proxyNames.map((name) => `printf '%s=%s\\n' '${name}' "\${${name}+set}"`),
+            'printf "CA=%s\\n" "$SSL_CERT_FILE"',
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, ...seed, SSL_CERT_FILE: "/trusted/ca.pem" },
+        },
+      );
+      expect(out).toBe(proxyNames.map((name) => `${name}=\n`).join("") + "CA=/trusted/ca.pem\n");
     });
 
     it.each([
@@ -585,11 +534,8 @@ describe("service environment", () => {
           ).toBe("native@example.invalid");
 
           const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-          expect(envFile).toContain('export HTTP_PROXY="http://10.200.0.1:3128"');
-          expect(envFile).toContain('export HTTPS_PROXY="http://10.200.0.1:3128"');
-          expect(envFile).toContain("export NO_PROXY=");
-          expect(envFile).not.toContain("inference.local");
-          expect(envFile).toContain("10.200.0.1");
+          expect(envFile).toContain("unset HTTP_PROXY HTTPS_PROXY NO_PROXY");
+          expect(envFile).not.toContain("10.200.0.1");
           expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
           expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
 
@@ -700,8 +646,8 @@ describe("service environment", () => {
 
         const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
         // cat > overwrites the file each time, so there should be exactly one
-        // HTTP_PROXY line — no duplication from repeated runs.
-        const httpProxyCount = (envFile.match(/export HTTP_PROXY=/g) || []).length;
+        // proxy cleanup line — no duplication from repeated runs.
+        const httpProxyCount = (envFile.match(/unset HTTP_PROXY /g) || []).length;
         expect(httpProxyCount).toBe(1);
         const metadataCount = (envFile.match(/export AWS_EC2_METADATA_DISABLED=/g) || []).length;
         expect(metadataCount).toBe(1);
@@ -725,7 +671,7 @@ describe("service environment", () => {
       }
     });
 
-    it("entrypoint replaces stale proxy values on restart", () => {
+    it("entrypoint clears stale proxy values on restart", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-replace-test-${process.pid}`);
       mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-replace-write-test-${process.pid}.sh`);
@@ -749,12 +695,12 @@ describe("service environment", () => {
         writeFileSync(tmpFile, makeWrapper("10.200.0.1"), { mode: 0o700 });
         execFileSync("bash", [tmpFile], { encoding: "utf-8" });
         let envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        expect(envFile).toContain("10.200.0.1");
+        expect(envFile).not.toContain("10.200.0.1");
 
         writeFileSync(tmpFile, makeWrapper("192.168.1.99"), { mode: 0o700 });
         execFileSync("bash", [tmpFile], { encoding: "utf-8" });
         envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        expect(envFile).toContain("192.168.1.99");
+        expect(envFile).not.toContain("192.168.1.99");
         expect(envFile).not.toContain("10.200.0.1");
       } finally {
         try {
@@ -809,92 +755,71 @@ describe("service environment", () => {
       }
     });
 
-    it("overrides narrow NO_PROXY and no_proxy while sourcing proxy-env.sh in simulation", () => {
-      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-bashi-test-"));
-      try {
-        const envContent = [
-          'export HTTP_PROXY="http://10.200.0.1:3128"',
-          'export HTTPS_PROXY="http://10.200.0.1:3128"',
-          'export NO_PROXY="localhost,127.0.0.1,::1,10.200.0.1"',
-          'export http_proxy="http://10.200.0.1:3128"',
-          'export https_proxy="http://10.200.0.1:3128"',
-          'export no_proxy="localhost,127.0.0.1,::1,10.200.0.1"',
-        ].join("\n");
-        writeFileSync(join(fakeDataDir, "proxy-env.sh"), envContent);
+    it.each(["sh", "bash"])(
+      "clears proxy inputs in %s connect shells even when NODE_USE_ENV_PROXY=1",
+      (shell) => {
+        const fakeDataDir = join(tmpdir(), `nemoclaw-http-fix-test-${process.pid}`);
+        mkdirSync(fakeDataDir, { recursive: true });
+        const tmpFile = join(tmpdir(), `nemoclaw-http-fix-env-${process.pid}.sh`);
+        const fakeFixPath = "/tmp/nemoclaw-http-proxy-fix.js";
+        try {
+          const persistBlock = extractRuntimeShellEnvSnippet();
+          const wrapper = [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            sandboxInitSource,
+            'PROXY_HOST="10.200.0.1"',
+            'PROXY_PORT="3128"',
+            '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+            "NODE_USE_ENV_PROXY=1",
+            "_TOOL_REDIRECTS=()",
+            `_PROXY_FIX_SCRIPT="${fakeFixPath}"`,
+            `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
+            "set +u  # array expansion safe on macOS bash",
+            persistBlock
+              .trimEnd()
+              .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+          ].join("\n");
+          writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
-        const out = execFileSync(
-          "bash",
-          [
-            "--norc",
-            "-c",
+          const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+          expect(envFile).toContain("NODE_OPTIONS");
+          expect(envFile).toContain("--require");
+          expect(envFile).not.toContain(fakeFixPath);
+          expect(envFile).toContain("nemotron-inference-fix");
+          const out = execFileSync(
+            shell,
             [
-              'export NO_PROXY="127.0.0.1,localhost,::1"',
-              'export no_proxy="127.0.0.1,localhost,::1"',
-              `source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}`,
-              'echo "NO_PROXY=$NO_PROXY"',
-              'echo "no_proxy=$no_proxy"',
-            ].join("; "),
-          ],
-          { encoding: "utf-8" },
-        ).trim();
-
-        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1");
-        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1");
-      } finally {
-        try {
-          rmSync(fakeDataDir, { recursive: true, force: true });
-        } catch {
-          /* ignore */
+              "-c",
+              [
+                `. "${join(fakeDataDir, "proxy-env.sh")}"`,
+                ...proxyNames.map((name) => `printf '%s=%s\\n' '${name}' "\${${name}+set}"`),
+              ].join("\n"),
+            ],
+            {
+              encoding: "utf8",
+              env: {
+                ...process.env,
+                ...Object.fromEntries(proxyNames.map((name) => [name, "obsolete-proxy-value"])),
+                NODE_OPTIONS: "",
+              },
+            },
+          );
+          expect(out).toBe(proxyNames.map((name) => `${name}=\n`).join(""));
+        } finally {
+          try {
+            rmSync(fakeDataDir, { recursive: true, force: true });
+            rmSync(tmpFile, { force: true });
+          } catch {
+            /* ignore */
+          }
         }
-      }
-    });
+      },
+    );
 
-    it("includes NODE_OPTIONS --require in proxy-env.sh when NODE_USE_ENV_PROXY=1 (#2109)", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-http-fix-test-${process.pid}`);
-      mkdirSync(fakeDataDir, { recursive: true });
-      const tmpFile = join(tmpdir(), `nemoclaw-http-fix-env-${process.pid}.sh`);
-      const fakeFixPath = "/tmp/nemoclaw-http-proxy-fix.js";
-      try {
-        const persistBlock = extractRuntimeShellEnvSnippet();
-        const wrapper = [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          sandboxInitSource,
-          'PROXY_HOST="10.200.0.1"',
-          'PROXY_PORT="3128"',
-          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
-          "NODE_USE_ENV_PROXY=1",
-          "_TOOL_REDIRECTS=()",
-          `_PROXY_FIX_SCRIPT="${fakeFixPath}"`,
-          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
-          "set +u  # array expansion safe on macOS bash",
-          persistBlock
-            .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
-        ].join("\n");
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-
-        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        expect(envFile).toContain("NODE_OPTIONS");
-        expect(envFile).toContain("--require");
-        // Preload target is the in-sandbox /tmp path; no dependency on an
-        // external /opt path (see axios-proxy-fix Bug 1 — scripts/ never
-        // made it into the optimized build context). The JS is embedded in
-        // nemoclaw-start.sh and written to /tmp at boot.
-        expect(envFile).toContain(fakeFixPath);
-      } finally {
-        try {
-          rmSync(fakeDataDir, { recursive: true, force: true });
-          rmSync(tmpFile, { force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-
-    it("omits NODE_OPTIONS from proxy-env.sh when NODE_USE_ENV_PROXY is unset (#2109)", () => {
+    it("keeps the inference preload when NODE_USE_ENV_PROXY is unset", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-http-noop-test-${process.pid}`);
       mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-http-noop-env-${process.pid}.sh`);
@@ -921,9 +846,7 @@ describe("service environment", () => {
         execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
         const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        // Proxy preloads should NOT be injected when NODE_USE_ENV_PROXY
-        // is not 1. The Nemotron inference fix is
-        // unconditional (always needed regardless of proxy config).
+        // Native egress does not need the old double-proxy preload.
         expect(envFile).not.toContain("http-proxy-fix");
         expect(envFile).toContain("nemotron-inference-fix");
       } finally {

@@ -168,7 +168,6 @@ describe("managed vLLM serving-port guard (#8685)", () => {
       hasImage: true,
       nonInteractive: false,
       promptFn,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });

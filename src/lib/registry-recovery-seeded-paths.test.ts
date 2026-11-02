@@ -3,8 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runInferenceSet } from "./actions/inference-set.js";
-import { createDeps } from "../../test/helpers/inference-set.js";
+import { prepareInferenceSetRoute } from "./actions/inference-set-route-containment";
 import type { SandboxEntry } from "./state/registry.js";
 
 interface MockRegistryState {
@@ -255,7 +254,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(mockRegistryState.defaultSandbox).toBeNull();
   });
 
-  it("blocks route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
+  it("blocks shared route preflight after seeded recovery persists a live row without route metadata (#6315)", async () => {
     mockRegistryState.sandboxes.gamma = gammaEntry([]);
     mockRegistryState.defaultSandbox = "gamma";
     vi.mocked(captureOpenshell).mockReturnValue({
@@ -270,28 +269,26 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       model: null,
     });
 
-    const deps = createDeps({
-      config: {},
-      entries: Object.values(mockRegistryState.sandboxes),
-      defaultSandbox: "gamma",
-    });
-    await expect(
-      runInferenceSet(
-        { provider: "nvidia-router", model: "nvidia/model-b", sandboxName: "gamma" },
-        deps,
-      ),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(/recovered-live.*lacks durable provider or model metadata/s),
-      exitCode: 2,
-    });
-
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
-    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    const before = structuredClone(mockRegistryState);
+    const callsBefore = vi.mocked(captureOpenshell).mock.calls.slice();
+    expect(() =>
+      prepareInferenceSetRoute({
+        entry: mockRegistryState.sandboxes.gamma!,
+        sandboxName: "gamma",
+        provider: "registered-provider",
+        model: "nvidia/model-b",
+        customRoute: {},
+        session: null,
+        sandboxes: Object.values(mockRegistryState.sandboxes),
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        message: expect.stringMatching(/recovered-live.*lacks durable provider or model metadata/s),
+        exitCode: 2,
+      }),
+    );
+    expect(mockRegistryState).toEqual(before);
+    expect(vi.mocked(captureOpenshell).mock.calls).toEqual(callsBefore);
   });
 
   it("recovers only the targeted gateway's sandboxes, not a sibling gateway's (#7105)", async () => {

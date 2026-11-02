@@ -384,6 +384,23 @@ describe("inference selection config", () => {
 });
 
 describe("getSandboxInferenceConfig", () => {
+  it("keeps Pi private compatible endpoints on their native custom provider", () => {
+    const endpoint = "http://10.0.0.2:11434/v1";
+    expect(
+      getSandboxInferenceConfig(
+        "selected-model",
+        "compatible-endpoint",
+        "openai-completions",
+        true,
+        endpoint,
+        "pi",
+      ),
+    ).toMatchObject({
+      inferenceBaseUrl: endpoint,
+      inferenceApi: "openai-completions",
+    });
+  });
+
   it("enables streaming usage for ollama-local behind the managed inference route", () => {
     expect(getSandboxInferenceConfig("qwen3.6:35b", "ollama-local")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
@@ -667,7 +684,7 @@ describe("formatInferenceRouteDriftForDisplay", () => {
 });
 
 it.each([
-  ["openclaw", true, "https://inference.local/v1"],
+  ["openclaw", true, "http://host.openshell.internal:8000/v1"],
   ["pi", true, "http://host.openshell.internal:8000/v1"],
   ["pi", false, "https://inference.local/v1"],
   ["langchain-deepagents-code", false, "https://inference.local/v1"],
@@ -724,4 +741,27 @@ it.each([
   );
   expect(config.inferenceBaseUrl).toBe(endpoint);
   expect(config.inferenceApi).toBe(expectedApi);
+});
+
+it.each([
+  { agent: "openclaw" as const, api: "openai-completions" as const },
+  { agent: "openclaw" as const, api: "openai-responses" as const },
+  { agent: "hermes" as const, api: "openai-completions" as const },
+  { agent: "hermes" as const, api: "openai-responses" as const },
+])("preserves compatible $agent native API $api", ({ agent, api }) => {
+  expect(
+    getSandboxInferenceConfig(
+      "served-alias",
+      "compatible-endpoint",
+      api,
+      true,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ),
+  ).toMatchObject({
+    inferenceBaseUrl: "http://host.openshell.internal:8000/v1",
+    inferenceApi: api,
+    primaryModelRef: "inference/served-alias",
+    providerKey: "inference",
+  });
 });

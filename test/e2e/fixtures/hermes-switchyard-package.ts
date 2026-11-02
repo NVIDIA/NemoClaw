@@ -6,7 +6,7 @@
 export const HERMES_SWITCHYARD_PACKAGE_PROBE = String.raw`
 pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"
 test -n "$pid"
-/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I - "$pid" <<'PY'
+/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I -X faulthandler - "$pid" <<'PY'
 import hashlib
 from importlib.metadata import version
 import os
@@ -86,8 +86,11 @@ target = "default"
         runtime.shutdown()
         os.environ.pop(relay_runtime.RELAY_PLUGINS_CONFIG_ENV)
     assert nemo_relay.plugin.report() is None
+# Record loader state without requiring immediate unmapping after shutdown.
+print('Switchyard library mapped after shutdown:', str(library) in Path('/proc/self/maps').read_text(),
+      file=sys.stderr, flush=True)
 # The separate probe must not change the gateway's routing state.
 assert library.name not in Path(f'/proc/{pid}/maps').read_text()
-print('Switchyard package, disabled gateway, native activation, and cleanup verified')
+print('Switchyard package, disabled gateway, native activation, and cleanup verified', flush=True)
 PY
 `;

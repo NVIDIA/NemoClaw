@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   managedWorkloadRebuild,
-  rebuildProviderPreflight,
+  rebuildHostCredentialPreflight,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
@@ -27,7 +27,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
     async (provider) => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
-        sandboxEntry: { ...makeDcodeSandboxEntry(), provider },
+        sandboxEntry: { ...makeDcodeSandboxEntry(false), provider },
       });
       configureDcodeSession(harness);
 
@@ -47,7 +47,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
         sandboxEntry: {
-          ...makeDcodeSandboxEntry(),
+          ...makeDcodeSandboxEntry(false),
           provider: "nvidia-prod",
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
           nativeNvidiaProviderAttachment: {
@@ -60,7 +60,9 @@ describe("rebuildSandbox DCode flow: preflight", () => {
         hydrateCredentialEnv: () => "invalid-rebuild-test-credential",
       });
       configureDcodeSession(harness);
-      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockRestore();
+      vi.mocked(
+        rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
+      ).mockRestore();
       const catalog = vi
         .spyOn(managedWorkloadRebuild, "prepareManagedWorkloadRebuildHandoff")
         .mockRejectedValue(new Error("managed image catalog is unavailable"));
@@ -82,14 +84,16 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
         sandboxEntry: {
-          ...makeDcodeSandboxEntry(),
+          ...makeDcodeSandboxEntry(false),
           provider: "nvidia-prod",
           credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         },
         hydrateCredentialEnv: () => "invalid-rebuild-test-credential",
       });
       configureDcodeSession(harness);
-      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockRestore();
+      vi.mocked(
+        rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
+      ).mockRestore();
 
       await expect(
         harness.rebuildSandbox("alpha", force ? ["--yes", "--force"] : ["--yes"], {
@@ -108,7 +112,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       hydrateCredentialEnv: () => "host-test-key",
       beforeBackup: () => {
         vi.mocked(
-          rebuildProviderPreflight.validateRebuildHostInferenceCredential,
+          rebuildHostCredentialPreflight.validateRebuildHostInferenceCredential,
         ).mockResolvedValue(false);
       },
     });

@@ -12,6 +12,10 @@ content:
 
 NemoClaw can pull, start, and manage a local NVIDIA NIM container on hosts with a NIM-capable NVIDIA GPU.
 This provider is experimental and requires an explicit opt-in.
+New Local NVIDIA NIM selections use a native OpenShell provider attached to the sandbox.
+Live qualification on OpenShell `0.1.5` remains pending.
+For older NIM sandboxes without a native attachment, preserve backups, the existing installation, and sandbox data.
+Follow the [OpenShell upgrade restrictions](../../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
 Local NVIDIA NIM is unavailable on N1x.
 NemoClaw omits this provider from onboarding and rejects `NEMOCLAW_PROVIDER=nim-local` on N1x.
 Use the [Deferred managed-vLLM preview](set-up-vllm#use-n1x-express) instead.
@@ -59,6 +63,9 @@ Non-interactive onboarding cannot prompt for registry credentials.
 Run `docker login nvcr.io` before starting non-interactive onboarding.
 
 When `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
+The NGC key stays with Docker and the NIM container.
+The native inference provider stores a nonsecret sentinel for the existing unauthenticated NIM API.
+OpenShell limits the attached provider to the configured NIM port and the models and Chat Completions paths.
 
 ## Understand Model Detection
 

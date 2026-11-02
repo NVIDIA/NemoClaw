@@ -468,7 +468,7 @@ describe("stopSandbox", () => {
     expect(result.message).toContain("release of its host forward ports could not be proved");
     expect(h.getSandbox("my-sandbox")?.stopped).toBe(true);
     expect(h.warn).toHaveBeenCalledWith(
-      "  Warning: a ForwardTcp port for 'my-sandbox' did not release. Retry 'nemoclaw my-sandbox stop'.",
+      "  Warning: ForwardTcp port release for 'my-sandbox' could not be proved. Retry 'nemoclaw my-sandbox stop'.",
     );
   });
 

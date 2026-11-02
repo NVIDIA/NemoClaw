@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -15,12 +16,11 @@ import { compatibleAnthropicSwitchBinding } from "../fixtures/compatible-anthrop
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
-  API_KEY_SHAPE_PATTERN,
-  NVIDIA_API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
   expectAuthenticatedBaselineInventoryRequest,
+  expectOpenAiProvider,
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
   hermesApiCommand,
@@ -36,6 +36,7 @@ import {
   parseInferenceRoute,
   prepareProxyResolutionRoute,
   PROXY_RESOLUTION_PROVIDER,
+  PROXY_RESOLUTION_MODEL,
   runHermesInferenceSetWithRetry,
   runHermesCliPongWithRetry,
   runHermesPongWithRetry,
@@ -50,6 +51,38 @@ import {
 
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    [PUBLIC_NVIDIA_SWITCH_PROVIDER, "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY", 0],
+    [PUBLIC_NVIDIA_SWITCH_PROVIDER, '"openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY"', 0],
+    [
+      PUBLIC_NVIDIA_SWITCH_PROVIDER,
+      `'openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY'`,
+      0,
+    ],
+    [PUBLIC_NVIDIA_SWITCH_PROVIDER, "nvapi-raw-key", 1],
+    [PUBLIC_NVIDIA_SWITCH_PROVIDER, "${NVIDIA_INFERENCE_API_KEY}", 1],
+    [PUBLIC_NVIDIA_SWITCH_PROVIDER, "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", 1],
+    [PUBLIC_NVIDIA_SWITCH_PROVIDER, "openshell:resolve:env:v1_COMPATIBLE_ANTHROPIC_API_KEY", 1],
+    ["compatible-anthropic-endpoint", "${COMPATIBLE_ANTHROPIC_API_KEY}", 0],
+    ["compatible-anthropic-endpoint", '"${COMPATIBLE_ANTHROPIC_API_KEY}"', 0],
+    ["compatible-anthropic-endpoint", "'${COMPATIBLE_ANTHROPIC_API_KEY}'", 0],
+    ["compatible-anthropic-endpoint", "sk-raw-key", 1],
+    ["compatible-anthropic-endpoint", "${NVIDIA_INFERENCE_API_KEY}", 1],
+    ["compatible-anthropic-endpoint", "${COMPATIBLE_ANTHROPIC_API_KEY} trailing", 1],
+    ["compatible-anthropic-endpoint", '"${COMPATIBLE_ANTHROPIC_API_KEY}', 1],
+  ])("checks the deployed %s credential reference %s", (provider, scalar, status) => {
+    const [command, ...args] = apiKeyShapeCommand(String(provider));
+    const result = spawnSync(command!, args.slice(0, -1), {
+      input: `model:\n  api_key: ${scalar}\n`,
+      encoding: "utf8",
+    });
+    expect({ status: result.status, stdout: result.stdout, stderr: result.stderr }).toEqual({
+      status,
+      stdout: "",
+      stderr: "",
+    });
+  });
 
   it.each(["123", " 123\n"])("reads one PID from a successful gateway probe: %s", (stdout) => {
     expect(parseHermesGatewayPid({ exitCode: 0, stdout })).toBe("123");
@@ -116,15 +149,6 @@ describe("Hermes inference switch command shape", () => {
     return import("../live/hermes-inference-switch-helpers.ts");
   }
 
-  function matchesApiKeyShape(line: string, pattern: string = API_KEY_SHAPE_PATTERN): boolean {
-    return (
-      spawnSync("grep", ["-Eq", pattern], {
-        encoding: "utf8",
-        input: `${line}\n`,
-      }).status === 0
-    );
-  }
-
   it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
     expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(
       "openai-completions",
@@ -163,13 +187,58 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("probes native NVIDIA through its sandbox-attached provider route (#12558)", () => {
-    const command = sandboxInferenceCommand('{"model":"nvidia/test"}');
+    const command = sandboxInferenceCommand(
+      '{"model":"nvidia/test"}',
+      "https://integrate.api.nvidia.com/v1",
+    );
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
     expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
     expect(command).toContain(' -H "$AUTH_HEADER"');
     expect(command).not.toContain("nemoclaw-openshell-provider");
     expect(command).not.toContain("inference.local");
+  });
+
+  it("probes a custom hosted Anthropic provider using its injected credential and recorded endpoint", async () => {
+    const definition = customNativeProvider({
+      provider: "compatible-anthropic-endpoint",
+      api: "openai-completions",
+      endpointUrl: "https://anthropic.example.com/team",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      allowedIps: ["8.8.8.8"],
+    });
+    const receipt = {
+      schemaVersion: 1,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "owned-id",
+      endpointUrl: definition.endpointUrl,
+      allowedIps: definition.allowedIps,
+      custom: definition.custom,
+    };
+    const command = sandboxInferenceCommand(
+      '{"model":"mock-anthropic-model"}',
+      definition.endpoint,
+      "compatible-anthropic-endpoint",
+    );
+    expect(command).toContain("https://anthropic.example.com/team/v1/chat/completions");
+    expect(command).toContain(
+      'AUTH_HEADER="Authorization: Bearer ${COMPATIBLE_ANTHROPIC_API_KEY:-}"',
+    );
+    expect(command).not.toContain("inference.local");
+    const hostCommand = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: `Name: ${receipt.providerName}\nType: ${receipt.profileId}\nId: owned-id\nResource version: 1\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: <none>`,
+      stderr: "",
+    }));
+    await expectOpenAiProvider({ command: hostCommand } as unknown as HostCliClient, receipt);
+    expect(hostCommand.mock.calls[0]).toContainEqual([
+      "provider",
+      "get",
+      "-g",
+      "nemoclaw",
+      receipt.providerName,
+    ]);
   });
 
   it.each([
@@ -228,58 +297,6 @@ describe("Hermes inference switch command shape", () => {
     );
   });
 
-  it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
-    const nativeCommand = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
-
-    expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
-    expect(nativeCommand).toEqual([
-      "grep",
-      "-Eq",
-      NVIDIA_API_KEY_SHAPE_PATTERN,
-      "/sandbox/.hermes/config.yaml",
-    ]);
-    expect([...command, ...nativeCommand].every((argument) => !/[\r\n]/u.test(argument))).toBe(
-      true,
-    );
-  });
-
-  it("accepts only complete sk-prefixed YAML scalars", () => {
-    expect(
-      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every((line) =>
-        matchesApiKeyShape(line),
-      ),
-    ).toBe(true);
-    expect(
-      [
-        "  api_key: not-sk-value",
-        "  api_key: sk-value trailing",
-        '  api_key: "sk-value',
-        '  api_key: sk-value"',
-      ].some((line) => matchesApiKeyShape(line)),
-    ).toBe(false);
-  });
-
-  it("accepts only a provider-bound reference for a native NVIDIA switch", () => {
-    const reference = "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY";
-    expect(
-      [`  api_key: ${reference}`, `  api_key: "${reference}"`, `  api_key: '${reference}'`].every(
-        (line) => matchesApiKeyShape(line, NVIDIA_API_KEY_SHAPE_PATTERN),
-      ),
-    ).toBe(true);
-    expect(
-      [
-        "  api_key: sk-OPENSHELL-PROXY-REWRITE",
-        "  api_key: nvapi-raw-key",
-        "  api_key: ${NVIDIA_INFERENCE_API_KEY}",
-        "  api_key: openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
-        `  api_key: ${reference} trailing`,
-        `  api_key: "${reference}`,
-        `  api_key: ${reference}"`,
-      ].some((line) => matchesApiKeyShape(line, NVIDIA_API_KEY_SHAPE_PATTERN)),
-    ).toBe(false);
-  });
-
   it("keeps initial hosted onboarding independent from the switch target", () => {
     expect(hostedInstallModel({ NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model" })).toBe(
       DEFAULT_HOSTED_INFERENCE_MODEL,
@@ -303,7 +320,7 @@ describe("Hermes inference switch command shape", () => {
     const command = vi.fn().mockResolvedValue({
       exitCode: 0,
       stderr: "",
-      stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
+      stdout: "route synced",
     });
     await prepareProxyResolutionRoute({
       apiKey: "nvapi-public-fixture-key",
@@ -312,53 +329,69 @@ describe("Hermes inference switch command shape", () => {
       redactionValues: ["nvapi-public-fixture-key"],
     });
     expect(command.mock.calls[0]).toEqual([
-      "openshell",
+      "node",
       expect.arrayContaining([
-        "provider",
-        "create",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-        "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+        "--provider",
+        "compatible-endpoint",
+        "--endpoint-url",
+        "https://integrate.api.nvidia.com/v1",
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
       ]),
       expect.objectContaining({
-        env: expect.objectContaining({ NVIDIA_INFERENCE_API_KEY: "nvapi-public-fixture-key" }),
+        env: expect.objectContaining({ COMPATIBLE_API_KEY: "nvapi-public-fixture-key" }),
         redactionValues: ["nvapi-public-fixture-key"],
       }),
     ]);
   });
 
-  it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
-    const command = vi
-      .fn()
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "created" })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stderr: "",
-        stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
-      })
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
-
-    await prepareProxyResolutionRoute({
-      apiKey: "hosted-key",
+  it("selects the native local route before testing split provider and namespaced model flags", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "route synced" });
+    const mockBaseline = {
+      baseUrl: "http://host.openshell.internal:11434/v1",
+      logFile: "fixture-server.log",
+      requestsFile: "fixture-requests.jsonl",
+      environmentKeys: () => [],
+      requests: () => [{ method: "GET", path: "/v1/models", bodyBytes: 0 }],
+      close: async () => undefined,
+    } satisfies NonNullable<Parameters<typeof prepareProxyResolutionRoute>[0]["mockBaseline"]>;
+    const selected = await prepareProxyResolutionRoute({
+      apiKey: "fixture-key",
       host: { command } as unknown as HostCliClient,
-      mockBaseline: undefined,
-      redactionValues: ["hosted-key"],
+      mockBaseline,
+      redactionValues: ["fixture-key"],
     });
 
-    expect(PROXY_RESOLUTION_PROVIDER).not.toBe("nvidia-prod");
-    expect(command.mock.calls[0]?.[1]).toEqual(
-      expect.arrayContaining([
-        "--name",
+    expect(selected).toEqual({ model: PROXY_RESOLUTION_MODEL, requestOffset: 1 });
+    expect(command).toHaveBeenCalledExactlyOnceWith(
+      "node",
+      [
+        expect.any(String),
+        "inference",
+        "set",
+        "--sandbox",
+        SANDBOX_NAME,
+        "--provider",
         PROXY_RESOLUTION_PROVIDER,
-        "--type",
-        "openai",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-      ]),
+        "--model",
+        PROXY_RESOLUTION_MODEL,
+        "--endpoint-url",
+        mockBaseline.baseUrl,
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+        "--no-verify",
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining({ COMPATIBLE_API_KEY: "fixture-key" }),
+        redactionValues: ["fixture-key"],
+        timeoutMs: 180_000,
+      }),
     );
-    expect(command.mock.calls[2]?.[1]).toEqual(
-      expect.arrayContaining(["--provider", PROXY_RESOLUTION_PROVIDER]),
-    );
+    expect(JSON.stringify(command.mock.calls[0][1])).not.toContain("fixture-key");
   });
 
   it("uses authenticated model inventory as baseline readiness evidence", () => {

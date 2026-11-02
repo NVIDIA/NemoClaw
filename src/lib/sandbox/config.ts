@@ -12,6 +12,8 @@
 // config set:          Validated host mutation for Hermes.
 // config rotate-token: Credential rotation via stdin or env var.
 
+import { writeHermesConfigNatively } from "./hermes-native-config";
+import { resolveSandboxConfigRuntimeSelection } from "../actions/sandbox/mcp-bridge-provider-inspection";
 import type { AgentConfigTarget } from "./agent-config";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
 import {
@@ -41,7 +43,6 @@ const os = require("os");
 const path = require("path");
 const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
-const { isErrnoException }: typeof import("../core/errno") = require("../core/errno");
 const { validateName } = require("../runner");
 const { shellQuote } = require("../core/shell-quote");
 const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
@@ -60,11 +61,8 @@ const {
   withPrivilegedSandboxExecutionLease,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 const {
-  buildHermesUpstreamHeader,
-}: typeof import("./hermes-upstream-header") = require("./hermes-upstream-header");
-const {
   parseConfig,
-  serializeConfig,
+  composeSandboxConfigBody,
 }: typeof import("./config-format") = require("./config-format");
 const {
   buildOpenClawNativeConfigBatchInvocation,
@@ -153,12 +151,11 @@ async function restartSandboxAgentAfterConfigSet(
     (require("../actions/sandbox/process-recovery").restartSandboxGateway as ManagedGatewayRestart);
   const result = await restart(sandboxName, ...(runtimeSelection ? [{ runtimeSelection }] : []));
   if (!result.ok) {
-    // The config write already completed, but the running agent was not
-    // reloaded. Say so plainly and point to the idempotent retry rather than
-    // leaving disk and the live gateway silently diverged. The restart layer
-    // has already printed its own failure detail.
+    // The Hermes native transaction verifies its reload before this optional restart.
     configFail([
-      `  Config was written to disk but NOT applied to the running agent.`,
+      agentName === "hermes"
+        ? "  Hermes configuration was applied and its reload verified. The additional restart was not confirmed."
+        : "  Config was written to disk but NOT applied to the running agent.",
       `  The ${agentName} gateway restart did not complete for '${sandboxName}' (see the failure above).`,
       `  Retry the restart with: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
     ]);
@@ -167,8 +164,8 @@ async function restartSandboxAgentAfterConfigSet(
 
 function buildConfigSetRestartGuidance(sandboxName: string): string[] {
   return [
-    "  Note: Hermes may restart its gateway when it applies this configuration.",
-    `  Use --restart to request and verify a restart, or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
+    "  Hermes verified its gateway reload after applying this configuration.",
+    `  For another verified restart, use --restart or run: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
   ];
 }
 
@@ -385,22 +382,6 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
 }
 
 /**
- * Pure body composition for {@link writeSandboxConfig}: serialize the config
- * and prepend agent-specific headers. Extracted so unit tests can assert the
- * exact byte sequence that lands in the sandbox without driving the
- * privileged docker exec path.
- */
-function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
-  if (target.agentName === "hermes" && target.format === "yaml") {
-    // Hermes/PyYAML reads YAML 1.1. Preserve strings such as tool_search's "on"
-    // when a credential-only restore writes a config sanitized as JSON.
-    const body = require("yaml").stringify(config, { compat: "yaml-1.1" });
-    return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
-  }
-  return serializeConfig(config, target.format);
-}
-
-/**
  * Parse a CLI-provided config value as JSON when possible, otherwise keep it
  * as a string literal.
  */
@@ -540,8 +521,19 @@ function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
   config: ConfigObject,
-  options: { restoreNativeLocalCredential?: true } = {},
+  optionsOrGateway:
+    | {
+        gatewayName?: string;
+        workspace?: string;
+        localTlsDir?: string;
+        deferReload?: true;
+        restoreNativeLocalCredential?: true;
+      }
+    | string = {},
 ): void {
+  const nativeGatewayName =
+    typeof optionsOrGateway === "string" ? optionsOrGateway : optionsOrGateway.gatewayName;
+  const options = typeof optionsOrGateway === "string" ? {} : optionsOrGateway;
   if (target.agentName === "openclaw") {
     throw new Error(
       "Refusing a whole-file OpenClaw config write; use OpenClaw's native config commands.",
@@ -556,6 +548,29 @@ function writeSandboxConfig(
       throw new Error(
         "Refusing Hermes config write without the digest from the matching sandbox read.",
       );
+    }
+    if (nativeGatewayName) {
+      writeHermesConfigNatively(
+        getOpenshellBinary(),
+        sandboxName,
+        nativeGatewayName,
+        expectedConfigSha256,
+        content,
+        runOpenshellCommand,
+        {
+          ...options,
+          ...(options.workspace !== undefined
+            ? {
+                env: buildSelectedOpenShellSubprocessEnv({
+                  gatewayName: nativeGatewayName,
+                  workspace: options.workspace,
+                  ...(options.localTlsDir ? { localTlsDir: options.localTlsDir } : {}),
+                }),
+              }
+            : {}),
+        },
+      );
+      return;
     }
     try {
       privilegedSandboxExec(
@@ -1085,9 +1100,10 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     shellQuote,
   );
   if (unsupportedAgent) configFail(unsupportedAgent);
+  const runtimeSelection = resolveSandboxConfigRuntimeSelection(sandboxName);
   // Read current config
   console.log(`  Reading ${target.agentName} config...`);
-  const config = readSandboxConfig(sandboxName, target);
+  const config = readSandboxConfig(sandboxName, target, runtimeSelection);
   const initialConfigSha256 = (config as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string })[
     CONFIG_SOURCE_SHA256
   ];
@@ -1145,7 +1161,12 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
         confirmed = await confirmYesNo("  Write this new key? [y/N] ");
       } catch (error) {
         // The shared prompt re-raises SIGINT; only EOF needs config-specific remediation here.
-        if (isErrnoException(error) && error.code === "EOF") {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "EOF"
+        ) {
           configFail([
             "  No input available on stdin, so config set cannot confirm the new key.",
             "  Re-run with --config-accept-new-path or set NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1.",
@@ -1188,7 +1209,17 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   const telemetryMetadataErrors: import("../domain/telemetry/event").TelemetryMetadataError[] = [];
   // Re-read under the sandbox mutation lock and enforce the source digest.
   await withSandboxMutationLock(sandboxName, () => {
-    const currentConfig = readSandboxConfig(sandboxName, target);
+    const currentRuntime = resolveSandboxConfigRuntimeSelection(sandboxName);
+    if (
+      currentRuntime.gatewayName !== runtimeSelection.gatewayName ||
+      currentRuntime.workspace !== runtimeSelection.workspace ||
+      currentRuntime.localTlsDir !== runtimeSelection.localTlsDir
+    ) {
+      configFail(
+        "  Sandbox runtime target changed while validating configuration. Retry config set.",
+      );
+    }
+    const currentConfig = readSandboxConfig(sandboxName, target, runtimeSelection);
     const currentConfigSha256 = (
       currentConfig as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string }
     )[CONFIG_SOURCE_SHA256];
@@ -1200,25 +1231,24 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     setDotpath(currentConfig, opts.key!, safeValue);
 
     console.log(`  Writing config to sandbox (${target.configPath})...`);
-    writeSandboxConfig(sandboxName, target, currentConfig);
+    writeSandboxConfig(sandboxName, target, currentConfig, runtimeSelection);
     telemetryPersistenceVerified = persistConfigurationTelemetry(
       sandboxName,
       configKey,
       currentConfig,
-      Object.is(oldValue, safeValue) && !opts.restart ? undefined : true,
+      false,
       !Object.is(oldValue, safeValue),
     );
     if (!telemetryPersistenceVerified) {
       telemetryMetadataErrors.push({ category: "native_model_source" });
-      if (!Object.is(oldValue, safeValue) || opts.restart)
-        telemetryMetadataErrors.push({ category: "configuration_apply_state" });
+      telemetryMetadataErrors.push({ category: "configuration_apply_state" });
     }
     if (isTelemetryConfigurationKey(configKey)) {
       recordTelemetryTarget({
         scope: "configuration",
         sandboxName,
         outcome: Object.is(oldValue, safeValue) && !opts.restart ? "no_change" : "completed",
-        state: Object.is(oldValue, safeValue) && !opts.restart ? "unchanged" : "pending",
+        state: Object.is(oldValue, safeValue) && !opts.restart ? "unchanged" : "applied",
         ...(!telemetryPersistenceVerified
           ? {
               verificationStatus: "collection_error" as const,
@@ -1240,7 +1270,12 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   // Restart if requested
   if (opts.restart) {
     try {
-      await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
+      await restartSandboxAgentAfterConfigSet(
+        sandboxName,
+        target.agentName,
+        undefined,
+        runtimeSelection,
+      );
     } catch (error) {
       if (isTelemetryConfigurationKey(configKey)) {
         recordTelemetryTarget({

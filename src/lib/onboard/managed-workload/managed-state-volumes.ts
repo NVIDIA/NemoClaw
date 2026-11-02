@@ -221,6 +221,32 @@ function managedStateVolumeApproval(deps: ManagedStateVolumeDeps): Record<string
   };
 }
 
+/** Reject legacy state before the caller deletes the source sandbox. */
+export function preflightManagedStateVolumes(
+  input: { readonly roots: readonly ManagedStartupStateRoot[] },
+  deps: ManagedStateVolumeDeps = {},
+): void {
+  if (input.roots.length === 0 || !supportsManagedStateVolumes(deps.runtimeProvider)) return;
+  const run =
+    deps.runContainerEngine ??
+    (deps.runtimeProvider ? defaultRuntimeVolumeRun(deps.runtimeProvider) : undefined);
+  if (!run) throw new Error("Managed state volumes require runtime provider authority.");
+  const approval = managedStateVolumeApproval(deps);
+  for (const root of input.roots) {
+    const observed = inspectVolume(root, run);
+    if (observed.status === "failed")
+      throw new Error(`Cannot inspect managed state volume: ${observed.detail}`);
+    if (observed.status === "absent") continue;
+    if (!labelsMatch(observed.labels, root.ownershipLabels))
+      throw new Error("Managed state volume ownership changed.");
+    if (!labelsMatch(observed.labels, approval)) {
+      throw new Error(
+        "Managed state volume lacks OpenShell attachment approval. Retained data was not changed.",
+      );
+    }
+  }
+}
+
 export function prepareManagedStateVolumes(
   input: {
     readonly roots: readonly ManagedStartupStateRoot[];

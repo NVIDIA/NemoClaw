@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
@@ -30,7 +34,10 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
-import { isTransientInferenceInvocationFailure } from "./inference-route-health";
+import {
+  isTransientInferenceInvocationFailure,
+  verifyRegisteredStatusAttachment,
+} from "./inference-route-health";
 import { hasRecordedNativeNvidiaAttachment } from "./launch-readiness/health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
@@ -92,6 +99,7 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
   now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  verifyRegisteredAttachment?: typeof verifyRegisteredStatusAttachment;
   qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
   recoverPortableSandbox?: typeof recoverPortableAgentSandboxLifecycle;
   requalifyPortableSandbox?: typeof requalifyPortableAgentSandboxAuthority;
@@ -160,12 +168,26 @@ async function checkStartedSandboxInference(
   const model = (sandbox.model ?? "").trim();
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
+  let registered: RegisteredInferenceProviderAttachment | undefined;
   let nativeProvider: boolean;
   let nativeEndpointUrl: string | undefined;
   try {
     const receipt = recordedNativeProviderAttachment(sandbox);
-    nativeProvider = Boolean(receipt);
-    nativeEndpointUrl = receipt?.endpointUrl;
+    registered = recordedRegisteredInferenceProviderAttachment(sandbox);
+    if (registered) {
+      if (
+        registered.sandboxName !== sandboxName ||
+        registered.gatewayName !== getPersistedSandboxTargetGatewayName(sandbox)
+      )
+        throw new Error("Registered inference target changed");
+      await (deps.verifyRegisteredAttachment ?? verifyRegisteredStatusAttachment)({
+        sandboxName,
+        gatewayName: registered.gatewayName,
+        expected: registered,
+      });
+    }
+    nativeProvider = Boolean(receipt || registered);
+    nativeEndpointUrl = registered?.endpointUrl ?? receipt?.endpointUrl;
   } catch {
     return {
       ok: false,
@@ -187,6 +209,7 @@ async function checkStartedSandboxInference(
     ...(sandbox.nativeLocalProviderAttachment
       ? { nativeLocalProviderAttachment: sandbox.nativeLocalProviderAttachment }
       : {}),
+    ...(registered ? { registeredInferenceProviderAttachment: registered } : {}),
     ...(nativeProvider ? { nativeProvider: true } : {}),
     ...(nativeEndpointUrl ? { nativeEndpointUrl } : {}),
   };

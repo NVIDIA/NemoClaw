@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
+
 import {
   type CommandRunner,
   GatewayClient,
@@ -555,34 +556,44 @@ describe("LifecyclePhaseFixture profile dispatch", () => {
 describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   const sandboxName = "e2e-dcode-cloud";
   const validCredential = "valid-fixture-credential";
-  const nativeProvider = customNativeProvider({
+  const definition = customNativeProvider({
     provider: "compatible-endpoint",
     endpointUrl: "https://inference-api.nvidia.com/v1",
     api: "openai-completions",
     credentialEnv: "COMPATIBLE_API_KEY",
     allowedIps: ["8.8.8.8"],
   });
-  const attachment = {
+  const nativeHostedProviderAttachment = {
     schemaVersion: 1,
-    profileId: nativeProvider.profileId,
-    providerName: nativeProvider.providerName,
-    providerId: "provider-fixture-id",
-    endpointUrl: nativeProvider.endpoint,
-    allowedIps: nativeProvider.allowedIps,
-    custom: nativeProvider.custom,
+    profileId: definition.profileId,
+    providerName: definition.providerName,
+    providerId: "dcode-owned-provider",
+    endpointUrl: definition.endpointUrl,
+    allowedIps: definition.allowedIps,
+    custom: definition.custom,
   };
-  const options = dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
-    {
-      agent: "langchain-deepagents-code",
-      gatewayName: "nemoclaw",
-      provider: "compatible-endpoint",
-      endpointUrl: nativeProvider.endpoint,
-      preferredInferenceApi: "openai-completions",
-      nativeHostedProviderAttachment: attachment,
-      model: "nvidia/nvidia/nemotron-3-ultra",
-    },
-    validCredential,
-  );
+  const entry = {
+    agent: "langchain-deepagents-code",
+    gatewayName: "nemoclaw",
+    provider: "compatible-endpoint",
+    model: "nvidia/nvidia/nemotron-3-ultra",
+    nativeHostedProviderAttachment,
+  };
+  const options = dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(entry, validCredential);
+
+  function providerMetadata(id = "dcode-owned-provider"): ShellProbeResult {
+    return shellResult(
+      0,
+      [
+        `Name: ${definition.providerName}`,
+        `Id: ${id}`,
+        `Type: ${definition.profileId}`,
+        "Resource version: 1",
+        "Credential keys: COMPATIBLE_API_KEY",
+        "Config keys: <none>",
+      ].join("\n"),
+    );
+  }
 
   function dcodeInstance(): NemoClawInstance {
     return instance({
@@ -631,6 +642,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       try {
         const runner = new FakeRunner();
         enqueuePreamble(runner);
+        runner.enqueue(providerMetadata());
         runner.enqueue(shellResult(0)); // install invalid provider credential
         runner.enqueue(shellResult(0, "401"));
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
@@ -645,6 +657,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         runner.enqueue(shellResult(0, "container-b\ncontainer-a\n"));
         runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_REBUILD_MARKER"));
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
+        runner.enqueue(providerMetadata());
         runner.enqueue(shellResult(0)); // restore valid provider credential
         runner.enqueue(shellResult(0, "200"));
         runner.enqueue(shellResult(0, "rebuild complete"));
@@ -703,17 +716,66 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
         );
         expect(providerUpdates).toHaveLength(2);
-        expect(providerUpdates[0].args).toContain(nativeProvider.providerName);
-        const baselineProbe = runner.calls.find(
-          (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
-        );
-        expect(baselineProbe?.args).toContain(options.endpoint);
-        expect(baselineProbe?.args.join(" ")).not.toContain("inference.local");
+        expect(providerUpdates.map((call) => call.args[4])).toEqual([
+          definition.providerName,
+          definition.providerName,
+        ]);
         const invalidCredential = providerUpdates[0].options?.env?.COMPATIBLE_API_KEY;
         expect(invalidCredential).toMatch(/^nvapi-e2e-invalid-/);
         expect(providerUpdates[0].args).not.toContain(invalidCredential);
         expect(providerUpdates[0].options?.redactionValues).toContain(invalidCredential);
         expect(providerUpdates[1].options?.env?.COMPATIBLE_API_KEY).toBe(validCredential);
+        const probe = runner.calls.find(
+          (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
+        )!;
+        expect(probe.command).toBe("openshell");
+        expect(probe.args.slice(0, 6)).toEqual([
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+        ]);
+        expect(probe.args).toContain(options.endpoint);
+        expect(probe.args.join(" ")).not.toContain("inference.local");
+        // Execute the shell payload after the sandbox wrapper and managed launcher.
+        const command = probe.args.slice(6);
+        const fakeCurl = path.join(home, "curl");
+        fs.writeFileSync(fakeCurl, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n", { mode: 0o700 });
+        const handle = "openshell:resolve:env:s" + "a".repeat(64) + "_COMPATIBLE_API_KEY";
+        const probeRun = spawnSync(command[0], command.slice(1), {
+          encoding: "utf8",
+          env: { PATH: `${home}:/usr/bin:/bin`, COMPATIBLE_API_KEY: handle },
+        });
+        expect(probeRun.status).toBe(0);
+        const probeArgs = probeRun.stdout.split("\0").filter(Boolean);
+        expect(probeArgs).toEqual([
+          "-q",
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "15",
+          "-H",
+          "Content-Type: application/json",
+          "-H",
+          `Authorization: Bearer ${handle}`,
+          "--data-binary",
+          JSON.stringify({
+            model: options.model,
+            max_tokens: 8,
+            messages: [{ role: "user", content: "Reply with OK" }],
+            stream: false,
+          }),
+          options.endpoint,
+        ]);
+        expect(probe.options?.timeoutMs).toBe(25_000);
+        expect(probe.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
         const rebuild = runner.calls.find(
           (call) =>
             call.command === "nemoclaw" &&
@@ -831,7 +893,12 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         options,
       ),
     ).rejects.toThrow(/gateway's only sandbox/);
-    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls).toEqual([
+      expect.objectContaining({
+        command: "openshell",
+        args: ["sandbox", "list", "--names", "--page-size", "2", "-g", "nemoclaw"],
+      }),
+    ]);
     expect(cleanup.calls).toHaveLength(0);
   });
 
@@ -842,7 +909,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     try {
       const runner = new FakeRunner();
       enqueuePreamble(runner);
+      runner.enqueue(providerMetadata());
       runner.enqueue(shellResult(1, "invalid provider update failed"));
+      runner.enqueue(providerMetadata());
       runner.enqueue(shellResult(1, "valid provider restoration failed"));
       const cleanup = new FakeCleanup();
 
@@ -868,9 +937,12 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   it("derives only the expected DCode compatible-endpoint binding", () => {
     expect(options).toEqual({
       gatewayName: "nemoclaw",
-      providerName: nativeProvider.providerName,
-      credentialEnv: "COMPATIBLE_API_KEY",
+      providerName: definition.providerName,
+      providerId: "dcode-owned-provider",
+      profileId: definition.profileId,
+      endpointUrl: definition.endpoint,
       endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
       model: "nvidia/nvidia/nemotron-3-ultra",
       validCredential,
     });
@@ -895,18 +967,109 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         },
         validCredential,
       ),
-    ).toThrow(/attached native completion provider/);
+    ).toThrow(/native hosted provider attachment/);
     expect(() =>
       dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
         {
-          agent: "langchain-deepagents-code",
-          gatewayName: "nemoclaw",
-          provider: "compatible-endpoint",
-          model: "nvidia/model",
-          nativeHostedProviderAttachment: { ...attachment, providerName: "wrong-provider" },
+          ...entry,
+          nativeHostedProviderAttachment: {
+            ...nativeHostedProviderAttachment,
+            providerName: "wrong-provider",
+          },
         },
         validCredential,
       ),
     ).toThrow(/native hosted provider attachment/);
+  });
+
+  it.each([
+    { nativeHostedProviderAttachment: undefined },
+    {
+      nativeHostedProviderAttachment: {
+        ...nativeHostedProviderAttachment,
+        providerName: "compatible-endpoint",
+      },
+    },
+    { nativeHostedProviderAttachment: { ...nativeHostedProviderAttachment, providerId: "" } },
+    {
+      nativeHostedProviderAttachment: {
+        ...nativeHostedProviderAttachment,
+        endpointUrl: "https://other.example/v1",
+      },
+    },
+    { nativeLocalProviderAttachment: {} },
+    { credentialEnv: "OTHER_API_KEY" },
+  ])("rejects a changed or missing native credential owner: %j", (change) => {
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        { ...entry, ...change },
+        validCredential,
+      ),
+    ).toThrow(/requires/);
+  });
+
+  it("refuses credential mutation and restoration when the provider identity changes", async () => {
+    const runner = new FakeRunner();
+    enqueuePreamble(runner);
+    runner.enqueue(providerMetadata("replacement-id"));
+    runner.enqueue(providerMetadata("replacement-id"));
+    const cleanup = new FakeCleanup();
+    await expect(
+      fixture(runner, cleanup).simulate(
+        "dcode-rebuild-invalid-credential",
+        dcodeInstance(),
+        options,
+      ),
+    ).rejects.toThrow(AggregateError);
+    expect(
+      runner.calls.filter((call) => call.args[0] === "provider" && call.args[1] === "update"),
+    ).toHaveLength(0);
+    expect(cleanup.calls).toHaveLength(1);
+  });
+
+  it.each([
+    "",
+    "valid-fixture-credential",
+    "openshell:resolve:env:v1_COMPATIBLE_API_KEY\n",
+    "openshell:resolve:env:v1_COMPATIBLE_API_KEY\r\nInjected: x",
+  ])("rejects an empty, raw, or multiline sandbox credential: %j", async (credential) => {
+    const runner = new FakeRunner();
+    enqueuePreamble(runner);
+    runner.enqueue(providerMetadata("replacement-id"));
+    runner.enqueue(providerMetadata("replacement-id"));
+    await expect(
+      fixture(runner, new FakeCleanup()).simulate(
+        "dcode-rebuild-invalid-credential",
+        dcodeInstance(),
+        options,
+      ),
+    ).rejects.toThrow(AggregateError);
+    const probe = runner.calls.find(
+      (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
+    )!;
+    expect(probe.command).toBe("openshell");
+    expect(probe.args.slice(0, 6)).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      sandboxName,
+      "--",
+      "/usr/local/lib/nemoclaw/dcode-managed-exec",
+    ]);
+    const command = probe.args.slice(6);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-probe-denial-"));
+    try {
+      fs.writeFileSync(path.join(directory, "curl"), "#!/bin/sh\necho unexpected-curl\n", {
+        mode: 0o700,
+      });
+      const denied = spawnSync(command[0], command.slice(1), {
+        encoding: "utf8",
+        env: { PATH: `${directory}:/usr/bin:/bin`, COMPATIBLE_API_KEY: credential },
+      });
+      expect(denied.status).toBe(2);
+      expect(denied.stdout).toBe("");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

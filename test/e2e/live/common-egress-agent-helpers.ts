@@ -436,6 +436,18 @@ export function reduceOpenClawToolEvidence(
     }
     return null;
   };
+  const diagnosticStatusFrom = (payload: Record<string, unknown> | null): number | undefined => {
+    const status = payload?.status;
+    // OpenClaw's tool adapter serializes non-2xx fetch errors in this fixed prefix.
+    // Read only the status, never the response detail following the colon.
+    const errorStatus =
+      payload?.status === "error" &&
+      payload.tool === "web_fetch" &&
+      typeof payload.error === "string"
+        ? /^Web fetch failed \(([1-5][0-9]{2})\):/u.exec(payload.error.slice(0, 32))?.[1]
+        : undefined;
+    return typeof status === "number" ? status : errorStatus ? Number(errorStatus) : undefined;
+  };
   const expectedUrl = normalizedUrl(expectedFetch?.url);
   const expectedContent =
     typeof expectedFetch?.content === "string" &&
@@ -445,17 +457,20 @@ export function reduceOpenClawToolEvidence(
       : null;
   const trajectoryDocuments = parseJsonLines(trajectoryJsonLines, "trajectory");
   const projectedMessages: unknown[] = [];
+  let projectedRunId: string | null = null;
   for (const document of trajectoryDocuments) {
     const root = asRecord(document);
     if (root?.type !== "model.completed") continue;
     const data = asRecord(root.data);
     if (!Array.isArray(data?.messagesSnapshot)) continue;
+    projectedRunId = normalizedId(root.runId);
     projectedMessages.splice(0, projectedMessages.length, ...data.messagesSnapshot);
   }
 
   const toolCalls: OpenClawToolRecord[] = [];
   const sessionDocuments = parseJsonLines(sessionJsonLines, "session");
   const allowedWrapperIdParts = new Set<string>();
+  const allowedWrapperIds = new Set<string>();
   const controlTargetViolationIds = new Set<string>();
   const sessionCallIds = new Set<string>();
   const sessionToolNames = new Set<string>();
@@ -495,11 +510,77 @@ export function reduceOpenClawToolEvidence(
         controlTargetViolationIds.add(id);
       }
       if (name === "tool_call" && allowedControlTarget) {
+        allowedWrapperIds.add(id);
         allowedWrapperIdParts.add(sanitizeToolCallIdPart(id));
       }
     }
   }
+  const readProjectedWrapperIds = (): Set<string> => {
+    const ids = new Set<string>();
+    for (const document of projectedMessages) {
+      const root = asRecord(document);
+      const message = asRecord(root?.message ?? document);
+      if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+      for (const value of message.content) {
+        const block = asRecord(value);
+        const id = normalizedId(block?.id ?? block?.toolCallId ?? block?.tool_call_id);
+        if (
+          block?.type === "toolCall" &&
+          normalizedName(block.name) === "tool_call" &&
+          id &&
+          isAllowedWebFetchControlTarget(block.arguments ?? block.input ?? block.args)
+        ) {
+          ids.add(id);
+        }
+      }
+    }
+    return ids;
+  };
+  const projectedWrapperIds = readProjectedWrapperIds();
+  const nestedMessages: unknown[] = [];
   const projectedTargetCallIds = new Set<string>();
+  for (const document of sessionDocuments) {
+    const root = asRecord(document);
+    const message = asRecord(root?.message ?? document);
+    if (message?.customType !== "openclaw.nested-tool.v1") continue;
+    const details = asRecord(message.details);
+    const result = asRecord(details?.result);
+    const parentId = normalizedId(details?.parentToolCallId);
+    const id = normalizedId(details?.toolCallId);
+    const name = normalizedName(details?.toolName);
+    const prefix =
+      parentId && name ? `tool_search_code:${sanitizeToolCallIdPart(parentId)}:${name}:` : "";
+    if (
+      message.role !== "custom" ||
+      message.display !== true ||
+      message.excludeFromContext !== true ||
+      !details ||
+      !result ||
+      !Array.isArray(result.content) ||
+      typeof details.isError !== "boolean" ||
+      !projectedRunId ||
+      normalizedId(details.runId) !== projectedRunId ||
+      !parentId ||
+      !allowedWrapperIds.has(parentId) ||
+      !projectedWrapperIds.has(parentId) ||
+      !id ||
+      !name ||
+      !id.startsWith(prefix) ||
+      !/^[1-9][0-9]*$/u.test(id.slice(prefix.length))
+    ) {
+      addError("nested tool evidence has invalid correlation or result");
+      continue;
+    }
+    if (nestedMessages.length >= MAX_RECORDS * 2) {
+      addError("nested tool record limit exceeded");
+      break;
+    }
+    nestedMessages.push(
+      { role: "assistant", content: [{ type: "toolCall", id, name, arguments: details.input }] },
+      { ...result, role: "toolResult", toolCallId: id, toolName: name, isError: details.isError },
+    );
+    if (name === "web_fetch") projectedTargetCallIds.add(id);
+  }
   for (const document of projectedMessages) {
     const root = asRecord(document);
     const message = asRecord(root?.message ?? document);
@@ -518,14 +599,13 @@ export function reduceOpenClawToolEvidence(
       if (associated) projectedTargetCallIds.add(id);
     }
   }
-  // Progressive Tool Search persists the model-visible control calls in the
-  // session, then projects each invoked target tool into the final trajectory
-  // snapshot. Prefer the complete projection whenever present so result
-  // content remains available before session persistence truncates it. Only a
-  // paired web_fetch target whose generated ID binds to an allowed native
-  // wrapper grants the control-tool exemption; direct-disclosure sessions
-  // remain web_fetch-only.
-  const proofMessages = projectedMessages.length > 0 ? projectedMessages : sessionDocuments;
+  // OpenClaw 2026.9.2 stores nested results outside model snapshots. Bind those
+  // records to the current run and an allowed wrapper before reducing them.
+  // A paired target result is still required for the control-tool exemption.
+  const proofMessages = [
+    ...(projectedMessages.length > 0 ? projectedMessages : sessionDocuments),
+    ...nestedMessages,
+  ];
   const callsById = new Map<
     string,
     {
@@ -605,16 +685,7 @@ export function reduceOpenClawToolEvidence(
     const boundedPayloadText =
       typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
     const status = payload?.status;
-    // OpenClaw's tool adapter serializes non-2xx fetch errors in this fixed prefix.
-    // Read only the status, never the response detail following the colon.
-    const errorStatus =
-      payload?.status === "error" &&
-      payload.tool === "web_fetch" &&
-      typeof payload.error === "string"
-        ? /^Web fetch failed \(([1-5][0-9]{2})\):/u.exec(payload.error.slice(0, 32))?.[1]
-        : undefined;
-    const diagnosticStatus =
-      typeof status === "number" ? status : errorStatus ? Number(errorStatus) : undefined;
+    const diagnosticStatus = diagnosticStatusFrom(payload);
     const paired = call?.name === "web_fetch" && resultName === "web_fetch";
     if (paired && callId && projectedTargetCallIds.has(callId)) {
       pairedProjectedTargetCallIds.add(callId);

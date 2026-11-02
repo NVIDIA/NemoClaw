@@ -123,6 +123,7 @@ export async function preflightRebuildTargetHostCredential(
   target: RebuildTargetConfig,
   bail: RebuildBail,
 ): Promise<boolean> {
+  if (target.resumeConfig.registeredInferenceProviderAttachment) return true;
   const credentialEnv = target.credentialEnv;
   return preflightRebuildHostCredential(
     { ...target.resumeConfig, credentialEnv },
@@ -304,6 +305,7 @@ export async function preflightAuthoritativeOnboardRuntime(
       ...recreateOptions,
       ...options,
       agent: resumeConfig.agent,
+      registeredInferenceProviderAttachment: resumeConfig.registeredInferenceProviderAttachment,
       nativeLocalProviderAttachment: resumeConfig.nativeLocalProviderAttachment,
       model: resumeConfig.model,
       provider: resumeConfig.provider,

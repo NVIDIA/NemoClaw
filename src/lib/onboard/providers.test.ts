@@ -733,3 +733,11 @@ describe("onboard provider helpers", () => {
     ]);
   });
 });
+
+it("supplies the persisted native local authority owner to production onboarding", () => {
+  const owner = require("../state/registry/native-local-provider-authority");
+  const providers = require("./providers");
+  const deps = providers.setupInferenceProviderDeps(() => ({ status: 1 }));
+  expect(deps.getNativeLocalProviderAuthority).toBe(owner.getNativeLocalProviderAuthority);
+  expect(deps.setNativeLocalProviderAuthority).toBe(owner.setNativeLocalProviderAuthority);
+});

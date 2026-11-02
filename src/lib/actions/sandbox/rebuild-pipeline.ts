@@ -62,6 +62,7 @@ import {
   assertSandboxRebuildCommandAvailable,
   revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
+  revalidateRebuildHostCredentialBeforeDelete,
 } from "./rebuild-preflight-guards";
 import {
   runHermesCronRestoreBackupPreflight,
@@ -77,8 +78,8 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
-  validateRebuildHostInferenceCredential,
   verifyRebuildNativeLocalProviderBeforeDelete,
+  verifyRebuildRegisteredProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -846,34 +847,22 @@ async function rebuildSandboxUnlocked(
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
-          const hostCredential = resumeConfig.credentialEnv
-            ? hydrateCredentialEnv(resumeConfig.credentialEnv)
-            : null;
-          let indeterminate = false;
-          const valid =
-            !hostCredential ||
-            (await validateRebuildHostInferenceCredential(
-              resumeConfig,
-              hostCredential,
-              undefined,
-              () => {
-                indeterminate = true;
-              },
-            ));
-          if (!valid) {
-            return {
-              ok: false,
-              message: indeterminate
-                ? "NVIDIA upstream inference was temporarily unavailable before sandbox deletion. The sandbox is untouched; retry rebuild when inference recovers."
-                : "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
-            };
-          }
+          const hostCredential =
+            !resumeConfig.registeredInferenceProviderAttachment && resumeConfig.credentialEnv
+              ? hydrateCredentialEnv(resumeConfig.credentialEnv)
+              : null;
+          const hostCredentialCheck = await revalidateRebuildHostCredentialBeforeDelete(
+            resumeConfig,
+            hostCredential,
+          );
+          if (!hostCredentialCheck.ok) return hostCredentialCheck;
           const nativeAttachment =
             resumeConfig.nativeNvidiaProviderAttachment ??
             resumeConfig.nativeHostedProviderAttachment;
           if (
             !recreateOptions.rebuildProviderReconfigure &&
             resumeConfig.nativeLocalProviderAttachment === undefined &&
+            resumeConfig.registeredInferenceProviderAttachment === undefined &&
             resumeConfig.provider &&
             (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
           ) {
@@ -939,6 +928,21 @@ async function rebuildSandboxUnlocked(
               };
             }
           })();
+          if (
+            policyValidation.ok &&
+            resumeConfig.registeredInferenceProviderAttachment !== undefined &&
+            !(await verifyRebuildRegisteredProviderBeforeDelete(
+              sandboxName,
+              recreateOptions.targetGatewayName,
+              resumeConfig,
+              runtimeSelection,
+            ))
+          ) {
+            return {
+              ok: false,
+              message: "Registered provider binding changed before sandbox deletion.",
+            };
+          }
           if (!policyValidation.ok || resumeConfig.nativeLocalProviderAttachment === undefined)
             return policyValidation;
           if (

@@ -16,7 +16,7 @@ import { prepareExactMainDriverConfigProof } from "./openshell-exact-main-driver
 import { assertExactMainOpenShellContracts } from "./openshell-exact-main-exec.ts";
 import {
   assertExactMainMcpLogPrivacy,
-  assertExactMainPolicyNftAndIdentityContracts,
+  assertExactMainPolicyAndIdentityContracts,
 } from "./openshell-exact-main-runtime-contracts.ts";
 
 const DCODE_MCP_SNAPSHOT_TMPFS = "/run/nemoclaw-dcode-mcp";
@@ -44,49 +44,20 @@ else:
     raise AssertionError("OpenShell did not block memfd_create")
 
 payload = b'{"mcpServers":{"proof":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer openshell:resolve:env:PROOF_TOKEN"}}}}' + bytes([10])
-real_open = managed.os.open
-opened_directories = []
-
-def reject_primary_tmpfile(path, flags, *args, **kwargs):
-    if flags & os.O_TMPFILE:
-        directory = Path(path)
-        opened_directories.append(directory)
-        if directory == managed._MCP_ANONYMOUS_DIRECTORY:
-            raise OSError(errno.EOPNOTSUPP, "O_TMPFILE unavailable for primary snapshot directory")
-    return real_open(path, flags, *args, **kwargs)
-
-managed.os.open = reject_primary_tmpfile
-try:
-    descriptor, binding = managed._managed_mcp_snapshot(payload)
-finally:
-    managed.os.open = real_open
-
-assert opened_directories == [
-    managed._MCP_ANONYMOUS_DIRECTORY,
-    managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY,
-]
-snapshot_path = f"/proc/self/fd/{descriptor}"
+# Fallback selection and digest-tampering behavior belong to the Linux integration tests.
+# Exercise the real private tmpfs and descriptor boundary without injected filesystem errors.
+managed._validate_private_managed_mcp_tmpfs()
+descriptor = managed._anonymous_managed_mcp_snapshot_at(
+    payload, managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY
+)
+binding = managed._managed_mcp_binding(descriptor, payload, managed._MCP_ANONYMOUS_KIND)
 try:
     metadata = os.fstat(descriptor)
-    assert binding["kind"] == managed._MCP_ANONYMOUS_KIND
     assert metadata.st_nlink == 0
     assert stat.S_IMODE(metadata.st_mode) == 0
     assert fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
     assert managed._read_bound_managed_mcp_descriptor(descriptor, binding) == payload
 
-    os.fchmod(descriptor, 0o600)
-    writer = os.open(snapshot_path, os.O_RDWR | os.O_CLOEXEC)
-    try:
-        os.pwrite(writer, b"!" + payload[1:], 0)
-    finally:
-        os.close(writer)
-    os.fchmod(descriptor, 0)
-    try:
-        managed._read_bound_managed_mcp_descriptor(descriptor, binding)
-    except RuntimeError as exc:
-        assert "contents changed" in str(exc)
-    else:
-        raise AssertionError("same-size anonymous snapshot tampering was accepted")
 finally:
     os.close(descriptor)
 
@@ -139,7 +110,7 @@ export function prepareExactMainMcpProof(
         await assertDcodeMcpSnapshotPlatformContract(sandbox, sandboxName, "after-onboard");
       }
       await assertExactMainOpenShellContracts(host, sandboxName);
-      await assertExactMainPolicyNftAndIdentityContracts({
+      await assertExactMainPolicyAndIdentityContracts({
         artifacts,
         cleanup,
         host,

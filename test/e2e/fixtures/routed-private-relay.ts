@@ -11,6 +11,7 @@ import path from "node:path";
 import { isOperatorTrustablePrivateIp } from "../../../src/lib/security/trusted-private-endpoint.ts";
 import { assertExitZero } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
+import { discoverHostInterfaceAddress } from "./host-address.ts";
 import { RuntimeProviderPrerequisite } from "./runtime-provider.ts";
 
 const RELAY_PORT = 8443;
@@ -95,9 +96,7 @@ export async function startRoutedPrivateRelay(options: {
   upstreamHost: string;
   upstreamPort: number;
 }): Promise<RoutedPrivateRelay> {
-  const runtime = new RuntimeProviderPrerequisite(options.host, (reason) => {
-    throw new Error(reason);
-  });
+  const runtime = new RuntimeProviderPrerequisite(options.host);
   const sandboxHandle = await runtime.resolveSandboxResourceHandle(options.sandboxName, {
     artifactName: "routed-private-relay-sandbox-resource",
     timeoutMs: 30_000,
@@ -110,6 +109,22 @@ export async function startRoutedPrivateRelay(options: {
   const networkNames = Object.keys(JSON.parse(networks.stdout) as Record<string, unknown>);
   assert.equal(networkNames.length, 1, "sandbox must have one exact runtime network");
   const networkName = networkNames[0] as string;
+  if (networkName === "none") {
+    // OpenShell 0.1.3 isolates the workload network and runs its supervisor on
+    // the host network. The caller's HTTPS fixture already listens on 0.0.0.0;
+    // retain its authentication and diagnostics without creating another relay.
+    const { address } = await discoverHostInterfaceAddress(
+      options.host,
+      "routed-private-host-address",
+    );
+    assert.equal(
+      isOperatorTrustablePrivateIp(address),
+      true,
+      "host listener must use an operator-trustable private address",
+    );
+    // The caller owns the existing listener and its cleanup.
+    return Object.freeze({ address, port: options.upstreamPort, close: async () => {} });
+  }
   const relayName = `nemoclaw-private-relay-${process.pid}-${randomBytes(4).toString("hex")}`;
   const snapshot = async (phase: string): Promise<void> => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "nemoclaw-relay-snapshot-")).catch(

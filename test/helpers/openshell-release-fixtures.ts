@@ -13,16 +13,16 @@ export const CANDIDATE_RUNTIME = {
 export const CANDIDATE_RUNTIME_ENABLED = Object.values(CANDIDATE_RUNTIME).every(Boolean);
 
 export const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22",
-  cliLinuxArm64: "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43",
-  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
-  formula: "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
-  gatewayDarwinArm64: "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d",
-  gatewayLinuxArm64: "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b",
-  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
-  sandboxLinuxArm64: "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557",
-  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
-  sandboxBinaryLinuxX64: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40",
+  cliDarwinArm64: "48d6f4b4a222dc0a120ee4d6a677cb931bcc57f9ac54aefb101588f99c9c7642",
+  cliLinuxArm64: "30c949b4ac07a9c8245c1248eb82e4eb241615134fcabf3c9bf30dec7d00addf",
+  cliLinuxX64: "ca1ad6e6fbb4a6cd407e95763391b8ecff02912e7d9c467e7ca22696fe80af69",
+  formula: "6b197da850a299774114d517a45cffd3f3259c9aa1a49faae28ec9d8e02a757a",
+  gatewayDarwinArm64: "8e6fd1b05999709a9042ec83fcd902e062507af3e817f28bcda181fb93b42e7a",
+  gatewayLinuxArm64: "125f9f43b8d06da8280c78089904a6da2faa7c4cb03f82db3b31fc980cf6c62d",
+  gatewayLinuxX64: "6ed6a6aff420c65250082cc1db48dc6271a6f5eec0e0068133566ffae4aa788b",
+  sandboxLinuxArm64: "5d9b633c2f2b935af0193089828a38b88bce74c1c94e7eab69329c86130dbcfb",
+  sandboxLinuxX64: "e7a67e0254a19b829171d5bb1b5c9e00a3ea98411d941c9c99ad6d8fd7e181b5",
+  sandboxBinaryLinuxX64: "65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc",
 } as const;
 
 export const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -88,6 +88,8 @@ export const INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS = new Map([
   ["0.0.106", V00106_SUPERVISOR_MANIFEST_DIGEST],
   ["0.0.116", V00116_SUPERVISOR_MANIFEST_DIGEST],
   ["0.1.2", V012_SUPERVISOR_MANIFEST_DIGEST],
+  ["0.1.3", "sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4"],
+  ["0.1.5", "sha256:fabcd01f656e9d23df4386f82e80b4f48b90f3452d7d5c58889007643a069161"],
   ["9.9.9", `sha256:${"c".repeat(64)}`],
 ]);
 
@@ -517,6 +519,7 @@ export const V012_TEMPLATE_DIGESTS = new Map<string, readonly string[]>([
     [
       "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
       "610fa58bc4242f23e6ce5e22444dd595995c5a9466bf406a34e5a548869377bc",
+      "4d5970db104adeddcb90e38ff13f482c5e41e47897007c14b181c5ab2c3f9ff2",
     ],
   ],
   [

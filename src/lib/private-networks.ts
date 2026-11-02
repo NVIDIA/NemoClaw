@@ -19,7 +19,7 @@ import type {
   PrivateNetworkMatcher,
 } from "../../nemoclaw/dist/shared/private-networks-boundary.cjs";
 
-import { ROOT } from "./runner";
+import { ROOT } from "./state/paths";
 
 const NETWORKS_FILE = path.join(ROOT, "nemoclaw-blueprint", "private-networks.yaml");
 

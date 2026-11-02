@@ -16,6 +16,8 @@ import {
 import type { StartedHttpServer } from "./mcp-bridge-servers.ts";
 
 export interface RuntimeIdentityTokenRequest {
+  readonly sequence: number;
+  readonly receivedAt: string;
   readonly method: string;
   readonly path: string;
   readonly grantTypeOk: boolean;
@@ -33,17 +35,10 @@ export interface RuntimeIdentityResourceRequest {
 }
 
 export interface RuntimeIdentityOAuthServer extends StartedHttpServer {
+  readonly certificate: Buffer;
   tokenRequests(): readonly RuntimeIdentityTokenRequest[];
   resourceRequests(): readonly RuntimeIdentityResourceRequest[];
   secretValues(): readonly string[];
-}
-
-function requireTcpPort(server: https.Server): number {
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("runtime identity OAuth fixture did not bind to a TCP port");
-  }
-  return address.port;
 }
 
 function generateEphemeralTlsMaterial(): {
@@ -67,6 +62,8 @@ function generateEphemeralTlsMaterial(): {
       "1",
       "-subj",
       "/CN=nemoclaw-runtime-identity-e2e",
+      "-addext",
+      "subjectAltName=IP:127.0.0.1",
       "-keyout",
       keyPath,
       "-out",
@@ -130,6 +127,7 @@ export async function startRuntimeIdentityOAuthServer(options: {
   let currentRefreshToken = refreshTokens[0];
   let currentAccessToken: string | undefined;
   let issueCount = 0;
+  let tokenRequestSequence = 0;
   const resourcePath = options.resourcePath ?? "/resource";
   const tokenPath = options.tokenPath ?? "/oauth/token";
 
@@ -145,6 +143,10 @@ export async function startRuntimeIdentityOAuthServer(options: {
     }
 
     if (req.method === "POST" && requestPath === tokenPath) {
+      // Capture arrival before reading the body so a slow request cannot appear
+      // to start after a later blueprint operation. Never retain the raw form.
+      const receivedAt = new Date().toISOString();
+      const sequence = ++tokenRequestSequence;
       const body = new URLSearchParams(await readRequestBody(req));
       const grantTypeOk = body.get("grant_type") === "refresh_token";
       const clientIdOk = body.get("client_id") === options.clientId;
@@ -153,6 +155,8 @@ export async function startRuntimeIdentityOAuthServer(options: {
       const accepted = grantTypeOk && clientIdOk && refreshTokenOk && clientSecretOk;
       const nextVersion = accepted && issueCount < accessTokens.length ? issueCount + 1 : null;
       tokenRequests.push({
+        sequence,
+        receivedAt,
         method: req.method,
         path: requestPath,
         grantTypeOk,
@@ -215,9 +219,10 @@ export async function startRuntimeIdentityOAuthServer(options: {
     writeJsonResponse(res, 404, { error: "not found" });
   });
 
-  await listenOnRandomPort(server);
+  const port = await listenOnRandomPort(server);
   return {
-    port: requireTcpPort(server),
+    port,
+    certificate: tls.cert,
     tokenRequests: () => tokenRequests,
     resourceRequests: () => resourceRequests,
     secretValues: () => [options.clientId, options.clientSecret, ...accessTokens, ...refreshTokens],

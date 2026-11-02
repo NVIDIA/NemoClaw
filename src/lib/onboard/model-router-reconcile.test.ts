@@ -4,6 +4,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { reconcileModelRouter } from "./model-router";
+import {
+  probeHostServiceSandboxReachability,
+  formatHostServiceUnreachableMessage,
+} from "./host-service-reachability";
 import { saveCredential } from "../credentials/store";
 
 const RECORDED_ROUTER_PID = 4321;
@@ -73,7 +77,9 @@ vi.mock("./host-service-reachability", () => ({
     holder.reachabilityProbes += 1;
     return { ok: true };
   }),
-  formatHostServiceUnreachableMessage: () => "",
+  formatHostServiceUnreachableMessage: vi.fn(
+    () => "Inspect the selected bridge and its firewall rules.",
+  ),
 }));
 
 describe("model router reconciliation", () => {
@@ -99,6 +105,48 @@ describe("model router reconciliation", () => {
     expect(holder.reachabilityProbes).toBe(1);
     expect(holder.updatedRouterPorts).toEqual([]);
   });
+
+  it("reuses a healthy native router when the historical Docker bridge is blocked", async () => {
+    holder.snapshotBody = JSON.stringify({ healthy_endpoints: [{}] });
+    vi.mocked(probeHostServiceSandboxReachability).mockImplementationOnce(async (options) => {
+      // Native supervisor capability is supplied by the runtime provider. A
+      // bridge-only probe would report the stale UFW failure for this host.
+      return (options as { nativeSupervisorNetwork?: boolean }).nativeSupervisorNetwork
+        ? { ok: true, reason: "ok", networkName: "host", gatewayIp: "127.0.0.1" }
+        : {
+            ok: false,
+            reason: "tcp_failed",
+            networkName: "openshell-cluster-nemoclaw",
+            detail: "UFW blocks bridge",
+          };
+    });
+    await expect(reconcileModelRouter()).resolves.toBeUndefined();
+    expect(probeHostServiceSandboxReachability).toHaveBeenCalledWith({
+      port: 4000,
+      nativeSupervisorNetwork: true,
+    });
+    expect(holder.stopped).toEqual([]);
+  });
+
+  it.each([
+    ["host", "  Check that Model Router listens on 127.0.0.1:4000 for the native supervisor.", 0],
+    ["openshell-cluster-nemoclaw", "Inspect the selected bridge and its firewall rules.", 1],
+  ] as const)(
+    "reports the correct repair for unreachable %s routing",
+    async (networkName, message, bridgeCalls) => {
+      holder.snapshotBody = JSON.stringify({ healthy_endpoints: [{}] });
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(probeHostServiceSandboxReachability).mockResolvedValueOnce({
+        ok: false,
+        reason: "tcp_failed",
+        networkName,
+      });
+      await expect(reconcileModelRouter()).rejects.toThrow("cannot reach the Model Router");
+      expect(error).toHaveBeenCalledWith(message);
+      expect(formatHostServiceUnreachableMessage).toHaveBeenCalledTimes(bridgeCalls);
+      expect(holder.stopped).toEqual([]);
+    },
+  );
 
   it("backfills the cleanup port when reusing a legacy router session", async () => {
     holder.routerPort = null;

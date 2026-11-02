@@ -524,3 +524,10 @@ process.exit(result.status ?? 1);
     }
   },
 );
+
+it("reserves capacity for every concurrent stopped-state copy", () => {
+  expect(sandboxState.nativeStateCaptureMaxBytes(testHome, 1024, 2)).toBe(512);
+  expect(() => sandboxState.nativeStateCaptureMaxBytes(testHome, 1024, 0)).toThrow(
+    "concurrent-copy count must be a positive integer",
+  );
+});

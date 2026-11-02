@@ -123,7 +123,7 @@ COPY agents/pi/generate-config.ts agents/pi/check-native-credentials.ts /opt/nem
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/endpoint-url-safety.ts
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/agent-config.ts
 COPY src/lib/inference/native-nvidia/contract.ts /src/lib/inference/native-nvidia/contract.ts
-COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts /src/lib/inference/native-provider/
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/pi/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
@@ -147,21 +147,11 @@ ARG NEMOCLAW_REASONING=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
-ARG NEMOCLAW_PROXY_HOST=10.200.0.1
-ARG NEMOCLAW_PROXY_PORT=3128
 
 RUN case "$NEMOCLAW_INFERENCE_API" in \
         openai-completions) ;; \
         *) echo "ERROR: NEMOCLAW_INFERENCE_API must be openai-completions for Pi" >&2; exit 1 ;; \
     esac
-
-# The startup script reads the root-owned proxy host and port files instead of
-# trusting process-level environment overrides.
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
-    && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/pi-proxy-host \
-    && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/pi-proxy-port \
-    && chown root:root /usr/local/share/nemoclaw/pi-proxy-host /usr/local/share/nemoclaw/pi-proxy-port \
-    && chmod 0444 /usr/local/share/nemoclaw/pi-proxy-host /usr/local/share/nemoclaw/pi-proxy-port
 
 # hadolint ignore=DL3064
 ENV HOME=/sandbox \

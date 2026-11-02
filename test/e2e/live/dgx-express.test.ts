@@ -5,9 +5,15 @@
 
 import assert from "node:assert/strict";
 
+import { normalizeNativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
+import {
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
-import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import {
@@ -30,7 +36,7 @@ import {
 } from "../support/spark-express-vllm-safety.ts";
 import {
   cleanupSandbox,
-  expectOpenAiChatThroughSandbox,
+  openAiContent,
   requireLivePrerequisites,
 } from "./inference-routing-helpers.ts";
 
@@ -371,18 +377,7 @@ test(
     expect(inspection.HostConfig.IpcMode).toBe(plan.recipe.spec.runtime.ipcMode);
     expect(inspection.HostConfig.ShmSize).toBe(plan.recipe.spec.runtime.sharedMemoryBytes);
     const portBindings = inspection.HostConfig.PortBindings["8000/tcp"];
-    expect(portBindings).toHaveLength(2);
-    expect(portBindings).toContainEqual({ HostIp: "127.0.0.1", HostPort: "8000" });
-    expect(portBindings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          HostIp: expect.stringMatching(/^(?!127\.0\.0\.1$)(?!0\.0\.0\.0$).+/u),
-          HostPort: "8000",
-        }),
-      ]),
-    );
-    const bridgeBinding = portBindings.find(({ HostIp }) => HostIp !== "127.0.0.1");
-    expect(bridgeBinding?.HostIp).toBe(resolveManagedVllmBridgeHost());
+    expect(portBindings).toEqual([{ HostIp: "127.0.0.1", HostPort: "8000" }]);
     expect(inspection.HostConfig.DeviceRequests).toEqual(
       expect.arrayContaining([expect.objectContaining({ Count: -1, Capabilities: [["gpu"]] })]),
     );
@@ -397,26 +392,56 @@ test(
     );
 
     progress.phase("prove sandbox inference and unrelated egress denial");
-    await expectOpenAiChatThroughSandbox(
-      sandbox,
-      SANDBOX_NAME,
-      plan.recipe.spec.model.servedName,
-      [],
-      "spark-express-inference-local-chat",
+    const route = normalizeNativeLocalProviderAttachment(
+      getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment,
     );
-    const denied = await sandbox.execShell(
+    expect(
+      route?.sandboxName === SANDBOX_NAME &&
+        route.gatewayName === "nemoclaw" &&
+        route.agent === "openclaw" &&
+        route.provider === "vllm-local" &&
+        route.authMode === "authenticated" &&
+        route.credentialEnv === NATIVE_LOCAL_CREDENTIAL_ENV,
+      "The managed vLLM probe requires its authenticated native attachment.",
+    ).toBe(true);
+    const payload = JSON.stringify({
+      model: plan.recipe.spec.model.servedName,
+      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+      max_tokens: 1024,
+    });
+    const chat = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        "status=0; code=$(curl -sS -o /dev/null -w '%{http_connect}' --max-time 20 https://example.com/) || status=$?; printf '%s %s' \"$status\" \"$code\"",
+        `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; exec curl -sS --max-time 60 ${shellQuote(`${route!.endpointUrl}/chat/completions`)} -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data-raw ${shellQuote(payload)}`,
       ),
+      { artifactName: "spark-express-native-vllm-chat", env: e2eEnv(), timeoutMs: 90_000 },
+    );
+    expect(chat.exitCode, resultText(chat)).toBe(0);
+    expect(
+      openAiContent(JSON.parse(chat.stdout)),
+      "The native vLLM response has no chat content.",
+    ).not.toBe("");
+    const denied = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "curl",
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_connect}",
+        "--max-time",
+        "20",
+        "https://example.com/",
+      ],
       {
         artifactName: "spark-express-unrelated-egress-denied",
         env: e2eEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(denied.exitCode, resultText(denied)).toBe(0);
-    expect(denied.stdout.trim()).toBe("56 403");
+    expect(denied.exitCode, resultText(denied)).toBe(56);
+    expect(denied.stdout.trim()).toBe("403");
   },
 );
 

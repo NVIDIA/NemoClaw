@@ -545,7 +545,6 @@ def _install_fal_queue_handle_patch():
 
 
 _BROWSER_USE_CDP_TUNNEL_SCRIPT = r"""
-import base64
 import os
 import select
 import socket
@@ -557,8 +556,7 @@ from urllib.parse import urlparse
 
 remote_url = sys.argv[1]
 remote = urlparse(remote_url)
-proxy = urlparse(os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or "")
-if remote.scheme != "wss" or not remote.hostname or not proxy.hostname:
+if remote.scheme != "wss" or not remote.hostname:
     raise SystemExit(2)
 
 target_host = remote.hostname
@@ -566,7 +564,6 @@ target_port = remote.port or 443
 target_path = remote.path or "/"
 if remote.query:
     target_path += "?" + remote.query
-proxy_port = proxy.port or 8080
 idle_timeout = int(os.environ.get("NEMOCLAW_CDP_TUNNEL_IDLE_SECONDS", "600"))
 last_activity = time.monotonic()
 
@@ -584,24 +581,13 @@ def _read_headers(sock):
 
 
 def _connect_remote():
-    raw = socket.create_connection((proxy.hostname, proxy_port), timeout=15)
-    host_header = f"{target_host}:{target_port}"
-    lines = [
-        f"CONNECT {host_header} HTTP/1.1",
-        f"Host: {host_header}",
-    ]
-    if proxy.username:
-        user = proxy.username or ""
-        password = proxy.password or ""
-        token = base64.b64encode(f"{user}:{password}".encode()).decode()
-        lines.append(f"Proxy-Authorization: Basic {token}")
-    raw.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
-    response = _read_headers(raw)
-    first = response.split(b"\r\n", 1)[0]
-    if b" 200 " not in first:
-        raise OSError("proxy CONNECT failed")
-    context = ssl.create_default_context()
-    return context.wrap_socket(raw, server_hostname=target_host)
+    raw = socket.create_connection((target_host, target_port), timeout=15)
+    try:
+        context = ssl.create_default_context()
+        return context.wrap_socket(raw, server_hostname=target_host)
+    except Exception:
+        raw.close()
+        raise
 
 
 def _rewrite_request(data):
@@ -741,13 +727,10 @@ def _start_browser_use_cdp_tunnel(cdp_url):
 
 
 def _install_browser_cdp_tunnel_patch():
-    """Route Browser Use CDP sockets through OpenShell's HTTP proxy.
+    """Bridge Browser Use CDP through verified TLS under OpenShell network policy.
 
-    ``agent-browser`` can use the OpenShell proxy for ordinary HTTP requests,
-    but its native CDP websocket connector currently dials WSS endpoints
-    directly. Direct egress is blocked in the sandbox. Browser Use session
-    creation still goes through the Nous gateway; this tunnel only bridges the
-    returned short-lived CDP capability URL through the already-enforced proxy.
+    Session creation still uses the Nous gateway. Preserve the loopback bridge
+    for the returned capability URL and use the sandbox's configured CA trust.
     """
     if not _broker_mode_enabled():
         return False

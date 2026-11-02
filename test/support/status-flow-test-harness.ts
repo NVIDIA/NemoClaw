@@ -38,6 +38,7 @@ delete require.cache[requireDist.resolve(statusModulePath)];
 
 export type StatusFlowHarness = {
   checkAgentVersionSpy: MockInstance;
+  classifyGatewayFailureSpy: MockInstance;
   collectSandboxStatusSnapshotSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
@@ -139,6 +140,16 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 
   const statusPreflight = requireDist("../../src/lib/actions/sandbox/status-preflight.js");
+  const failureClassifier = requireDist(
+    "../../src/lib/actions/sandbox/gateway-failure-classifier.js",
+  );
+  // Status rendering consumes the classification; classifier tests own real probe behavior.
+  const classifyGatewayFailureSpy = vi
+    .spyOn(failureClassifier, "classifyGatewayFailure")
+    .mockResolvedValue({
+      layer: "gateway_unreachable",
+      detail: "The selected gateway is unreachable.",
+    });
   const statusSnapshot = requireDist("../../src/lib/actions/sandbox/status-snapshot.js");
   const dockerHealth = requireDist("../../src/lib/actions/sandbox/docker-health.js");
   const statusProcessRecovery = requireDist(
@@ -336,6 +347,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
 
   return {
     checkAgentVersionSpy,
+    classifyGatewayFailureSpy,
     collectSandboxStatusSnapshotSpy,
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,

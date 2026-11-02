@@ -4,9 +4,10 @@
 import { randomUUID } from "node:crypto";
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../../../../src/lib/actions/sandbox/connect-inference-route-probe.ts";
+import { parseCliOpenShellProviderMetadata } from "../../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
 import { nativeHostedAuthHeaderScript } from "../../../../src/lib/inference/native-provider/contract.ts";
 import { hostedNativeProviderForAttachment } from "../../../../src/lib/inference/native-provider/hosted-attachment.ts";
-import { recordedNativeProviderAttachment } from "../../../../src/lib/inference/native-provider/recorded-selection.ts";
+
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero, outputContainsReadySandbox, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
@@ -44,8 +45,12 @@ const NATIVE_STATE_CASES = [
 export interface DcodeInvalidCredentialRebuildOptions {
   gatewayName: string;
   providerName: string;
-  credentialEnv: string;
+  providerId: string;
+  profileId: string;
+  endpointUrl: string;
+  /** Fully resolved native completion endpoint, used only by the managed probe launcher. */
   endpoint: string;
+  credentialEnv: string;
   model: string;
   validCredential: string;
 }
@@ -80,10 +85,10 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
   if (!validCredential) {
     throw new Error("DCode invalid-credential lifecycle requires the original provider credential");
   }
-  const logicalProvider = requiredString(entry, "provider");
-  if (logicalProvider !== HOSTED_INFERENCE_PROVIDER_NAME) {
+  const providerName = requiredString(entry, "provider");
+  if (providerName !== HOSTED_INFERENCE_PROVIDER_NAME) {
     throw new Error(
-      `DCode invalid-credential lifecycle requires provider '${HOSTED_INFERENCE_PROVIDER_NAME}', got '${logicalProvider}'`,
+      `DCode invalid-credential lifecycle requires provider '${HOSTED_INFERENCE_PROVIDER_NAME}', got '${providerName}'`,
     );
   }
   const credentialEnv =
@@ -95,29 +100,27 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
       `DCode invalid-credential lifecycle requires credential env '${HOSTED_INFERENCE_CREDENTIAL_ENV}'`,
     );
   }
-  const attachment = recordedNativeProviderAttachment({
-    provider: logicalProvider,
-    endpointUrl: typeof entry.endpointUrl === "string" ? entry.endpointUrl : undefined,
-    credentialEnv,
-    preferredInferenceApi:
-      typeof entry.preferredInferenceApi === "string" ? entry.preferredInferenceApi : undefined,
-    nativeHostedProviderAttachment: entry.nativeHostedProviderAttachment,
-  });
-  const nativeProvider = attachment && hostedNativeProviderForAttachment(attachment);
+  const receipt = entry.nativeHostedProviderAttachment;
+  const definition = hostedNativeProviderForAttachment(receipt);
   if (
-    !nativeProvider?.custom ||
-    nativeProvider.api !== "openai-completions" ||
-    nativeProvider.credentialEnv !== credentialEnv
+    !definition?.custom ||
+    definition.logicalProvider !== providerName ||
+    definition.api !== "openai-completions" ||
+    definition.credentialEnv !== credentialEnv ||
+    entry.nativeLocalProviderAttachment !== undefined
   ) {
     throw new Error(
-      "DCode invalid-credential lifecycle requires an attached native completion provider",
+      "DCode invalid-credential lifecycle requires its native hosted provider attachment",
     );
   }
   return {
     gatewayName: requiredString(entry, "gatewayName"),
-    providerName: nativeProvider.providerName,
+    providerName: definition.providerName,
+    providerId: (receipt as { providerId: string }).providerId,
+    profileId: definition.profileId,
+    endpointUrl: definition.endpoint,
+    endpoint: `${definition.endpoint.replace(/\/+$/u, "")}/chat/completions`,
     credentialEnv,
-    endpoint: `${nativeProvider.endpoint.replace(/\/+$/u, "")}/chat/completions`,
     model: requiredString(entry, "model"),
     validCredential,
   };
@@ -129,8 +132,11 @@ export function isDcodeInvalidCredentialRebuildOptions(
   return (
     "gatewayName" in options &&
     "providerName" in options &&
-    "credentialEnv" in options &&
+    "providerId" in options &&
+    "profileId" in options &&
+    "endpointUrl" in options &&
     "endpoint" in options &&
+    "credentialEnv" in options &&
     "model" in options &&
     "validCredential" in options
   );
@@ -280,6 +286,28 @@ async function updateProviderCredential(
   phase: string,
   redactionValues: string[],
 ): Promise<ShellProbeResult> {
+  const queryOptions = {
+    env: gatewayEnv(options.gatewayName),
+    redactionValues,
+    timeoutMs: 30_000,
+  };
+  const provider = await deps.host.command(
+    "openshell",
+    ["provider", "get", "-g", options.gatewayName, options.providerName],
+    { ...queryOptions, artifactName: `lifecycle-dcode-provider-owner-${phase}` },
+  );
+  const metadata =
+    provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+  if (
+    metadata?.name !== options.providerName ||
+    metadata.type !== options.profileId ||
+    metadata.revision?.id !== options.providerId ||
+    metadata.configKeys.length !== 0 ||
+    metadata.credentialKeys.length !== 1 ||
+    metadata.credentialKeys[0] !== options.credentialEnv
+  ) {
+    throw new Error(`DCode provider ownership changed before credential ${phase}`);
+  }
   const result = await deps.host.command(
     "openshell",
     [
@@ -378,7 +406,7 @@ export async function simulateDcodeInvalidCredentialRebuild(
   const baseRedactions = [options.validCredential];
   const names = await deps.host.command(
     "openshell",
-    ["sandbox", "list", "--names", "--limit", "2", "-g", options.gatewayName],
+    ["sandbox", "list", "--names", "--page-size", "2", "-g", options.gatewayName],
     {
       artifactName: "lifecycle-dcode-gateway-sandboxes",
       env: gatewayEnv(options.gatewayName),

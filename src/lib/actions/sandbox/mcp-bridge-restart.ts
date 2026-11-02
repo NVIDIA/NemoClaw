@@ -262,7 +262,7 @@ export async function restoreExistingMcpBridgeRuntime(
         providerRuntimeSelection,
       );
       const providerAdapter = createMcpProviderAdapterBoundary(providerRuntimeSelection).adapter;
-      await ensureMcpBridgeProviderProfile(providerRuntimeSelection, providerAdapter);
+      await ensureMcpBridgeProviderProfile(providerRuntimeSelection, entry.env[0], providerAdapter);
       if (options.applyPolicy !== false) {
         await applyGeneratedPolicy(
           sandboxName,

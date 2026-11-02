@@ -13,10 +13,10 @@ describe("config rotate-token", () => {
   it("rotates an OpenAI provider without a compatibility-profile mutation (#11229)", async () => {
     const appendAuditEntry = vi.fn();
     const captureOpenshellCommand = vi.fn(() => ({
-      output: "openshell 0.0.116\n",
+      output: "openshell 0.1.5\n",
       status: 0,
       stderr: "",
-      stdout: "openshell 0.0.116\n",
+      stdout: "openshell 0.1.5\n",
     }));
     const runOpenshellCommand = vi.fn<RotateTokenDeps["runOpenshellCommand"]>(
       (): ReturnType<RotateTokenDeps["runOpenshellCommand"]> =>
@@ -100,7 +100,7 @@ describe("config rotate-token", () => {
     } satisfies RotateTokenDeps;
 
     await expect(rotateSandboxToken("rotate-profile-test", {}, deps)).rejects.toThrow(
-      "expected 0.0.116, actual 0.0.106",
+      "expected 0.1.5, actual 0.0.106",
     );
 
     expect(captureOpenshellCommand).toHaveBeenCalledOnce();
@@ -170,10 +170,10 @@ describe("config rotate-token", () => {
       () => ({ status: 0 }) as ReturnType<RotateTokenDeps["runOpenshellCommand"]>,
     );
     const captureOpenshellCommand = vi.fn(() => ({
-      output: "openshell 0.0.116\n",
+      output: "openshell 0.1.5\n",
       status: 0,
       stderr: "",
-      stdout: "openshell 0.0.116\n",
+      stdout: "openshell 0.1.5\n",
     }));
     const deps = {
       appendAuditEntry: vi.fn(),
@@ -269,10 +269,10 @@ describe("config rotate-token", () => {
     const deps = {
       appendAuditEntry: vi.fn(),
       captureOpenshellCommand: vi.fn(() => ({
-        output: "openshell 0.0.116\n",
+        output: "openshell 0.1.5\n",
         status: 0,
         stderr: "",
-        stdout: "openshell 0.0.116\n",
+        stdout: "openshell 0.1.5\n",
       })),
       fail: (lines: string | readonly string[]): never => {
         throw new Error(typeof lines === "string" ? lines : lines.join("\n"));
@@ -351,10 +351,10 @@ describe("config rotate-token", () => {
       const deps = {
         appendAuditEntry,
         captureOpenshellCommand: vi.fn(() => ({
-          output: "openshell 0.0.116\n",
+          output: "openshell 0.1.5\n",
           status: 0,
           stderr: "",
-          stdout: "openshell 0.0.116\n",
+          stdout: "openshell 0.1.5\n",
         })),
         fail: (lines: string | readonly string[]): never => {
           throw new Error(typeof lines === "string" ? lines : lines.join("\n"));

@@ -396,7 +396,9 @@ describe("native backup of backslash paths across tar quoting modes", () => {
             '    fs.writeFileSync(listFile, Buffer.from(patterns.map((pattern) => pattern.replaceAll("\\\\\\\\", "\\\\")).join("\\0") + "\\0"));',
             "  }",
             "}",
-            `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
+            // The restore path passes an unlinked archive through descriptor 3.
+            'const stdio = args.includes("/dev/fd/3") || args.includes("/proc/self/fd/3") ? ["inherit", "inherit", "inherit", 3] : "inherit";',
+            `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio }).status ?? 90);`,
           ].join("\n"),
         );
       },

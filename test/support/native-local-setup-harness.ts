@@ -131,10 +131,8 @@ export async function withNativePolicyFixture<T>(operation: () => Promise<T>): P
     executable,
     `#!/bin/sh
 set -eu
-if [ "$#" = 6 ] && [ "$1" = settings ] && [ "$2" = get ] && [ "$3" = -g ] && [ "$5" = --global ] && [ "$6" = --json ]; then
-  printf '%s\\n' '{"scope":"global","settings":{"providers_v2_enabled":"true"}}'
-elif [ "$#" = 7 ] && [ "$1" = policy ] && [ "$2" = list ] && [ "$3" = -g ] && [ "$5" = --global ] && [ "$6" = --limit ] && [ "$7" = 1 ]; then
-  printf '%s\\n' 'No global policy history found' >&2
+if [ "$#" = 9 ] && [ "$1" = policy ] && [ "$2" = list ] && [ "$3" = -g ] && [ "$5" = --global ] && [ "$6" = --page-size ] && [ "$7" = 1 ] && [ "$8" = --output ] && [ "$9" = json ]; then
+  printf '%s\\n' '{"revisions":[],"next_page_token":""}'
 else
   echo 'Unexpected policy fixture command' >&2
   exit 1

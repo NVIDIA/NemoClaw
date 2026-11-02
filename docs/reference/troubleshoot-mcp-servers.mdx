@@ -50,8 +50,13 @@ If restart reports a missing provider, remove the native registration and re-add
 
 ## Provider Uses the Legacy Generic Profile
 
-If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
-OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
+The legacy `generic` type and the older `nemoclaw-mcp-v1` profile do not declare the credential required by OpenShell 0.1.5.
+If restart or rebuild reports either type, remove the server and add it again with the recorded credential variable exported.
+Preserve its URL, denied-tool selectors, and trusted-private declaration.
+NemoClaw accepts a matching legacy provider only for cleanup and preserves its provider object.
+Follow [Rotate a Credential](../manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential) before deleting a retained provider.
+After re-adding the server, run `$$nemoclaw <sandbox> mcp status <server> --json`.
+Verify that the provider and adapter are ready; treat an inconclusive credential-resolution probe as unverified.
 
 ## Rebuild Cannot Prove a Credential Handle
 
@@ -399,7 +404,9 @@ For a host-local server, keep the MCP process on loopback when practical.
 Place an operator-managed HTTPS reverse proxy on a stable private address that the OpenShell gateway can route to.
 The certificate must match the original endpoint hostname and chain to a trust root available to the managed runtime.
 For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rebuild the existing sandbox after setting it.
-The managed image installs that CA for both the OpenShell upstream proxy and sandbox TLS clients.
+The managed image installs the CA for sandbox TLS clients.
+On OpenShell `0.1.5` with Docker, the separate supervisor does not receive this image trust anchor.
+A private-CA TLS failure can therefore remain after rebuilding; refer to [Corporate CA Trust](../security/configure-corporate-ca-trust#understand-image-and-runtime-trust).
 Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
 
 Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.

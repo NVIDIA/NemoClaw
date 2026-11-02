@@ -217,7 +217,7 @@ export function createPhases(
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");
       }),
-      agentSetupContext: () => ({ gatewayName: "nemoclaw-19090" }),
+      agentSetupContext: () => ({ gatewayName: "nemoclaw-19090", getSandbox: () => null }),
       ensureAgentDashboardForward: vi.fn(() => {
         order.push("agent-forward");
         return 45123;

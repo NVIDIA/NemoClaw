@@ -470,6 +470,7 @@ describe("complete managed-image publication workflow", () => {
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
+        "src/lib/inference/native-provider/catalog.ts",
         "test/helpers/openclaw-real-agent-reload-proof.ts",
       ]),
     );

@@ -10,6 +10,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createOpenClawPairingFixture } from "../../../../../test/helpers/openclaw-pairing-fixture";
+import { redactString } from "../../../../../test/e2e/fixtures/redaction.ts";
 
 import {
   buildAutoPairApprovalScript,
@@ -298,7 +299,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
   }
 
-  function observeOrdinarySettlement(approvalPolicy = POLICY) {
+  function observeOrdinarySettlement(approvalPolicy = POLICY, spawn = localScriptSpawn) {
     return observeOrdinaryOpenClawPairingSettlement(
       "alpha",
       "nemoclaw-8080",
@@ -307,9 +308,13 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       {
         getOpenshellBinary: () => "openshell",
         readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
+        spawnSync: spawn as typeof spawnSync,
       },
     );
+  }
+
+  function writeCanonicalSqliteState() {
+    writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
   }
 
   function observeRepairSettlement(approvalPolicy = POLICY) {
@@ -342,6 +347,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     ).toContain(adapter);
   });
 
+  function readFixture<T>(directory: string, name: string): [string, T] {
+    const file = path.join(stateDirectory, directory, name);
+    return [file, JSON.parse(fs.readFileSync(file, "utf8")) as T];
+  }
+
   function writePairingOnlyState(): void {
     const pairedPath = path.join(stateDirectory, "devices", "paired.json");
     const authPath = path.join(stateDirectory, "identity", "device-auth.json");
@@ -359,11 +369,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     const sqliteIt = it.skipIf(!OPENSSL_ED25519_AVAILABLE);
 
     it("rejects a database swapped only while sqlite3.connect reopens its pathname", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
-      });
+      writeCanonicalSqliteState();
       const databasePath = checkpointSqlitePairingState(stateDirectory);
       const attackerPath = path.join(root, "attacker.sqlite");
       fs.copyFileSync(databasePath, attackerPath);
@@ -403,11 +409,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("rejects WAL and SHM swapped only while SQLite performs its first read", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
-      });
+      writeCanonicalSqliteState();
       const databasePath = path.join(stateDirectory, "state", "openclaw.sqlite");
       const walPath = `${databasePath}-wal`;
       const sharedMemoryPath = `${databasePath}-shm`;
@@ -462,11 +464,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     sqliteIt(
       "qualifies committed WAL state without consulting legacy JSON or mutating DB/WAL",
       () => {
-        writeSqlitePairingState(stateDirectory, {
-          deviceId,
-          publicKey,
-          privateKeyPem,
-        });
+        writeCanonicalSqliteState();
         const database = path.join(stateDirectory, "state", "openclaw.sqlite");
         const walProof = spawnSync(
           "python3",
@@ -497,6 +495,29 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         expect(fs.readFileSync(database)).toEqual(databaseBefore);
         expect(fs.readFileSync(walPath)).toEqual(walBefore);
         expect(fs.readdirSync(sqliteStateDirectory).sort()).toEqual(entriesBefore);
+      },
+    );
+
+    sqliteIt(
+      "waits for the SQLite client token without accepting absent or mismatched credentials",
+      () => {
+        writeCanonicalSqliteState();
+        updateSqlitePairingState(stateDirectory, "DELETE FROM device_auth_tokens");
+        const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+        expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingObservationRetryableError);
+        expect(diagnostic).not.toHaveBeenCalled();
+        expect(() => observe()).toThrow(OpenClawPairingIncompatibleError);
+        expect(() => observeSettlement()).toThrow(OpenClawPairingIncompatibleError);
+        updateSqlitePairingState(
+          stateDirectory,
+          "INSERT INTO device_auth_tokens SELECT device_id, 'operator', json_extract(tokens_json, '$.operator.token'), json_extract(tokens_json, '$.operator.scopes'), 1 FROM device_pairing_paired",
+        );
+        expect(observeOrdinarySettlement()).toMatchObject({ state: "settled" });
+        updateSqlitePairingState(
+          stateDirectory,
+          "UPDATE device_auth_tokens SET token = 'mismatched'",
+        );
+        expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingIncompatibleError);
       },
     );
 
@@ -532,11 +553,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("rejects invalid native identity timestamps", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
-      });
+      writeCanonicalSqliteState();
       updateSqlitePairingState(stateDirectory, "UPDATE device_identities SET created_at_ms = -1");
 
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
@@ -557,11 +574,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     sqliteIt("treats an unavailable OpenSSL binary as a terminal qualification failure", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
-      });
+      writeCanonicalSqliteState();
       const spawnWithoutOpenSsl = (
         _binary: string,
         _args: readonly string[],
@@ -591,11 +604,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("retries a nonempty WAL without SHM instead of creating the missing sidecar", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
-      });
+      writeCanonicalSqliteState();
       const sqliteStateDirectory = path.join(stateDirectory, "state");
       const sharedMemoryPath = path.join(sqliteStateDirectory, "openclaw.sqlite-shm");
       fs.rmSync(sharedMemoryPath);
@@ -630,11 +639,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it("rejects an unsafe authoritative SQLite database instead of reading legacy state", () => {
-      writeSqlitePairingState(stateDirectory, {
-        deviceId,
-        publicKey,
-        privateKeyPem,
-      });
+      writeCanonicalSqliteState();
       fs.chmodSync(path.join(stateDirectory, "state", "openclaw.sqlite"), 0o666);
 
       expect(() => observe()).toThrow("OpenClaw pairing qualification is unavailable");
@@ -776,8 +781,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
 
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {});
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.scopes = ["operator.pairing", "operator.read"];
       writeJson(pairedPath, paired);
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
@@ -812,28 +816,86 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       "rejects a probe baseline with inconsistent %s permissions (#13100)",
       (scope) => {
         writePairingOnlyState();
-        const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-        const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+        const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
         paired[deviceId]!.clientMode = "probe";
         paired[deviceId]!.scopes.push(scope);
         writeJson(pairedPath, paired);
+        const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
         expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingIncompatibleError);
+        expect(diagnostic).toHaveBeenCalledWith("OpenClaw CLI pairing incompatible: scope-set.");
       },
     );
 
     it.each(["ui", "unknown"])("rejects %s metadata on the local device (#13100)", (clientMode) => {
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.clientMode = clientMode;
       writeJson(pairedPath, paired);
-      expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spawn = vi.fn(localScriptSpawn);
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        OpenClawPairingIncompatibleError,
+      );
+      expect(spawn.mock.results[0]?.value.status).toBe(4);
+      expect(spawn.mock.results[0]?.value.stdout).toBe(
+        "__NEMOCLAW_PAIRING_INCOMPATIBLE__=paired-metadata\n",
+      );
+      expect(diagnostic.mock.calls).toEqual([
+        ["OpenClaw CLI pairing incompatible: paired-metadata."],
+      ]);
+    });
+
+    it.each([
+      ["missing-operator", [], {}],
+      ["role-set", ["operator", "observer"], {}],
+      ["token-mismatch", ["operator"], { token: `${TOKEN}-mismatch` }],
+      ["metadata", ["operator"], { role: "observer" }],
+    ] as const)("reports only the fixed client-token %s category", (reason, roles, fields) => {
+      const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
+      const invalidAuth = {
+        ...auth,
+        tokens: Object.fromEntries(
+          roles.map((role) => [role, { ...auth.tokens.operator, ...fields }]),
+        ),
+      };
+      writeJson(authPath, invalidAuth);
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spawn = vi.fn(localScriptSpawn);
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        OpenClawPairingIncompatibleError,
+      );
+      expect({
+        status: spawn.mock.results[0]?.value.status,
+        stdout: spawn.mock.results[0]?.value.stdout,
+        diagnostic: diagnostic.mock.calls,
+        redactedDiagnostic: diagnostic.mock.calls.map(([message]) => redactString(message)),
+        auth: JSON.parse(fs.readFileSync(authPath, "utf8")),
+      }).toEqual({
+        status: 4,
+        stdout: `__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:${reason}\n`,
+        diagnostic: [[`OpenClaw CLI pairing incompatible: client-token / ${reason}.`]],
+        redactedDiagnostic: [`OpenClaw CLI pairing incompatible: client-token / ${reason}.`],
+        auth: invalidAuth,
+      });
+    });
+
+    it.each([
+      TOKEN,
+      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=" + TOKEN,
+      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token\n" + TOKEN,
+      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:" + TOKEN,
+    ])("does not log unrecognized pairing output %j", (stdout) => {
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spawn = vi.fn(() => ({ status: 4, stdout })) as unknown as typeof localScriptSpawn;
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        OpenClawPairingIncompatibleError,
+      );
+      expect(diagnostic.mock.calls).toEqual([["OpenClaw CLI pairing incompatible: unclassified."]]);
     });
 
     it.each(
       [OPENCLAW_PAIRING_REQUEST_SCOPES, OPENCLAW_PAIRING_REQUIRED_SCOPES].map((scopes) => [scopes]),
     )("preserves qualification across cli/probe/cli metadata with %j grants (#13100)", (scopes) => {
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.scopes = [...scopes];
       paired[deviceId]!.approvedScopes = [...scopes];
       writeJson(pairedPath, paired);
@@ -861,8 +923,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     );
 
     it("accepts native approval preserving an explicitly granted read scope (#13100)", () => {
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.scopes = [...OPENCLAW_PAIRING_REQUIRED_SCOPES];
       paired[deviceId]!.approvedScopes = [...OPENCLAW_PAIRING_REQUIRED_SCOPES];
       writeJson(pairedPath, paired);
@@ -1202,8 +1263,7 @@ process.stdout.write("{}\\n");
       [
         "mismatched client credential",
         () => {
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           auth.tokens.operator.token = "different-token";
           writeJson(authPath, auth);
         },
@@ -1211,8 +1271,7 @@ process.stdout.write("{}\\n");
       [
         "changed paired request scopes",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.scopes = ["operator.pairing", "operator.read", "operator.write"];
           writeJson(pairedPath, paired);
         },
@@ -1220,8 +1279,7 @@ process.stdout.write("{}\\n");
       [
         "changed approved request scopes",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.approvedScopes = ["operator.pairing", "operator.read"];
           writeJson(pairedPath, paired);
         },
@@ -1229,8 +1287,7 @@ process.stdout.write("{}\\n");
       [
         "changed paired token scopes",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.tokens.operator.scopes = ["operator.pairing", "operator.write"];
           writeJson(pairedPath, paired);
         },
@@ -1238,8 +1295,7 @@ process.stdout.write("{}\\n");
       [
         "changed client-auth token scopes",
         () => {
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           auth.tokens.operator.scopes = ["operator.pairing", "operator.write"];
           writeJson(authPath, auth);
         },
@@ -1247,8 +1303,7 @@ process.stdout.write("{}\\n");
       [
         "changed canonical client ID",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.clientId = "unknown-client";
           writeJson(pairedPath, paired);
         },
@@ -1256,8 +1311,7 @@ process.stdout.write("{}\\n");
       [
         "changed canonical client mode",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.clientMode = "unknown-mode";
           writeJson(pairedPath, paired);
         },
@@ -1265,8 +1319,7 @@ process.stdout.write("{}\\n");
       [
         "duplicate operator identity roles",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.roles = ["operator", "operator"];
           writeJson(pairedPath, paired);
         },
@@ -1274,8 +1327,7 @@ process.stdout.write("{}\\n");
       [
         "missing canonical operator role",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           delete (paired[deviceId]! as unknown as Record<string, unknown>).role;
           writeJson(pairedPath, paired);
         },
@@ -1283,8 +1335,7 @@ process.stdout.write("{}\\n");
       [
         "missing canonical operator roles",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           delete (paired[deviceId]! as unknown as Record<string, unknown>).roles;
           writeJson(pairedPath, paired);
         },
@@ -1323,8 +1374,7 @@ process.stdout.write("{}\\n");
           >;
           identity.publicKey = `${publicKey}=`;
           writeJson(identityPath, identity);
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.publicKey = `${publicKey}=`;
           writeJson(pairedPath, paired);
         },
@@ -1332,12 +1382,10 @@ process.stdout.write("{}\\n");
       [
         "whitespace-padded operator token",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.tokens.operator.token = ` ${TOKEN} `;
           writeJson(pairedPath, paired);
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           auth.tokens.operator.token = ` ${TOKEN} `;
           writeJson(authPath, auth);
         },
@@ -1356,8 +1404,7 @@ process.stdout.write("{}\\n");
       [
         "alternate scopes on the paired device",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.requestedScopes = ["operator.admin"];
           writeJson(pairedPath, paired);
         },
@@ -1365,8 +1412,7 @@ process.stdout.write("{}\\n");
       [
         "alternate public key on the paired device",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.publicKeyPem = publicKeyPem(ED25519_SPKI_PREFIX, Buffer.alloc(32, 8));
           writeJson(pairedPath, paired);
         },
@@ -1374,8 +1420,7 @@ process.stdout.write("{}\\n");
       [
         "alternate roles on the paired operator token",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           (paired[deviceId]!.tokens.operator as unknown as Record<string, unknown>).roles = [
             "admin",
           ];
@@ -1385,8 +1430,7 @@ process.stdout.write("{}\\n");
       [
         "alternate scopes on the client authorization",
         () => {
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           (auth.tokens.operator as unknown as Record<string, unknown>).approvedScopes = [
             "operator.admin",
           ];
@@ -1396,8 +1440,7 @@ process.stdout.write("{}\\n");
       [
         "ambiguous local device state",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired.duplicate = {
             ...paired[deviceId]!,
             deviceId: "different-device",

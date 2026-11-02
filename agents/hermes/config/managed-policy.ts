@@ -283,13 +283,17 @@ export function buildHermesManagedPolicy(
   };
 
   if (settings.model !== null)
-    applyHermesManagedRoute(config, {
-      model: settings.model,
-      baseUrl: settings.baseUrl,
-      upstreamProvider: settings.upstreamProvider,
-      inferenceApi: settings.inferenceApi,
-      contextWindow: settings.contextWindow,
-    });
+    applyHermesManagedRoute(
+      config,
+      {
+        model: settings.model,
+        baseUrl: settings.baseUrl,
+        upstreamProvider: settings.upstreamProvider,
+        inferenceApi: settings.inferenceApi,
+        contextWindow: settings.contextWindow,
+      },
+      env.NEMOCLAW_LOCAL_INFERENCE_TOKEN,
+    );
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);
   if (managedToolGatewayPresets.length > 0) {

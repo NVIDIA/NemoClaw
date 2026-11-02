@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import * as nim from "../../inference/nim";
 import type { VllmDeps } from "./types";
 import { setupVllmLocalInference } from "./vllm-local";
 
@@ -101,4 +102,57 @@ describe("vLLM local provider credential", () => {
     );
     expect(error.mock.calls.flat().join("\n")).not.toContain(leaked);
   });
+});
+
+describe("Local NIM provider selection", () => {
+  it("uses its sentinel and owned port without reading managed vLLM or host credentials", async () => {
+    vi.spyOn(nim, "getServedModelId").mockReturnValue("local/nim-model");
+    vi.stubEnv("NGC_API_KEY", "ngc-download-secret");
+    vi.stubEnv("OPENAI_API_KEY", "host-openai-secret");
+    const getManagedVllmProviderBinding = vi.fn(() => ({
+      baseUrl: "http://host.openshell.internal:18000/v1",
+      apiKey: "managed-vllm-secret",
+    }));
+    const validateLocalProvider = vi.fn(() => ({ ok: true as const }));
+    const getLocalProviderBaseUrl = vi.fn(() => "http://host.openshell.internal:18000/v1");
+    const selected = deps({
+      getManagedVllmProviderBinding,
+      validateLocalProvider,
+      getLocalProviderBaseUrl,
+    });
+    await expect(
+      setupVllmLocalInference(
+        { model: "local/nim-model", provider: "vllm-local", localNimSelected: true },
+        selected,
+      ),
+    ).resolves.toEqual({ done: false });
+    expect(selected.upsertProvider).toHaveBeenCalledWith(
+      "vllm-local",
+      "openai",
+      CREDENTIAL_ENV,
+      nim.getNimInferenceEndpoints().baseUrl,
+      { [CREDENTIAL_ENV]: "dummy" },
+    );
+    expect(getManagedVllmProviderBinding).not.toHaveBeenCalled();
+    expect(validateLocalProvider).not.toHaveBeenCalled();
+    expect(getLocalProviderBaseUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "different-model"])(
+    "stops before provider mutation when NIM serves %s",
+    async (observed) => {
+      vi.spyOn(nim, "getServedModelId").mockReturnValue(observed);
+      const selected = deps();
+      await expect(
+        setupVllmLocalInference(
+          { model: "local/nim-model", provider: "vllm-local", localNimSelected: true },
+          selected,
+        ),
+      ).rejects.toThrow("exit 1");
+      expect(selected.upsertProvider).not.toHaveBeenCalled();
+      expect(selected.error).toHaveBeenCalledWith(
+        "  Local NVIDIA NIM does not serve the selected model. Onboarding stopped.",
+      );
+    },
+  );
 });

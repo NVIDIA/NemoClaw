@@ -1491,7 +1491,7 @@ network_policies:
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
-      openshellVersion: "0.0.116",
+      openshellVersion: "0.1.5",
     };
 
     const entry = override === null ? null : { ...matching, ...override };

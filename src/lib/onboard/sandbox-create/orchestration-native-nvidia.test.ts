@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
@@ -169,3 +171,45 @@ describe("native NVIDIA post-create provider verification", () => {
     expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
   });
 });
+
+it.each([false, true])(
+  "restores external provider membership without adopting its profile (attached=%s)",
+  async (attached) => {
+    const f = registeredInferenceFixture(attached);
+    const boundary = createProviderEffectBoundary({
+      deferred: false,
+      sandboxName: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      expectedRegisteredInferenceProviderAttachment: f.binding,
+      preparationInput: {
+        openshellDriver: "docker",
+        inferenceProvider: f.binding.providerName,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: f.binding.gatewayName,
+      },
+      preparationDeps: {
+        providerAdapter: f.adapter,
+        runOpenshell: vi.fn() as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: null,
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+    await boundary.validateBeforeCreate();
+    await boundary.runAfterVerifiedCreate?.({
+      ...verifiedCreateContext(),
+      gatewayName: f.binding.gatewayName,
+    });
+    expect(f.adapter.attachProvider).toHaveBeenCalledTimes(attached ? 0 : 1);
+    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    f.state.id = "replacement";
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+  },
+);

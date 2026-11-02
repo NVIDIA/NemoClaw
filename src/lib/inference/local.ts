@@ -80,10 +80,7 @@ import {
   type RecoveredManagedClusterVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
-import {
-  recoverHostLocalManagedVllmEndpoint,
-  resolveManagedVllmBridgeHost,
-} from "./serving/vllm-host-local-lifecycle";
+import { recoverHostLocalManagedVllmEndpoint } from "./serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecycle";
@@ -1692,12 +1689,21 @@ export function getLocalProviderContainerReachabilityCheck(
       if (managed.kind === "unavailable") return null;
       const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
       const hostAlias = managed.binding?.validationBaseUrl
-        ? `host.openshell.internal:${resolveManagedVllmBridgeHost()}`
+        ? "host.openshell.internal:127.0.0.1"
         : "host.openshell.internal:host-gateway";
       return [
         ...(managedBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
         "run",
         "--rm",
+        ...(managed.binding?.validationBaseUrl
+          ? [
+              "--network",
+              "host",
+              "--cap-drop=ALL",
+              "--security-opt=no-new-privileges",
+              "--read-only",
+            ]
+          : []),
         "--add-host",
         hostAlias,
         CONTAINER_REACHABILITY_IMAGE,
@@ -2045,16 +2051,15 @@ function collectContainerDiagnostic(
     );
   }
   const dockerCommand = containerCommand.slice(0, dockerRunIndex);
+  const probeCommand = containerCommand.slice(
+    0,
+    containerCommand.indexOf(CONTAINER_REACHABILITY_IMAGE) + 1,
+  );
   try {
-    // Reuse the exact Docker context, host mapping, and URL from the failed check.
+    // Retain the failed probe's Docker context, network, hardening, and host mapping.
     const httpStatus = capture(
       [
-        ...dockerCommand,
-        "run",
-        "--rm",
-        "--add-host",
-        hostAlias,
-        CONTAINER_REACHABILITY_IMAGE,
+        ...probeCommand,
         "-s",
         "-o",
         "/dev/null",
@@ -2070,19 +2075,7 @@ function collectContainerDiagnostic(
     );
 
     // Confirm that Docker applied the same host mapping used by the failed check.
-    const hostsOutput = capture(
-      [
-        ...dockerCommand,
-        "run",
-        "--rm",
-        "--add-host",
-        hostAlias,
-        CONTAINER_REACHABILITY_IMAGE,
-        "cat",
-        "/etc/hosts",
-      ],
-      { ignoreError: true },
-    );
+    const hostsOutput = capture([...probeCommand, "cat", "/etc/hosts"], { ignoreError: true });
 
     if (!httpStatus && !hostsOutput) {
       return classifyContainerRunFailure(dockerCommand, capture);

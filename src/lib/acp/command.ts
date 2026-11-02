@@ -6,7 +6,10 @@ import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 
 import { withConnectSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
-import { createCliHermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh-cli";
+import {
+  ACP_SETUP_TIMEOUT_MS,
+  createCliHermesAcpSshTransport,
+} from "../adapters/openshell/hermes-acp-ssh-cli";
 import type { HermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh";
 import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
 import {
@@ -17,6 +20,7 @@ import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-obs
 import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../adapters/openshell/sandbox-ssh-host";
 import { getVersion } from "../core/version";
+import { waitUntilAsync } from "../core/wait";
 import { HERMES_LIFECYCLE_DEFINITION } from "../domain/lifecycle/hermes-definition";
 import { recoverNamedGatewayRuntime } from "../gateway-runtime-action";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
@@ -269,22 +273,52 @@ async function validateLiveTarget(
   target: HermesAcpTarget,
   observer: OpenShellSandboxObserver,
   inspectIdentity: typeof inspectOpenShellSandboxIdentityFingerprint,
+  recoveryDeadlineMs: number,
+  allowProvisioning: boolean,
 ): Promise<string | null> {
-  const inventory = await observer.listSandboxes({
-    target: { kind: "named", gatewayName: target.gatewayName },
-  });
-  if (!inventory.ok) return "OpenShell could not inspect the selected sandbox.";
-  const matches = inventory.value.sandboxes.filter(({ name }) => name === target.sandboxName);
-  if (matches.length === 0) return "The requested sandbox is missing.";
-  if (matches.length > 1) return "OpenShell returned an ambiguous sandbox identity.";
-  if (matches[0]!.readiness !== "ready") return "The requested sandbox is stopped or not ready.";
-  const fingerprint = inspectIdentity({
-    gatewayName: target.gatewayName,
-    sandboxName: target.sandboxName,
-  });
-  return fingerprint === target.entry.lifecycleLiveIdentityFingerprint
-    ? null
-    : "The live sandbox identity does not match its NemoClaw registration.";
+  let failure: string | null = "The requested sandbox is stopped or not ready.";
+  await waitUntilAsync(
+    async () => {
+      const remainingMs = Math.max(1, recoveryDeadlineMs - Date.now());
+      const inventory = await observer.listSandboxes({
+        target: { kind: "named", gatewayName: target.gatewayName },
+        timeoutMs: remainingMs,
+      });
+      if (!inventory.ok) {
+        failure = "OpenShell could not inspect the selected sandbox.";
+        return true;
+      }
+      const matches = inventory.value.sandboxes.filter(({ name }) => name === target.sandboxName);
+      if (matches.length !== 1) {
+        failure =
+          matches.length === 0
+            ? "The requested sandbox is missing."
+            : "OpenShell returned an ambiguous sandbox identity.";
+        return true;
+      }
+      const observed = matches[0]!;
+      const canWait =
+        allowProvisioning &&
+        observed.phase === "Provisioning" &&
+        observed.readiness === "not_ready";
+      if (observed.readiness !== "ready" && !canWait) return true;
+      const fingerprint = inspectIdentity({
+        gatewayName: target.gatewayName,
+        sandboxName: target.sandboxName,
+        timeoutMs: Math.max(1, recoveryDeadlineMs - Date.now()),
+      });
+      if (fingerprint !== target.entry.lifecycleLiveIdentityFingerprint) {
+        failure = "The live sandbox identity does not match its NemoClaw registration.";
+        return true;
+      }
+      if (Date.now() >= recoveryDeadlineMs) return true;
+      failure =
+        observed.readiness === "ready" ? null : "The requested sandbox is stopped or not ready.";
+      return !canWait;
+    },
+    { deadlineMs: recoveryDeadlineMs, initialIntervalMs: 250, maxIntervalMs: 1_000 },
+  );
+  return failure;
 }
 
 /** Run the packaged host-side ACP adapter without writing ACP-adjacent progress to stdout. */
@@ -309,6 +343,8 @@ export async function runHermesAcpCommand(
     return 0;
   }
 
+  const sessionDeadlineMs =
+    options.timeoutMs === undefined ? Infinity : Date.now() + options.timeoutMs;
   const home = (deps.home ?? os.homedir)();
   let entries: HostGatewayRegistryEntry[];
   try {
@@ -396,11 +432,34 @@ export async function runHermesAcpCommand(
             target,
             deps.observer ?? defaultObserver(),
             deps.inspectIdentity ?? inspectOpenShellSandboxIdentityFingerprint,
+            Math.min(sessionDeadlineMs, Date.now() + ACP_SETUP_TIMEOUT_MS),
+            recovery.attempted,
           );
         } catch {
           liveError = "OpenShell could not validate the selected sandbox identity.";
         }
         if (liveError) return { error: liveError } as const;
+        const finalTarget = resolveHermesAcpTarget(
+          (deps.listRegistry ?? listHostGatewayRegistryEntries)(home),
+          {
+            gatewayName: target.gatewayName,
+            sandboxName: target.sandboxName,
+            nemoclawVersion: currentVersion,
+          },
+        );
+        if (
+          !finalTarget.ok ||
+          finalTarget.target.stateRoot !== target.stateRoot ||
+          finalTarget.target.entry.lifecycleGeneration !== target.entry.lifecycleGeneration ||
+          finalTarget.target.entry.lifecycleLiveIdentityFingerprint !==
+            target.entry.lifecycleLiveIdentityFingerprint ||
+          Date.now() >= sessionDeadlineMs
+        ) {
+          return {
+            error:
+              "The requested sandbox changed or its deadline expired before the ACP adapter could start.",
+          } as const;
+        }
 
         let markSessionStarted!: () => void;
         const sessionStarted = new Promise<void>((resolve) => {
@@ -411,7 +470,7 @@ export async function runHermesAcpCommand(
           sandboxName: target.sandboxName,
           streams: io,
           onSessionStarted: markSessionStarted,
-          ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options.timeoutMs ? { timeoutMs: Math.max(1, sessionDeadlineMs - Date.now()) } : {}),
         });
         await Promise.race([
           sessionStarted,

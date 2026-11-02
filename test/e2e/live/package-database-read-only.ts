@@ -27,7 +27,8 @@ export async function expectPackageDatabaseReadOnly(
     [
       "sh",
       "-c",
-      'set -eu; probe="$1"; test ! -e "$probe"; install -o sandbox -g sandbox -m 600 /dev/null "$probe"',
+      // Workload containers drop CAP_CHOWN; writable mode isolates Landlock from DAC.
+      'set -eu; probe="$1"; test ! -e "$probe"; install -m 666 /dev/null "$probe"',
       "sh",
       sentinel,
     ],

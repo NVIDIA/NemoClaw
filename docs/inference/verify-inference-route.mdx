@@ -4,7 +4,7 @@
 title: "Verify the Sandbox Inference Route"
 sidebar-title: "Verify the Inference Route"
 description: "Verify that a NemoClaw sandbox can reach its configured model through its selected inference provider."
-description-agent: "Verifies the in-sandbox inference path for native NVIDIA and fixed hosted providers and shared inference routes."
+description-agent: "Verifies the in-sandbox inference path for native provider attachments and retained shared inference routes."
 keywords: ["verify inference provider", "nemoclaw inference route", "sandbox inference health"]
 content:
   type: "how_to"
@@ -20,7 +20,10 @@ Read the selected inference path first.
 $$nemoclaw inference get
 ```
 
-For a selected sandbox with a valid native NVIDIA or fixed hosted attachment, the command returns that sandbox's recorded provider, model, and native endpoint.
+For a selected sandbox with a valid native NVIDIA, fixed hosted, or native local attachment, the command returns the recorded provider, model, and native endpoint.
+<AgentOnly variant="openclaw,hermes">
+It validates the recorded selection without querying the shared route or authenticating a model request.
+</AgentOnly>
 For shared-route providers, the command reads the live shared gateway route.
 Confirm that the provider, model, and endpoint match the path you intended to configure.
 
@@ -40,7 +43,7 @@ For NVIDIA Endpoints, the `Inference` row verifies the recorded sandbox attachme
 It then sends a native Chat Completions request to `https://integrate.api.nvidia.com/v1`.
 It does not probe `https://inference.local/v1/models` for this provider.
 
-For fixed hosted providers, the `Inference` row verifies the recorded attachment and sends a model request to the native endpoint. A healthy shared route cannot satisfy this check.
+For fixed hosted and native local providers, the `Inference` row verifies the recorded attachment and sends a model request to the native endpoint. A healthy shared route cannot satisfy this check.
 
 For shared-route providers, the `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends an inference request through the same path.
@@ -49,6 +52,12 @@ When the live provider differs, `status` does not carry the recorded API family 
 The row reports `healthy` only when the route returns a structurally valid result for the selected API family.
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
+<AgentOnly variant="openclaw,hermes">
+If the check reports that the native inference credential handle is `missing` or `invalid`, it stopped before sending the model request.
+OpenShell supplies this handle; do not copy a provider API key into the sandbox to replace it.
+Check the recorded provider with `$$nemoclaw inference get` and retain the diagnostic for investigation.
+The diagnostic does not include the credential value.
+</AgentOnly>
 An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
 A legacy shared-route `openrouter-api` selection uses NemoClaw's Chat Completions-only OpenRouter adapter.
 Its models route returns `404` by design, so `status` requires a successful inference request before it reports the route as healthy.
@@ -68,8 +77,13 @@ Restore the configured endpoint or proxy, run `$$nemoclaw onboard --resume` to c
 
 ## Understand Local Provider Post-Ready Checks
 
-For local Ollama, local vLLM, and local NVIDIA NIM on Docker GPU sandboxes using the compatibility route, onboarding performs an additional check after the sandbox becomes ready.
-Local NIM uses the `vllm-local` route, so it receives the same reversible post-ready check as local vLLM.
+New Local NVIDIA NIM selections use the recorded sandbox-attached provider endpoint.
+Final verification requires a successful native model request.
+Live qualification on OpenShell `0.1.5` remains pending.
+For older NIM sandboxes without a native attachment, follow the [OpenShell upgrade restrictions](../../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
+
+The retained Docker GPU compatibility route has an additional post-ready check for local Ollama, local vLLM, and Local NVIDIA NIM.
+Local NVIDIA NIM uses the `vllm-local` provider identifier, so this compatibility check also applies to it.
 It requests `https://inference.local/v1/models` from inside the sandbox and accepts only a 2xx response.
 If this check fails after compatibility recreation, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
 If that rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
@@ -81,8 +95,14 @@ For those routes, continue to the final route check, then use the status command
 
 ## Understand Final Route Checks
 
-For NVIDIA Endpoints and fixed hosted providers, onboarding verifies the sandbox-attached provider through its native endpoint.
-It does not request the shared `inference.local` models route.
+For NVIDIA Endpoints, fixed hosted providers, and native local providers including Local NVIDIA NIM, final verification requires a successful model request through the sandbox-attached provider.
+This final check does not request the shared `inference.local` models route.
+
+<AgentOnly variant="openclaw,hermes">
+When onboarding resumes with a recorded registered-provider selection, final verification checks the provider identity, profile, and sandbox attachment.
+It requires a successful model request to the recorded native endpoint.
+It does not use the shared `inference.local` models route.
+</AgentOnly>
 
 For shared-route providers, onboarding first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
 <AgentOnly variant="openclaw,hermes">
@@ -101,6 +121,16 @@ Correct the reported adapter or route error, then rerun `$$nemoclaw onboard --re
 Onboarding retries any other 404 within its startup budget, then reports the missing model catalog and exits nonzero if the failure persists.
 Confirm the provider and model configuration and restore the endpoint's `/v1/models` route.
 Run `$$nemoclaw onboard --resume` to verify the retained session again without rebuilding a healthy sandbox.
+
+For native local inference smoke checks, NemoClaw verifies that direct access to each resolved host address is unavailable.
+Each address must refuse the connection, report network or host unreachable, or return the expected OpenShell policy denial.
+A transport result establishes direct-route unavailability but does not identify which control blocked access.
+An HTTP `403` alone does not prove that OpenShell denied the forbidden request.
+The denial must match the requested route and its provider policy.
+Address-resolution failures, timeouts, and unexpected responses fail verification.
+If a model request fails after bounded retries, the transport diagnostic reports the exception type and numeric error code when available.
+It omits raw exception text to avoid exposing credentials.
+Verification remains failed; preserve the diagnostic for investigation instead of bypassing the check.
 
 Provider setup still performs its own model, credential, and endpoint validation before this final route check.
 Use the status command and a short agent request after onboarding to verify ongoing availability and model responses.

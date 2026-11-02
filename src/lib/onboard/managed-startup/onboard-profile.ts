@@ -41,25 +41,13 @@ const PROFILE_ENVIRONMENT_INPUTS = {
     "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
     "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
     "NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME",
-    "NEMOCLAW_PROXY_HOST",
-    "NEMOCLAW_PROXY_PORT",
     "NEMOCLAW_REASONING",
     "NEMOCLAW_REASONING_EFFORT",
     "NEMOCLAW_SERVING_PRESET",
   ],
-  hermes: ["NEMOCLAW_CONTEXT_WINDOW", "NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
-  "langchain-deepagents-code": [
-    "NEMOCLAW_PROXY_HOST",
-    "NEMOCLAW_PROXY_PORT",
-    "NEMOCLAW_REASONING_EFFORT",
-  ],
-  pi: [
-    "NEMOCLAW_CONTEXT_WINDOW",
-    "NEMOCLAW_MAX_TOKENS",
-    "NEMOCLAW_PROXY_HOST",
-    "NEMOCLAW_PROXY_PORT",
-    "NEMOCLAW_REASONING",
-  ],
+  hermes: ["NEMOCLAW_CONTEXT_WINDOW"],
+  "langchain-deepagents-code": ["NEMOCLAW_REASONING_EFFORT"],
+  pi: ["NEMOCLAW_CONTEXT_WINDOW", "NEMOCLAW_MAX_TOKENS", "NEMOCLAW_REASONING"],
 } as const satisfies Record<ManagedStartupAgent, readonly string[]>;
 
 const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
@@ -100,9 +88,17 @@ export function resolveManagedStartupNativeLocalAttachment(input: {
   provider: string | null;
   endpointUrl: string | null;
   localNimSelected?: boolean;
+  preferredInferenceApi?: string | null;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
 }): NativeLocalProviderAttachment | undefined {
   const attachment = input.nativeLocalProviderAttachment;
+  if (
+    (attachment?.agent === "openclaw" || attachment?.agent === "hermes") &&
+    attachment.provider === "compatible-endpoint" &&
+    (attachment.api ?? "openai-completions") !==
+      (input.preferredInferenceApi ?? "openai-completions")
+  )
+    throw new Error("Recorded compatible provider API does not match its native attachment.");
   return usesNativeLocalInferenceForAgent(
     input.agentName,
     input.provider,
@@ -123,11 +119,17 @@ export function resolveManagedStartupInferenceEndpoint(input: {
   localNimSelected?: boolean;
   nativeLocalProviderAttachment?: { endpointUrl: string };
 }): string | null {
+  if (
+    input.provider === "vllm-local" &&
+    input.localNimSelected &&
+    input.agentName !== "pi" &&
+    !input.nativeLocalProviderAttachment
+  )
+    throw new Error("Local NIM inference requires its native provider attachment.");
   if (input.agentName === "hermes") {
     return input.nativeLocalProviderAttachment?.endpointUrl ?? input.endpointUrl;
   }
   if (input.agentName === "langchain-deepagents-code") {
-    if (input.provider === "vllm-local" && input.localNimSelected) return input.endpointUrl;
     if (
       usesNativeLocalInference(input.provider, input.endpointUrl) &&
       !input.nativeLocalProviderAttachment

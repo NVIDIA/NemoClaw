@@ -111,6 +111,26 @@ describe("Hermes GPU startup failure diagnostics", () => {
       "Docker GPU diagnostics saved: /tmp/docker",
       "/tmp/docker",
     ],
+    [
+      "recognizes generic startup diagnostics",
+      "  Diagnostics saved: /tmp/onboard-failure\n",
+      "/tmp/onboard-failure",
+    ],
+    [
+      "uses the later generic bundle",
+      "Native GPU diagnostics saved: /tmp/native\n  Diagnostics saved: /tmp/latest",
+      "/tmp/latest",
+    ],
+    [
+      "uses the latest repeated marker",
+      "Diagnostics saved: /tmp/old\nDiagnostics saved: /tmp/new",
+      "/tmp/new",
+    ],
+    [
+      "follows chronology across marker categories",
+      "Pre-rollback diagnostics saved: /tmp/old\nNative GPU diagnostics saved: /tmp/new",
+      "/tmp/new",
+    ],
     ["returns empty without a bundle", "GPU setup failed before diagnostics\n", ""],
   ])("extracts %s", (_name, output, expected) => {
     expect(extractHermesGpuDiagnosticsDirectory(output)).toBe(expected);

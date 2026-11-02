@@ -20,6 +20,10 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { boundedTestTempRoot } from "../../helpers/bounded-temp-root";
 import {
+  nativeLocalIdentity,
+  type NativeLocalBinding,
+} from "../../../src/lib/inference/native-local/contract.ts";
+import {
   stationVllmCommands,
   assertStationWorkload,
   assertStationInference,
@@ -28,6 +32,7 @@ import {
   runStationExpressSmoke,
   stationModelCacheMetadata,
   stationSmokeEnvironment,
+  stationNativeInferenceCommand,
   STATION_SMOKE_MODEL,
   STATION_SMOKE_SANDBOX,
 } from "./dgx-station-express.ts";
@@ -40,6 +45,20 @@ const base = {
   E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
 };
 const directories: string[] = [];
+function stationAttachment(overrides: Partial<NativeLocalBinding> = {}) {
+  const binding: NativeLocalBinding = {
+    agent: "openclaw",
+    provider: "vllm-local",
+    sandboxName: STATION_SMOKE_SANDBOX,
+    gatewayName: "nemoclaw",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+    ...overrides,
+  };
+  return { ...binding, ...nativeLocalIdentity(binding), schemaVersion: 1, providerId: "owned" };
+}
+
 afterEach(() => {
   for (const directory of directories.splice(0))
     fs.rmSync(directory, { recursive: true, force: true });
@@ -159,6 +178,61 @@ describe("Station Express smoke boundaries", () => {
   });
 
   it.each([
+    undefined,
+    { ...stationAttachment(), providerId: "" },
+    { ...stationAttachment(), profileId: "another-profile" },
+    stationAttachment({ sandboxName: "another-sandbox" }),
+    stationAttachment({ gatewayName: "another-gateway" }),
+    stationAttachment({ agent: "hermes" }),
+    stationAttachment({ provider: "ollama-local" }),
+    stationAttachment({ endpointUrl: "http://host.openshell.internal:18000/v1" }),
+    stationAttachment({ credentialEnv: "ANOTHER_TOKEN" }),
+    stationAttachment({ authMode: "sentinel" }),
+  ])("rejects missing or mismatched Station inference authority %#", (attachment) => {
+    expect(() =>
+      stationNativeInferenceCommand({
+        sandboxes: { [STATION_SMOKE_SANDBOX]: { nativeLocalProviderAttachment: attachment } },
+      }),
+    ).toThrow("authenticated native vLLM attachment");
+  });
+
+  it("passes the scoped native credential and exact model request to curl", () => {
+    const token = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const probe = invokeStationInference(token);
+    expect(probe.status).toBe(0);
+    expect(probe.stdout.trim().split("\n")).toEqual([
+      "-q",
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--max-time",
+      "90",
+      "http://host.openshell.internal:8000/v1/chat/completions",
+      "-H",
+      `Authorization: Bearer ${token}`,
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      JSON.stringify({
+        model: STATION_SMOKE_MODEL,
+        messages: [{ role: "user", content: "Reply with one word: PONG" }],
+        max_tokens: 8192,
+        parallel_tool_calls: false,
+      }),
+    ]);
+  });
+
+  it.each([
+    "host-secret",
+    "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN\nhost-secret",
+  ])("rejects an unscoped or raw credential before calling curl %#", (token) => {
+    const rejected = invokeStationInference(token);
+    expect(rejected.status).toBe(2);
+    expect(rejected.stdout).toBe("");
+  });
+
+  it.each([
     { model: "other-model", choices: [{ message: { content: "PONG" } }] },
     { model: STATION_SMOKE_MODEL, choices: [{ message: { content: "" } }] },
     { model: STATION_SMOKE_MODEL, choices: [] },
@@ -231,6 +305,7 @@ describe("Station Express smoke boundaries", () => {
             sandboxes: {
               [STATION_SMOKE_SANDBOX]: {
                 agent: "openclaw",
+                nativeLocalProviderAttachment: stationAttachment(),
                 workload: {
                   kind: "managed-image",
                   sourceRevision: base.E2E_MANAGED_IMAGE_REVISION,
@@ -255,14 +330,14 @@ describe("Station Express smoke boundaries", () => {
         label === "station-express-install" && timeoutAt === "host" ? observed : normal;
       return { ...result, stdout: outputs[label] ?? "" };
     });
-    const exec = vi
-      .fn<SandboxClient["exec"]>()
+    const execShell = vi
+      .fn<SandboxClient["execShell"]>()
       .mockResolvedValue(timeoutAt === "inference" ? observed : normal);
     const cleanup = new CleanupRegistry();
     const writeEvidence = vi.fn(async () => {});
     const result = runStationExpressSmoke({
       host: { command },
-      sandbox: { exec },
+      sandbox: { execShell },
       cleanup,
       environment: { ...base, HOME: home, NEMOCLAW_STATION_RUNNER_HOME: home },
       repoRoot: "/candidate",
@@ -276,7 +351,7 @@ describe("Station Express smoke boundaries", () => {
         (error: Error) => error.message,
       ),
     ).resolves.toBe(expectedFailure);
-    expect(exec).toHaveBeenCalledTimes(inferenceCalls);
+    expect(execShell).toHaveBeenCalledTimes(inferenceCalls);
     expect(command).toHaveBeenCalledWith(
       "bash",
       ["uninstall.sh", "--yes", "--destroy-user-data"],
@@ -317,14 +392,14 @@ describe("Station Express smoke boundaries", () => {
         return empty;
       })
       .mockResolvedValue(empty);
-    const exec = vi.fn<SandboxClient["exec"]>();
+    const execShell = vi.fn<SandboxClient["execShell"]>();
     const writeEvidence = vi.fn(async () => {});
     const phases = { inspect: vi.fn(), install: vi.fn(), assert: vi.fn(), cleanup: vi.fn() };
     await expect(
       runStationExpressSmoke({
         cleanup,
         host: { command },
-        sandbox: { exec },
+        sandbox: { execShell },
         environment: { ...base, HOME: home, NEMOCLAW_STATION_RUNNER_HOME: home },
         repoRoot: "/candidate",
         phases,
@@ -346,7 +421,7 @@ describe("Station Express smoke boundaries", () => {
       ["uninstall.sh", "--yes", "--destroy-user-data"],
       expect.anything(),
     );
-    expect(exec).not.toHaveBeenCalled();
+    expect(execShell).not.toHaveBeenCalled();
     expect(phases.inspect).toHaveBeenCalledOnce();
     expect(phases.install).toHaveBeenCalledOnce();
     expect(phases.assert).not.toHaveBeenCalled();
@@ -385,6 +460,22 @@ function cleanupHome() {
   directories.push(home);
   return home;
 }
+function invokeStationInference(token: string) {
+  const home = cleanupHome();
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+  const script = stationNativeInferenceCommand({
+    sandboxes: { [STATION_SMOKE_SANDBOX]: { nativeLocalProviderAttachment: stationAttachment() } },
+  });
+  return spawnSync("/bin/sh", ["-c", script], {
+    env: { PATH: `${bin}:/usr/bin:/bin`, NEMOCLAW_LOCAL_INFERENCE_TOKEN: token },
+    encoding: "utf8",
+    timeout: 1000,
+    killSignal: "SIGKILL",
+  });
+}
+
 async function stationProbeOutcome(home: string, timeOut: boolean) {
   const progress = startTestProgress(
     "Station timeout result",

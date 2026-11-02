@@ -524,6 +524,139 @@ def _startup_process_identity_is_live(
             os.close(proc_root_fd)
 
 
+def _runtime_drm_groups(expected_uid: int) -> set[str]:
+    # NVIDIA CDI adds nonzero groups for device nodes that are not world read/write.
+    # Landlock denies /dev directory reads. Discover kernel device names through
+    # sysfs, then inspect metadata under pinned /dev directories without opening devices.
+    try:
+        flags = os.O_PATH | _directory_flag() | _no_follow_flag() | _cloexec_flag()
+        dev_fd = os.open("/dev", flags)
+        try:
+            directory = os.fstat(dev_fd)
+            if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+                return set()
+            device_directory = os.open("dri", flags, dir_fd=dev_fd)
+            try:
+                directory = os.fstat(device_directory)
+                if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+                    return set()
+                sysfs_directory = _open_directory("/sys/class/drm")
+                try:
+                    directory = os.fstat(sysfs_directory)
+                    if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+                        return set()
+                    groups: set[str] = set()
+                    device_count = 0
+                    with os.scandir(sysfs_directory) as entries:
+                        for index, entry in enumerate(entries):
+                            # Sysfs includes connectors and devices not assigned to this container.
+                            if index >= 32768:
+                                return set()
+                            match = re.fullmatch(r"(?:card|renderD)([0-9]+)", entry.name)
+                            if not match:
+                                continue
+                            try:
+                                device = os.stat(
+                                    entry.name, dir_fd=device_directory, follow_symlinks=False
+                                )
+                            except FileNotFoundError:
+                                continue
+                            device_count += 1
+                            if device_count > 256:
+                                return set()
+                            if (
+                                stat.S_ISCHR(device.st_mode)
+                                and os.major(device.st_rdev) == 226
+                                and os.minor(device.st_rdev) == int(match[1])
+                                and device.st_uid in (0, expected_uid)
+                                and device.st_gid > 0
+                                and device.st_mode & 0o006 != 0o006
+                            ):
+                                groups.add(str(device.st_gid))
+                    return groups
+                finally:
+                    os.close(sysfs_directory)
+            finally:
+                os.close(device_directory)
+        finally:
+            os.close(dev_fd)
+    except (OSError, UnsafePathError):
+        return set()
+
+
+def _capability_free_supervisor_matches(
+    cmdline: bytes,
+    status_bytes: bytes,
+    status_metadata: os.stat_result,
+    expected_uid: int,
+) -> bool:
+    # OpenShell 0.1.2's workload boundary runs without saved root IDs or
+    # capabilities, using bootstrap directly or Podman's rootless launcher.
+    # It becomes nondumpable before reading bootstrap material, which
+    # makes its proc status file root-owned and prevents same-user ptrace/argv
+    # replacement. Accept only that pinned launch contract, not arbitrary
+    # same-user supervisors. PID/parent, lifetime and unique child checks remain
+    # in the descriptor-pinned callers below; argv alone is never authority.
+    try:
+        sandbox = pwd.getpwnam("sandbox")
+    except KeyError:
+        return False
+    if (
+        expected_uid <= 0
+        or sandbox.pw_uid != expected_uid
+        or sandbox.pw_gid <= 0
+        or not stat.S_ISREG(status_metadata.st_mode)
+        or status_metadata.st_uid != 0
+        or status_metadata.st_gid != 0
+    ):
+        return False
+    rootless_argv = (
+        OPENSHELL_SUPERVISOR_ARGV0,
+        b"launch-capability-free",
+        str(expected_uid).encode("ascii"),
+        str(sandbox.pw_gid).encode("ascii"),
+        b"/.openshell/channel/sandbox/bootstrap.json",
+        b"/sandbox",
+    )
+    bootstrap = b"/.openshell/channel/sandbox/bootstrap.json"
+    expected_argvs = (
+        rootless_argv,
+        (OPENSHELL_SUPERVISOR_ARGV0, b"--bootstrap", bootstrap),
+        (b"/.openshell/runtime/openshell-sandbox", b"--bootstrap", bootstrap),
+    )
+    if cmdline not in tuple(b"\0".join(argv) + b"\0" for argv in expected_argvs):
+        return False
+    expected_fields = {
+        "Uid": [str(expected_uid)] * 4,
+        "Gid": [str(sandbox.pw_gid)] * 4,
+        "Groups": [],
+        "NoNewPrivs": ["1"],
+        **{name: ["0000000000000000"] for name in (
+            "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"
+        )},
+    }
+    observed: dict[str, list[str]] = {}
+    try:
+        for line in status_bytes.decode("ascii").splitlines():
+            name, separator, value = line.partition(":")
+            if separator and name in expected_fields:
+                if name in observed:
+                    return False
+                observed[name] = value.split()
+    except UnicodeDecodeError:
+        return False
+    # Docker preserves the primary group and CDI device groups. The rootless
+    # launcher still must clear supplementary groups. Reject unexplained groups.
+    if cmdline != b"\0".join(rootless_argv) + b"\0":
+        groups = observed.get("Groups", [])
+        allowed = {str(sandbox.pw_gid)}
+        if set(groups) - allowed:
+            allowed |= _runtime_drm_groups(expected_uid)
+        if len(set(groups)) == len(groups) and set(groups) <= allowed:
+            expected_fields["Groups"] = groups
+    return observed == expected_fields
+
+
 def _openshell_supervisor_identity(
     expected_effective_uid: int,
 ) -> tuple[str, int | None] | None:
@@ -533,12 +666,18 @@ def _openshell_supervisor_identity(
         proc_root_fd = _open_proc_root()
         proc_pid_fd = _open_proc_pid(proc_root_fd, 1)
         pinned_before = os.fstat(proc_pid_fd)
+        # Linux deliberately leaves the world-readable /proc/<pid> directory
+        # owned by the effective UID even for a nondumpable process. Its status
+        # entry follows task_dump_owner's nondumpable ownership rule instead.
+        # Resolve it without symlinks beneath the already-pinned PID directory.
+        first_status_metadata = os.stat("status", dir_fd=proc_pid_fd, follow_symlinks=False)
         first_cmdline = _read_proc_pid_file(
             proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
         )
-        first_status = _process_status_identity(
-            _read_proc_pid_file(proc_pid_fd, "status", f"{PROC_ROOT}/1/status")
+        first_status_bytes = _read_proc_pid_file(
+            proc_pid_fd, "status", f"{PROC_ROOT}/1/status"
         )
+        first_status = _process_status_identity(first_status_bytes)
         first_stat = _read_proc_pid_file(
             proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
         )
@@ -547,18 +686,36 @@ def _openshell_supervisor_identity(
         second_cmdline = _read_proc_pid_file(
             proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
         )
-        second_status = _process_status_identity(
-            _read_proc_pid_file(proc_pid_fd, "status", f"{PROC_ROOT}/1/status")
+        second_status_bytes = _read_proc_pid_file(
+            proc_pid_fd, "status", f"{PROC_ROOT}/1/status"
         )
+        second_status = _process_status_identity(second_status_bytes)
         second_stat = _read_proc_pid_file(
             proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
         )
         second_start_time = _parse_process_start_time(second_stat)
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        second_status_metadata = os.stat("status", dir_fd=proc_pid_fd, follow_symlinks=False)
         pinned_after = os.fstat(proc_pid_fd)
+        if expected_effective_uid == 0:
+            supervisor_matches = (
+                _cmdline_is_openshell_supervisor(first_cmdline)
+                and _cmdline_is_openshell_supervisor(second_cmdline)
+            )
+        else:
+            supervisor_matches = (
+                first_cmdline == second_cmdline
+                and first_status_metadata.st_dev == second_status_metadata.st_dev
+                and first_status_metadata.st_ino == second_status_metadata.st_ino
+                and _capability_free_supervisor_matches(
+                    first_cmdline, first_status_bytes, first_status_metadata, expected_effective_uid
+                )
+                and _capability_free_supervisor_matches(
+                    second_cmdline, second_status_bytes, second_status_metadata, expected_effective_uid
+                )
+            )
         if not (
-            _cmdline_is_openshell_supervisor(first_cmdline)
-            and _cmdline_is_openshell_supervisor(second_cmdline)
+            supervisor_matches
             and first_status is not None
             and second_status is not None
             and first_status[0] == expected_effective_uid
@@ -676,7 +833,11 @@ def _openshell_supervised_nonroot_start_is_live(
     expected_sandbox_uid: int,
     required_pid: int | None = None,
 ) -> bool:
-    supervisor_identity = _openshell_supervisor_identity(expected_root_uid)
+    supervisor_uid = expected_root_uid
+    supervisor_identity = _openshell_supervisor_identity(supervisor_uid)
+    if supervisor_identity is None and expected_root_uid == 0 and expected_sandbox_uid > 0:
+        supervisor_uid = expected_sandbox_uid
+        supervisor_identity = _openshell_supervisor_identity(supervisor_uid)
     if supervisor_identity is None:
         return False
     proc_root_fd = -1
@@ -705,7 +866,7 @@ def _openshell_supervised_nonroot_start_is_live(
         return bool(
             matches == 1
             and (required_pid is None or matched_pid == required_pid)
-            and _openshell_supervisor_identity(expected_root_uid)
+            and _openshell_supervisor_identity(supervisor_uid)
             == supervisor_identity
         )
     except OSError:
@@ -2907,18 +3068,29 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
         upstream = source["_nemoclaw_upstream"]
         provider = upstream["provider"]
         model = source["model"]
-        managed = source["providers"][provider]
+        provider_key = upstream["provider_key"]
+        managed = source["providers"][provider_key]
         custom = source["custom_providers"]
         matches = [entry for entry in custom if isinstance(entry, dict) and entry.get("name") == provider]
         previous = model["api_key"]
         reference = candidate["model"]["api_key"]
         nvidia = provider == "nvidia-prod"
-        env_key = "NVIDIA_INFERENCE_API_KEY" if nvidia else "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
-        pattern = rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}"
+        local = provider in {"ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
+        previous_reference = re.fullmatch(
+            r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_([A-Z][A-Z0-9_]{0,255})",
+            previous if isinstance(previous, str) else "",
+        )
+        env_key = "NVIDIA_INFERENCE_API_KEY" if nvidia else "NEMOCLAW_LOCAL_INFERENCE_TOKEN" if local else (
+            previous_reference.group(1) if previous_reference else ""
+        )
+        pattern = rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}"
         if (
-            provider not in {"nvidia-prod", "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
+            not isinstance(provider, str)
+            or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}", provider) is None
+            or provider_key != re.sub(r"-+", "-", provider.lower()).strip("-")
+            or not env_key
+            or (not local and not nvidia and previous_reference is None)
             or (nvidia and model.get("base_url") != "https://integrate.api.nvidia.com/v1")
-            or upstream.get("provider_key") != provider
             or model.get("provider") != "custom"
             or upstream.get("model") != model.get("default")
             or managed.get("default_model") != model.get("default")
@@ -2926,17 +3098,17 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
             or managed.get("api") != model.get("base_url")
             or matches[0].get("base_url") != model.get("base_url")
             or not isinstance(previous, str)
-            or (previous != "${" + env_key + "}" and re.fullmatch(pattern, previous) is None)
+            or (not ((local or nvidia) and previous == "${" + env_key + "}") and re.fullmatch(pattern, previous) is None)
             or managed.get("api_key") != previous
             or matches[0].get("api_key") != previous
             or not isinstance(reference, str)
             or re.fullmatch(pattern, reference) is None
         ):
-            raise ValueError("invalid managed local slots")
+            raise ValueError("invalid managed native slots")
         expected = {
             **source,
             "model": {**model, "api_key": reference},
-            "providers": {**source["providers"], provider: {**managed, "api_key": reference}},
+            "providers": {**source["providers"], provider_key: {**managed, "api_key": reference}},
             "custom_providers": [
                 {**entry, "api_key": reference} if entry is matches[0] else entry
                 for entry in custom
@@ -2945,7 +3117,7 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
         if json.dumps(expected, sort_keys=True, allow_nan=False) != json.dumps(candidate, sort_keys=True, allow_nan=False):
             raise ValueError("candidate changed non-credential configuration")
     except (AttributeError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
-        raise UnsafePathError("restored Hermes write may change only its three native local credential slots") from exc
+        raise UnsafePathError("restored Hermes write may change only its three native credential slots") from exc
 
 
 def _with_issued_nvidia_slots(text: str, template: str, reference: str) -> bytes:
@@ -2985,17 +3157,10 @@ def verify_nvidia_credential(hermes_dir: str, expected_model: str) -> None:
         raise NvidiaCredentialRejectedError("Hermes NVIDIA credential is invalid or stale; rebuild the sandbox") from exc
 
 
-def _adopt_restored_native_local_source(
-    hermes_dir: str, hash_file: str, state_file: str,
-    expected_config_sha256: str | None, candidate_bytes: bytes,
-    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
-) -> None:
-    """Accept only a restored mutable source for an exact local-reference update.
-
-    The namespace is already frozen by seal_restart. General config writes keep
-    their strict-anchor requirement; this operation cannot change route or user
-    settings and must validate the restored environment before adopting it.
-    """
+def _validate_restored_native_local_source(
+    hermes_dir: str, expected_config_sha256: str | None, candidate_bytes: bytes,
+) -> tuple[str, FileSnapshot, str, FileSnapshot]:
+    """Validate archived inputs and an exact three-slot credential replacement."""
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     source_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
@@ -3008,6 +3173,25 @@ def _adopt_restored_native_local_source(
     if os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD:
         validator = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validate-env-secret-boundary.py")
     _validate_env_text_with_boundary(env_text, validator, isolated=True)
+    return source_text, config_snapshot, env_text, env_snapshot
+
+
+def _adopt_restored_native_local_source(
+    hermes_dir: str, hash_file: str, state_file: str,
+    expected_config_sha256: str | None, candidate_bytes: bytes,
+    hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
+) -> None:
+    """Accept only a restored mutable source for an exact native-reference update.
+
+    The namespace is already frozen by seal_restart. General config writes keep
+    their strict-anchor requirement; this operation cannot change route or user
+    settings and must validate the restored environment before adopting it.
+    """
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    source_text, config_snapshot, env_text, env_snapshot = _validate_restored_native_local_source(
+        hermes_dir, expected_config_sha256, candidate_bytes,
+    )
     for path, expected_snapshot in ((config_path, config_snapshot), (env_path, env_snapshot)):
         opened = _open_regular(path)
         try:

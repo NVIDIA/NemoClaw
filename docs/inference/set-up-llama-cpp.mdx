@@ -20,14 +20,15 @@ content:
 NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
 Both paths are experimental and use OpenAI Chat Completions.
+OpenShell `0.1.5` GPU qualification remains pending, including Docker Desktop and Windows WSL validation of the managed path.
 
-<AgentOnly variant="openclaw">
-Agent requests use `https://inference.local/v1`.
-</AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes sandboxes use the recorded local endpoint through a sandbox-attached OpenShell provider.
+<AgentOnly variant="openclaw,hermes,deepagents">
+New OpenClaw, Hermes, and Deep Agents Code llama.cpp selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
-Refer to [How Inference Routing Works](../about-inference-routing) for the qualification and existing-sandbox boundaries.
+Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+</AgentOnly>
+<AgentOnly variant="openclaw">
+Older OpenClaw sandboxes without a native attachment retain their recorded shared route, which requires OpenShell `0.0.x`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Live qualification of the Hermes native local lifecycle is pending.
@@ -59,11 +60,20 @@ The server must satisfy all of these requirements:
 - Report a stable, non-path served model alias.
 - Return native llama.cpp model metadata without conflicting model entries.
 
-On native Docker, publishing only `-p 127.0.0.1:8081:8081` can leave the sandbox route unreachable.
-Keep the loopback publication and also publish `-p <Docker-gateway-IP>:8081:8081` for the OpenShell network.
-For a host process, configure its listener or forwarding so both addresses work.
-Retain native API-key authentication and restrict non-loopback access to the sandbox network.
-Onboarding stops when the existing network probe confirms that the attached server cannot be reached.
+On native Linux Docker with OpenShell `0.1.5` and its default supervisor network mode, publish the server with `-p 127.0.0.1:8081:8081`, or bind the host process to `127.0.0.1:8081`.
+The native supervisor reaches this loopback listener through `host.openshell.internal`; a second publication on a Docker bridge is unnecessary.
+Retain native API-key authentication.
+NemoClaw checks TCP reachability from a restricted probe container on the supervisor's host network.
+The probe does not depend on a retained OpenShell Docker bridge.
+
+Docker Desktop, the portable profile, and native Podman retain their existing gateway-address probes.
+For these paths, preserve host-loopback access and make the authenticated server reachable through the selected runtime's host gateway.
+Restrict any non-loopback listener to the required runtime network.
+These probe changes do not establish OpenShell `0.1.5` platform qualification.
+
+A confirmed connection failure stops onboarding.
+If the probe cannot run, exceeds its execution deadline, or cannot resolve the hostname, this preflight remains inconclusive and continues.
+An inconclusive result does not prove reachability; subsequent inference-route validation still applies.
 
 Configure the server with its own supported mechanism before you run NemoClaw.
 Start the server with an explicit served model alias.
@@ -321,44 +331,17 @@ Refer to [CLI Commands](../../reference/commands) for complete command behavior.
 
 During managed installation, NemoClaw first checks internal runtime readiness and host-loopback health.
 It repeats these checks when onboarding resumes.
-It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
-On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process because a host-network container cannot reach the WSL loopback listener.
-If the bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
-On Docker Desktop in WSL, this failure reports the private sandbox bridge probe result. Check that Docker Desktop is running, that its WSL integration is enabled for this distribution, and that the OpenShell Docker network and host gateway are available before retrying onboarding. The WSL path does not print a UFW command.
+On native Linux, it then probes `host.openshell.internal:8081` from a restricted probe container using the native supervisor's host network.
+The alias resolves to `127.0.0.1` for this probe.
+The model container remains on its internal Docker network with no published ports.
+The authenticated host bridge listens only on `127.0.0.1:8081`.
 
-On native Linux, when the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
-
-- The detected Docker network.
-- The source subnet.
-- The gateway IP address.
-- The fixed port `8081`.
-- The narrow UFW command.
-
-On native Linux, if the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
-Inspect the OpenShell Docker bridge configuration before you retry onboarding.
-
-<Warning>
-  On native Linux, the printed command changes UFW. Confirm that the reported Docker network, source subnet, and
-  gateway IP address belong to the OpenShell Docker bridge before you run it. The rule allows TCP
-  traffic only from that subnet to port `8081` on that gateway IP address.
-</Warning>
-
-On native Linux, run the command from the onboarding error.
-It has this form:
-
-```bash
-sudo ufw allow from <subnet> to <gateway-ip> port 8081 proto tcp
-```
-
-On native Linux, after you apply the rule, rerun the same onboarding selection.
-
-On native Linux, remove the rule if onboarding still reports the bridge failure or the managed runtime no longer needs it:
-
-```bash
-sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
-```
-
-On native Linux, use the same subnet and gateway IP address that appeared in the original command.
+On Docker Desktop in WSL, NemoClaw runs the loopback health probe from the WSL CLI process.
+It then checks `host.openshell.internal:8081` from a bridge-network probe container using Docker's host gateway.
+If either probe fails, onboarding stops and reports the failed check without changing UFW or suggesting a firewall rule.
+Check that Docker is running and that the managed host bridge is listening on port `8081`.
+On Docker Desktop in WSL, also check that WSL integration is enabled for the distribution and that Docker's host gateway is reachable.
+Correct the reported failure, then rerun the same onboarding selection.
 
 If resumed onboarding reports that it cannot reserve host-local inference, run `$$nemoclaw <sandbox-name> doctor`.
 If the diagnostic identifies the former WSL Qwen image, resume is unavailable. Follow the exact owned-runtime removal and fresh onboarding procedure in [Upgrade or Roll Back](#upgrade-or-roll-back) after a qualified native image is pinned.

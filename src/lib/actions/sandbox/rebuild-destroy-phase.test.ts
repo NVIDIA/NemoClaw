@@ -1195,7 +1195,7 @@ describe("rebuild destroy phase", () => {
         }),
         onDeleted: vi.fn(),
       }),
-    ).rejects.toThrow("Sandbox host ports did not release after deletion");
+    ).rejects.toThrow("Sandbox host port release could not be proved after deletion");
 
     expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(recreateJournal.beginDelete).toHaveBeenCalledOnce();

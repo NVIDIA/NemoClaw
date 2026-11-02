@@ -944,24 +944,68 @@ describe("native hosted inference probe credential boundary", () => {
 
   it.each([
     undefined,
+    "",
     "sk-not-a-supervisor-placeholder",
     "openshell:resolve:env:OTHER_API_KEY",
     "openshell:resolve:env:OPENAI_API_KEY;evil",
-  ])("rejects absent, raw, or wrong native credentials before curl [case %#]", (credential) => {
-    const command = buildSandboxInferenceInvocationCommand({
-      ...input,
-      provider: "openai-api",
-      nativeProvider: true,
-    });
-    const result = spawnSync("/bin/sh", ["-c", command], {
-      env: { PATH: process.env.PATH, ...(credential ? { OPENAI_API_KEY: credential } : {}) },
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("");
-  });
+    "openshell:resolve:env:OPENAI_API_KEY\nsecret-canary",
+  ])(
+    "reports absent or invalid native credentials without exposing values [case %#]",
+    async (credential) => {
+      const selected = {
+        ...input,
+        provider: "compatible-endpoint",
+        nativeProvider: true,
+        nativeEndpointUrl: "https://custom.example/v1",
+      };
+      const command = buildSandboxInferenceInvocationCommand(selected);
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        env: { PATH: process.env.PATH, ...(credential ? { COMPATIBLE_API_KEY: credential } : {}) },
+        encoding: "utf8",
+        timeout: 5000,
+      });
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        `native-hosted-credential:${credential ? "invalid" : "missing"}\n`,
+      );
+      expect(
+        await probeSandboxInferenceInvocation(selected, {
+          execute: async () => ({
+            status: result.status!,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          }),
+        }),
+      ).toEqual({
+        ok: false,
+        detail: `sandbox inference invocation probe exited with status 2: the native inference credential handle is ${credential ? "invalid" : "missing"}`,
+        httpStatus: null,
+        endpoint: "https://custom.example/v1/chat/completions",
+      });
+    },
+  );
+
+  it.each([
+    [2, "", "native-hosted-credential:missing secret-canary", true],
+    [2, "", "secret-canary\nnative-hosted-credential:invalid", true],
+    [7, "", "native-hosted-credential:missing", true],
+    [2, "curl-error:2\n", "native-hosted-credential:missing", true],
+    [2, "", "native-hosted-credential:missing", false],
+  ] as const)(
+    "ignores credential diagnostics outside the native rejection result [case %#]",
+    async (status, stdout, stderr, nativeProvider) => {
+      const result = await probeSandboxInferenceInvocation(
+        { ...input, nativeProvider, nativeEndpointUrl: "https://custom.example/v1" },
+        { execute: async () => ({ status, stdout, stderr }) },
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        detail: `sandbox inference invocation probe exited with status ${status}`,
+        httpStatus: null,
+      });
+    },
+  );
 });
 
 it.each([true, undefined])(

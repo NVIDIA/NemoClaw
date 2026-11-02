@@ -40,7 +40,7 @@ const CURRENT_INSTALLED_DOCKERFILE = [
   "COPY agents/hermes/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
   "RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env > /etc/nemoclaw/hermes.config-hash",
   "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
-  "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json",
+  "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.5.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.1.5.json",
   "RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \\",
   "    && node /opt/nemoclaw-hermes-config/generate-config.ts",
   "",
@@ -73,6 +73,10 @@ describe("scripts/update-hermes-agent.sh", () => {
     fs.mkdirSync(path.dirname(script), { recursive: true });
     fs.mkdirSync(path.join(repo, "agents", "hermes"), { recursive: true });
     fs.mkdirSync(fakeBin, { recursive: true });
+    writeExecutable(
+      path.join(fakeBin, "mktemp"),
+      '#!/bin/sh\nexec /usr/bin/mktemp "$@" "$TMPDIR/hermes.XXXXXXXX"\n',
+    );
     fs.copyFileSync(SCRIPT, script);
     fs.chmodSync(script, 0o755);
     fs.copyFileSync(HERMES_BASE_DOCKERFILE, path.join(repo, "agents", "hermes", "Dockerfile.base"));
@@ -134,6 +138,7 @@ fi
           ...process.env,
           PATH: `${fakeBin}:${process.env.PATH}`,
           HOME: path.join(tmp, "home"),
+          TMPDIR: tmp,
           HERMES_BASE_REF: baseRef,
           FAKE_DOCKER_LOG: dockerLog,
           FAKE_NEMOHERMES_LOG: nemohermesLog,
@@ -169,6 +174,10 @@ fi
       fs.mkdirSync(path.dirname(script), { recursive: true });
       fs.mkdirSync(path.dirname(dockerfile), { recursive: true });
       fs.mkdirSync(fakeBin, { recursive: true });
+      writeExecutable(
+        path.join(fakeBin, "mktemp"),
+        '#!/bin/sh\nexec /usr/bin/mktemp "$@" "$TMPDIR/hermes.XXXXXXXX"\n',
+      );
       fs.copyFileSync(SCRIPT, script);
       fs.chmodSync(script, 0o755);
       fs.copyFileSync(HERMES_BASE_DOCKERFILE, dockerfile);
@@ -210,6 +219,7 @@ printf 'fake archive' > "$output"
           ...process.env,
           PATH: `${fakeBin}:${process.env.PATH}`,
           HOME: path.join(tmp, "home"),
+          TMPDIR: tmp,
           NEMOCLAW_SOURCE_ROOT: undefined,
         },
         timeout: 10_000,
@@ -441,7 +451,7 @@ fi
     );
     const installedAgentDockerfile = path.join(path.dirname(installedDockerfile), "Dockerfile");
     const preMcpDockerfile = CURRENT_INSTALLED_DOCKERFILE.replace(
-      /^(?:COPY (?:agents\/hermes\/mcp-config-transaction\.py|src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v0\.0\.116\.json) .*)\n/gm,
+      /^(?:COPY (?:agents\/hermes\/mcp-config-transaction\.py|src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v0\.1\.5\.json) .*)\n/gm,
       "",
     );
     fs.mkdirSync(path.dirname(installedDockerfile), { recursive: true });
@@ -466,7 +476,7 @@ fi
       expect(run.status).toBe(1);
       expect(run.stdout).toContain("INVALID: installed copy");
       expect(run.stdout).toContain("marker hermes-mcp-config-transaction.py");
-      expect(run.stdout).toContain("marker openshell-child-visible-credentials.v0.0.116.json");
+      expect(run.stdout).toContain("marker openshell-child-visible-credentials.v0.1.5.json");
       expect(fs.readFileSync(installedDockerfile, "utf-8")).toBe(CURRENT_INSTALLED_BASE);
       expect(fs.readFileSync(installedAgentDockerfile, "utf-8")).toBe(preMcpDockerfile);
     } finally {

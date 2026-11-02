@@ -12,7 +12,11 @@ import {
 /** Apply host control-plane reservations at each local inference mutation boundary. */
 export function isProtectedLocalInferencePort(
   port: number,
-  options: { ownedProxy?: boolean; allowLegacyProxyDefault?: boolean } = {},
+  options: {
+    ownedProxy?: boolean;
+    allowLegacyProxyDefault?: boolean;
+    ownedModelRouterPort?: number;
+  } = {},
 ): boolean {
   const home = resolveHome();
   return (

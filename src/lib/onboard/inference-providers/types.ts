@@ -203,6 +203,7 @@ export type HermesDeps = CommonDeps &
     prepareNativeProvider?(
       apiKey: string | null,
       endpointUrl: string,
+      retainedHermesEndpoint?: boolean,
     ): Promise<NativeProviderAttachment>;
     hermesProviderAuth: {
       HERMES_PROVIDER_NAME: string;

@@ -15,7 +15,11 @@ import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { resolveDockerSnapshotRecreateGpuDevice } from "../../onboard/runtime-provider/snapshot";
 import { secureTempFile } from "../../onboard/temp-files";
-import { readRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
+import {
+  nativeRestoreTransportError,
+  readRebuildPolicyHandoff,
+  writeRebuildPolicyHandoff,
+} from "../../state/sandbox";
 import { captureRecordedSandboxBasePolicy } from "../../policy";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -154,6 +158,8 @@ export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
 ): Promise<RebuildBackupPhaseResult | null> {
+  const transportError = nativeRestoreTransportError();
+  if (transportError) return input.bail(transportError);
   const preparedRecoveryManifest = input.preparedRecoveryManifest;
   const preparedRetainedPolicy = preparedRecoveryManifest
     ? readRebuildPolicyHandoff(preparedRecoveryManifest)

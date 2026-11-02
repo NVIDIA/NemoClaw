@@ -1,11 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  isNetworkPolicyDenial,
+  NETWORK_POLICY_RESULT_PREFIX,
+} from "../support/network-policy-probe.ts";
+
 export function buildMcpProviderRewriteAuthorization(
   credentialKey: string,
   runtimeValue: string | undefined,
 ): string | null {
-  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(credentialKey) || runtimeValue === undefined) {
+  if (
+    !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(credentialKey) ||
+    runtimeValue === undefined ||
+    /[\r\n]/u.test(runtimeValue)
+  ) {
     return null;
   }
   const escapedCredentialKey = credentialKey.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -26,6 +35,8 @@ export function buildMcpCredentialHandleAuthorizationPattern(credentialKey: stri
 
 export const MCP_PROVIDER_REWRITE_PROBE_SOURCE = `const https = require("node:https");
 const buildMcpProviderRewriteAuthorization = ${buildMcpProviderRewriteAuthorization.toString()};
+const NETWORK_POLICY_RESULT_PREFIX = ${JSON.stringify(NETWORK_POLICY_RESULT_PREFIX)};
+const isNetworkPolicyDenial = ${isNetworkPolicyDenial.toString()};
 const url = new URL(process.argv[2]);
 const method = process.argv[3];
 const expectation = process.argv[4];
@@ -44,11 +55,13 @@ const body = JSON.stringify({
 });
 const req = https.request({
   hostname: url.hostname,
+  autoSelectFamily: false,
   port: url.port,
   path: url.pathname,
   method: "POST",
   headers: {
     "content-type": "application/json",
+    "mcp-protocol-version": "2025-11-25",
     "content-length": Buffer.byteLength(body),
     "authorization": authorization
   }
@@ -59,15 +72,15 @@ const req = https.request({
   res.on("end", () => {
     console.log(JSON.stringify({ status: res.statusCode, body: data }));
     const allowed = res.statusCode === 200 && data.includes('"result"');
-    const denied = res.statusCode === 403;
+    const denied = isNetworkPolicyDenial({ exitCode: 0, stdout: NETWORK_POLICY_RESULT_PREFIX + JSON.stringify({ status: res.statusCode, response: data }) });
     process.exit(expectation === "allow" ? (allowed ? 0 : 1) : (denied ? 0 : 1));
   });
 });
 req.on("error", (error) => {
   console.error(error.message);
-  const strictDenied = expectation === "deny-strict" && /HTTP\\/1\\.[01] 403 Forbidden/.test(error.message);
-  strictDenied && console.log(JSON.stringify({ status: 403, error: error.message }));
-  process.exit(expectation === "deny" || strictDenied ? 0 : 1);
+  const record = NETWORK_POLICY_RESULT_PREFIX + JSON.stringify({ errorCode: error.code ?? null, syscall: error.syscall ?? null });
+  console.log(record);
+  process.exit(expectation !== "allow" && isNetworkPolicyDenial({ exitCode: 0, stdout: record }) ? 0 : 1);
 });
 req.end(body);
 `;

@@ -5,13 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import { resolveDiscordTemplateReference } from "../../../src/lib/messaging/channels/discord/template-resolver.js";
 
-// OpenClaw's Discord plugin validates channels.discord.accounts.default.proxy
-// and rejects any non-loopback host (validateDiscordProxyUrl: "Proxy URL must
-// target a loopback host"). The sandbox egress proxy (10.200.0.1:3128) is not
-// loopback, so a per-account proxy must NOT be emitted; Discord gateway/REST
-// egress is carried by the top-level managed proxy (proxy.loopbackMode:
-// "gateway-only") instead. discordProxyUrl therefore resolves to undefined so
-// the proxy field is dropped from the rendered config (#5544; reverts #5248).
+// Discord uses OpenShell native egress. Obsolete proxy inputs must not create
+// an account-level proxy configuration.
 const ctx = (env: Record<string, string | undefined>) => ({ inputs: [], env });
 
 describe("discord template-resolver: discordProxyUrl", () => {

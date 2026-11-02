@@ -36,7 +36,7 @@ import {
 } from "./hermes-acp-ssh";
 
 const ACP_SDK_VERSION = "0.9.0";
-const ACP_SETUP_TIMEOUT_MS = 30_000;
+export const ACP_SETUP_TIMEOUT_MS = 30_000;
 const SSH_CONFIG_MAX_BYTES = 1024 * 1024;
 const PROBE_MAX_BYTES = 4 * 1024;
 const SSH_KILL_GRACE_MS = 1_000;

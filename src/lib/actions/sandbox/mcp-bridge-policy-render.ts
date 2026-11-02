@@ -112,6 +112,8 @@ function renderMcpBridgePolicyYaml(
             allowed_ips: allowedIps,
             ...(providerName ? { credential_binding: { provider: providerName } } : {}),
             mcp: {
+              // Match the pinned runtime's default so policy readback preserves equality.
+              versions: ["2025-11-25"],
               max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
               strict_tool_names: true,
               allow_all_known_mcp_methods: false,

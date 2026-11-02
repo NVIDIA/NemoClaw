@@ -169,3 +169,5 @@ Headless `--no-approve` intentionally ignores project-local skills, extensions, 
 ### Diagnose Direct Internet Access
 
 The baseline permits only the managed inference route. GitHub, npm, and other services require explicit policy selection. Do not put provider or service credentials in Pi state to bypass the managed policy.
+On OpenShell `0.1.5`, check the sandbox policy and recent denial logs before retrying an external request.
+If the gateway already runs OpenShell `0.1.5`, rebuild an older Pi sandbox image to receive the updated launcher and shell environment.

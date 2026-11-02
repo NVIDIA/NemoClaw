@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mcpBridgeProviderType } from "./mcp-bridge/provider-profile";
 
 const mocks = vi.hoisted(() => {
   const state = {
@@ -136,7 +137,7 @@ vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
             ? "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
             : "11111111-2222-4333-8444-555555555555",
           resourceVersion: 7,
-          type: "nemoclaw-mcp-v1",
+          type: mcpBridgeProviderType("GITHUB_TOKEN"),
         }
       : {
           credentialKeys: null,
@@ -179,7 +180,7 @@ function configureUpsertMcpProviderMock(): void {
           exists: true,
           id: "11111111-2222-4333-8444-555555555555",
           resourceVersion: 7,
-          type: "nemoclaw-mcp-v1",
+          type: mcpBridgeProviderType("GITHUB_TOKEN"),
         },
       };
     },
@@ -290,7 +291,7 @@ describe("Hermes MCP add reload finality", () => {
                 ? "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
                 : "11111111-2222-4333-8444-555555555555",
               resourceVersion: 7,
-              type: "nemoclaw-mcp-v1",
+              type: mcpBridgeProviderType("GITHUB_TOKEN"),
             }
           : {
               credentialKeys: null,
@@ -479,7 +480,7 @@ describe("Hermes MCP add reload finality", () => {
             exists: true,
             id: "11111111-2222-4333-8444-555555555555",
             resourceVersion: 7,
-            type: "nemoclaw-mcp-v1",
+            type: mcpBridgeProviderType("GITHUB_TOKEN"),
           }
         : {
             credentialKeys: null,

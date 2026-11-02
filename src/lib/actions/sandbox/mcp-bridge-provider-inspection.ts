@@ -39,8 +39,9 @@ import {
   preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-validation";
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
+import { MCP_BRIDGE_PROVIDER_TYPE, mcpBridgeProviderType } from "./mcp-bridge/provider-profile";
 
-export const MCP_BRIDGE_PROVIDER_TYPE = "nemoclaw-mcp-v1";
+export { MCP_BRIDGE_PROVIDER_TYPE, mcpBridgeProviderType } from "./mcp-bridge/provider-profile";
 
 export type McpProviderInspection = {
   exists: boolean | null;
@@ -363,8 +364,8 @@ export function providerMatchesCredential(
     expectedProviderId !== undefined &&
     inspection.id === expectedProviderId &&
     inspection.resourceVersion !== null &&
-    inspection.type === MCP_BRIDGE_PROVIDER_TYPE &&
     expectedCredential !== undefined &&
+    inspection.type === mcpBridgeProviderType(expectedCredential) &&
     inspection.credentialKeys?.length === 1 &&
     inspection.credentialKeys[0] === expectedCredential
   );
@@ -383,7 +384,7 @@ export function providerMatchesManagedCredential(
     expectedProviderId !== undefined &&
     inspection.id === expectedProviderId &&
     inspection.resourceVersion !== null &&
-    inspection.type === "generic" &&
+    (inspection.type === "generic" || inspection.type === MCP_BRIDGE_PROVIDER_TYPE) &&
     expectedCredential !== undefined &&
     inspection.credentialKeys?.length === 1 &&
     inspection.credentialKeys[0] === expectedCredential
@@ -417,7 +418,7 @@ export function providerShapeDetail(
       allowLegacyGeneric: true,
     })
   ) {
-    return `Provider type 'generic' predates the OpenShell 0.0.106 endpoint-binding contract. Remove this MCP server, then add it again with '${expectedCredential ?? "<missing>"}' exported.`;
+    return `Provider type '${inspection.type}' does not declare its MCP credential for OpenShell 0.1.5. Remove this MCP server, then add it again with '${expectedCredential ?? "<missing>"}' exported.`;
   }
   const type = inspection.type ?? "unparseable";
   const keys = inspection.credentialKeys?.join(", ") || "none or unparseable";
@@ -443,13 +444,13 @@ export async function assertMcpProviderRecoverable(
   }
   if (inspection.exists) {
     if (
-      inspection.type === "generic" &&
+      (inspection.type === "generic" || inspection.type === MCP_BRIDGE_PROVIDER_TYPE) &&
       providerMatchesManagedCredential(inspection, expectedCredential, entry.providerId, {
         allowLegacyGeneric: true,
       })
     ) {
       throw new McpBridgeError(
-        `OpenShell provider '${entry.providerName}' uses the legacy generic profile, which OpenShell 0.0.106 cannot bind to an MCP endpoint. Run mcp remove for '${entry.server}', then add it again with '${expectedCredential}' exported.`,
+        `OpenShell provider '${entry.providerName}' uses the legacy ${inspection.type} profile, which cannot bind its credential to an MCP endpoint on OpenShell 0.1.5. Run mcp remove for '${entry.server}', then add it again with '${expectedCredential}' exported.`,
       );
     }
     if (!providerMatchesCredential(inspection, expectedCredential, entry.providerId)) {

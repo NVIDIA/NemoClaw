@@ -30,17 +30,23 @@ type SdkSandboxRef = Readonly<{ id: string; phase: string }>;
 type SdkSandboxMutationResponse = Readonly<{
   sandbox?: Readonly<{ metadata?: Readonly<{ id?: string }> }>;
 }>;
+type SdkSandboxMutationRequest = Readonly<{
+  name: string;
+  workspaceScope: Readonly<{
+    selection: Readonly<{ case: "workspace"; value: "default" }>;
+  }>;
+}>;
 type SdkClient = Readonly<{
   sandbox: Readonly<{
     get(name: string, options: CallOptions): Promise<SdkSandboxRef>;
   }>;
   raw: Readonly<{
     startSandbox(
-      request: Readonly<{ name: string; workspace: string }>,
+      request: SdkSandboxMutationRequest,
       options: CallOptions,
     ): Promise<SdkSandboxMutationResponse>;
     stopSandbox(
-      request: Readonly<{ name: string; workspace: string }>,
+      request: SdkSandboxMutationRequest,
       options: CallOptions,
     ): Promise<SdkSandboxMutationResponse>;
   }>;
@@ -60,8 +66,9 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
 // minute while the immutable workload container was already running. The
 // lifecycle still requires the same sandbox identity to publish Ready.
 const SDK_START_INITIAL_ERROR_GRACE_POLLS = 40;
-const DEFAULT_MUTATION_TIMEOUT_MS = 75_000;
 const DEFAULT_START_TIMEOUT_MS = 135_000;
+// Native Podman stops the supervisor and workload sequentially before observing exit.
+const DEFAULT_STOP_TIMEOUT_MS = 150_000;
 
 function lifecycleError(
   error: unknown,
@@ -139,8 +146,7 @@ async function mutate(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    request.timeoutMs ??
-      (action === "start" ? DEFAULT_START_TIMEOUT_MS : DEFAULT_MUTATION_TIMEOUT_MS),
+    request.timeoutMs ?? (action === "stop" ? DEFAULT_STOP_TIMEOUT_MS : DEFAULT_START_TIMEOUT_MS),
   );
   const aborted = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener(
@@ -172,7 +178,13 @@ async function mutate(
     observedPhase = observed.phase;
     const operation = action === "start" ? client.raw.startSandbox : client.raw.stopSandbox;
     const mutation = await Promise.race([
-      operation({ name: request.sandboxName, workspace: "default" }, { signal: controller.signal }),
+      operation(
+        {
+          name: request.sandboxName,
+          workspaceScope: { selection: { case: "workspace", value: "default" } },
+        },
+        { signal: controller.signal },
+      ),
       aborted,
     ]);
     if (

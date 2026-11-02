@@ -11,6 +11,10 @@ import {
   DEFAULT_CLOUD_MODEL,
   resolveAgentInferenceApi,
 } from "../../../src/lib/inference/config.ts";
+import { requireHostedProviderAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
+import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
+import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
+import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
@@ -25,11 +29,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import {
   type CompatibleAnthropicSwitchBinding,
-  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
-  requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
+import { discoverHostAddress } from "../fixtures/host-address.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
@@ -77,8 +80,9 @@ export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-c
 export const RUNTIME_SWITCH_API =
   resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
+const SWITCH_NATIVE_CUSTOM = process.env.NEMOCLAW_SWITCH_NATIVE_CUSTOM === "1";
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-export const PROXY_RESOLUTION_PROVIDER = "hermes-proxy-resolution-e2e";
+export const PROXY_RESOLUTION_PROVIDER = "compatible-endpoint";
 export const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
 export const PROXY_FORBIDDEN_MARKERS = [
   "openshell:resolve:env:",
@@ -217,26 +221,22 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
   return { ...out, ...extra };
 }
 
-export async function expectOpenAiProvider(
-  host: HostCliClient,
-  providerName: string,
-  credentialEnv: string,
-): Promise<void> {
+export async function expectOpenAiProvider(host: HostCliClient, value: unknown): Promise<void> {
+  const receipt = requireHostedProviderAttachment(value, "compatible-anthropic-endpoint");
   const provider = await host.command(
     "openshell",
-    ["provider", "get", "-g", "nemoclaw", providerName],
+    ["provider", "get", "-g", "nemoclaw", receipt?.providerName ?? ""],
     {
-      artifactName: `${providerName}-openai-provider-metadata`,
+      artifactName: "compatible-anthropic-native-provider-metadata",
       env: env(),
       timeoutMs: 30_000,
     },
   );
-  const output = resultText(provider);
-  expect(provider.exitCode, output).toBe(0);
-  const plain = stripAnsi(output);
-  expect(plain).toMatch(/^\s*Type:\s*openai\s*$/imu);
-  expect(plain).toContain(credentialEnv);
-  expect(plain).toContain("OPENAI_BASE_URL");
+  expect(provider.exitCode, resultText(provider)).toBe(0);
+  const metadata = parseCliOpenShellProviderMetadata(provider.stdout);
+  expect(metadata?.type).toBe(receipt?.profileId);
+  expect(metadata?.credentialKeys).toEqual(["COMPATIBLE_ANTHROPIC_API_KEY"]);
+  expect(metadata?.configKeys).toEqual([]);
 }
 
 export async function prepareProxyResolutionRoute({
@@ -258,47 +258,29 @@ export async function prepareProxyResolutionRoute({
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
-  const registered = await host.command(
-    "openshell",
-    [
-      "provider",
-      "create",
-      "-g",
-      "nemoclaw",
-      "--name",
-      PROXY_RESOLUTION_PROVIDER,
-      "--type",
-      "openai",
-      "--credential",
-      "NVIDIA_INFERENCE_API_KEY",
-      "--config",
-      `OPENAI_BASE_URL=${endpoint}`,
-    ],
-    {
-      artifactName: "register-proxy-resolution-provider",
-      env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
-      redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  expect(registered.exitCode, resultText(registered)).toBe(0);
-  await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
-
   const setRoute = await host.command(
     "node",
     [
       CLI,
       "inference",
       "set",
+      "--sandbox",
+      SANDBOX_NAME,
       "--provider",
       PROXY_RESOLUTION_PROVIDER,
       "--model",
       model,
+      "--endpoint-url",
+      endpoint,
+      "--credential-env",
+      "COMPATIBLE_API_KEY",
+      "--inference-api",
+      "openai-completions",
       "--no-verify",
     ],
     {
       artifactName: "set-proxy-resolution-route",
-      env: env(),
+      env: env(undefined, { COMPATIBLE_API_KEY: apiKey }),
       redactionValues,
       timeoutMs: 180_000,
     },
@@ -566,7 +548,11 @@ function openAiSseResponse(res: http.ServerResponse, chunks: unknown[]): void {
   );
 }
 
-async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProvider> {
+async function startMockAnthropicProvider(
+  host: HostCliClient,
+): Promise<MockCompatibleAnthropicProvider> {
+  const trustedPrivateHost = (await discoverHostAddress(host, "native-anthropic-endpoint-address"))
+    .address;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://mock.local");
     if (req.method === "GET" && url.pathname === "/health")
@@ -689,7 +675,7 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
     throw new Error("mock Anthropic provider did not expose a TCP port");
   }
   return {
-    endpointUrl: compatibleAnthropicMockEndpointUrl((address as AddressInfo).port),
+    endpointUrl: `http://${trustedPrivateHost}:${String((address as AddressInfo).port)}`,
     close: () => closeServer(server),
   };
 }
@@ -700,15 +686,11 @@ export async function prepareCompatibleAnthropicSwitchBinding(
 ): Promise<CompatibleAnthropicSwitchBinding | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
     return null;
-  const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
+  const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider(host) : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const binding = compatibleAnthropicSwitchBinding(
     process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "",
   );
-  await requireCompatibleAnthropicProviderAbsent(host, {
-    artifactName: "compatible-anthropic-provider-absent-before-switch",
-    env: env(),
-  });
   return { ...binding, endpointUrl: openAiSurfaceEndpointUrl(binding.endpointUrl) };
 }
 
@@ -778,6 +760,13 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: `${options.artifactNamePrefix ?? "hermes-inference-set"}-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
+          ...(SWITCH_NATIVE_CUSTOM && options.compatibleBinding
+            ? {
+                NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: new URL(
+                  options.compatibleBinding.endpointUrl,
+                ).hostname,
+              }
+            : {}),
           ...(options.publicNvidiaApiKey
             ? { NVIDIA_INFERENCE_API_KEY: options.publicNvidiaApiKey }
             : {}),
@@ -819,13 +808,6 @@ export function parseHermesGatewayPid(
   return result.exitCode === 0 && /^[1-9][0-9]*$/u.test(pid) ? pid : undefined;
 }
 
-export function expectedBaseUrl(): string {
-  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) return NVIDIA_HOSTED_NATIVE_ENDPOINT;
-  return RUNTIME_SWITCH_API === "anthropic-messages"
-    ? "https://inference.local"
-    : "https://inference.local/v1";
-}
-
 export function inferenceLocalMaxTokens(api: string = RUNTIME_SWITCH_API): number {
   return api === "anthropic-messages" ? 32 : 100;
 }
@@ -837,18 +819,12 @@ export function expectedApiMode(): string | undefined {
   ]).get(RUNTIME_SWITCH_API);
 }
 
-// This live lane runs on ubuntu-latest and intentionally uses GNU grep's
-// POSIX ERE character classes; support tests pin the accepted scalar shapes.
-export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
-const NVIDIA_REFERENCE =
-  "openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY";
-export const NVIDIA_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("${NVIDIA_REFERENCE}"|'${NVIDIA_REFERENCE}'|${NVIDIA_REFERENCE})[[:space:]]*$`;
-
 export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
-  const pattern =
+  const reference =
     provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
-      ? NVIDIA_API_KEY_SHAPE_PATTERN
-      : API_KEY_SHAPE_PATTERN;
+      ? "openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY"
+      : "\\$\\{COMPATIBLE_ANTHROPIC_API_KEY\\}";
+  const pattern = `^[[:space:]]*api_key:[[:space:]]*("${reference}"|'${reference}'|${reference})[[:space:]]*$`;
   return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
@@ -872,11 +848,16 @@ export async function hashCheck(
   );
 }
 
-export async function strictHashPerms(sandbox: SandboxClient): Promise<ShellProbeResult> {
+export async function strictHashState(
+  sandbox: SandboxClient,
+  artifact: string,
+): Promise<ShellProbeResult> {
   return await sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript("stat -c '%u %a' /etc/nemoclaw/hermes.config-hash"),
-    { artifactName: "hermes-strict-hash-perms", env: env(), timeoutMs: 30_000 },
+    trustedSandboxShellScript(
+      "set -eu; sha256sum /etc/nemoclaw/hermes.config-hash; stat -c '%u %a' /etc/nemoclaw/hermes.config-hash",
+    ),
+    { artifactName: `hermes-strict-hash-${artifact}`, env: env(), timeoutMs: 30_000 },
   );
 }
 
@@ -905,16 +886,20 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
-export function sandboxInferenceCommand(payload: string): string {
-  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
-    // The upstream URL is the managed route for an attached OpenShell
-    // provider. OpenShell authorizes this profile-scoped request and replaces
-    // the placeholder without exposing the provider credential to the sandbox.
-    return `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
-  }
-  return RUNTIME_SWITCH_API === "anthropic-messages"
-    ? `curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
-    : `curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;
+export function sandboxInferenceCommand(
+  payload: string,
+  endpointUrl: string,
+  provider = SWITCH_PROVIDER,
+): string {
+  const headers =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NATIVE_NVIDIA_AUTH_HEADER_SCRIPT
+      : nativeHostedAuthHeaderScript({
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          api: RUNTIME_SWITCH_API,
+        });
+  const target = `${openAiSurfaceEndpointUrl(endpointUrl)}/chat/completions`;
+  return `${headers}; curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 90 ${shellQuote(target)} -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
 }
 
 export function hermesApiCommand(payload: string): string {

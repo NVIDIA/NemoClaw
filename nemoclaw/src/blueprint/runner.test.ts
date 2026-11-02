@@ -1,3 +1,7 @@
+import {
+  withNativeInferenceFixture,
+  createNativeInferenceFixture,
+} from "./runner-test-fixtures.js";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -74,9 +78,18 @@ vi.mock("./private-networks.js", async (importOriginal) => ({
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
-const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
-  await import("./runner.js");
-const { readFileSync } = await import("node:fs");
+const {
+  emitRunId,
+  loadBlueprint,
+  actionPlan,
+  actionApply: applyWithoutFixture,
+  actionStatus,
+  actionRollback,
+  main,
+} = await import("./runner.js");
+const mockNativeCreator = vi.fn(createNativeInferenceFixture);
+const actionApply = withNativeInferenceFixture(applyWithoutFixture, mockNativeCreator);
+const { readFileSync, existsSync } = await import("node:fs");
 const mockedReadFileSync = vi.mocked(readFileSync);
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -111,6 +124,7 @@ function mockCurrentPolicy(stdout: string): void {
 describe("runner", () => {
   beforeEach(() => {
     store.clear();
+    mockNativeCreator.mockReset().mockImplementation(createNativeInferenceFixture);
     addFile(TEST_SANDBOX_POLICY_PATH, TEST_SANDBOX_POLICY);
     vi.stubEnv("OPENSHELL_SANDBOX_POLICY", TEST_SANDBOX_POLICY_PATH);
     stdoutCapture.reset();
@@ -575,8 +589,10 @@ describe("runner", () => {
           "test-sandbox",
           "--policy",
           TEST_SANDBOX_POLICY_PATH,
-          "--forward",
-          "18789",
+          "--no-auto-providers",
+          "--label",
+          `ai.nvidia.nemoclaw.create-attempt=${"a".repeat(62)}`,
+          "--detach",
         ],
         expect.objectContaining({ reject: false }),
       );
@@ -635,16 +651,15 @@ describe("runner", () => {
 
     const hasPlanJson = (): boolean => [...store.keys()].some((k) => k.endsWith("plan.json"));
 
-    it("rejects provider creation failure with a compensated ownership plan (#6703)", async () => {
+    it("redacts provider creation failure while retaining the ownership plan (#6703)", async () => {
       const credential = "provider-secret-value";
       process.env.MY_API_KEY = credential;
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(
-          args,
-          ["provider", "create"],
-          `provider setup failed\nOPENAI_API_KEY=${credential}\nAuthorization: Bearer opaque-bearer`,
-        ),
-      );
+      mockNativeCreator.mockImplementationOnce(async (input) => {
+        input.persist({ schemaVersion: 1, sandboxId: "sandbox-id-1" });
+        throw new Error(
+          `Failed to create inference provider 'my-provider': provider setup failed\nOPENAI_API_KEY=${credential}\nAuthorization: Bearer opaque-bearer`,
+        );
+      });
 
       try {
         const error = await actionApply("default", minimalBlueprint()).then(
@@ -668,42 +683,28 @@ describe("runner", () => {
       }
     });
 
-    it("reuses an already-existing provider instead of failing (#6703)", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(
-          args,
-          ["provider", "create"],
-          "provider 'my-provider' already exists",
-        ),
+    it("reuses an already-recorded native sandbox without creating another provider (#6703)", async () => {
+      mockExeca.mockImplementation(async (_command: string, args: string[]) =>
+        args.join(" ") === "sandbox get test-sandbox"
+          ? { exitCode: 0, stdout: "Name: test-sandbox", stderr: "" }
+          : resultWithBlueprintPolicy(args, { exitCode: 0, stdout: "", stderr: "" }),
       );
-
-      // Matches the sandbox-create contract: already-existing is a reuse, so the
-      // apply proceeds and completes.
-      await actionApply("default", minimalBlueprint());
+      const nativeInferenceObserver = vi.fn(async () => "verified-native-binding");
+      await actionApply("default", minimalBlueprint(), { nativeInferenceObserver });
+      expect(nativeInferenceObserver).toHaveBeenCalled();
+      expect(mockNativeCreator).not.toHaveBeenCalled();
       expect(hasPlanJson()).toBe(true);
       expect(stdoutText()).toContain("Apply complete");
     });
 
     it("preserves an owned inference provider when name-only cleanup is unsafe (#9833)", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (args.join(" ") === "provider get my-provider") {
-          return {
-            exitCode: 0,
-            stdout: [
-              "Name: my-provider",
-              "Type: openai",
-              "Credential keys: <none>",
-              "Config keys: OPENAI_BASE_URL",
-              "",
-            ].join("\n"),
-            stderr: "",
-          };
-        }
-        return resultForCommandFailure(args, ["inference", "set"], "inference route rejected");
+      mockNativeCreator.mockImplementationOnce(async (input) => {
+        await createNativeInferenceFixture(input);
+        throw new Error("Native inference route rejected");
       });
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /Failed to set inference route .*inference route rejected.*automatic cleanup was refused/iu,
+        /Native inference route rejected.*automatic cleanup was refused/iu,
       );
 
       expect(hasPlanJson()).toBe(true);
@@ -815,25 +816,14 @@ describe("runner", () => {
       );
     });
 
-    it("passes credential via subprocess env, not global env", async () => {
-      process.env.MY_API_KEY = "secret-key-123";
-      try {
-        await actionApply("default", minimalBlueprint());
-
-        // The provider create call should scope credentials to env
-        const providerCall = mockExeca.mock.calls.find(
-          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
-        );
-        if (!providerCall) throw new Error("provider create call not found");
-        expect(providerCall[2].env.OPENAI_API_KEY).toBe("secret-key-123");
-        expect(providerCall[2].env.MY_API_KEY).toBeUndefined();
-        // Args pass the env var NAME, not the value
-        expect(providerCall[1]).toContain("--credential");
-        expect(providerCall[1]).toContain("OPENAI_API_KEY");
-        expect(providerCall[1]).not.toContain("secret-key-123");
-      } finally {
-        delete process.env.MY_API_KEY;
-      }
+    it("passes the selected credential only to the host creator", async () => {
+      vi.stubEnv("MY_API_KEY", "secret-key-123");
+      await actionApply("default", minimalBlueprint());
+      expect(mockNativeCreator).toHaveBeenCalledWith(
+        expect.objectContaining({ credentialValue: "secret-key-123" }),
+      );
+      expect(JSON.stringify(mockExeca.mock.calls)).not.toContain("secret-key-123");
+      expect(process.env.OPENAI_API_KEY).not.toBe("secret-key-123");
     });
 
     it("saves run state to disk", async () => {
@@ -897,6 +887,7 @@ describe("runner", () => {
         [
           "inference",
           "inference_provider_created_by_apply",
+          "native_inference",
           "gateway",
           "profile",
           "run_id",
@@ -922,8 +913,7 @@ describe("runner", () => {
       await actionApply("default", minimalBlueprint());
       const out = stdoutText();
       expect(out).toContain("PROGRESS:20:Creating OpenClaw sandbox");
-      expect(out).toContain("PROGRESS:50:Configuring inference provider");
-      expect(out).toContain("PROGRESS:70:Setting inference route");
+      expect(out).toContain("PROGRESS:70:Verifying native inference route");
       expect(out).toContain("PROGRESS:85:Saving run state");
       expect(out).toContain("PROGRESS:100:Apply complete");
     });
@@ -938,13 +928,14 @@ describe("runner", () => {
 
       await actionApply("bare", sparseBlueprint);
 
-      // Provider create should use fallback defaults
-      const providerCall = mockExeca.mock.calls.find(
-        (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+      expect(mockNativeCreator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "default",
+          api: "openai-completions",
+          model: "",
+          endpointUrl: "",
+        }),
       );
-      if (!providerCall) throw new Error("provider create call not found");
-      expect(providerCall[1]).toContain("default"); // provider_name fallback
-      expect(providerCall[1]).toContain("openai"); // provider_type fallback
 
       // Sandbox create should use fallback defaults
       const sandboxCall = mockExeca.mock.calls.find(
@@ -975,11 +966,9 @@ describe("runner", () => {
 
       await actionApply("nocred", noCredBlueprint);
 
-      const providerCall = mockExeca.mock.calls.find(
-        (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+      expect(mockNativeCreator).toHaveBeenCalledWith(
+        expect.objectContaining({ credentialValue: "" }),
       );
-      if (!providerCall) throw new Error("provider create call not found");
-      expect(providerCall[1]).not.toContain("--credential");
     });
 
     it("does not leak parent secrets into subprocess env", async () => {
@@ -998,14 +987,16 @@ describe("runner", () => {
       try {
         await actionApply("default", minimalBlueprint());
 
-        const providerCall = mockExeca.mock.calls.find(
-          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+        const sandboxCall = mockExeca.mock.calls.find(
+          (c) => Array.isArray(c[1]) && c[1][0] === "sandbox" && c[1][1] === "create",
         );
-        if (!providerCall) throw new Error("provider create call not found");
-        const subEnv = providerCall[2].env;
+        const subEnv = sandboxCall![2].env;
 
-        // The explicitly injected credential must be present
-        expect(subEnv.OPENAI_API_KEY).toBe("secret-key-123");
+        // The host creator receives the selected credential; other subprocesses receive none.
+        expect(mockNativeCreator).toHaveBeenCalledWith(
+          expect.objectContaining({ credentialValue: "secret-key-123" }),
+        );
+        expect(subEnv).not.toHaveProperty("OPENAI_API_KEY");
 
         // Secrets from the parent process must NOT be present
         expect(subEnv).not.toHaveProperty("GITHUB_TOKEN");
@@ -1053,11 +1044,9 @@ describe("runner", () => {
 
       await actionApply("withdefault", bp);
 
-      const providerCall = mockExeca.mock.calls.find(
-        (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+      expect(mockNativeCreator).toHaveBeenCalledWith(
+        expect.objectContaining({ credentialValue: "fallback-key" }),
       );
-      if (!providerCall) throw new Error("provider create call not found");
-      expect(providerCall[2].env.OPENAI_API_KEY).toBe("fallback-key");
     });
 
     it("validates and applies endpoint URL override", async () => {
@@ -1084,7 +1073,7 @@ describe("runner", () => {
       expect(mockExeca).not.toHaveBeenCalled();
     });
 
-    it("passes --timeout when timeout_secs is set in profile", async () => {
+    it("passes the selected request timeout to the native creator", async () => {
       const bp = {
         components: {
           inference: {
@@ -1110,22 +1099,15 @@ describe("runner", () => {
         delete process.env.OPENAI_API_KEY;
       }
 
-      const inferenceCall = mockExeca.mock.calls.find(
-        (c) => Array.isArray(c[1]) && c[1].includes("inference") && c[1].includes("set"),
+      expect(mockNativeCreator).toHaveBeenCalledWith(
+        expect.objectContaining({ timeoutSeconds: 180 }),
       );
-      if (!inferenceCall) throw new Error("inference set call not found");
-      expect(inferenceCall[1]).toContain("--timeout");
-      expect(inferenceCall[1]).toContain("180");
     });
 
-    it("omits --timeout when timeout_secs is not set in profile", async () => {
+    it("leaves the request timeout unspecified when the profile omits it", async () => {
       await actionApply("default", minimalBlueprint());
 
-      const inferenceCall = mockExeca.mock.calls.find(
-        (c) => Array.isArray(c[1]) && c[1].includes("inference") && c[1].includes("set"),
-      );
-      if (!inferenceCall) throw new Error("inference set call not found");
-      expect(inferenceCall[1]).not.toContain("--timeout");
+      expect(mockNativeCreator.mock.calls[0]?.[0].timeoutSeconds).toBeUndefined();
     });
 
     it("passes endpoint as-is from blueprint (no rewriting)", async () => {
@@ -1133,14 +1115,9 @@ describe("runner", () => {
       try {
         await actionApply("routed", routedBlueprint());
 
-        const providerCall = mockExeca.mock.calls.find(
-          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+        expect(mockNativeCreator).toHaveBeenCalledWith(
+          expect.objectContaining({ endpointUrl: "http://localhost:4000/v1" }),
         );
-        if (!providerCall) throw new Error("provider create call not found");
-        const configArg = (providerCall[1] as string[]).find((a: string) =>
-          a.startsWith("OPENAI_BASE_URL="),
-        );
-        expect(configArg).toBe("OPENAI_BASE_URL=http://localhost:4000/v1");
       } finally {
         delete process.env.NVIDIA_INFERENCE_API_KEY;
       }
@@ -1387,6 +1364,24 @@ describe("runner", () => {
       },
     );
 
+    it("preserves an uncertain native create intent instead of marking rollback complete", async () => {
+      addDir(`${RUNS_DIR}/nc-run-1`);
+      addFile(
+        `${RUNS_DIR}/nc-run-1/plan.json`,
+        JSON.stringify({
+          sandbox_name: "sb",
+          sandbox_created_by_apply: false,
+          inference_provider_created_by_apply: false,
+          native_inference: { schemaVersion: 1, createAttemptNonce: "a".repeat(62) },
+        }),
+      );
+      await expect(actionRollback("nc-run-1")).rejects.toThrow(
+        /preserved for identity-bound recovery/,
+      );
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(existsSync(`${RUNS_DIR}/nc-run-1/rolled_back`)).toBe(false);
+    });
+
     it("throws when rollback plan has no sandbox_name", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;
       addDir(runDir);
@@ -1453,7 +1448,9 @@ describe("runner", () => {
     });
 
     it("parses apply with --profile and --endpoint-url", async () => {
-      await main(["apply", "--profile", "default", "--endpoint-url", "https://override.test/v1"]);
+      await main(["apply", "--profile", "default", "--endpoint-url", "https://override.test/v1"], {
+        nativeInferenceCreator: mockNativeCreator,
+      });
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.test/v1");
       expect(stdoutText()).toContain("PROGRESS:100:Apply complete");
     });

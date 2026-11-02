@@ -75,7 +75,7 @@ describe.each(["0.1.3", "0.1.5"])("OpenShell %s projection", (version) => {
   it("binds lifecycle volume approval to the selected workspace", () => {
     vi.stubEnv("OPENSHELL_WORKSPACE", "ambient");
     const docker = createHermesStateVolumeDockerHarness();
-    createManagedStateVolumeOnboardLifecycle(
+    const lifecycle = createManagedStateVolumeOnboardLifecycle(
       {
         roots,
         workspace: "selected",
@@ -92,6 +92,7 @@ describe.each(["0.1.3", "0.1.5"])("OpenShell %s projection", (version) => {
       },
       { runContainerEngine: docker.runDocker },
     );
+    lifecycle.materializeSandboxCreatePlan({} as never, () => ({}) as never);
     expect(docker.volume?.labels["openshell.ai/sandbox-attachable-workspace"]).toBe("selected");
   });
 

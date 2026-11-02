@@ -1158,14 +1158,14 @@ usage() {
   printf "    HUGGING_FACE_HUB_TOKEN        Compatibility alias for HF_TOKEN\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
-  printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
+  printf "                                  Allow automatic upgrade only for eligible gateways\n"
+  printf "                                  Registered sandboxes prevent replacement of an out-of-range OpenShell version\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
-  printf "                                  Continue only after the current CLI completes strict backup and forward retirement:\n"
-  printf "                                  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards\n"
-  printf "                                  Then retire the selected gateway process:\n"
-  printf "                                  openshell gateway destroy -g nemoclaw || openshell gateway destroy\n"
-  printf "                                  For NEMOCLAW_GATEWAY_PORT=<port>, destroy nemoclaw-<port> with -g and omit the unnamed fallback\n"
-  printf "                                  Resolve any failure before setting this variable\n"
+  printf "                                  Resume an eligible upgrade after strict backup, forward retirement, and gateway retirement\n"
+  printf "                                  With registered sandboxes, the installed OpenShell version must be verifiable and within the supported range\n"
+  printf "                                  This flag does not migrate registered sandboxes from an out-of-range OpenShell version\n"
+  printf "                                  Retained NemoClaw sandbox records still block component replacement, including on OpenShell 0.1.x\n"
+  printf "                                  Preserve the legacy gateway, registrations, sandbox records, and data\n"
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
   printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -3359,7 +3359,7 @@ finish_nemoclaw_install() {
       if [ "$retry_gateway_port" -ne 8080 ]; then
         retry_gateway_port_env="NEMOCLAW_GATEWAY_PORT=${retry_gateway_port} "
       fi
-      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
+      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. If component replacement reports retained NemoClaw sandbox records, stop and preserve those records and all gateway data. Otherwise, verify the installed version and resolve the reported failure before retrying with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1. This flag does not bypass version or registry checks."
     fi
     # The retired gateway registration is intentionally gone. Start the newly
     # installed, identity-checked NemoClaw service before upgrade-sandboxes
@@ -3371,7 +3371,7 @@ finish_nemoclaw_install() {
       info "Starting the current OpenShell gateway before sandbox recovery…"
       restart_selected_openshell_gateway_user_service \
         "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service" \
-        || error "The current OpenShell gateway service could not start after the legacy gateway was retired. Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1."
+        || error "The current OpenShell gateway service could not start after the legacy gateway was retired. Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1. If component replacement reports retained NemoClaw sandbox records, stop and preserve those records and all gateway data."
     fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
@@ -3664,6 +3664,10 @@ const sandboxes = entries.filter(
 
 if (process.argv[3] === "count") {
   process.stdout.write(String(sandboxes.length));
+  process.exit(0);
+}
+if (process.argv[3] === "names") {
+  process.stdout.write(JSON.stringify(sandboxes.map(([name]) => name).sort()));
   process.exit(0);
 }
 if (process.argv[3] === "incompatible-names") {
@@ -3991,7 +3995,9 @@ installed_openshell_version() {
   command_exists openshell || return 1
   local version_output
   version_output="$(openshell --version 2>/dev/null)" || return 1
-  printf "%s\n" "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+  [[ "$version_output" =~ ^openshell\ ([0-9]+\.[0-9]+\.[0-9]+)([.+-][A-Za-z0-9.+-]+)?$ ]] \
+    || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 # Fail closed when OpenShell is present but cannot report its version. An absent
@@ -4202,6 +4208,11 @@ print_openshell_upgrade_manual_commands() {
     gateway_retire_command="openshell gateway destroy -g ${gateway_name} || openshell gateway destroy"
   fi
   cat <<EOF
+  Do not use these commands for an OpenShell 0.1.x target while NemoClaw sandbox
+  records remain. Those records block component replacement, including when the
+  installed CLI reports 0.1.x. Preserve the gateway, registrations, and sandbox
+  data. NEMOCLAW_OPENSHELL_UPGRADE_PREPARED does not bypass this check.
+
   Manual upgrade path (after installing the current CLI with OpenShell deferred):
     ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all --retire-legacy-forwards
     ${gateway_retire_command}
@@ -4770,6 +4781,30 @@ preinstall_backup_and_retire_legacy_gateway() {
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
   require_openshell_compatible_sandbox_names "$reg_file"
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  supported_range="$(resolve_current_openshell_version_range)" \
+    || error "Could not resolve the current OpenShell version range. Existing gateway and sandboxes were left unchanged."
+  read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  # Keep the 0.1.x retained-state refusal before prepared-state handling,
+  # backup, gateway retirement, and the install-openshell.sh component handoff.
+  # The component installer repeats the guard for direct invocations.
+  if version_gte "$max_openshell_version" "0.1.0"; then
+    if ! command_exists openshell; then prefer_user_local_openshell; fi
+    command_exists openshell \
+      || error "Could not verify the installed OpenShell version before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
+    local old_cutover_version="" sandbox_names="" scope="selected"
+    old_cutover_version="$(installed_openshell_version || true)"
+    [[ "$old_cutover_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || error "Could not verify the installed OpenShell version before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
+    if ! version_gte "$old_cutover_version" "$min_openshell_version" \
+      || ! version_gte "$max_openshell_version" "$old_cutover_version"; then
+      if [ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ] \
+        || [ "$reg_file" = "${HOME}/.nemoclaw/sandboxes.json" ]; then scope="legacy"; fi
+      sandbox_names="$(inspect_sandbox_registry_for_upgrade "$reg_file" names "$scope")" \
+        || error "Could not inspect legacy sandbox names before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
+      error "OpenShell 0.1.x requires sandbox recreation. Refusing to retire gateway ${gateway_name} with registered sandboxes ${sandbox_names} on OpenShell ${old_cutover_version}; existing gateway and sandboxes were left unchanged."
+    fi
+  fi
   if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
     if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
       error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
@@ -4802,11 +4837,6 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   confirm_legacy_managed_image_recovery "$reg_file"
-  local supported_range="" min_openshell_version="" max_openshell_version=""
-  supported_range="$(resolve_current_openshell_version_range || true)"
-  if [[ -n "$supported_range" ]]; then
-    read -r min_openshell_version max_openshell_version <<<"$supported_range"
-  fi
   local retire_legacy_forwards=false
   if [[ -n "$old_openshell_version" && -n "$supported_range" ]] \
     && { ! version_gte "$old_openshell_version" "$min_openshell_version" \

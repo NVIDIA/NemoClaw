@@ -75,6 +75,7 @@ export type MessagingOpenShellRunner = (
 export type MessagingCredentialProviderProfile = Readonly<{
   profilePath: string;
   profileType: string;
+  credentialFamily?: Readonly<{ primary: string; keys: readonly string[] }>;
 }>;
 
 /**

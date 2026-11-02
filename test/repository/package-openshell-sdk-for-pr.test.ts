@@ -75,7 +75,7 @@ describe("reviewed OpenShell SDK transition packaging", () => {
         const key = parsed.pathname + parsed.search;
         return new Response(JSON.stringify(responses[key] ?? {}), { status: key in responses ? 200 : 404 });
       };
-      process.argv[1] = ${JSON.stringify(path.join(root, "scripts/checks/prepare-ci-npm-install.mts"))};
+      process.argv[1] = ${JSON.stringify(fs.realpathSync(path.join(root, "scripts/checks/prepare-ci-npm-install.mts")))};
       await import('./scripts/checks/prepare-ci-npm-install.mts');
     `,
         ],

@@ -19,6 +19,9 @@ When both streams are available, choose `retry` to open the secure API-key promp
 If either stream is not an interactive terminal, NemoClaw exits with a nonzero status.
 Rerun onboarding with both streams attached to retry credential entry.
 NemoClaw retries transient upstream failures before it reports a provider failure.
+For NVIDIA Endpoints, an HTTP `500` response permits an initial request and up to three retries, with delays of 5, 15, and 30 seconds.
+If the fourth response is HTTP `500`, that retry sequence fails without replay through another transport.
+Other transport and credential recovery behavior is unchanged.
 After a fatal provider or inference-validation failure before sandbox creation, NemoClaw attempts to release an unowned NemoClaw-managed OpenShell gateway and remove its registration so provider credentials do not remain in a live process.
 It preserves a gateway that another registered sandbox uses, an external supervisor owns, or whose teardown authority cannot be proven.
 If listener release cannot be confirmed, NemoClaw keeps the gateway registration for recovery and reports the remaining listener.
@@ -56,25 +59,30 @@ This applies to local runtimes such as Ollama and vLLM.
 Onboarding continues only when a retry returns a structured tool call.
 If the last retry fails or times out, validation stops without another Chat Completions attempt.
 
+<Note>
+Fresh installations without retained legacy state can install OpenShell `0.1.5` and use sandbox-attached native providers.
+The installer refuses to migrate registered OpenShell `0.0.x` sandboxes, including shared `inference.local` routes, and preserves their state.
+OpenShell `0.1.5` removes the shared route.
+GPU compatibility and native local lifecycle qualification remain incomplete.
+Follow the [OpenShell upgrade restrictions](../../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
+</Note>
+
 <AgentOnly variant="deepagents">
 
 The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions.
-NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
-Hosted compatible endpoints normally use the same native path.
-Fresh Personal-tier onboarding instead keeps a hosted compatible endpoint on `inference.local` and creates no native provider attachment.
-NemoClaw refuses Personal for an existing sandbox that already has a custom native provider attachment.
-Owned Local NVIDIA NIM and retained legacy shared routes use `inference.local`.
+NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers.
+Remaining shared selections use `inference.local` only on OpenShell `0.0.x`.
 `NEMOCLAW_PREFERRED_API` does not change that runtime selection.
 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
 
-New OpenClaw Ollama, standalone vLLM, llama.cpp, and hosted compatible selections outside the Personal tier use their recorded sandbox-attached provider for validation.
-Local NVIDIA NIM, new Personal-tier hosted compatible selections, and retained shared routes use `inference.local`.
-An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment can use supported shared-route model switches, but cannot resume or rebuild.
+New OpenClaw Ollama, standalone vLLM, llama.cpp, and qualifying custom hosted selections use their recorded sandbox-attached native provider for validation.
+Remaining shared selections use `inference.local` only on OpenShell `0.0.x`.
+On OpenShell `0.0.x`, an older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without a native attachment can use supported shared-route model switches, but cannot resume or rebuild.
 Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
-Owned Local NVIDIA NIM sandboxes can resume or rebuild on the shared route.
+New Local NVIDIA NIM sandboxes use their recorded native attachment for resume and rebuild. Back up and recreate older NIM sandboxes before upgrading OpenShell.
 
 </AgentOnly>
 
@@ -130,7 +138,9 @@ Verify that route from inside the sandbox after onboarding.
 
 <AgentOnly variant="openclaw">
 
-For a shared OpenClaw `compatible-endpoint` selection, the compatible endpoint check validates `inference.local` from inside the sandbox.
+For OpenClaw, the `compatible-endpoint` check validates the selected route from inside the sandbox.
+Qualifying custom hosted selections use their recorded native provider attachment.
+Remaining shared selections use `inference.local` only on OpenShell `0.0.x`.
 The check runs whether or not you select a messaging channel and stops onboarding if the route fails.
 
 </AgentOnly>

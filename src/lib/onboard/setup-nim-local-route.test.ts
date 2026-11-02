@@ -14,7 +14,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("marks Local NIM as shared before its container starts", async () => {
+it("marks Local NIM before its container starts", async () => {
   const routeGuard = vi.fn(() => ({
     requiredModel: null,
     requiredEndpointUrl: null,

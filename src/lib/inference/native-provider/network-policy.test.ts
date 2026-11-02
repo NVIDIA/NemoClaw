@@ -20,6 +20,9 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("$label sandbox policy", (provider) => {
         enforcement: "enforce",
       }),
     ]);
+    expect(parsed.network_policies.native_hosted_inference.binaries).toContainEqual({
+      path: "/usr/bin/python3.13",
+    });
     expect(buildNativeHostedSandboxPolicy(result, provider.providerName)).toBe(result);
   });
   it("refuses an existing policy granting different provider access (#12589)", () => {

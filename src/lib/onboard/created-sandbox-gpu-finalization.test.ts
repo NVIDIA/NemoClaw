@@ -4,8 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import type { SandboxEntry } from "../state/registry";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
+import * as providerRetirement from "./sandbox-create/provider-retirement";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import * as registration from "./sandbox-registration";
@@ -17,6 +19,10 @@ function createCompletionFixture(
   provider = "ollama-local",
   route: SandboxGpuCreateFlowResult["route"] = "compatibility",
   gpuEnabled = true,
+  createContext: Parameters<typeof createOnboardCreatedSandboxCompletion>[7] = {
+    createIntent: null,
+    resolvedCreateIntent: { policy: { options: {} } },
+  },
 ) {
   const order: string[] = [];
   const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => {
@@ -87,7 +93,7 @@ function createCompletionFixture(
     null,
     { customOpenClawImage: false, isManagedDcodeAgent: false },
     selection,
-    { createIntent: null, resolvedCreateIntent: { policy: { options: {} } } },
+    createContext,
     {
       gpuEnabled,
       hostGpuDetected: true,
@@ -245,5 +251,74 @@ describe("GPU inference verification in production finalization", () => {
       expect(fixture.order).toEqual(enabled ? ["commit", "acknowledge", "register"] : ["register"]);
       expect(fixture.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     },
+  );
+});
+
+it.each([true, false])(
+  "publishes the current registered provider attachment receipt (owned=%s)",
+  async (attachedBySelection) => {
+    const f = registeredInferenceFixture();
+    let receipt = f.binding;
+    const onRegistered = vi.fn();
+    const completion = createCompletionFixture(
+      "HTTP_200",
+      f.binding.providerName,
+      "native",
+      false,
+      {
+        createIntent: null,
+        resolvedCreateIntent: {
+          policy: { options: {} },
+          registeredInferenceProviderAttachment: f.binding,
+        },
+        getRegisteredInferenceProviderAttachment: () => receipt,
+        onRegistered,
+      },
+    );
+    receipt = { ...f.binding, attachedBySelection };
+    await completion.complete();
+    expect(completion.register.mock.calls[0]![0].registeredInferenceProviderAttachment).toBe(
+      receipt,
+    );
+    expect(onRegistered).toHaveBeenCalledOnce();
+    expect(completion.register.mock.invocationCallOrder[0]).toBeLessThan(
+      onRegistered.mock.invocationCallOrder[0]!,
+    );
+  },
+);
+
+it("retains attachment rollback authority if registry publication fails", async () => {
+  const onRegistered = vi.fn();
+  const completion = createCompletionFixture("HTTP_200", "nvidia", "native", false, {
+    createIntent: null,
+    resolvedCreateIntent: { policy: { options: {} } },
+    onRegistered,
+  });
+  const failure = new Error("publication failed");
+  completion.register.mockImplementation(() => {
+    throw failure;
+  });
+  await expect(completion.complete()).rejects.toBe(failure);
+  expect(onRegistered).not.toHaveBeenCalled();
+});
+
+it("disarms attachment rollback before post-publication provider retirement", async () => {
+  const onRegistered = vi.fn();
+  const completion = createCompletionFixture("HTTP_200", "nvidia", "native", false, {
+    createIntent: null,
+    resolvedCreateIntent: { policy: { options: {} } },
+    onRegistered,
+  });
+  const failure = new Error("retirement failed");
+  const retire = vi
+    .spyOn(providerRetirement, "retireUnselectedCreatedSandboxProviders")
+    .mockRejectedValueOnce(failure);
+  await expect(completion.complete()).rejects.toBe(failure);
+  expect(onRegistered).toHaveBeenCalledOnce();
+  expect(completion.register.mock.invocationCallOrder[0]).toBeLessThan(
+    onRegistered.mock.invocationCallOrder[0]!,
+  );
+  expect(onRegistered.mock.invocationCallOrder[0]).toBeLessThan(
+    retire.mock.invocationCallOrder[0]!,
   );
 });

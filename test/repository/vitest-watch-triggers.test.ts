@@ -114,6 +114,13 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("maps the installer cutover boundary to its process tests", () => {
+    expect(triggeredBy("scripts/install-openshell.sh")).toEqual([
+      "test/installer-integration/install-openshell-version-check.test.ts",
+      "test/installer-integration/install-openshell-retained-state-size.test.ts",
+      "test/installer-integration/install-openshell-version-pin.test.ts",
+    ]);
+  });
   it.each(["test/helpers/onboard-fixture-contract.json", "test/helpers/onboard-script-mocks.cjs"])(
     "maps %s to every sandbox identity consumer (#10463)",
     (fixturePath) => {
@@ -271,6 +278,8 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-runtime-config-guard.test.ts",
+      "test/agents/hermes/hermes-capability-free-supervisor.test.ts",
       "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
     ]);
