@@ -6,6 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import { planRegisteredExtraProviders } from "../../extra-provider-reconciliation";
 import { createSession } from "../../../state/onboard-session";
 import { recordCheckpointEffectGroup } from "../../checkpoint-record";
+import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../../../hermes-switchyard-routing";
 import { handleSandboxState } from "./sandbox";
 import {
   baseOptions,
@@ -86,7 +91,90 @@ async function prepareResumedGpuSandboxRecreate(
   };
 }
 
+async function captureHermesRoutingRecreateFingerprint(efficientModel: string | null) {
+  let fingerprint: string | undefined;
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledRecreate(session, "saved", "hermes");
+  const { deps } = createDeps(
+    {
+      getSandboxReuseState: () => "ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: vi.fn(async (...args: unknown[]) => {
+        fingerprint = session.checkpoint?.sandboxRecreate?.targetIntentFingerprint;
+        return journal.completeCreate(...args);
+      }),
+    },
+    session,
+  );
+  const env = efficientModel
+    ? {
+        [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(
+          createHermesSwitchyardRoutingIntent({
+            efficient: { provider: "nvidia-prod", model: efficientModel },
+            capable: { provider: "openai-api", model: "capable-model" },
+          }),
+        ),
+      }
+    : {};
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    agent: { name: "hermes" },
+    resume: true,
+    sandboxName: "saved",
+    recreateSandbox: () => true,
+    env,
+  });
+  expect(fingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  return fingerprint;
+}
+
 describe("handleSandboxState resume recreation", () => {
+  it.each([
+    ["enabled", null, "efficient-model"],
+    ["changed", "efficient-model", "changed-efficient-model"],
+    ["disabled", "efficient-model", null],
+  ])(
+    "changes the replacement fingerprint when Hermes routing is %s (#13862)",
+    async (_label, before, after) => {
+      expect(await captureHermesRoutingRecreateFingerprint(before)).not.toBe(
+        await captureHermesRoutingRecreateFingerprint(after),
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "rejects changed Hermes routing before sandbox reuse when resume=%s (#13862)",
+    async (resume) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const { deps, calls } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRegistryEntry: () => ({ name: "saved", agent: "hermes" }),
+        },
+        session,
+      );
+      await expect(
+        handleSandboxState({
+          ...baseOptions(deps, session),
+          agent: { name: "hermes" },
+          resume,
+          sandboxName: "saved",
+          env: {
+            [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(
+              createHermesSwitchyardRoutingIntent({
+                efficient: { provider: "nvidia-prod", model: "efficient-model" },
+                capable: { provider: "openai-api", model: "capable-model" },
+              }),
+            ),
+          },
+        }),
+      ).rejects.toThrow("--recreate-sandbox");
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(RECORDED_RECEIPTS)(
     "recreates a not-ready GPU sandbox on resume when the recorded create receipt %s",
     async (_receipt, recordedGpuSettings) => {
