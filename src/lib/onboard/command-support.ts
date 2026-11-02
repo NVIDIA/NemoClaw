@@ -8,6 +8,13 @@ import { describeAgentFlag } from "./agent-flag-help";
 import { PORTABLE_EXPERIMENTAL_PROFILE } from "./docker-driver-platform";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
+export {
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+  type HermesSwitchyardRoutingIntent,
+} from "../hermes-switchyard-routing";
+export { loadSwitchyardOnboardConfig } from "./switchyard/config";
+
 type AgentRegistryReader = () => readonly string[];
 
 let agentRegistryReaderForTest: AgentRegistryReader | null = null;
@@ -48,7 +55,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository@sha256:digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--switchyard-config <file>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository@sha256:digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -61,6 +68,7 @@ export const onboardExamples = [
   "<%= config.bin %> onboard --from-image registry.example.com/agent@sha256:<digest> --name alpha",
   "<%= config.bin %> onboard --name alpha --host-mount /home/user/project:/sandbox/project",
   "<%= config.bin %> onboard --agents ./agents.yaml",
+  "nemohermes onboard --switchyard-config ./switchyard.json",
   "<%= config.bin %> onboard --sandbox-gpu --sandbox-gpu-device nvidia.com/gpu=0",
   `<%= config.bin %> onboard --non-interactive --yes --name alpha ${NOTICE_ACCEPT_FLAG}`,
 ];
@@ -94,6 +102,7 @@ export type OnboardFlags = {
   "no-ollama-autostart"?: boolean;
   "experimental-profile"?: string;
   profile?: string;
+  "switchyard-config"?: string;
   [NOTICE_ACCEPT_FLAG_NAME]?: boolean;
 };
 
@@ -195,6 +204,10 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     profile: Flags.string({
       description: "Select a serving profile shown by `nemoclaw profiles list`",
       exclusive: ["experimental-profile"],
+    }),
+    "switchyard-config": Flags.string({
+      description:
+        "Configure adaptive Hermes routing from high-level efficient and capable provider/model selections",
     }),
     [NOTICE_ACCEPT_FLAG_NAME]: Flags.boolean({
       description: "Accept the third-party software notice",
