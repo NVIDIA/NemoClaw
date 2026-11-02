@@ -2,7 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  localLocationPrompts,
+  webLocationPrompts,
+  webSourceRetrievalPrompts,
+} from "../test/runtime-context-path-prompts.js";
 import { DeniedSearchState, SEARCH_DENIAL_RETENTION_MS } from "./denied-search-state.js";
+import { suppliedSearchSources } from "./runtime-context.js";
+
+describe("denied-search local grants for web locations (#13594)", () => {
+  it.each([
+    ...[...webLocationPrompts, ...webSourceRetrievalPrompts].map((prompt) => ({
+      prompt,
+      local: false,
+    })),
+    ...localLocationPrompts.map((prompt) => ({ prompt, local: true })),
+  ])(
+    "keeps local reads after a search denial only for local sources: $prompt",
+    ({ prompt, local }) => {
+      const state = new DeniedSearchState(() => {}, 2);
+      state.admit("runId:turn", [], suppliedSearchSources(prompt));
+      state.deny("runId:turn");
+      expect(state.blocks("runId:turn", [], { kind: "local" })).toBe(!local);
+      state.clear();
+    },
+  );
+});
 
 describe("denied-search identity retention", () => {
   let state: DeniedSearchState;

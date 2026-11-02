@@ -144,13 +144,38 @@ function localPath(value: string): boolean {
 const WEB_PLACE =
   /^(?:the\s+)?(?:web|internet|online|github|gitlab|bitbucket|codeberg|sourceforge|sourcegraph|stack\s*overflow|hugging\s*face|npm(?:js)?|pypi|docker\s*hub)$/iu;
 const PLACE =
-  /\b(?:on|from|at|via|in|inside|within|across|throughout)\s+((?:the\s+)?[\w.:/-]+(?:\s+(?:overflow|face|hub))?)/giu;
+  /\b(?:(on|from|at|via|in|inside|within|across|throughout)\s+((?:the\s+)?[\w.:/-]+(?:\s+(?:overflow|face|hub))?)|site:\s*([\w.:/-]+))/giu;
 function webPlace(place: string): boolean {
   const name = place.replace(/[.,;:!?]+$/u, "");
   return HOSTNAME.test(name) || WEB_PLACE.test(name);
 }
+// Where to look ("on", "at", "via", "from", "site:") makes any host-shaped name a web
+// host, whatever its suffix. File names, rooted paths and versions are not host-shaped.
+const BARE_HOST =
+  /^(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+(?:[a-z]{2,63}|xn--[a-z\d-]+)(?::\d+)?(?:\/\S*)?$/iu;
+const WEB_LOCATION = /^(?:on|from|at|via|site)$/iu;
+function bareHost(place: string): boolean {
+  const name = place.replace(/[.,;:!?]+$/u, "");
+  return (
+    BARE_HOST.test(name) &&
+    !FILE_EXTENSION.test(name.replace(/[:/].*$/u, "")) &&
+    !/^(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)\./u.test(name)
+  );
+}
+// A place right after the described code's verb is part of that behavior
+// ("reads from os.environ"), not where to look for the code.
 function namesWebPlace(value: string): boolean {
-  return Array.from(value.matchAll(PLACE)).some(([, place]) => webPlace(place!));
+  return Array.from(value.matchAll(PLACE)).some(
+    ({ 1: preposition = "site", 2: named, 3: site, index }) => {
+      const place = (named ?? site)!;
+      return (
+        webPlace(place) ||
+        (WEB_LOCATION.test(preposition) &&
+          bareHost(place) &&
+          !/\b(?:that|which)\s+\w+\s+$/iu.test(value.slice(0, index)))
+      );
+    },
+  );
 }
 // Where published information is requested, a bare dotted name is a web host unless it
 // ends in a file extension. Elsewhere an unfamiliar suffix still names a local file.
@@ -457,7 +482,11 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
         normalizeQuotedTargets(subject, budget)
           .replace(QUOTED_TARGET, " ")
           .matchAll(LOCAL_SOURCE_LOCATION),
-      ).some((match) => localTarget(match[1]!, budget) === "source");
+      ).some(
+        ([location, place]) =>
+          !(/^from\s/iu.test(location) && bareHost(place!)) &&
+          localTarget(place!, budget) === "source",
+      );
     const localWork = target !== undefined;
     const suppliedUrl =
       /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:browse|summarize|fetch|retrieve|read|get)\s+(?:exactly\s+)?(?:this\s+)?(?:public\s+)?(?:HTTPS?\s+)?(?:URL:?\s*)?https?:\/\/\S+|\b(?:using|with|via)\s+(?:the\s+)?(?:web_fetch|browser)(?:\s+tool)?\s+(?:at|for)\s+https?:\/\/\S+|\b(?:in|within|at|from)\s+(?:this\s+URL:?\s*)?https?:\/\/\S+/iu.test(

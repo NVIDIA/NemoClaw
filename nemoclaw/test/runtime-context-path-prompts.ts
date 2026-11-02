@@ -38,6 +38,38 @@ export const quotedExternalResearchPrompts = [
   'Read README.md. Search for "official NemoClaw installation documentation on docs.nvidia.com".',
 ];
 
+// Explicit local paths, file names, versions and the described code's own data sources stay local.
+export const localLocationPrompts = [
+  "Search for code that implements OAuth in ./nvidia.tech",
+  "Search for code that implements OAuth on ./nvidia.tech",
+  "Find the function that reads from os.environ",
+  "Find the code that reads from config.yaml",
+  "Find the function that loads settings from config.local.json",
+  "Find the code that handles retries on v1.2.3",
+  "Find the code that implements OAuth on localhost",
+  "Find all callers of handleRequest in django.db",
+];
+
+// Where to look ("on", "at", "from", "site:") makes a host-shaped name a web host, whatever its suffix.
+export const webLocationPrompts = [
+  "Search for code that implements OAuth on nvidia.com",
+  "Search for code that implements OAuth on nvidia.tech",
+  "Search for code that implements OAuth on example.dev",
+  "Search for code that implements OAuth on internal.corp",
+  "Search for code that implements OAuth on NVIDIA.Tech.",
+  "Search for code that implements OAuth from nvidia.tech",
+  "Search for code that implements OAuth site:nvidia.tech",
+  "Search for code that implements OAuth at nvidia.tech:8443/src",
+  "Find the function that handles authentication at gitea.internal.corp",
+  "Find all callers of handleRequest on nvidia.tech",
+];
+
+// A host named as the source is not a local file, whatever its suffix.
+export const webSourceRetrievalPrompts = [
+  "Get the OAuth code from nvidia.tech",
+  "Read the OAuth handler from internal.corp",
+];
+
 // A code relationship stays local wherever it looks, including code described by its behavior.
 export const localCodeRelationshipPrompts = [
   "Find the function that handles authentication",
@@ -58,6 +90,7 @@ export const localCodeRelationshipPrompts = [
   "Find the handler that writes to Redis",
   "Read the latest release notes from CHANGELOG.md",
   "Get the latest version from package.json",
+  ...localLocationPrompts,
 ];
 
 // URLs coordinated only with each other, or with a local file, keep their grants.
@@ -92,4 +125,5 @@ export const webTargetPrompts = [
   "Get the latest news from nvidia.tech",
   "Find the latest release notes on nvidia.tech.",
   "Read the official docs from nemoclaw.build",
+  ...webLocationPrompts,
 ];
