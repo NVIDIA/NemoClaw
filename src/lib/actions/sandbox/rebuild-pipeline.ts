@@ -42,6 +42,7 @@ import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
+  withRebuildHostFence,
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
@@ -134,55 +135,57 @@ export async function rebuildSandbox(
     return;
   }
   assertSandboxRebuildCommandAvailable(sandboxName);
-  return withPortableOnboardRetirementBoundary(
-    {
-      homeDir,
-      registryFile: registry.REGISTRY_FILE,
-      sessionFile: onboardSession.SESSION_FILE,
-      stateDir: path.dirname(onboardSession.SESSION_FILE),
-    },
-    () =>
-      withMcpLifecycleLock(sandboxName, async () => {
-        const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
-          sandboxName,
-          {
-            allowStateRecord: true,
-          },
-        );
-        assertSandboxRebuildCommandAvailable(sandboxName);
-        const restoreOpenShellEnv = snapshotOpenShellEnv();
-        const scopedEnvKeys = [
-          BRAVE_API_KEY_ENV,
-          TAVILY_API_KEY_ENV,
-          MESSAGING_SETUP_APPLIER_ENV_KEY,
-          DOCKER_GPU_PATCH_NETWORK_ENV,
-          "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
-          // Port selection publishes here; keep it from pinning the next rebuild (#13628).
-          HERMES_API_PORT_ENV,
-          ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
-          ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
-        ];
-        const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
-        try {
-          await rebuildSandboxUnlocked(
+  const runRebuild = () =>
+    withPortableOnboardRetirementBoundary(
+      {
+        homeDir,
+        registryFile: registry.REGISTRY_FILE,
+        sessionFile: onboardSession.SESSION_FILE,
+        stateDir: path.dirname(onboardSession.SESSION_FILE),
+      },
+      () =>
+        withMcpLifecycleLock(sandboxName, async () => {
+          const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
             sandboxName,
-            normalizedOptions,
-            opts,
-            removedImmutabilityMigration.stateRecord !== null,
+            {
+              allowStateRecord: true,
+            },
           );
-        } finally {
-          restoreOpenShellEnv();
-          for (const key of scopedEnvKeys) delete process.env[key];
-          Object.assign(
-            process.env,
-            Object.fromEntries(
-              savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
-            ),
-          );
-        }
-      }),
-    { loadRegistry: registry.load, withLifecycleLock: withMcpLifecycleLock },
-  );
+          assertSandboxRebuildCommandAvailable(sandboxName);
+          const restoreOpenShellEnv = snapshotOpenShellEnv();
+          const scopedEnvKeys = [
+            BRAVE_API_KEY_ENV,
+            TAVILY_API_KEY_ENV,
+            MESSAGING_SETUP_APPLIER_ENV_KEY,
+            DOCKER_GPU_PATCH_NETWORK_ENV,
+            "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+            // Port selection publishes here; keep it from pinning the next rebuild (#13628).
+            HERMES_API_PORT_ENV,
+            ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
+            ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
+          ];
+          const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
+          try {
+            await rebuildSandboxUnlocked(
+              sandboxName,
+              normalizedOptions,
+              opts,
+              removedImmutabilityMigration.stateRecord !== null,
+            );
+          } finally {
+            restoreOpenShellEnv();
+            for (const key of scopedEnvKeys) delete process.env[key];
+            Object.assign(
+              process.env,
+              Object.fromEntries(
+                savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
+              ),
+            );
+          }
+        }),
+      { loadRegistry: registry.load, withLifecycleLock: withMcpLifecycleLock },
+    );
+  return withRebuildHostFence(homeDir, runRebuild, opts);
 }
 
 async function rebuildSandboxUnlocked(
