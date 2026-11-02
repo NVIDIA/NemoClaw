@@ -685,11 +685,20 @@ describe("E2E workflow plan", () => {
   });
 
   it.each(["test/e2e/live/gpu-e2e-helpers.ts", "test/e2e/live/gpu-e2e-ollama.ts"])(
-    "selects every live Ollama cleanup consumer when %s changes",
+    "selects the live targets that import %s when it changes",
     (file) => {
       const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
-      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(
-        expect.arrayContaining(["gpu-e2e", "gpu-double-onboard"]),
+      expect(
+        Object.values(plan.catalogueMatrices).flatMap((rows) => rows.map((row) => row.id)),
+      ).toEqual(
+        expect.arrayContaining([
+          "gpu-e2e",
+          "gpu-double-onboard",
+          "llama-cpp-generic-gpu",
+          "inference-routing-openclaw-native",
+          "openclaw-inference-switch",
+          "openclaw-compatible-anthropic-inference-switch",
+        ]),
       );
       expect(selectedWorkflowJobs(plan)).toEqual(
         expect.arrayContaining([
