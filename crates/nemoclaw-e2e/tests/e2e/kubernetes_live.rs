@@ -70,6 +70,60 @@ fn random_hex(bytes: usize) -> String {
     buffer.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// How long each phase of a deployment flow took, so a slow Live / Kind run
+/// shows where it spent its time. It reports phase names and seconds only,
+/// never deployment values.
+struct Phases {
+    since: std::time::Instant,
+    marks: Vec<(&'static str, Duration)>,
+}
+
+impl Phases {
+    fn new() -> Self {
+        Self {
+            since: std::time::Instant::now(),
+            marks: Vec::new(),
+        }
+    }
+
+    /// Record the time since the previous mark as `phase`.
+    fn mark(&mut self, phase: &'static str) {
+        let now = std::time::Instant::now();
+        self.marks.push((phase, now - self.since));
+        self.since = now;
+    }
+
+    fn table(&self, flow: &str) -> String {
+        let total: Duration = self.marks.iter().map(|(_, took)| *took).sum();
+        let mut table = format!(
+            "#### Phases of the {flow} flow: {:.1} s\n\n| Phase | Time |\n|---|---|\n",
+            total.as_secs_f64()
+        );
+        for (phase, took) in &self.marks {
+            table.push_str(&format!("| {phase} | {:.1} s |\n", took.as_secs_f64()));
+        }
+        table
+    }
+
+    /// Print the phases, and add them to the GitHub job summary, where nextest
+    /// shows nothing of a passing test.
+    fn report(&self, flow: &str) {
+        let table = self.table(flow);
+        eprintln!("{table}");
+        if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+            // One write, so concurrent tests' tables do not interleave.
+            let appended = fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(summary)
+                .and_then(|mut file| file.write_all(format!("{table}\n").as_bytes()));
+            if let Err(error) = appended {
+                eprintln!("cannot write the job summary: {error}");
+            }
+        }
+    }
+}
+
 /// Create a ConfigMap, Secret, Service or Deployment from its manifest, for a
 /// server that a test runs in its own namespace, as a platform would.
 async fn create(client: &kube::Client, object: Value) {
@@ -909,6 +963,24 @@ fn fabric_messages(state: &Path) -> String {
 }
 
 #[test]
+fn phase_tables_list_each_phase_in_order_with_their_total() {
+    let phases = Phases {
+        since: std::time::Instant::now(),
+        marks: vec![
+            ("first apply", Duration::from_millis(40_240)),
+            ("destroy", Duration::from_millis(33_800)),
+        ],
+    };
+    assert_eq!(
+        phases.table("openshift profile, 3 sandboxes"),
+        "#### Phases of the openshift profile, 3 sandboxes flow: 74.0 s\n\n\
+         | Phase | Time |\n|---|---|\n\
+         | first apply | 40.2 s |\n\
+         | destroy | 33.8 s |\n"
+    );
+}
+
+#[test]
 fn fabric_messages_name_each_failed_sandbox_and_redact_credentials() {
     let state = tempfile::tempdir().unwrap();
     let diagnostics = state.path().join("diagnostics");
@@ -1156,6 +1228,7 @@ async fn deploy_image_and_export(
     while_applying: impl AsyncFnOnce(&str),
 ) -> Vec<u8> {
     use nemoclaw_sdk::{CancellationToken, Deployment};
+    let mut phases = Phases::new();
     let mut uid = [0u8; 16];
     getrandom::fill(&mut uid).unwrap();
     uid[6] = (uid[6] & 0x0f) | 0x40;
@@ -1195,6 +1268,7 @@ async fn deploy_image_and_export(
         context: required("NEMOCLAW_TEST_KUBE_CONTEXT"),
     };
     let cluster = connect(&target).await.unwrap();
+    phases.mark("setup and cluster connection");
     // The requests reach the gateway as the SDK's providers do, from the
     // deployment's Kubernetes state.
     let operations = Operations {
@@ -1218,6 +1292,7 @@ async fn deploy_image_and_export(
     before_applying(&namespace).await;
     // The stub's pod starts while the deployment applies.
     stub.place(&cluster).await;
+    phases.mark("namespace preparation and stub placement");
 
     // Stop waiting on the caller's hook if apply fails first, so the error and
     // the namespace's state show. Every pod exists once apply succeeds, so
@@ -1244,6 +1319,7 @@ async fn deploy_image_and_export(
         stub.remove(&cluster).await;
     }
     applied.expect("the agent starts through fabric-agent-ctl");
+    phases.mark("first apply and the caller's hook");
     let state_file = state.path().join("terraform.tfstate");
     let state_snapshot = fs::read(&state_file).unwrap();
     let applied_identities = identities(state.path(), &document);
@@ -1272,6 +1348,7 @@ async fn deploy_image_and_export(
         state.path(),
     )
     .await;
+    phases.mark("unchanged apply");
     let unchanged_state = fs::read(&state_file).unwrap();
     let stub_ready = stub.ready(&cluster).await;
     // Without the first apply's identities or the stub, no request is sent;
@@ -1281,7 +1358,9 @@ async fn deploy_image_and_export(
         Some(agents) => requests::round(&operations, agents, &[]).await,
         None => Vec::new(),
     };
+    phases.mark("stub readiness and requests after the unchanged apply");
     let exported = deployment.export(&cancel).await;
+    phases.mark("export");
     let reapplied = match &exported {
         Ok(exported) => Some(
             diagnosed(
@@ -1294,10 +1373,12 @@ async fn deploy_image_and_export(
         ),
         Err(_) => None,
     };
+    phases.mark("apply of the export");
     let after_export = match requested {
         Some(agents) => requests::round(&operations, agents, &after_unchanged).await,
         None => Vec::new(),
     };
+    phases.mark("requests after the export's apply");
     let unanswered: Vec<String> = requested
         .into_iter()
         .flat_map(|agents| {
@@ -1317,11 +1398,19 @@ async fn deploy_image_and_export(
     let reapplied_identities = identities(state.path(), &document);
     let deployed_objects = sandbox_objects(&cluster, &namespace).await;
     let kept = retained(&cluster, &namespace, &release).await;
+    phases.mark("diagnostics and reads before destroy");
     let destroyed = deployment.destroy(&cancel).await;
     stub.remove(&cluster).await;
+    phases.mark("destroy and stub removal");
     let destroyed = destroyed.unwrap();
     let remaining = retained(&cluster, &namespace, &release).await;
+    phases.mark("storage check after destroy");
     let objects_left = sandbox_objects_left(&cluster, &namespace).await;
+    phases.mark("wait for the Sandbox objects to go");
+    phases.report(&format!(
+        "{provider} profile, {} sandboxes",
+        sandboxes.len()
+    ));
     for change in &destroyed.changes {
         assert!(
             !change.resource.contains("kubernetes_storage"),
