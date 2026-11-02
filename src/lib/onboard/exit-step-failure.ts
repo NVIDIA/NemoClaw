@@ -8,6 +8,8 @@ import { printOnboardResumeHint } from "./resume-hint";
 export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
   releaseOnboardLock?(): void;
+  /** Recovery guidance only; this name does not establish a recorded sandbox identity. */
+  readonly requestedSandboxName?: string | null;
   finalizeIncompleteOnboardStep(
     stepName: string,
     message?: string | null,
@@ -58,7 +60,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     const interrupted = markLastStartedStepFailed(deps, message, true);
     if (!interrupted) return;
     if (interrupted.status === "recovery_required") return;
-    printOnboardResumeHint(portable, undefined, interrupted.sandboxName);
+    printOnboardResumeHint(portable, undefined, interrupted.sandboxName, deps.requestedSandboxName);
   };
 
   processLike.once("exit", (code) => {

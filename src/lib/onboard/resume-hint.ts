@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import { isValidName } from "../sandbox-name-contract";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
 export function onboardResumeRecoveryCommand(sandboxName?: string | null): string {
-  const nameArg = sandboxName === null ? " --name <sandbox>" : "";
+  const nameArg = isValidName(sandboxName) ? ` --name ${sandboxName}` : "";
   return `${CLI_NAME} onboard --resume${nameArg}`;
 }
 
@@ -35,19 +36,21 @@ export function printOnboardResumeHint(
   portable = isPortableExperimentalProfile(),
   log: (message: string) => void = (message) => console.error(message),
   sandboxName?: string | null,
+  requestedSandboxName?: string | null,
 ): void {
   if (resumeHintShown) return;
   resumeHintShown = true;
+  const recoveryName = isValidName(sandboxName) ? sandboxName : requestedSandboxName;
   log("");
   if (portable) {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardResumeRecoveryCommand(sandboxName)}`);
+    log(`    ${onboardResumeRecoveryCommand(recoveryName)}`);
     log("  The portable profile and rootless Podman authority are restored from the checkpoint.");
     log("  To start over instead, run:");
     log(`    ${onboardFreshRecoveryCommand(true)}`);
   } else {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardResumeRecoveryCommand(sandboxName)}`);
+    log(`    ${onboardResumeRecoveryCommand(recoveryName)}`);
     log("  Completed steps are skipped; pass --fresh instead to start over.");
   }
 }

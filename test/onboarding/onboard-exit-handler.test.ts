@@ -428,6 +428,7 @@ const { onboard } = require(${onboardPath});
       const result = runOnboard(tmpDir, "unexpected");
 
       expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("    nemoclaw onboard --resume --name exit-seam");
       const lastLine = result.stdout.trim().split(/\n/).at(-1) ?? "";
       const payload = JSON.parse(lastLine) as {
         loaded: ReturnType<typeof onboardSession.createSession>;
