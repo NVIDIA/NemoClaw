@@ -108,12 +108,12 @@ it.each([
     fs.writeFileSync(
       preload,
       `const fs = require('node:fs');
-const { TEST_TELEMETRY_ENDPOINT } = require(${JSON.stringify(adapter)});
+const { TELEMETRY_ENDPOINT } = require(${JSON.stringify(adapter)});
 fs.appendFileSync(process.env.NEMOCLAW_TEST_TRACE, 'loaded ' + process.argv[1] + '\\n');
 const fetchOriginal = globalThis.fetch;
 globalThis.fetch = (input, init) => {
   fs.appendFileSync(process.env.NEMOCLAW_TEST_TRACE, 'fetch ' + String(input) + '\\n');
-  if (String(input) !== TEST_TELEMETRY_ENDPOINT) throw new Error('Unexpected network request');
+  if (String(input) !== TELEMETRY_ENDPOINT) throw new Error('Unexpected network request');
   return fetchOriginal(process.env.NEMOCLAW_TEST_RECEIVER_URL, init);
 };
 `,
