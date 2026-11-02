@@ -458,6 +458,7 @@ async function runSandboxConnectProbe(
         agentName,
         commandExecutor: sandboxCommandExecutor,
         ensureInferenceRoute: () => routeResult,
+        gatewayName: getSandboxTargetGatewayName(sandboxName),
         sandboxName,
       }),
     );
