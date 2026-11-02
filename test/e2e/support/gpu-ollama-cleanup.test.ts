@@ -11,7 +11,68 @@ import path from "node:path";
 import { expect, it } from "vitest";
 
 import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
-import { ollamaCleanupScript } from "../live/gpu-e2e-helpers.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { cleanupOllama, ollamaCleanupScript } from "../live/gpu-e2e-helpers.ts";
+
+it.each([0, 17])(
+  "preserves Ollama service cleanup status %i without running logout hooks",
+  async (status) => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-logout-"));
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    const server = createServer();
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = (server.address() as { port: number }).port;
+      const closed = once(server, "close");
+      server.close();
+      await closed;
+      writeFileSync(path.join(root, ".bash_logout"), "false\n");
+      // Inert commands isolate the fixture from host services and processes.
+      writeFileSync(
+        path.join(bin, "systemctl"),
+        `#!/bin/sh\ncase "$*" in "stop ollama.service") exit ${status} ;; *) exit 0 ;; esac\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(path.join(bin, "id"), "#!/bin/sh\nprintf '0\\n'\n", { mode: 0o755 });
+      writeFileSync(path.join(bin, "sudo"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      writeFileSync(path.join(bin, "pkill"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      writeFileSync(path.join(bin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      writeFileSync(path.join(bin, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const host = new HostCliClient({
+        run: async ({ command, args }) =>
+          await new Promise((resolve) => {
+            execFile(
+              command,
+              // Skip host profiles while retaining the helper's login-shell selection.
+              ["--noprofile", ...args.map((arg) => arg.replaceAll("11434", String(port)))],
+              {
+                env: { HOME: root, PATH: `${bin}:/usr/bin:/bin` },
+                timeout: 5_000,
+                killSignal: "SIGKILL",
+              },
+              (error, stdout, stderr) =>
+                resolve({
+                  command: [command, ...args],
+                  exitCode: error ? (typeof error.code === "number" ? error.code : null) : 0,
+                  signal: error?.signal ?? null,
+                  timedOut: error?.killed ?? false,
+                  stdout,
+                  stderr,
+                  artifacts: { stdout: "", stderr: "", result: "" },
+                }),
+            );
+          }),
+      });
+      const result = await cleanupOllama(host, "cleanup-logout-fixture");
+      expect(result).toMatchObject({ exitCode: status, signal: null, timedOut: false });
+    } finally {
+      server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 async function runCleanupFixture(termination: string, sleepCommand: string) {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-shutdown-"));

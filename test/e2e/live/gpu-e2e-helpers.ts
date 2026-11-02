@@ -273,7 +273,8 @@ export async function cleanupOllama(
   host: HostCliClient,
   artifactName: string,
 ): Promise<ShellProbeResult> {
-  return await host.command("bash", ["-lc", ollamaCleanupScript()], {
+  // Login-shell logout hooks can turn successful cleanup into a failed command.
+  return await host.command("bash", ["-c", ollamaCleanupScript()], {
     artifactName,
     env: env(),
     timeoutMs: 30_000,
