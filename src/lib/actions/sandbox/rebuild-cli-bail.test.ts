@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
+  agentRuntime,
   openClawLifecycle,
   rebuildBackupPhase,
   rebuildDestroyPhase,
@@ -56,6 +60,27 @@ describe("interactive rebuild bail after backup (#12919)", () => {
     expect(finish).toHaveBeenCalledOnce();
     expect(abort).toHaveBeenCalledOnce();
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(abort.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
+    expect(harness.releaseOnboardLockSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      exit.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("aborts the post-restore window before exiting for a recreated agent mismatch", async () => {
+    const harness = createRebuildFlowHarness();
+    harness.onboardSpy.mockImplementation(async () => {
+      vi.mocked(agentRuntime.getSessionAgent).mockReturnValue({ name: "hermes" } as never);
+    });
+    const abort = vi.spyOn(openClawLifecycle, "abortUnregisteredOpenClawPostRestoreDoctor");
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+    await harness.rebuildSandbox("alpha", ["--yes"]);
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Recreated sandbox agent identity did not match the authoritative rebuild target.",
+    );
+    expect(abort).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledExactlyOnceWith(1);
     expect(abort.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
     expect(harness.releaseOnboardLockSpy.mock.invocationCallOrder[0]).toBeLessThan(
@@ -119,6 +144,28 @@ describe("interactive rebuild bail after backup (#12919)", () => {
 
     await expect(harness.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
       "OpenClaw source maintenance cleanup did not complete.",
+    );
+    expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the recovery handoff when MCP reattachment fails before deletion", async () => {
+    const harness = createRebuildFlowHarness();
+    vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockImplementation(async (input) => {
+      input.onMcpRecoveryFailed?.();
+      input.bail("MCP reattachment failed before deletion");
+      return null;
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("MCP reattachment failed before deletion");
+
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
+    ) as { rebuildPolicyHandoff: { file: string } };
+    expect(manifest.rebuildPolicyHandoff?.file).toBeTruthy();
+    expect(fs.existsSync(path.join(harness.backupPath, manifest.rebuildPolicyHandoff.file))).toBe(
+      true,
     );
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
   });

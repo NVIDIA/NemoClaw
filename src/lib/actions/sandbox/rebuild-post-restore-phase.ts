@@ -253,29 +253,6 @@ export async function runRebuildPostRestorePhase(
   // OpenClaw is represented by a null registry agent and a null runtime definition.
   const recreatedRegistryAgentName = recreatedEntry?.agent ?? "openclaw";
   const recreatedRuntimeAgentName = recreatedAgent?.name ?? "openclaw";
-  if (
-    !recreatedEntry ||
-    recreatedRegistryAgentName !== targetAgentName ||
-    recreatedRuntimeAgentName !== targetAgentName ||
-    (targetAgentName === "hermes" &&
-      mcpRuntimeSelection &&
-      getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
-  ) {
-    console.error(
-      `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
-    );
-    if (hermesCronRestoreIdentity) {
-      return bailAfterHermesCronRestoreFailure(
-        sandboxName,
-        backupManifest,
-        "  Hermes cron dispatch remains drained because the replacement identity is unverified.",
-        "Recreated sandbox agent identity did not match the authoritative rebuild target.",
-        bail,
-      );
-    }
-    bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
-    return;
-  }
   const agentDef = loadAgent(targetAgentName);
   const rebuiltAgentName = agentDef.displayName;
   let mutableConfigPermissionsVerified = targetAgentName !== "hermes";
@@ -295,6 +272,29 @@ export async function runRebuildPostRestorePhase(
     : {};
 
   try {
+    if (
+      !recreatedEntry ||
+      recreatedRegistryAgentName !== targetAgentName ||
+      recreatedRuntimeAgentName !== targetAgentName ||
+      (targetAgentName === "hermes" &&
+        mcpRuntimeSelection &&
+        getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
+    ) {
+      console.error(
+        `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
+      );
+      if (hermesCronRestoreIdentity) {
+        return bailAfterHermesCronRestoreFailure(
+          sandboxName,
+          backupManifest,
+          "  Hermes cron dispatch remains drained because the replacement identity is unverified.",
+          "Recreated sandbox agent identity did not match the authoritative rebuild target.",
+          bail,
+        );
+      }
+      bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
+      return;
+    }
     if (targetAgentName === "openclaw") {
       // The restore phase enters this window before replacing any live state.
       // Keep that exact window through every post-restore writer and release it
@@ -432,6 +432,7 @@ export async function runRebuildPostRestorePhase(
       await abortOpenClawPostRestoreWindowAfterFailure(openClawDoctorWindow, log);
     }
   }
+  if (!recreatedEntry) return;
   const hermesGatewayVerification = hermesCronRestoreIdentity
     ? await verifyHermesGatewayAfterStateRestoreForCronGate(
         sandboxName,

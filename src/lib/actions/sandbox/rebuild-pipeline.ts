@@ -788,6 +788,10 @@ async function rebuildSandboxUnlocked(
 
       let preservedMcpPolicyHandoff = false;
       const sourceWindowForDelete = sourceOpenClawDoctorWindow;
+      const retainRecoveryHandoffs = (): void => {
+        telemetryMutated = true;
+        retainPolicyHandoffForRecovery = true;
+      };
       const mcpPreparation = await runRebuildDestroyPhase({
         ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
@@ -1001,14 +1005,9 @@ async function rebuildSandboxUnlocked(
           : undefined,
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
-        onDeleted: () => {
-          telemetryMutated = true;
-          retainPolicyHandoffForRecovery = true;
-        },
-        onDeleteStateAmbiguous: () => {
-          telemetryMutated = true;
-          retainPolicyHandoffForRecovery = true;
-        },
+        onDeleted: retainRecoveryHandoffs,
+        onDeleteStateAmbiguous: retainRecoveryHandoffs,
+        onMcpRecoveryFailed: retainRecoveryHandoffs,
       });
       if (mcpPreparation) sourceOpenClawDoctorWindow = null;
       if (!mcpPreparation) return;
