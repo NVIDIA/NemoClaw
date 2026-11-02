@@ -80,8 +80,10 @@ for both onboarding calls, rebuild, restart, consumer, credential scan and sibli
 denial. Its catalogue job adds both DCode scenario budgets to the existing
 75-minute routing allowance, for a total of 243 minutes. This preserves the
 inherited suite's overall limit instead of summing every per-test failure guard.
-Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+Manual PR runs use the catalogue and job timeout from the trusted workflow commit on `main`, so
 a candidate's job-timeout change applies only after it reaches that commit.
+The protected managed-image GPU job allows 90 minutes, with 60 minutes for setup and providers,
+15 minutes for rollback, and 15 minutes reserved for cleanup, evidence, and runner headroom.
 
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
@@ -2498,8 +2500,8 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
-The 75-minute job records its start before checkout. Setup and provider qualification share the first
-45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
+The 90-minute job records its start before checkout. Setup and provider qualification share the first
+60 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
 limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
 and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
 and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
