@@ -137,7 +137,9 @@ async function completeRebuildSourceWindowCleanup(
   }
   return {
     complete: false,
-    retainPolicyHandoff: !released.markerInvalidated,
+    // A failed release needs its policy and MCP evidence for manual reconciliation,
+    // even when the old backup marker was retired before the source could reopen.
+    retainPolicyHandoff: true,
     ...(unwinding ? {} : { failure: error }),
   };
 }

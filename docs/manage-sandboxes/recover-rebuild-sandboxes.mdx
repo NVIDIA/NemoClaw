@@ -506,10 +506,8 @@ $$nemoclaw <sandbox-name> logs --tail 100
 ```
 
 If the warning says `The retained sandbox was stopped` and OpenShell confirms it remains stopped, keep it stopped.
-Rerun the original rebuild with the same settings only if the source has not run since the backup.
-The retry uses the retained backup. Do not start the source before the retry completes.
-If the source ran after that backup, do not retry. Preserve the source, backup, and recovery files.
-Ask a NemoClaw maintainer to reconcile writes made after the backup before another rebuild attempt.
+If the warning says the recovery marker could not be invalidated, the retained backup remains available for a same-transaction retry. Rerun the original rebuild with the same settings only if the source has not run since that backup. Do not start the source before the retry completes. If the source ran after the backup, preserve the source and recovery files and ask a NemoClaw maintainer to reconcile its writes before retrying.
+If source maintenance cleanup failed after the marker was removed, the old backup is inspection evidence, not retry authority. Keep the source stopped and ask a NemoClaw maintainer to reconcile its maintenance state and any writes before another rebuild. A later rebuild creates a new backup.
 If NemoClaw could not verify the stop or maintenance reconciliation, preserve the current state and ask a NemoClaw maintainer to review the warning, redacted logs, and backup path.
 Do not delete the source or start another replacement until its maintenance state is reconciled.
 

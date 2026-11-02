@@ -134,17 +134,31 @@ describe("interactive rebuild bail after backup (#12919)", () => {
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
   });
 
-  it("reports an unsuccessful source-window release result", async () => {
+  it("keeps recovery handoffs without reauthorizing a backup after source release fails", async () => {
     const harness = createRebuildFlowHarness();
     vi.spyOn(rebuildDestroyPhase, "runRebuildDestroyPhase").mockResolvedValue(null);
-    vi.spyOn(rebuildBackupPhase, "releaseRebuildSourceOpenClawWindow").mockResolvedValue({
+    vi.spyOn(openClawLifecycle, "finishOpenClawBackupQuiesce").mockResolvedValue({
       ok: false,
-      stage: "finish",
+      stage: "restart",
       detail: "source remained in maintenance",
-    } as never);
+    });
+    const abort = vi.spyOn(openClawLifecycle, "abortOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+    });
 
     await expect(harness.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
       "OpenClaw source maintenance cleanup did not complete.",
+    );
+    expect(abort).toHaveBeenCalledOnce();
+    expect(fs.existsSync(path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      false,
+    );
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
+    ) as { rebuildPolicyHandoff: { file: string } };
+    expect(manifest.rebuildPolicyHandoff?.file).toBeTruthy();
+    expect(fs.existsSync(path.join(harness.backupPath, manifest.rebuildPolicyHandoff.file))).toBe(
+      true,
     );
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
   });
