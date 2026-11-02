@@ -1055,7 +1055,9 @@ function stat {
   );
 
   it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));
+    const tmp = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-openshell-active-dir-"),
+    );
     try {
       const activeBin = path.join(tmp, "active-bin");
       const fakeBin = path.join(tmp, "fake-bin");

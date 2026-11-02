@@ -2915,18 +2915,25 @@ ensure_cli_shim() {
   fi
   node_dir="$(dirname "$node_path")"
 
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    # An existing directory alias to the validated npm bin is safe to reuse
+    # only when it already names that same CLI. Its parent was checked above.
+    if [[ -L "$NEMOCLAW_SHIM_DIR" && "$NEMOCLAW_SHIM_DIR" -ef "$npm_bin" &&
+      "$cli_path" != "$shim_path" && -e "$shim_path" && "$cli_path" -ef "$shim_path" ]]; then
+      :
+    else
+      error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+    fi
+  fi
+
   # If npm placed the binary at the same path as the shim target (e.g. when
   # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
-  # binary with a script that exec's itself — an infinite loop.  In that case
+  # binary with a script that exec's itself — an infinite loop. In that case
   # the binary is already where it needs to be; skip shim creation.
   if [[ "$cli_path" != "$shim_path" && -e "$shim_path" && "$cli_path" -ef "$shim_path" ]]; then
     refresh_path
     ensure_local_bin_in_profile
     return 0
-  fi
-
-  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
-    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
   fi
 
   assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"

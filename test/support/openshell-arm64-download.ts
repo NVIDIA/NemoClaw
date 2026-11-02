@@ -19,7 +19,9 @@ function writeExecutable(target: string, contents: string) {
 }
 
 export function createLinuxArm64DownloadFixture() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
+  const tmp = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-openshell-linux-arm64-assets-"),
+  );
   const fakeBin = path.join(tmp, "bin");
   const downloadLog = path.join(tmp, "downloads.log");
   const checksumLog = path.join(tmp, "checksums.log");
