@@ -277,7 +277,8 @@ When an older trusted workflow exports startup evidence without a Hermes Discord
 the candidate consumer builds its CLI and runs the native contract against the same immutable Hermes image.
 Identity validation precedes that execution. A failed native contract rejects qualification,
 and the original evidence artifact remains unchanged.
-Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
+Its amd64 shard exports digest-addressed npm and agent system inputs for protected offline builds.
+For the `sandbox` runtime user, it also exports the completed OpenClaw image with only its candidate revision tag.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
 base activation. PR image-publication runs build all three managed-agent bases
 from the selected checkout's Dockerfiles, pins and lockfiles on native CPU runners.
@@ -837,6 +838,15 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+The `vllm-docker-storage` job also checks startup log history through a real
+Docker daemon at `/run/docker.sock`. A pinned CPU-only BusyBox container emits
+a startup error, restarts automatically, and emits 80 newer records. The production
+log reader must recover the earlier stderr error before fixture cleanup.
+The fixture has no network access, host mounts, GPU, or credentials. Cleanup
+removes only its uniquely named container and retains the shared image cache.
+Source tests own record bounds, ordering, redaction, fallback, and installer cleanup ordering.
+The support test owns the shell fixture's two-attempt output.
+
 ### External gateway health
 
 `external-gateway-health` is an explicit-only retained job for the external
@@ -1015,6 +1025,12 @@ Route assertions use JSON fields so terminal column alignment does not affect th
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
 The baseline model expectation comes from the environment passed to installation.
 The native NVIDIA variant then switches to the public endpoint with its public credential.
+Its sandbox inference and Hermes API probes retain response bodies and record curl's HTTP status separately in stderr.
+HTTP 408, 429, and 5xx responses can use the existing three-attempt limit with five seconds between attempts.
+A curl timeout after HTTP 200 headers can also retry when its diagnostic identifies a transient transport failure.
+Authentication, authorization, policy, and malformed-input diagnostics prevent retries even when the HTTP status would otherwise qualify.
+A successful probe still requires HTTP 200, the selected model, and a `PONG` response.
+Each attempt retains its command artifact, and the retry artifact distinguishes first-attempt success, recovery, and exhaustion.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
@@ -2440,9 +2456,20 @@ For a manual PR run, the protected startup job uses a trusted resolver to compar
 the candidate's OpenClaw base Dockerfile and its inputs with the published base's
 source revision. Matching inputs permit an immutable published base reference.
 Changed or unverified inputs use a base built from the exact candidate instead.
-The final managed image always builds from the selected candidate commit, and the
-GPU job verifies the same-run build-cache identity and any published OpenClaw
-base digest before its offline rebuild.
+The final managed image always builds from the selected candidate commit.
+The GPU job verifies the same-run build-cache identity and any published OpenClaw base digest.
+For OpenClaw with the `sandbox` runtime user, it reuses the completed CPU image only when the producer and consumer attempts match.
+The receipt binds the candidate, workflow, cohort, platform, runtime user, base reference, image config digest, and archive digest and size.
+The CPU job derives the config digest from the hash-verified immutable registry manifest; Docker's local image ID remains a separate contract field.
+The GPU job verifies the receipt, archive, config, Docker metadata, and any OCI metadata before loading the single image and revision tag.
+It rejects an existing destination tag, then checks the loaded image's labels, platform, and runtime user.
+It publishes the verified image to the isolated registry and pins the resulting manifest digest while requiring the same config digest.
+An invalid handoff fails qualification.
+A missing handoff from an older CPU producer, an earlier-attempt handoff, or the legacy `root` runtime user retains the offline OpenClaw build.
+Hermes and Deep Agents Code retain their existing offline builds.
+Runtime assertions, phase deadlines, and cleanup reserves remain unchanged; image reuse alone does not establish a passing runtime result.
+Manual PR qualification runs the GPU build helper from trusted `main`, so a premerge run cannot exercise candidate changes to that helper.
+Validate those changes separately through an explicitly authorized local run while retaining the trusted workflow boundary.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.

@@ -372,15 +372,22 @@ if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
   sudo -n pkill -f '[o]llama serve' >/dev/null 2>&1 || true
 fi
 
-if pgrep -f '[o]llama serve' >/dev/null 2>&1; then
-  echo 'Ollama cleanup left a daemon process' >&2
-  pgrep -af '[o]llama serve' >&2 || true
-  exit 1
-fi
-if (exec 3<>/dev/tcp/127.0.0.1/${listenerPort}) 2>/dev/null; then
-  echo 'Ollama cleanup left a listener on 127.0.0.1:${listenerPort}' >&2
-  exit 1
-fi`;
+# Manual daemons can close their listener before finishing GPU shutdown.
+# Keep the wait inside the caller's 30-second command budget.
+for ((attempt = 0; attempt < 50; attempt++)); do
+  sleep 0.1
+  if ! pgrep -f '[o]llama serve' >/dev/null 2>&1; then
+    if (exec 3<>/dev/tcp/127.0.0.1/${listenerPort}) 2>/dev/null; then
+      echo 'Ollama cleanup left a listener on 127.0.0.1:${listenerPort}' >&2
+      exit 1
+    fi
+    exit 0
+  fi
+done
+
+echo 'Ollama cleanup left a daemon process' >&2
+pgrep -af '[o]llama serve' >&2 || true
+exit 1`;
 }
 
 export function assertNvidiaAvailable(

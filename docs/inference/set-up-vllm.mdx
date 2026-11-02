@@ -375,7 +375,9 @@ Hugging Face credentials are forwarded only to that temporary downloader, not re
 A legacy root-owned or otherwise unwritable required model-cache path stops before the image pull and prints a scoped ownership-repair command; NemoClaw never changes its ownership automatically.
 </Note>
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
-If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
+If vLLM does not become ready, NemoClaw prints up to 80 lines from the current container log tail before exiting.
+After a restart, it also prints up to 80 lines from before the latest restart when that history is available.
+Check the block labeled `before the latest restart` for startup errors hidden by the new attempt's pip output.
 Because the single-host managed container carries the `--restart unless-stopped` policy described above, a container that cannot serve its model restarts instead of exiting.
 While NemoClaw waits for the API, it also reads that container's restart count.
 After the container restarts three times, NemoClaw stops the container and the install instead of waiting out the full load timeout.
@@ -792,7 +794,7 @@ NEMOCLAW_PROVIDER=install-vllm \
   $$nemoclaw onboard --non-interactive
 ```
 
-If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
+If the selected image does not support an argument, the managed container fails to start and NemoClaw prints the available startup log excerpts.
 
 When the selected managed recipe defines a GPU-memory utilization value, NemoClaw checks `nvidia-smi` total and free memory for the Docker-selected GPU before large downloads.
 It repeats the same check with fresh telemetry immediately before launch so another workload cannot consume the required free GPU memory unnoticed during the download.

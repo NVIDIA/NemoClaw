@@ -336,6 +336,10 @@ const TERMINAL_HERMES_PROBE_RE =
 const TRANSIENT_HERMES_PROBE_RE =
   /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|timed? out|gateway unavailable|network connection error|DNS error|fetch failed|inference service unavailable|rawError=503/iu;
 
+function hermesProbeHttpStatus(result: ShellProbeResult): string | undefined {
+  return result.stderr.match(/(?:^|\n)__NEMOCLAW_HTTP_STATUS__=(\d{3})\s*$/u)?.[1];
+}
+
 function hermesProbeFailureClass(result: ShellProbeResult): RetryFailureClass {
   const output = resultText(result);
   if (
@@ -356,8 +360,14 @@ function hermesProbeFailureClass(result: ShellProbeResult): RetryFailureClass {
     return "policy-denial";
   }
   if (/malformed|invalid (?:request|json)/iu.test(output)) return "malformed-input";
+  // curl writes the final status to stderr separately from the untrusted response body.
+  const httpStatus = hermesProbeHttpStatus(result);
+  if (result.exitCode === 22 && httpStatus && /^(408|429|5[0-9]{2})$/u.test(httpStatus)) {
+    return "transient-external";
+  }
   if (
     result.exitCode !== 0 &&
+    (!httpStatus || httpStatus === "000" || (httpStatus === "200" && result.exitCode === 28)) &&
     !TERMINAL_HERMES_PROBE_RE.test(output) &&
     TRANSIENT_HERMES_PROBE_RE.test(output)
   ) {
@@ -388,7 +398,8 @@ export async function runHermesPongWithRetry(
     run: async (attempt) => {
       const result = await options.run(attempt);
       let passed = false;
-      if (result.exitCode === 0) {
+      const httpStatus = hermesProbeHttpStatus(result);
+      if (result.exitCode === 0 && (!httpStatus || httpStatus === "200")) {
         try {
           passed =
             acceptedSwitchResponseModels(options.expectedModel).includes(
@@ -888,11 +899,11 @@ export function sandboxInferenceCommand(
           api: RUNTIME_SWITCH_API,
         });
   const target = `${openAiSurfaceEndpointUrl(endpointUrl)}/chat/completions`;
-  return `${headers}; curl -sS --max-time 90 ${shellQuote(target)} -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
+  return `${headers}; curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 90 ${shellQuote(target)} -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
 }
 
 export function hermesApiCommand(payload: string): string {
-  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
+  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
 }
 
 /** Prove that a native NVIDIA rebuild retains Discord settings and agent inference. */

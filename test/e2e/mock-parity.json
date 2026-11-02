@@ -71,6 +71,7 @@
         "test/e2e/fixtures/llama-cpp-runtime-diagnostics.ts"
       ],
       "fast": [
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/inference/llama-cpp/index.test.ts",
         "src/lib/onboard/llama-cpp-selection/index.test.ts",
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
@@ -99,6 +100,7 @@
       "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
       "liveSources": ["test/e2e/live/managed-image-protected-runtime-helpers.ts"],
       "fast": [
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-readiness.test.ts",
@@ -680,6 +682,7 @@
         "test/e2e/fixtures/native-local-chat.ts"
       ],
       "fast": [
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
         "src/lib/adapters/config/live-export-source-vllm.test.ts",
         "src/lib/domain/config/export-document.test.ts",
