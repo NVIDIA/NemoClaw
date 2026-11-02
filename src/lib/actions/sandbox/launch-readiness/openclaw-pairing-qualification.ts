@@ -946,38 +946,54 @@ function runOpenClawPairingObservation(
     getOpenshellBinary: execDeps?.getOpenshellBinary ?? resolveOpenshellBinary,
     spawnSync: execDeps?.spawnSync ?? spawnSync,
   };
-  const result = deps.spawnSync(
-    deps.getOpenshellBinary(),
-    ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
-    {
-      cwd: ROOT,
-      env: process.env,
-      input: script,
-      encoding: "utf8",
-      maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
-      stdio: ["pipe", "pipe", "ignore"],
-      timeout: OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
-    },
-  );
-  if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
-    throw new OpenClawPairingObservationRetryableError();
-  }
-  if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
-    throw new OpenClawPairingIncompatibleError();
-  }
-  if (result.error || result.signal || result.status !== 0) {
-    if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
-      throw new OpenClawPairingQualificationError("timeout");
+  const observationStartedAt = performance.now();
+  for (let attempt = 0; ; attempt += 1) {
+    const timeoutMs =
+      attempt === 0
+        ? OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS
+        : Math.floor(
+            OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS - (performance.now() - observationStartedAt),
+          );
+    if (timeoutMs <= 0) throw new OpenClawPairingObservationRetryableError();
+    const result = deps.spawnSync(
+      deps.getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
+      {
+        cwd: ROOT,
+        env: process.env,
+        input: script,
+        encoding: "utf8",
+        maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: timeoutMs,
+      },
+    );
+    if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
+      // Native state may change during a descriptor-pinned read. Reobserve only
+      // that explicit retryable result, with fresh strict snapshots and the same
+      // total deadline. Authorization and malformed-state failures stay terminal.
+      if (attempt < 2) continue;
+      throw new OpenClawPairingObservationRetryableError();
     }
-    const output = String(result.stdout ?? "").trim();
-    const reason = OBSERVATION_FAILURE_REASONS.find(
-      (value) => output === `${FAILURE_MARKER}${value}`,
-    );
-    throw new OpenClawPairingQualificationError(
-      !result.error && !result.signal && result.status === 1 && reason ? reason : "process-failed",
-    );
+    if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
+      throw new OpenClawPairingIncompatibleError();
+    }
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+        throw new OpenClawPairingQualificationError("timeout");
+      }
+      const output = String(result.stdout ?? "").trim();
+      const reason = OBSERVATION_FAILURE_REASONS.find(
+        (value) => output === `${FAILURE_MARKER}${value}`,
+      );
+      throw new OpenClawPairingQualificationError(
+        !result.error && !result.signal && result.status === 1 && reason
+          ? reason
+          : "process-failed",
+      );
+    }
+    return { output: String(result.stdout ?? ""), policy: approvalPolicy };
   }
-  return { output: String(result.stdout ?? ""), policy: approvalPolicy };
 }
 
 export function observeOpenClawPairingSettlement(
