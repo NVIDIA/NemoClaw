@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -253,6 +254,56 @@ function openClawMaintenanceMarkerContent(window: OpenClawPostRestoreDoctorWindo
     : OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT;
 }
 
+/** Pin the live provider resource before retiring its source maintenance gate. */
+export function prepareMaintenanceStopProof(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection | undefined,
+  timeoutMs: number,
+): ((remainingMs: number) => boolean) | null {
+  const readEntry = () => readRecoverySandbox(sandboxName);
+  try {
+    const entry = readEntry();
+    if (!entry || entry.name !== sandboxName) return null;
+    if (runtimeSelection && runtimeSelection.workspace !== "default") return null;
+    if (runtimeSelection && entry.gatewayName !== runtimeSelection.gatewayName) return null;
+    const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+    if (!provider?.snapshot.supported) return null;
+    const snapshot = provider.snapshot;
+    const observe = (budgetMs: number) => {
+      const deadline = Date.now() + budgetMs;
+      const preflight = snapshot.preflight("backup", entry, budgetMs);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("Maintenance stop observation deadline expired");
+      return { preflight, runtime: snapshot.capture(entry, preflight, remaining) };
+    };
+    const pinned = observe(timeoutMs);
+    if (pinned.preflight.lifecycleState !== "running") return null;
+    return (remainingMs) => {
+      try {
+        const current = readEntry();
+        if (
+          !current ||
+          current.gatewayName !== entry.gatewayName ||
+          current.openshellDriver !== entry.openshellDriver
+        ) {
+          return false;
+        }
+        const observed = observe(remainingMs);
+        // The provider rechecks lifecycle generation between preflight and capture.
+        // Neither an SDK acknowledgement nor Error/Failed alone proves this state.
+        return (
+          observed.preflight.lifecycleState === "stopped" &&
+          isDeepStrictEqual(observed.runtime, pinned.runtime)
+        );
+      } catch {
+        return false;
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
   collectFailureLogs?: typeof collectRedactedOpenShellSandboxLogs;
@@ -263,6 +314,7 @@ interface OpenClawPostRestoreDoctorDeps {
   executePrivilegedSandboxCommand?: typeof executePrivilegedSandboxCommand;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
   lookupSandbox?: CliOpenShellSandboxLookup;
+  prepareMaintenanceStopProof?: typeof prepareMaintenanceStopProof;
   now: () => number;
   sleep: typeof sleepSeconds;
 }
@@ -271,6 +323,7 @@ const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
   executePrivilegedSandboxCommand,
   executeSandboxExecCommand,
+  prepareMaintenanceStopProof,
   now: Date.now,
   sleep: sleepSeconds,
 };
@@ -640,13 +693,18 @@ async function waitForOpenClawDoctorSandboxStopped(
   sandboxName: string,
   runtimeSelection: OpenShellRuntimeSelection | undefined,
   deps: OpenClawPostRestoreDoctorDeps,
+  pinnedStopProof?: ((remainingMs: number) => boolean) | null,
 ): Promise<boolean> {
   const deadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   return await waitUntilAsync(
     async () => {
       const remainingMs = deadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
-      return await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps, remainingMs);
+      if (await isOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps, remainingMs)) {
+        return true;
+      }
+      const proofBudgetMs = deadlineMs - deps.now();
+      return proofBudgetMs > 0 && pinnedStopProof?.(proofBudgetMs) === true;
     },
     {
       deadlineMs,
@@ -670,6 +728,11 @@ export async function abortOpenClawPostRestoreDoctor(
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<OpenClawPostRestoreDoctorAbortResult> {
   const { sandboxName, runtimeSelection } = window;
+  const pinnedStopProof = deps.prepareMaintenanceStopProof?.(
+    sandboxName,
+    runtimeSelection,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
   const lifecycleOptions = withSelectedOpenShellCommandOptions(
     {
       ignoreError: true,
@@ -718,7 +781,12 @@ export async function abortOpenClawPostRestoreDoctor(
     });
   }
   captureOpenClawDoctorLifecycle(deps, ["sandbox", "stop", sandboxName], lifecycleOptions);
-  const stopped = await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps);
+  const stopped = await waitForOpenClawDoctorSandboxStopped(
+    sandboxName,
+    runtimeSelection,
+    deps,
+    pinnedStopProof,
+  );
   if (!abortPublished) {
     return {
       ok: false,
@@ -747,6 +815,11 @@ export async function retireOpenClawPostRestoreDoctorForDelete(
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<OpenClawPostRestoreDoctorAbortResult> {
   const { sandboxName, runtimeSelection } = window;
+  const pinnedStopProof = deps.prepareMaintenanceStopProof?.(
+    sandboxName,
+    runtimeSelection,
+    OPENSHELL_PROBE_TIMEOUT_MS,
+  );
   const retired = await executeOpenClawDoctorGateCommand(
     deps,
     sandboxName,
@@ -773,7 +846,12 @@ export async function retireOpenClawPostRestoreDoctorForDelete(
     runtimeSelection,
   );
   captureOpenClawDoctorLifecycle(deps, ["sandbox", "stop", sandboxName], lifecycleOptions);
-  const stopped = await waitForOpenClawDoctorSandboxStopped(sandboxName, runtimeSelection, deps);
+  const stopped = await waitForOpenClawDoctorSandboxStopped(
+    sandboxName,
+    runtimeSelection,
+    deps,
+    pinnedStopProof,
+  );
   if (stopped) return { ok: true };
   return {
     ok: false,

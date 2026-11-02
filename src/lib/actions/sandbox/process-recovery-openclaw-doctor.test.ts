@@ -727,6 +727,48 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.invocationCallOrder[0]).toBeLessThan(capture.mock.invocationCallOrder[0]!);
   });
 
+  it.each([
+    ["abort", abortOpenClawPostRestoreDoctor],
+    ["retire", retireOpenClawPostRestoreDoctorForDelete],
+  ] as const)(
+    "requires a resource pinned before marker mutation to reconcile an errored source with %s",
+    async (_name, operation) => {
+      const proof = vi.fn(() => true);
+      const prepare = vi.fn(() => proof);
+      const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+      const capture = vi.fn(() => ({ status: 1, output: "current phase: Error" }));
+      const lookup = vi.fn(async () => ({
+        result: {
+          ok: true as const,
+          value: {
+            state: "present" as const,
+            sandbox: { name: "alpha", phase: "Error", readiness: "terminal" as const },
+          },
+        },
+        displayOutput: "",
+      }));
+      const result = await operation(
+        { sandboxName: "alpha", kind: "backup" },
+        {
+          prepareMaintenanceStopProof: prepare,
+          captureOpenshell: capture as never,
+          executeSandboxExecCommand: execute,
+          lookupSandbox: lookup,
+          now: () => 0,
+          sleep: vi.fn(async () => undefined),
+        },
+      );
+      expect(result).toEqual({ ok: true });
+      expect(prepare).toHaveBeenCalledExactlyOnceWith("alpha", undefined, expect.any(Number));
+      expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
+        execute.mock.invocationCallOrder[0]!,
+      );
+      expect(capture.mock.invocationCallOrder[0]).toBeLessThan(proof.mock.invocationCallOrder[0]!);
+      expect(lookup).toHaveBeenCalledOnce();
+      expect(proof).toHaveBeenCalledExactlyOnceWith(180_000);
+    },
+  );
+
   it("keeps filesystem gates direct and probes health through the OpenShell network namespace", async () => {
     const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
     const executePrivileged = vi.fn(
