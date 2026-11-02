@@ -291,7 +291,7 @@ grep -c '^| [a-z-]* | [A-Z][^|]* | *|' "$EVIDENCE/checks.md"
 The last count is the checks still without an outcome; it must be 0 for a complete run.
 Include the `checks.md` table and `findings.md`, with each finding's affected checks.
 A run is complete when every selected check has an outcome and cleanup finished; a complete run is not a claim that every check passed.
-Add the pair to the agent file's Proven Pairs only after a complete run, including cleanup, and record its counts by outcome there.
+Add the pair to the agent file's Proven Pairs only after a complete run, including cleanup, and record its inference source and counts by outcome there.
 Mark an interrupted run as interrupted, keep its evidence, and don't add it.
 
 ## Hand Off
