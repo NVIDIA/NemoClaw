@@ -8,6 +8,7 @@ import { rebuildSandbox, retireRebuildRecoveryBackup } from "../../lib/actions/s
 import {
   delegateRebuildToOwningRegistry,
   delegateRecoveryRetirementToOwningRegistry,
+  withRebuildHostFence,
 } from "../../lib/actions/sandbox/rebuild/owning-registry";
 import { forceFlag, yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
@@ -81,11 +82,14 @@ export default class RebuildCliCommand extends NemoClawCommand {
     }),
   };
 
+  private retiringRecovery = false;
+
   protected override async runBeforeLifecycleBoundary(): Promise<boolean> {
     const parsed = await this.parse(RebuildCliCommand);
     this.retainLifecycleParserOutput(parsed);
     const { args, flags } = parsed;
     const recoveryTransactionId = flags["retire-recovery"];
+    this.retiringRecovery = Boolean(recoveryTransactionId);
     if (recoveryTransactionId) {
       enforceRemovedImmutabilityMigrationBoundary(args.sandboxName, {
         allowStateRecord: true,
@@ -109,6 +113,15 @@ export default class RebuildCliCommand extends NemoClawCommand {
       process.env.HOME || os.homedir(),
       REGISTRY_FILE,
     );
+  }
+
+  protected override async withLifecycleHostFence<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.retiringRecovery) return await operation();
+    let result: T | undefined;
+    await withRebuildHostFence(process.env.HOME || os.homedir(), async () => {
+      result = await operation();
+    });
+    return result as T;
   }
 
   public async run(): Promise<void> {

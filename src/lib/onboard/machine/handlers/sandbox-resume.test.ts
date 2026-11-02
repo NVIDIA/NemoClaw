@@ -53,7 +53,6 @@ describe("decideSandboxResume", () => {
 
   it.each([
     ["agent", { resumeAgentChanged: true }, false],
-    ["compatible endpoint reasoning", { compatibleEndpointReasoningChanged: true }, false],
     ["web search", { webSearchConfigChanged: true }, true],
     ["explicit recreate", { recreateSandboxRequested: true }, false],
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
@@ -71,6 +70,23 @@ describe("decideSandboxResume", () => {
       kind: "recreate",
       removeRegistryEntry,
     });
+  });
+
+  it("reuses a Ready sandbox when its baked reasoning capability drifted without an explicit recreate (#13732)", () => {
+    expect(
+      decideSandboxResume(resumeSignals({ compatibleEndpointReasoningChanged: true })),
+    ).toEqual({
+      kind: "reuse",
+      note: "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+    });
+  });
+
+  it("recreates a Ready sandbox with reasoning drift only when recreate is explicitly requested (#13732)", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({ compatibleEndpointReasoningChanged: true, recreateSandboxRequested: true }),
+      ),
+    ).toMatchObject({ kind: "recreate" });
   });
 
   it("preserves registry fidelity while recreating for Hermes inference route drift", () => {
@@ -250,8 +266,9 @@ describe("decideSandboxResume", () => {
   });
 
   it("repairs a not-ready sandbox even with reasoning capability drift (#7570)", () => {
-    // compatibleEndpointReasoningChanged only triggers recreate when the
-    // sandbox is ready; when not_ready, the sandbox falls through to repair.
+    // compatibleEndpointReasoningChanged never triggers a recreate on its own:
+    // a Ready sandbox is reused with its recorded value on a plain resume
+    // (#13732), and a not-ready sandbox still falls through to repair.
     expect(
       decideSandboxResume(
         resumeSignals({

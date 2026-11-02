@@ -1261,6 +1261,7 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       chatRequests.some((request) => request.requestCanaryPresent === true) &&
       chatRequests.some((request) => request.toolResultPresent === true) &&
       externalImages.every((image) => image.verified),
+    JSON.stringify({ chatRequests, externalImages }, null, 2),
   ).toBe(true);
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,

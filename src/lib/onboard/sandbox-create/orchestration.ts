@@ -1991,7 +1991,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         requestedExtraProviders: createIntent?.extraProviders,
         resolvedIntent: createIntent?.resolved,
         planOrdinaryExtraProviders: () =>
-          planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+          planRegisteredExtraProviders(GATEWAY_NAME, {
+            runOpenshell,
+            webSearchProvider: webSearchConfig?.provider ?? null,
+          }),
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;
@@ -2405,6 +2408,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           toolDisclosure: effectiveToolDisclosure,
           dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          ...sandboxReuse.hermesSwitchyardRoutingCreateIntentFields(
+            getRequestedSandboxAgentName(agent),
+            process.env,
+          ),
         },
       });
     let pendingStateRestoreBackupPath: string | null = null,
@@ -2432,6 +2439,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       })
     ) {
       const existingSandboxState = getSandboxReuseState(sandboxName);
+      sandboxReuse.assertHermesSwitchyardRoutingReusable({
+        agentName: getRequestedSandboxAgentName(agent),
+        entry: registry.getSandbox(sandboxName),
+        env: process.env,
+        recreate: isRecreateSandbox(createIntent?.recreate),
+        sandboxState: existingSandboxState,
+      });
       const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
       let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 

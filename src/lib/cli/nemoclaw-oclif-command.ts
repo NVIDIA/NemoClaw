@@ -212,6 +212,10 @@ export abstract class NemoClawCommand extends Command {
 
   private async runLifecycleBoundary<T>(): Promise<T> {
     if (await this.runBeforeLifecycleBoundary()) return undefined as T;
+    return await this.withLifecycleHostFence(() => this.runAdmittedLifecycleBoundary<T>());
+  }
+
+  private async runAdmittedLifecycleBoundary<T>(): Promise<T> {
     const commandId = this.id;
     const portablePolicy =
       typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
@@ -287,6 +291,11 @@ export abstract class NemoClawCommand extends Command {
   /** Allow a command to transfer complete ownership before host-wide fences are acquired. */
   protected async runBeforeLifecycleBoundary(): Promise<boolean> {
     return false;
+  }
+
+  /** Let a command take the host fence itself so it can report contention before admission. */
+  protected async withLifecycleHostFence<T>(operation: () => Promise<T>): Promise<T> {
+    return await operation();
   }
 
   /** Reuse an early command parse when the ordinary lifecycle wrapper continues. */

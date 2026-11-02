@@ -16,11 +16,9 @@ export const telemetryRuntime: { config: TelemetryDeliveryConfig | null } = { co
 export function shouldSuppressTelemetry(env: NodeJS.ProcessEnv): boolean {
   return (
     env.NEMOCLAW_DISABLE_TELEMETRY === "1" ||
-    env.CI === "true" ||
-    env.CI === "1" ||
-    env.GITHUB_ACTIONS === "true" ||
     env.VITEST === "true" ||
-    env.NODE_ENV === "test"
+    env.NODE_ENV === "test" ||
+    readTelemetryTestLabel(env) === null
   );
 }
 
