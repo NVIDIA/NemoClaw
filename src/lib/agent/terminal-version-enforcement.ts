@@ -9,6 +9,7 @@ import {
 } from "./terminal-version-drift";
 
 interface TerminalVersionEnforcementOptions {
+  gatewayName?: string;
   beforeFailure?: () => Promise<void>;
   onFailure: (message: string) => Promise<never>;
 }
@@ -23,7 +24,7 @@ export async function enforceTerminalAgentVersion(
   executor: OpenShellSandboxBufferedCommandExecutor,
   options: TerminalVersionEnforcementOptions,
 ): Promise<void> {
-  const result = await checkTerminalAgentVersion(sandboxName, agent, executor);
+  const result = await checkTerminalAgentVersion(sandboxName, agent, executor, options.gatewayName);
   if (result.status === "current" || result.status === "not-required") return;
 
   await options.beforeFailure?.();
