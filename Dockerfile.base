@@ -422,6 +422,7 @@ COPY agents/openclaw/mcporter-runtime/package.json \
     agents/openclaw/mcporter-runtime/package-lock.json \
     /usr/local/lib/nemoclaw/mcporter-runtime/
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
+COPY scripts/lib/patch-openclaw-dependency-overrides.mts /scripts/lib/patch-openclaw-dependency-overrides.mts
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
     scripts/lib/reviewed-npm-audit.mts \
@@ -511,7 +512,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-        OPENCLAW_LOCK_SHA256=0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199; \
+        OPENCLAW_LOCK_SHA256=9ab6ce3358a1f3858d7c64aa6156a9e22df498107a7727d945a1efcb99a69869; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \
@@ -625,6 +626,12 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
 # will still report healthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD node -e "process.exit(0)"
+
+# Keep future official plugin installs on the reviewed security versions.
+RUN if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
+      node /scripts/lib/patch-openclaw-dependency-overrides.mts \
+        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw; \
+    fi
 
 # Keep /usr/local/bin/openclaw as the symlink into this .bin directory so its
 # real path remains a valid package-resolution anchor. The wrapper satisfies

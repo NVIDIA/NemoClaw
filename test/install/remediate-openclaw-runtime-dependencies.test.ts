@@ -26,6 +26,8 @@ import {
   patchOpenClawManagedPluginOverrides,
 } from "../../scripts/lib/remediate-openclaw-runtime-dependencies.mts";
 
+import { OPENCLAW_97_WORKSPACE } from "../fixtures/openclaw-2026.9.7-workspace";
+
 const directories: string[] = [];
 function fixture(installedVersion = "8.12.3") {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-security-"));
@@ -38,6 +40,9 @@ function fixture(installedVersion = "8.12.3") {
     join(root, "node_modules/openclaw/package.json"),
     JSON.stringify({ name: "openclaw", version: "2026.9.7" }),
   );
+  writeFileSync(join(root, "node_modules/openclaw/pnpm-workspace.yaml"), OPENCLAW_97_WORKSPACE, {
+    mode: 0o600,
+  });
   writeFileSync(
     join(legacy, "package.json"),
     JSON.stringify({ name: "undici", version: "8.10.2" }),
@@ -313,7 +318,7 @@ describe("OpenClaw managed plugin security overrides", () => {
       failure.mockRestore();
       patchOpenClawManagedPluginOverrides(owner);
       expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+        "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
       );
       expect(readWorkspaceSnapshot(workspace).mode).toBe(original.mode);
     },
@@ -378,7 +383,7 @@ describe("OpenClaw managed plugin security overrides", () => {
       failure.mockRestore();
       remediateOpenClawRuntimeDependencies(root, { updateLock: true });
       expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+        "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
       );
       expect(JSON.parse(readFileSync(manifest, "utf8")).dependencies).toEqual({
         undici: "8.12.3",
@@ -399,7 +404,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     const failure = failMetadataDirectorySync();
     expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("directory sync failed");
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
     expect(fs.readdirSync(owner).sort()).toEqual(entries);
     // Already patched bytes must not hide an incomplete directory publication on retry.
@@ -407,7 +412,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     failure.mockRestore();
     patchOpenClawManagedPluginOverrides(owner);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
     expect(fs.readdirSync(owner).sort()).toEqual(entries);
   });
@@ -417,7 +422,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     patchOpenClawManagedPluginOverrides(owner);
     const patched = readWorkspaceSnapshot(workspace);
     expect(createHash("sha256").update(patched.contents).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
     expect(patched.mode).toBe(0o600);
     patchOpenClawManagedPluginOverrides(owner);
@@ -456,7 +461,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     );
     patchOpenClawManagedPluginOverrides(owner);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
   });
 
@@ -518,7 +523,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     });
     expect(readFileSync(lockfile)).toEqual(originalLock);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
   });
 

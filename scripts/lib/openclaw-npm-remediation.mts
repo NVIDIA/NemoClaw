@@ -42,6 +42,7 @@ type Remediation = Readonly<{
     | "current-core"
     | "jaeger"
     | "legacy-core"
+    | "music-metadata"
     | "slack-proxy-addr"
     | "undici"
     | "zod";
@@ -140,10 +141,10 @@ const CURRENT_BRACE_EXPANSION_INTEGRITY =
   "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 const CURRENT_BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
-const CURRENT_FAST_URI_VERSION = "3.1.7";
+const CURRENT_FAST_URI_VERSION = "3.1.9";
 const CURRENT_FAST_URI_INTEGRITY =
-  "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==";
-const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
+  "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==";
+const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz";
 const CURRENT_UNDICI_VERSION = "8.12.2";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==";
@@ -318,6 +319,18 @@ const PLUGIN_SECURITY_SOURCE_TREES: Readonly<Record<string, string>> = {
 };
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/whatsapp@2026.9.2": {
+    kind: "music-metadata",
+    version: "2026.9.2",
+    expectedPatchedTreeIntegrity:
+      "sha512-fLr8urxlwrYm6r9RVXdVlYACuiXPehWu7LeZmR02SuBNb4H2onG5rs2lms9lamOrGsA+73z4qCtpBWG/WBibSg==",
+  },
+  "@openclaw/whatsapp@2026.9.5": {
+    kind: "music-metadata",
+    version: "2026.9.5",
+    expectedPatchedTreeIntegrity:
+      "sha512-oycnF4CR3Ch5j3zGbJDunWqvGAGXMgT9nv1kqbcE1Ur90GZPZNqt9DM/ebDDPjss0jjOxAOzMnDePz64ruA6cQ==",
+  },
   "@openclaw/discord@2026.10.5": {
     kind: "plugin-security",
     version: "2026.10.5",
@@ -1262,6 +1275,98 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
   } else {
     copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
   }
+}
+
+export function patchOpenClawMusicMetadataPackageGraph(
+  packageDirectory: string,
+  replacement: string,
+  packageSpec: string,
+): void {
+  if (!["@openclaw/whatsapp@2026.9.2", "@openclaw/whatsapp@2026.9.5"].includes(packageSpec)) {
+    throw new Error("Unreviewed WhatsApp music metadata remediation");
+  }
+  const plugin = readJson(join(packageDirectory, "package.json"));
+  requirePackageIdentity(
+    plugin,
+    "@openclaw/whatsapp",
+    packageSpec.split("@").at(-1)!,
+    "WhatsApp plugin",
+  );
+  if (plugin.dependencies?.baileys !== "7.0.0-rc14") {
+    throw new Error("WhatsApp Baileys dependency changed after review");
+  }
+  const baileys = join(packageDirectory, "node_modules", "baileys");
+  const parent = readJson(join(baileys, "package.json"));
+  requirePackageIdentity(parent, "baileys", "7.0.0-rc14", "WhatsApp Baileys");
+  if (parent.dependencies?.["music-metadata"] !== "^11.12.3") {
+    throw new Error("Baileys music metadata dependency changed after review");
+  }
+  const target = join(baileys, "node_modules", "music-metadata");
+  const installed = readJson(join(target, "package.json"));
+  const alreadyPatched = installed.version === "11.16.0";
+  requirePackageIdentity(
+    installed,
+    "music-metadata",
+    alreadyPatched ? "11.16.0" : "11.15.0",
+    "Bundled music metadata",
+  );
+  const fixed = readJson(join(replacement, "package.json"));
+  requirePackageIdentity(fixed, "music-metadata", "11.16.0", "Music metadata replacement");
+  const dependencies = {
+    "@borewit/text-codec": "^0.2.2",
+    "@tokenizer/token": "^0.3.0",
+    "content-type": "^2.1.0",
+    debug: "^4.4.3",
+    "file-type": "^21.3.4",
+    "media-typer": "^2.0.0",
+    strtok3: "^10.3.5",
+    "token-types": "^6.1.2",
+    "uint8array-extras": "^1.5.0",
+    "win-guid": "^0.2.1",
+  };
+  requireDependencyShape(installed, dependencies, "Bundled music metadata");
+  requireDependencyShape(fixed, dependencies, "Music metadata replacement");
+  if (fixed.engines?.node !== ">=18") {
+    throw new Error("Music metadata package layout changed after review");
+  }
+  hashPackageTree(target);
+  // npm may nest these unchanged dependencies under the bundled parser.
+  // Retain that resolution when replacing the parser's own files.
+  const nested = join(target, "node_modules");
+  if (existsSync(nested)) {
+    const nestedTree = hashPackageTree(nested);
+    const replacementNested = join(replacement, "node_modules");
+    if (existsSync(replacementNested)) {
+      if (hashPackageTree(replacementNested) !== nestedTree)
+        throw new Error("Music metadata nested dependencies changed after review");
+    } else {
+      cpSync(nested, replacementNested, { recursive: true });
+    }
+  }
+  const replacementTree = hashPackageTree(replacement);
+  if (alreadyPatched) {
+    if (hashPackageTree(target) !== replacementTree)
+      throw new Error("Music metadata changed after remediation");
+    return;
+  }
+  copyReplacementPackage(replacement, target);
+}
+
+function remediateMusicMetadata(
+  packageDirectory: string,
+  packageSpec: string,
+  root: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const archive = packReplacement(
+    "music-metadata@11.16.0",
+    "sha512-D5zZHjQUbfR+JhHjnwdbgeB4qj7zVJtisCB1I0GAI5sjSPGqPLoY14WMIzMeR8iA+4nSFswVLpO4crksZUybBg==",
+    "https://registry.npmjs.org/music-metadata/-/music-metadata-11.16.0.tgz",
+    root,
+    env,
+  );
+  const replacement = extractArchive(archive.archivePath, join(root, "music-metadata"), root, env);
+  patchOpenClawMusicMetadataPackageGraph(packageDirectory, replacement, packageSpec);
 }
 
 function remediateBundledUndici(
@@ -2487,7 +2592,9 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "plugin-security") {
+  if (remediation.kind === "music-metadata") {
+    remediateMusicMetadata(sourcePackage, request.packageSpec, remediationRoot, env);
+  } else if (remediation.kind === "plugin-security") {
     patchOpenClaw105PluginDependencies(sourcePackage, remediationRoot, env);
   } else if (remediation.kind === "slack-proxy-addr") {
     const archive = packReplacement(
@@ -3123,7 +3230,14 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const patchesMsal =
     request.packageSpec === "@openclaw/msteams@2026.9.2" ||
     request.packageSpec === "@openclaw/msteams@2026.9.5";
-  if (kind !== "plugin-security" && !patchesProxyAddr && !supportsZod && !patchesMsal) return;
+  if (
+    kind !== "plugin-security" &&
+    kind !== "music-metadata" &&
+    !patchesProxyAddr &&
+    !supportsZod &&
+    !patchesMsal
+  )
+    return;
   if (
     !request.packageDirectory ||
     !isAbsolute(request.packageDirectory) ||
@@ -3188,6 +3302,8 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     (installedMetadata.dependencies?.undici !== undefined ||
       existsSync(join(packageDirectory, "node_modules", "undici")));
   const dependencyPaths: string[][] = [];
+  if (kind === "music-metadata")
+    dependencyPaths.push(["node_modules", "baileys", "node_modules", "music-metadata"]);
   if (patchesMsal) {
     for (const name of ["@azure/msal-node", "@azure/identity", "@microsoft/teams.apps", "zod"]) {
       let dependency = trustedRoot;
@@ -3236,6 +3352,10 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
   try {
+    if (kind === "music-metadata") {
+      remediateMusicMetadata(packageDirectory, request.packageSpec, directory, env);
+      return;
+    }
     if (patchesMsal) {
       remediateInstalledTeamsDependencies(packageDirectory, directory, env);
       return;
