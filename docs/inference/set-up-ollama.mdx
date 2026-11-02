@@ -156,7 +156,8 @@ The menu identifies a reachable daemon as running and labels an installed but st
 NemoClaw lists installed models or offers starter models when none are installed.
 
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
-The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
+The menu shows currently available GPU memory when the host reports it, including `0`, or total GPU memory when available memory is unknown.
+A `0` reading means no GPU memory is currently free, so each known starter model is shown as exceeding available memory.
 
 Among installed models that fit, NemoClaw selects the registry-known model with the highest approximate VRAM requirement.
 Unregistered tags follow registry-known tags and retain Ollama's list order.

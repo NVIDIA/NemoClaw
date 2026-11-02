@@ -19,7 +19,11 @@ import {
   createWhatsappHookRegistrations,
   type WhatsappHookOptions,
 } from "../channels/whatsapp/hooks";
-import { type CommonHookOptions, createCommonHookRegistrations } from "./common";
+import {
+  type CommonHookOptions,
+  createCommonHookRegistrations,
+  resolveCommonHookOptions,
+} from "./common";
 import { MessagingHookRegistry } from "./registry";
 import type { MessagingHookRegistration } from "./types";
 
@@ -41,10 +45,15 @@ export interface BuiltInMessagingHookOptions {
 export function createBuiltInMessagingHookRegistrations(
   options: BuiltInMessagingHookOptions = {},
 ): readonly MessagingHookRegistration[] {
+  const common = resolveCommonHookOptions(options.common);
   return [
-    ...createCommonHookRegistrations(options.common),
+    ...createCommonHookRegistrations(common),
     ...createDiscordHookRegistrations(
-      withOpenClawBridgeHealthOptions(options.discord, options.openclawBridgeHealth),
+      withStatusHealthOptions(
+        withOpenClawBridgeHealthOptions(options.discord, options.openclawBridgeHealth),
+        options.statusHealth,
+      ),
+      { ...common, ...common.tokenPaste },
     ),
     ...createGooglechatHookRegistrations(options.googlechat),
     ...createSlackHookRegistrations(

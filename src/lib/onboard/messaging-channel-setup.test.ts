@@ -64,16 +64,7 @@ function manifests(...channelIds: string[]) {
 function stubTelegramReachability(): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      async json() {
-        return { ok: true };
-      },
-      async text() {
-        return "";
-      },
-    })),
+    vi.fn(async () => Response.json({ ok: true, id: "1", bot: true })),
   );
 }
 
@@ -195,9 +186,9 @@ describe("setupSelectedMessagingChannels", () => {
     expect(output).toContain("/setprivacy -> your bot -> Disable");
     expect(output).toContain("remove and re-add the bot to each group");
     expect(output).toContain("reply mode already set: @mentions only");
-    expect(output.indexOf("✓ telegram — already configured")).toBeLessThan(
-      output.indexOf("disable privacy mode in @BotFather"),
-    );
+    expect(
+      output.indexOf("✓ telegram token available from the environment or credential store"),
+    ).toBeLessThan(output.indexOf("disable privacy mode in @BotFather"));
     expect(output.indexOf("disable privacy mode in @BotFather")).toBeLessThan(
       output.indexOf("reply mode already set: @mentions only"),
     );
@@ -902,7 +893,7 @@ describe("setupMessagingChannels", () => {
     expect(saveCredential).not.toHaveBeenCalled();
     const output = logs.join("\n");
     expect(output).toContain("token_revoked");
-    expect(output).toContain("slack — already configured");
+    expect(output).toContain("slack token available from the environment or credential store");
   });
 
   it("exits with code 1 when TELEGRAM_GROUP_POLICY is set to an unrecognised value (#5696)", async () => {

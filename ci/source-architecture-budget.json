@@ -48,7 +48,7 @@
       "src/lib/actions/sandbox/status-snapshot.ts": 20,
       "src/lib/actions/sandbox/policy-channel.ts": 30,
       "src/lib/actions/sandbox/process-recovery.ts": 17,
-      "src/lib/actions/sandbox/rebuild-pipeline.ts": 29,
+      "src/lib/actions/sandbox/rebuild-pipeline.ts": 30,
       "src/lib/actions/uninstall/run-plan.ts": 25,
       "src/lib/inference/local.ts": 22,
       "src/lib/inference/onboard-probes.ts": 21,
@@ -57,7 +57,7 @@
       "src/lib/onboard/sandbox-gpu-create-run-attempt.ts": 18,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 23,
-      "src/lib/sandbox/config.ts": 17,
+      "src/lib/sandbox/config.ts": 16,
       "scripts/checks/run-managed-image-openshell-e2e.ts": 18
     }
   },

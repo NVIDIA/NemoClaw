@@ -59,6 +59,7 @@ export interface ProviderInferenceOnboardFlowPhaseOptions<
   authoritativeResumeConfig?: boolean;
   providerRecoveryReceipt?: ProviderRecoveryReceipt | null;
   providerRecoveryReceiptLedger?: ReturnType<typeof createProviderRecoveryReceiptLedger>;
+  rebuildSandboxPolicyDocument?: string;
   inspectSandboxForCreate: import("../sandbox-lifecycle").SandboxLifecycleHelpers["inspectSandboxForCreate"];
   endpointProvenance: EndpointProvenanceOptions;
   env: NodeJS.ProcessEnv;
@@ -262,6 +263,7 @@ export function createProviderInferenceOnboardFlowPhase<
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       providerRecoveryReceipt: options.providerRecoveryReceipt,
       providerRecoveryReceiptLedger: options.providerRecoveryReceiptLedger,
+      rebuildSandboxPolicyDocument: options.rebuildSandboxPolicyDocument,
       initial: {
         model: context.model,
         provider: context.provider,

@@ -450,7 +450,9 @@ export async function backupAllUnderPortableHostFence(
       backed++;
     } else {
       if (result.unreachable) {
-        if (skipUnreachable) {
+        // Strict mode cannot skip it, so report the failed backup instead of
+        // a skip that the strict gate would reject without guidance (#13782).
+        if (skipUnreachable && !requireAll) {
           console.log(
             `  ${YW}⚠${R} Skipped '${sb.name}' (running but SSH-unreachable; NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 set). Any uncommitted state since the last successful backup will be lost.`,
           );
@@ -519,6 +521,11 @@ export async function backupAllUnderPortableHostFence(
         console.error(
           `  Strict ${purpose} backup cannot skip these sandboxes. Restore their gateway health, then ${strictRetry}.`,
         );
+        if (skipUnreachable) {
+          console.error(
+            `  NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 applies only to a standalone '${CLI_NAME} backup-all'; it does not relax strict ${purpose} backup.`,
+          );
+        }
       } else {
         console.error(
           `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,

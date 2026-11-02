@@ -5,6 +5,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/ope
 import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { runAgentSmokeCommands } from "../../agent/terminal-smoke";
+import { enforceTerminalAgentVersion } from "../../agent/terminal-version-enforcement";
 import { redact } from "../../runner";
 import {
   probeSandboxInferenceInvocation,
@@ -63,6 +64,12 @@ export async function runTerminalAgentConnectProbe({
     }
     process.exit(1);
   }
+  await enforceTerminalAgentVersion(sandboxName, agent, commandExecutor, {
+    onFailure: async (message) => {
+      console.error(`  Probe failed: ${message}.`);
+      process.exit(1);
+    },
+  });
   const command = agentRuntime.getTerminalCommand(agent);
   const commandText = command ? ` (${command})` : "";
   console.log(`  Probe complete: ${agentName} terminal smoke checks passed${commandText}.`);

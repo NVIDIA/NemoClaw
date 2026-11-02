@@ -134,6 +134,31 @@ describe("terminal-agent connect inference route", () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
+  it("accepts Pi when its runtime satisfies the declared version without an inference route", async () => {
+    const capture = vi.fn(() => ({ status: 0, output: "pi 0.84.1" }));
+
+    await expect(
+      runTerminalAgentConnectProbe({
+        agent: {
+          ...otherTerminalAgent,
+          name: "pi",
+          displayName: "Pi",
+          versionCommand: "pi --version",
+          expectedVersion: "0.84.1",
+          versionScheme: "semver",
+        },
+        agentName: "Pi",
+        commandExecutor: commandExecutorThrough(capture),
+        ensureInferenceRoute: () => ({ routeHealthy: null }),
+        sandboxName: "pi-box",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capture).toHaveBeenCalledOnce();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("terminal smoke checks passed"));
+  });
+
   it("fails dcode connect when a hostile profile forges markers before a nonzero exit (#8624)", async () => {
     const capture = vi.fn(() => ({
       status: 97,

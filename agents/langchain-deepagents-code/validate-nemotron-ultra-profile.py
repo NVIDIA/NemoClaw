@@ -34,12 +34,12 @@ from langchain_openai import ChatOpenAI
 
 EXPECTED_VERSIONS = {
     "nemoclaw-deepagents-profile": "0.1.0",
-    "deepagents-code": "0.1.71",
-    "deepagents": "0.7.15",
-    "langchain": "1.4.3",
-    "langchain-core": "1.6.6",
-    "langgraph": "1.2.12",
-    "langchain-openai": "1.6.7",
+    "deepagents-code": "0.1.87",
+    "deepagents": "0.7.29",
+    "langchain": "1.4.7",
+    "langchain-core": "1.7.0",
+    "langgraph": "1.2.18",
+    "langchain-openai": "1.7.3",
 }
 EXPECTED_PROFILE_ENTRY_POINT = (
     "deepagents.harness_profiles",
@@ -48,7 +48,7 @@ EXPECTED_PROFILE_ENTRY_POINT = (
 )
 EXPECTED_PLUGIN_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_PLUGIN_SOURCE_SHA256 = (
-    "d7bd880d47d423f27dee2997a96271f5f1c67b88fdafaf771e29b82c0ac8b947"
+    "b8c349b409d2583d3f24d7e268872d03e71a5b62031e371a226eb9f6fd1dfcec"
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
     "eec0bfdb27522823f80e5f95a00e03071162c2a96aa71fbffc1c112c5184c01f"

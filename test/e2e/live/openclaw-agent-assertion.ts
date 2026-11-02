@@ -128,23 +128,30 @@ export async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
+      const recordAttemptEvidence = async (path: string, evidence: unknown): Promise<void> => {
+        const write = artifacts.writeJson(path, evidence);
+        // Required success evidence retains its original write failure.
+        // Failed-turn diagnostics must preserve the original retry classification.
+        await (classification.passed ? write : write.catch(() => undefined));
+      };
       if (!classification.passed && args.persistCommandArtifacts === false) {
-        await artifacts.writeJson(
+        await recordAttemptEvidence(
           `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
           projectOpenClawAgentFailureArtifact(attempt, classification, agent),
         );
       }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
+        collectToolEvidence: args.publicFetchExpectation !== undefined && !classification.passed,
         label: args.label,
         recordToolEvidenceReductionFailure: async (failure) => {
-          await artifacts.writeJson(
+          await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reducer-failure.json`,
             failure,
           );
         },
         recordToolEvidence: async (toolEvidence) => {
-          await artifacts.writeJson(
+          await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
             projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence),
           );
@@ -191,5 +198,70 @@ export async function runOpenClawAgentAssertion(
     }
   });
   if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
+  if (args.publicFetchExpectation) {
+    await capturePublicFetchFailureProbe(
+      sandbox,
+      artifacts,
+      args.sandboxName,
+      args.label,
+      args.publicFetchExpectation.url,
+    );
+  }
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
+}
+
+/** A separate request can corroborate reachability, but cannot prove the tool request's response. */
+export async function capturePublicFetchFailureProbe(
+  sandbox: SandboxClient,
+  artifacts: ArtifactSink,
+  sandboxName: string,
+  label: string,
+  url: string,
+): Promise<void> {
+  const observedAt = new Date().toISOString();
+  try {
+    const result = await sandbox.exec(
+      sandboxName,
+      [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--proto",
+        "=https",
+        "--max-time",
+        "15",
+        "--max-redirs",
+        "0",
+        "--output",
+        "/dev/null",
+        "--write-out",
+        "%{http_code}",
+        "--",
+        url,
+      ],
+      { env: commandEnv(), persistArtifacts: false, timeoutMs: 20_000 },
+    );
+    await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
+      schemaVersion: 1,
+      source: "separate-sandbox-curl-request",
+      observedAt,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      httpStatus: /^[1-5][0-9]{2}$/.test(result.stdout.trim())
+        ? Number(result.stdout.trim())
+        : null,
+    });
+  } catch {
+    try {
+      await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
+        schemaVersion: 1,
+        source: "separate-sandbox-curl-request",
+        observedAt,
+        unavailable: true,
+      });
+    } catch {
+      // Preserve the original assertion when diagnostics cannot be saved.
+    }
+  }
 }
