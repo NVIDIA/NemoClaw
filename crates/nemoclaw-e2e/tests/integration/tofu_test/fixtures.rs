@@ -8,6 +8,9 @@
 //! what they recorded.
 
 use crate::docker_engine::{self, DATA_ROOT};
+
+/// The fixed engine socket on Unix, which managed Docker gateways name.
+const MANAGED_ENGINE: &str = "unix:///tmp/nemoclaw-integration/engine.sock";
 use nemoclaw_e2e::{http_fixture, openshell};
 use nemoclaw_sdk::config::{Document, Gateway};
 use serde_json::{Value, json};
@@ -296,7 +299,7 @@ impl Fixtures {
         let serving = cell.clone();
         #[cfg(unix)]
         let (engine, socket) = {
-            let socket = PathBuf::from("/tmp/nemoclaw-integration/engine.sock");
+            let socket = PathBuf::from(MANAGED_ENGINE.trim_start_matches("unix://"));
             std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
             assert!(
                 std::os::unix::net::UnixStream::connect(&socket).is_err(),
@@ -360,16 +363,22 @@ impl Fixtures {
     pub fn redirect(&self, document: &mut Document) {
         let shared = &self.shared;
         *document.spec.gateway.endpoint_mut() = shared.gateway_endpoint.clone();
-        let engine = match &mut document.spec.gateway {
+        let (engine, endpoint) = match &mut document.spec.gateway {
             Gateway::External(gateway) => {
                 gateway.credential = None;
                 gateway.tls = None;
-                Some(&mut gateway.engine)
+                (Some(&mut gateway.engine), shared.engine_endpoint.as_str())
             }
-            gateway => gateway.as_managed_mut().map(|managed| &mut managed.engine),
+            // Managed gateway storage takes only a local engine socket. Every
+            // platform compiles the Unix socket, so the Docker alias a test
+            // file names stays the same; these scenarios run only on Unix.
+            gateway => (
+                gateway.as_managed_mut().map(|managed| &mut managed.engine),
+                MANAGED_ENGINE,
+            ),
         };
         if let Some(engine) = engine.filter(|engine| !engine.is_empty()) {
-            engine.clone_from(&shared.engine_endpoint);
+            *engine = endpoint.to_owned();
         }
         let upstream = shared.upstream_endpoint.get().unwrap();
         for provider in document.spec.inference_providers.values_mut() {
