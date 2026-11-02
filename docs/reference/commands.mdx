@@ -1652,13 +1652,26 @@ For a stopped standard sandbox, `recover` asks OpenShell to start that exact san
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-After the sandbox is available, `recover` sends authenticated requests only to verify supported in-sandbox agent processes and repair supported state for a running gateway and host forwards.
+After the sandbox is available, `recover` verifies supported in-sandbox agent processes and repairs supported state for a running gateway and host forwards.
 Standard sandbox start and stop remain OpenShell-owned.
 The host selects the controller from the live container topology.
 In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
-When `recover` finds a stopped built-in OpenClaw or Hermes agent gateway, it reports the stopped gateway and does not relaunch it.
+
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+If the existing Hermes supervisor is waiting for authenticated gated recovery after a clean exit or exit status `79`, `recover` requests a supervised gateway relaunch before verification.
+Otherwise, `recover` reports a stopped gateway without relaunching it.
+
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 If the gateway is healthy, `recover` checks or repairs host-side forwards.
 It exits zero only when the required forward checks succeed.
@@ -1782,7 +1795,8 @@ mutation. Portable remains a separate receipt-bound lifecycle path.
 
 ### `$$nemoclaw <name> start`
 
-Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot.
+Then verify agent runtime readiness.
 
 ```bash
 $$nemoclaw my-assistant start
@@ -1791,9 +1805,10 @@ $$nemoclaw my-assistant start
 `start` submits the lifecycle mutation through the owning OpenShell gateway, validates the returned immutable sandbox identity, and waits for that same sandbox to become ready. If the registered identity is missing or changed, or OpenShell no longer has the sandbox, the command fails without direct Docker or Podman fallback and points you to the appropriate recovery or rebuild action.
 
 <AgentOnly variant="openclaw,hermes">
-  Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
-  in the `Ready` or `Running` state, using the same `300`-second budget and
-  `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+Before gateway-health verification and host-forward restoration, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
+This wait uses the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+Gateway startup observation does not relaunch the agent.
+If the gateway remains stopped, follow the [native gateway restart procedure](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-the-agent-runtime) before retrying `start`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
   Before it verifies the managed terminal runtime, `start` waits for OpenShell to report the sandbox
@@ -1803,7 +1818,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. After an OpenClaw sandbox and gateway become Ready, a verified native NVIDIA attachment can start with degraded inference when the request returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout. The command clears the stop record and exits `0`, but the failed request leaves model availability unverified. A terminal credential, route, policy, or malformed-response failure still exits non-zero. Other providers also exit non-zero when the inference request fails. For terminal failures, the command prints the probe result, including any HTTP status, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After runtime verification and any required host-forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. After an OpenClaw sandbox and gateway become Ready, a verified native NVIDIA attachment can start with degraded inference when the request returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout. The command clears the stop record and exits `0`, but the failed request leaves model availability unverified. A terminal credential, route, policy, or malformed-response failure still exits non-zero. Other providers also exit non-zero when the inference request fails. For terminal failures, the command prints the probe result, including any HTTP status, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 
@@ -4949,7 +4964,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`            | `180`                                                 | Timeout in seconds for the inference-server validation probe and each native-local or provider-neutral in-sandbox inference request during onboarding and rebuild. The in-sandbox check uses a 60-second minimum. Raise it for a slow model or network.                                                                                                                                                                                                                                                                                                                                         |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT`              | `180`                                                 | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Onboarding preserves a partially created sandbox when the deadline expires. Follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery); do not delete the sandbox by mutable name.                                                                                   |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE`       | `30`                                                  | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`      | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, gateway startup after an intentional OpenClaw stop, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase.                                                                                                                                                                                                                                                                             |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`      | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, OpenClaw gateway startup after runtime start, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase.                                                                                                                                                                                                                                                                             |
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -4962,9 +4977,14 @@ Post-recovery OpenShell readiness uses 120 seconds when the recovery path does n
 
 <AgentOnly variant="openclaw">
 
-After an intentional stop, `$$nemoclaw <sandbox-name> start` uses the 30-second OpenClaw gateway-health budget, including probe execution and delays.
-`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides this startup budget and preserves finite, nonnegative fractional seconds.
-If the budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+After OpenShell reports the sandbox ready, `$$nemoclaw <sandbox-name> start` waits up to 120 seconds for the OpenClaw gateway process.
+This startup wait applies after both an intentional stop and an external Docker restart, regardless of the recorded stop intent.
+The budget includes probe execution and delays; it is separate from the preceding 300-second OpenShell readiness wait.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides the startup budget and preserves finite, nonnegative fractional seconds.
+If the startup budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+With a value of `0`, a sandbox not recorded as intentionally stopped skips process observation but still runs normal gateway and inference verification.
+An intentionally stopped sandbox with a zero budget exits nonzero before those checks.
+These startup settings do not change the 30-second default for OpenClaw gateway-health recovery or onboarding process observation.
 
 </AgentOnly>
 

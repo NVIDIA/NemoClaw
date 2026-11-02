@@ -1367,7 +1367,7 @@ describe("E2E workflow plan", () => {
       "| `ubuntu-repo-cloud-openclaw / docker` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu managed-runtime host; NVIDIA hosted inference | typed-registry |  |",
     );
     expect(complete.stdout).toContain(
-      "| `vllm-docker-storage / docker` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
+      "| `vllm-docker-storage / docker` | none | vLLM storage gate handles host capacity and startup errors survive Docker restarts | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
     );
     expect(complete.stdout).toContain(
       "| `channels-add-remove / default-docker` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",
