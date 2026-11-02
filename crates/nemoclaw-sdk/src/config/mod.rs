@@ -225,6 +225,17 @@ fn default_string(value: &mut String, default: &str) {
         *value = default.into();
     }
 }
+/// Parse a private IPv4 /24 written as its network address in canonical form.
+/// ipnet accepts octets with leading zeros, which Docker rejects, and networks
+/// are compared as text, so one network must have one spelling.
+pub(crate) fn private_network(cidr: &str) -> Option<ipnet::Ipv4Net> {
+    let network = cidr.parse::<ipnet::Ipv4Net>().ok()?;
+    (network.to_string() == cidr
+        && network.addr().is_private()
+        && network.prefix_len() == 24
+        && network.addr() == network.network())
+    .then_some(network)
+}
 pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
     network_address(
         cidr,

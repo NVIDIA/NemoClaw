@@ -99,6 +99,15 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
 }
 
 #[test]
+fn managed_gateway_network_is_written_without_leading_zeros() {
+    let mut document =
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    // Docker rejects the leading zero when it creates the network.
+    document.spec.gateway.as_managed_mut().unwrap().network_cidr = "172.030.110.0/24".into();
+    assert!(document.validate().is_err());
+}
+
+#[test]
 fn inference_endpoints_leave_destination_checks_to_openshell() {
     let destinations = [
         "http://host.openshell.internal:11446/v1",
