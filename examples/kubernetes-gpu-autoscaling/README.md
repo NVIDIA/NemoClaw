@@ -28,6 +28,8 @@ Build the CLI from this checkout. There is no release download yet ([#12638](htt
 
 ## Deployment architecture
 
+<img width="1672" height="941" alt="architecture" src="https://github.com/user-attachments/assets/4e61491d-7a8b-4ce7-9910-9715965e4e7c" />
+
 One end user, one sandbox, one agent. `nemoclaw apply` installs a managed OpenShell gateway and starts `fabric-agent-ctl serve` in each sandbox. These files set `authentication.profile: development`. Only NemoClaw can mint those tokens.
 
 A load test sends each prompt with `kubectl exec` into `fabric-agent-ctl invoke`. That skips gateway auth. The operator command is `./scripts/invoke.sh`, which runs `openshell sandbox exec`. `development` gives the OpenShell CLI no token, so `invoke.sh` waits until you switch the file to `oidc` and register the gateway.
@@ -123,19 +125,39 @@ Replace both `image.ref` values in the YAML with that digest. Load the same dige
 
 ### 4. Install GPU inference and the Envoy load balancer
 
-Skip this when `kubectl get gatewayclass eg` already succeeds and the chart runtime matches the pairing.
+`install-hpa.sh` starts the GPU chart in `nemoclaw-gpu`. It does not create sandboxes or start agents. Run it before `nemoclaw apply`. The chart serves one runtime at a time.
+
+| Pairing | `INFERENCE_RUNTIME` |
+| --- | --- |
+| Hermes + vLLM | `vllm` |
+| OpenClaw + Ollama | `ollama` |
+| Deep Agents + NIM | `nim` |
+
+Skip the install when `kubectl get gatewayclass eg` already succeeds and the chart already serves that runtime.
+
+This DGX uses the Helm GPU Operator, so `DCGM_NAMESPACE=gpu-operator`. The install uses `MAX_REPLICAS=8`.
+
+Hermes:
 
 ```bash
 cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
-DCGM_NAMESPACE=gpu-operator-resources MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 \
+DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 \
   INFERENCE_RUNTIME=vllm \
   ./scripts/install-hpa.sh
 kubectl get gatewayclass eg
 ```
 
-Set `INFERENCE_RUNTIME` to `ollama`, `vllm`, or `nim` before install. A later pairing that needs a different runtime must run `install-hpa.sh` again with that runtime so Helm points this same release at it. `./scripts/set-hpa-metric.sh` changes only the HPA metric.
+OpenClaw uses the same Helm release with Ollama:
 
-For NIM, create `secrets.env` from `secrets.env.example` and run `./scripts/apply-local-secrets.sh` before `install-hpa.sh`. Do not commit `secrets.env`.
+```bash
+DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 \
+  INFERENCE_RUNTIME=ollama \
+  ./scripts/install-hpa.sh
+```
+
+A later pairing runs `install-hpa.sh` again with its runtime. Sandboxes that are already Running stay up. `./scripts/set-hpa-metric.sh` changes only the HPA metric. Run it after the sandbox pods are Ready.
+
+For NIM, create `secrets.env` from `secrets.env.example` and run `./scripts/apply-local-secrets.sh` before `install-hpa.sh` with `INFERENCE_RUNTIME=nim`. Do not commit `secrets.env`.
 
 ### 5. Check the pairing files
 
@@ -155,43 +177,48 @@ Replace `metadata.uid` before apply. A placeholder digest is valid YAML and is n
 
 ### 6. Apply one pairing
 
-`nemoclaw apply` creates the OpenShell gateway and one Fabric sandbox per user. The plan prints `data.fabric_harness` and `data.fabric_harnesses`. It records `.local/gpu-autoscaling/terraform.tfstate`.
+`nemoclaw apply` starts the agents. It creates the OpenShell gateway and one Fabric sandbox per user. Each sandbox runs `fabric-agent-ctl serve` and that pairing's harness. The plan prints `data.fabric_harness` and `data.fabric_harnesses`.
 
-The GPU HPA is a separate Helm release in `nemoclaw-gpu`. `install-hpa.sh` installs it. `set-hpa-metric.sh` changes its metric. `get-hpa.sh` prints it. Those commands leave the sandboxes unchanged.
+Run step 4 for that pairing first. Apply leaves the GPU chart unchanged.
 
-Run apply when the sandbox pods are missing. When they are already Running, skip apply and start the load test.
+A sandbox is ready when its `user-NNNN` pod is `1/1 Running`. When those pods are already Running, skip apply.
 
 ```bash
 kubectl get pods -n nemoclaw-v1-gpu-autoscaling
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling-openclaw
 ```
 
-| Step | File | Harness | Apply when |
-| --- | --- | --- | --- |
-| 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | The GPU chart serves Ollama. |
-| 6b Hermes + vLLM | [`hermes-vllm.yaml`](hermes-vllm.yaml) | `nvidia.fabric.hermes` | The GPU chart serves vLLM. |
-| 6c Deep Agents + NIM | [`deepagents-nim.yaml`](deepagents-nim.yaml) | `nvidia.fabric.langchain.deepagents` | The GPU chart serves NIM. |
+| Step | File | Harness | Chart runtime | State directory | Namespace |
+| --- | --- | --- | --- | --- | --- |
+| 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | `ollama` | `.local/gpu-autoscaling-openclaw` | `nemoclaw-v1-gpu-autoscaling-openclaw` |
+| 6b Hermes + vLLM | [`hermes-vllm.yaml`](hermes-vllm.yaml) | `nvidia.fabric.hermes` | `vllm` | `.local/gpu-autoscaling` | `nemoclaw-v1-gpu-autoscaling` |
+| 6c Deep Agents + NIM | [`deepagents-nim.yaml`](deepagents-nim.yaml) | `nvidia.fabric.langchain.deepagents` | `nim` | `.local/gpu-autoscaling-deepagents` | `nemoclaw-v1-gpu-autoscaling-dagent` |
 
-Each file declares sandboxes `user-0000` and `user-0001`. This command prints a wider file and does not apply it:
+Each file declares sandboxes `user-0000` and `user-0001`. `render-sandboxes.sh` prints a wider file. It does not apply. Put the real image digest and a new `metadata.uid` in that file before apply. `.local/` is gitignored. Do not commit it.
 
-```bash
-E2E_USERS=5 ./scripts/render-sandboxes.sh hermes-vllm
-```
-
-Hermes uses state directory `.local/gpu-autoscaling` and namespace `nemoclaw-v1-gpu-autoscaling`. OpenClaw uses `.local/gpu-autoscaling-openclaw` and `nemoclaw-v1-gpu-autoscaling-openclaw`. Deep Agents uses `.local/gpu-autoscaling-deepagents` and `nemoclaw-v1-gpu-autoscaling-dagent`. Apply refuses to take over a namespace that already exists. OpenClaw and Deep Agents use their own namespaces, so either can stay up beside the Hermes deployment.
+Hermes. The chart must serve vLLM.
 
 ```bash
-nemoclaw plan --non-interactive --state-dir .local/gpu-autoscaling hermes-vllm.yaml
-nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling hermes-vllm.yaml
-```
-
-For ten sandboxes:
-
-```bash
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
+export PATH="/home/maggiez/NemoClaw-v1/dist/linux_amd64/bin:${HOME}/.local/openshell-0.1.4:${PATH}"
 E2E_USERS=10 ./scripts/render-sandboxes.sh hermes-vllm > .local/hermes-vllm-10.yaml
 nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling .local/hermes-vllm-10.yaml
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling
 ```
 
-Put the real image digest and a new `metadata.uid` in the rendered file before apply. `.local/` is gitignored. Do not commit it.
+OpenClaw. The chart must serve Ollama.
+
+```bash
+E2E_USERS=10 ./scripts/render-sandboxes.sh openclaw-ollama > .local/openclaw-ollama-10.yaml
+nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling-openclaw .local/openclaw-ollama-10.yaml
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling-openclaw
+```
+
+Deep Agents uses `render-sandboxes.sh deepagents-nim` and `--state-dir .local/gpu-autoscaling-deepagents`. The chart must serve NIM.
+
+Apply writes `terraform.tfstate` in the state directory from that command. Apply refuses to take over a namespace that already exists. OpenClaw and Deep Agents use their own namespaces, so their sandboxes can stay up beside Hermes.
+
+After the `user-NNNN` pods are Ready, switch the metric with `./scripts/set-hpa-metric.sh` and start a client under [Load tests](#load-tests).
 
 After apply, a gateway prompt is:
 
@@ -233,7 +260,7 @@ OpenClaw GPU utilization is `INFLIGHT=4 MAX_TOKENS=2048` with [`client-openclaw.
 
 A laptop uses the same `INFLIGHT` and `MAX_TOKENS` flags. It does not run `get-hpa.sh`. The DGX watch above is the HPA print. This Fabric client still runs on the DGX, next to the apply state. Fabric does not serve the v0 Hermes HTTP port, so the laptop cannot send chats to `:8642`.
 
-Set `E2E_OUTPUT_DIR` to keep each run's logs apart. Results from a DGX with 7 free GPUs are in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md). The node has 8 GPUs. Another workload held one, so the live HPA maximum was 7. The chart `maxReplicas` stayed 8.
+Set `E2E_OUTPUT_DIR` to keep each run's logs apart. The chart `maxReplicas` is 8. Recorded runs in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md) peaked at 7 because another workload held one GPU.
 
 ## HPA-only load
 
