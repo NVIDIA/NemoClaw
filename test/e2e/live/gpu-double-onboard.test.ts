@@ -21,6 +21,7 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { cleanupOllama } from "./gpu-e2e-ollama.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-double";
 const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
@@ -87,30 +88,7 @@ async function preCleanup(
         timeoutMs: 60_000,
       }),
   );
-  await host
-    .command(
-      "bash",
-      [
-        "-lc",
-        String.raw`set +e
-status=0
-for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
-  pkill -f "$pattern"
-  rc=$?
-  case "$rc" in
-    0|1) ;;
-    *) status="$rc" ;;
-  esac
-done
-exit "$status"`,
-      ],
-      {
-        artifactName: "pre-cleanup-ollama-processes",
-        env: env(),
-        timeoutMs: 30_000,
-      },
-    )
-    .catch(() => undefined);
+  await cleanupOllama(host, "pre-cleanup-ollama-processes").catch(() => undefined);
 }
 
 async function httpStatus(host: HostCliClient, url: string, artifactName: string, token?: string) {
@@ -230,28 +208,7 @@ test(
     }
 
     cleanupRegistry.trackDisposable("stop gpu double-onboard Ollama processes", async () => {
-      const stop = await host.command(
-        "bash",
-        [
-          "-lc",
-          String.raw`set +e
-status=0
-for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
-  pkill -f "$pattern"
-  rc=$?
-  case "$rc" in
-    0|1) ;;
-    *) status="$rc" ;;
-  esac
-done
-exit "$status"`,
-        ],
-        {
-          artifactName: "cleanup-ollama-processes",
-          env: env(),
-          timeoutMs: 30_000,
-        },
-      );
+      const stop = await cleanupOllama(host, "cleanup-ollama-processes");
       expect(stop.exitCode, resultText(stop)).toBe(0);
     });
     cleanupRegistry.trackDisposable(
@@ -321,18 +278,7 @@ exit "$status"`,
       },
     );
     expect(installOllama.exitCode, resultText(installOllama)).toBe(0);
-    await host.command(
-      "bash",
-      [
-        "-lc",
-        "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama serve' 2>/dev/null || true; pkill -f 'ollama-auth-proxy' 2>/dev/null || true",
-      ],
-      {
-        artifactName: "phase-1-stop-preexisting-ollama",
-        env: env(),
-        timeoutMs: 60_000,
-      },
-    );
+    await cleanupOllama(host, "phase-1-stop-preexisting-ollama");
 
     progress.phase("perform first Ollama onboard");
     const first = await host.command("bash", ["install.sh", "--non-interactive"], {

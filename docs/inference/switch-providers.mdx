@@ -9,7 +9,7 @@ keywords: ["switch nemoclaw provider", "change inference provider", "nemoclaw in
 content:
   type: "how_to"
 ---
-Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
+Move a sandbox to another provider family while keeping the selected inference path, agent configuration, and host registry aligned.
 Runtime switching accepts catalog providers and qualifying providers already registered on the selected sandbox's OpenShell gateway.
 Use onboarding to configure a provider that is supported by onboarding but unavailable for runtime switching.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
@@ -30,7 +30,8 @@ NemoClaw normalizes an accepted alias or underscore spelling to its canonical Op
 
 The legacy hosted alias `nvidia-nim`, including `nvidia_nim`, selects NVIDIA Endpoints and normalizes to `nvidia-prod`.
 The installer names `nim`, `nim-local`, and `nim_local` select Local NVIDIA NIM through `vllm-local`.
-This local selection requires the NIM container and endpoint recorded for the sandbox or a matching onboarding session.
+This local selection requires the NIM container and endpoint recorded for the sandbox.
+When switching back from another provider, an onboarding session matching the sandbox, provider, and model can supply that metadata.
 The endpoint must match the NIM runtime, and that runtime must serve the requested model.
 Missing or inconsistent NIM state stops the switch before mutation; it does not select hosted NVIDIA Endpoints or standalone vLLM.
 Rerun onboarding for the affected sandbox with `NEMOCLAW_PROVIDER=nim-local` to repair its recorded selection, then retry the switch.
@@ -251,7 +252,7 @@ Then rerun onboarding before you use the route.
 
 ## Account for Shared Gateways
 
-One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Shared-route sandboxes on one gateway use one live route, even when NemoClaw records different intended routes for them.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a provider that another registered sandbox shares.
 For a shared-route switch, provider-global endpoint, API-family, credential, and incomplete-metadata conflicts stop the command before mutation.
 Native hosted attachments, qualified Hermes local attachments, and recorded OpenClaw native local attachments do not change that shared route.
