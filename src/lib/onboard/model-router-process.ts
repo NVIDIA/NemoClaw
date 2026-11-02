@@ -7,6 +7,101 @@ import * as http from "node:http";
 import path from "node:path";
 import type { Session } from "../state/onboard-session";
 
+export type ModelRouterStopOutcome =
+  | "stopped"
+  | "not-running"
+  | "not-router"
+  | "unavailable"
+  | "failed";
+
+// Hold the same kernel process identity across graceful shutdown and escalation.
+// A reused numeric PID can never redirect either signal to a replacement.
+export const MODEL_ROUTER_PIDFD_STOP_SCRIPT = String.raw`
+import os
+import select
+import signal
+import sys
+
+if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+    print("unavailable")
+    raise SystemExit(0)
+
+pid, port = int(sys.argv[1]), sys.argv[2]
+try:
+    descriptor = os.pidfd_open(pid)
+except ProcessLookupError:
+    print("not-running")
+    raise SystemExit(0)
+except OSError:
+    print("unavailable")
+    raise SystemExit(0)
+
+try:
+    with open(f"/proc/{pid}/cmdline", "rb") as source:
+        command = source.read(65537)
+    if len(command) > 65536 or (command and not command.endswith(b"\0")):
+        print("failed")
+        raise SystemExit(0)
+    args = [value.decode() for value in command.split(b"\0") if value]
+    names = [os.path.basename(value) for value in args[:2]]
+    matches_port = any(
+        (value == "--port" and args[index + 1:index + 2] == [port])
+        or value == "--port=" + port
+        for index, value in enumerate(args)
+    )
+    if "model-router" not in names or "proxy" not in args or not matches_port:
+        print("not-router")
+        raise SystemExit(0)
+    exited = select.poll()
+    exited.register(descriptor, select.POLLIN)
+    signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+    if not exited.poll(3000):
+        signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+    print("stopped" if exited.poll(1000) else "failed")
+except (ProcessLookupError, FileNotFoundError):
+    print("not-running")
+except Exception:
+    # After acquiring the descriptor, never authorize a numeric-PID fallback.
+    print("failed")
+finally:
+    os.close(descriptor)
+`;
+
+export function stopModelRouterWithPidfd(pid: number, port: number): ModelRouterStopOutcome {
+  if (
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535
+  ) {
+    return "failed";
+  }
+  if (process.platform !== "linux") return "unavailable";
+  try {
+    const result = execFileSync(
+      "python3",
+      ["-I", "-c", MODEL_ROUTER_PIDFD_STOP_SCRIPT, String(pid), String(port)],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5000,
+        maxBuffer: 1024,
+      },
+    ).trim();
+    if (["stopped", "not-running", "not-router", "unavailable"].includes(result)) {
+      return result as ModelRouterStopOutcome;
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return "unavailable";
+    }
+    // A timeout may follow delivery of SIGTERM. Do not signal again by PID.
+  }
+  return "failed";
+}
+
 export const ROUTER_HEALTH_TIMEOUT_MS = 3000;
 
 export type ModelRouterProcessOwnershipDeps = {
@@ -18,6 +113,7 @@ export type StopModelRouterProcessDeps = ModelRouterProcessOwnershipDeps & {
   isResponsive?: (port: number, timeoutMs?: number) => Promise<boolean>;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   sleep?: (delayMs: number) => Promise<void>;
+  stopWithHandle?: (pid: number, port: number) => ModelRouterStopOutcome;
 };
 
 type ModelRouterCommandLineReaderDeps = {
@@ -210,11 +306,11 @@ export function doesModelRouterProcessOwnPort(
 }
 
 /**
- * Stop the recorded Model Router process and return only after its PID no
- * longer reports as running and its liveness endpoint does not respond. The
- * session stores a numeric PID, not a PID-stable OS handle. Ownership
- * validation and SIGTERM delivery are separate OS operations, so PID reuse can
- * still redirect SIGTERM. Never send SIGKILL without a PID-stable handle.
+ * Stop the owned Model Router and require its liveness endpoint to stop responding.
+ * Linux verifies exit through a held kernel process handle. Without that handle,
+ * the fallback requires the numeric PID to stop reporting as running; ownership
+ * validation and SIGTERM delivery can still race PID reuse on that path. Never
+ * send SIGKILL without a PID-stable handle.
  */
 export async function stopModelRouterProcess(
   pid: number,
@@ -243,6 +339,17 @@ export async function stopModelRouterProcess(
     throw new Error(
       `NemoClaw refuses to stop PID ${pid}: it is not the model-router proxy for port ${port}.`,
     );
+  }
+
+  const stopWithHandle =
+    deps.stopWithHandle ?? (deps.kill ? () => "unavailable" : stopModelRouterWithPidfd);
+  const handled = stopWithHandle(pid, port);
+  if (handled !== "unavailable") {
+    if (handled !== "stopped" && handled !== "not-running") {
+      throw new Error(`Model Router identity-bound shutdown failed for PID ${pid}: ${handled}.`);
+    }
+    if (!(await isResponsive(port, 1000))) return;
+    throw new Error(`Model Router stopped, but port ${port} remains responsive.`);
   }
 
   try {

@@ -35,11 +35,12 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 
 - Advisory: [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) affects `proxy-addr@2.0.7`; `2.0.8` contains the reviewed fix.
 - Ordinary graph: `agents/openclaw/managed-image-messaging-runtime/package.json` overrides non-bundled `proxy-addr` resolutions to exact `2.0.8`. Its lock records npm integrity `sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==`, the unchanged `forwarded@0.2.0` and `ipaddr.js@1.9.1` dependencies, the MIT license, and the existing Node.js engine floor.
-- Bundled Slack graph: the reviewed registry archive `@openclaw/slack@2026.9.2` bundles `@slack/bolt@5.0.0`, `express@5.2.1`, and `proxy-addr@2.0.7`. NemoClaw retains the exact official registry install and verifies OpenClaw's trusted provenance record before replacing only that nested package with the reviewed `proxy-addr@2.0.8` archive. The replacement fails closed if the Slack, Bolt, Express, vulnerable package, or replacement package contract differs from the reviewed identities.
-- Audit boundary: the reviewed archive audit applies the same replacement before materializing the aggregate production graph, then pins the complete remediated archive tree digest. The registry archive remains immutable evidence; vulnerable bundled bytes do not survive in the final installed Slack extension.
+- Production Slack graph: the selected `@openclaw/slack@2026.10.5` archive bundles `@slack/bolt@5.1.0` and `proxy-addr@2.0.8`. The managed-messaging lock records both bundled versions. This archive needs no Slack-specific proxy-address rewrite; the production archive audit uses its reviewed registry identity.
+- Legacy Slack graph: `src/lib/messaging/channels/slack/manifest.ts` retains the `2026.9.2` archive identity for existing sandboxes running that version. That archive bundles `@slack/bolt@5.0.0`, `express@5.2.1`, and `proxy-addr@2.0.7`. NemoClaw verifies OpenClaw's trusted official-install provenance before replacing only the nested vulnerable package with the reviewed `proxy-addr@2.0.8` archive. The replacement rejects changes to the reviewed Slack, Bolt, Express, source package, or replacement package contracts.
+- Legacy archive boundary: `scripts/lib/openclaw-npm-remediation.mts` selects the proxy-address rewrite only for `@openclaw/slack@2026.9.2`. Its archive-remediation path verifies the complete remediated tree digest. The selected `2026.10.5` archive uses a separate recipe for its bundled HTTP client, Zod, and body parser. The production audit inventory excludes the legacy `2026.9.2` archive.
 - Lifecycle suppression: both the managed graph install and the replacement package retrieval keep lifecycle scripts disabled. The replacement package declares no lifecycle script.
-- Removal condition: remove the Slack-specific rewrite only after the reviewed Slack archive bundles `proxy-addr@2.0.8` or newer. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the replacement is unnecessary.
-- Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the exact source and replacement contracts; `test/runtime/messaging/messaging-build-applier-integrity.test.ts` proves the installed official plugin is patched only after provenance verification; `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph; and `test/agents/openclaw/openclaw-dependency-review.test.ts` keeps the audit and runtime remediation wiring present.
+- Removal condition: retain the `2026.9.2` rewrite while supported installed-sandbox paths can select that archive. Remove it when those paths and their manifest identities are retired. The patched production `2026.10.5` archive alone does not establish that legacy removal condition. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the override unnecessary.
+- Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the legacy source and replacement contracts. `test/runtime/messaging/messaging-build-applier-integrity.test.ts` exercises `2026.9.2` installation and rejects remediation without trusted provenance. `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph. `test/agents/openclaw/openclaw-dependency-review.test.ts` checks that the production audit inventory matches the selected runtime lock and retains legacy remediation wiring.
 
 ## Reviewed OpenClaw plugin remediation
 
@@ -53,7 +54,7 @@ They do not describe the separate 2026.10.5 replacements.
 - Slack: the official 2026.9.2 install and reviewed 2026.9.5 archive replace bundled `body-parser@2.3.0` with `2.4.0` and affected `qs` copies with `6.16.1`. The replacement checks the Slack, Bolt, Express, parser, and `qs` identities. A retry verifies completed replacements before resuming. Remove this rewrite when the reviewed Slack archives ship patched parser and `qs` versions. The failure-and-retry test is in `test/runtime/messaging/messaging-build-applier-integrity.test.ts`; the process probe is in `test/agents/openclaw/openclaw-body-parser-runtime.test.ts`.
 - Microsoft Teams: official 2026.9.2 and 2026.9.5 installs atomically replace the verified native project's MSAL Node/Common tree with `7.1.0`/`16.14.2` and its shared Zod with `4.6.6`. Both SDK consumers must resolve the project-owned MSAL path. The original project manifest and lock remain installation provenance. Remove this update when a reviewed upstream plugin install resolves those patched versions without it. `test/agents/openclaw/openclaw-msal-runtime.test.ts` probes the token manager and Azure identity constructors.
 
-The PR and main `real-openclaw-dist-harness` jobs run those three runtime probes with scripts disabled during package installation. The audit still verifies the final production graph separately.
+The PR and main `real-openclaw-dist-harness` jobs run those three runtime probes with scripts disabled during package installation. Their historical archive identities are pinned in `test/fixtures/openclaw/reviewed-legacy-plugin-archives.json`, independently of the selected production version. The audit still verifies the final production graph separately.
 
 ### OpenClaw 2026.10.5 plugins
 
@@ -75,53 +76,9 @@ The official-install path verifies OpenClaw's trusted provenance record before i
 Remove a recipe only when a newly reviewed upstream archive contains the replacements and real plugin consumers pass without the recipe.
 Retain historical recipes while supported installed sandboxes can still select their archives.
 
-### Runtime and managed-plugin overrides
-
-The prerequisite audit invokes `scripts/lib/remediate-openclaw-runtime-dependencies.mts` after controlled installation and before the installed-lock check.
-Production remains on 2026.9.2 with its existing remediation; the separate 10.5 upgrade wires this helper into its image builds.
-For OpenClaw 2026.10.5, it verifies the runtime identity and updates its npm and Undici declarations to 12.2.1 and 8.12.3.
-The managed-plugin workspace must match the reviewed original or patched SHA-256 digest.
-The patched workspace selects MSAL Node 7.1.0, body-parser 2.4.0, Undici 8.12.3, Zod 4.6.6, and qs 6.16.1 for future official-plugin projects.
-The helper also applies the plugin recipes above when those plugins occur in the installed graph.
-
-npm 12.2.1's bundled Undici 6.29.0 is replaced with reviewed 6.29.1 without changing npm's identity.
-`patch-bundled-npm-undici.mts` validates the package contract and layout, verifies the archive integrity, and checks the installed npm and npx entrypoints.
-The separate OpenClaw 2026.9.7 migration graph removes its bundled Undici 8.10.2 only after resolution selects reviewed top-level 8.12.3.
-Failed verification restores the original tree.
-After interrupted cleanup, a retry verifies the replacement and the retained backup before removing that backup.
-Ambiguous or unsafe retained state fails without deletion.
-
-Ordinary audit installation leaves the reviewed lock unchanged.
-The explicit `updateLock` mode updates metadata when producing the aggregate archive graph or regenerating a reviewed lock.
-The shared writer in `bundled-npm-package.mts` serves runtime workspaces, runtime and plugin manifests, and lock metadata.
-These updates stage and verify complete bytes in the same directory before an atomic rename.
-Staging failures preserve the original file and remove the attempt's temporary file; a later retry can resume.
-After publication, the writer syncs the parent directory and reports any sync failure.
-A retry syncs the directory even when the metadata already contains the verified replacement.
-The writer preserves file permissions and ownership, rejects symlinks, and stops if it observes a replaced pathname or changed source before publication.
-`test/install/remediate-openclaw-runtime-dependencies.test.ts` covers resolution, metadata writes, cleanup retries, unsafe state, and stale-lock rejection.
-`test/install/patch-bundled-npm-undici.test.ts` covers the bundled npm replacement, rollback, and cleanup failures.
-The shared `bundled-npm-package.mts` owns replacement, rollback, archive verification, and backup cleanup for ip-address and Undici.
-Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.
-They validate npm identity before restoration and preserve unverified staging trees.
-Replacement stages carry private ownership markers bound to the package, parent and stage directories, and creator's host boot and process scope.
-On retry, both entrypoints remove a marked stage only after verifying that identity and confirming that its creator has exited.
-Unknown, active, unsafe, or unverifiable stages remain intact with a recovery diagnostic; a directory-name prefix alone never authorizes deletion.
-Replacement copies the original package into the private stage and verifies its complete contents before publishing a backup.
-The ownership marker records the original and backup directory identities, backup name, and a digest of file contents and entry modes.
-If interruption leaves the original live package intact, recovery can remove its sole owned backup after both trees match that receipt.
-This recovery also requires a verified inactive stage owner; changed, ambiguous, or unsafe backups remain for inspection.
-After replacement succeeds, cleanup retries remove one recognized affected backup only after verifying the live replacement.
-Unrecognized names, multiple backups, missing identity, or unsafe trees fail without deletion.
-`test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; package-specific suites retain identity and rollback coverage.
-`test/install/bundled-npm-staging-recovery.test.ts` interrupts real child processes during copying, receipt publication, backup publication, and promotion, then checks recovery and ownership-denial behavior for both packages.
-`test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` materializes reviewed 2026.10.5 archives and runs npm, npx, and the Discord SDK through the repaired dependencies.
-It also verifies Google Chat account parsing through patched Zod and Slack Bolt HTTP body parsing through its patched local parser dependencies.
-Remove these repairs only after reviewed upstream packages resolve the required versions without mutation and the audit and real consumers pass.
-
 ## WeChat plugin runtime graph
 
-- Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies are `qrcode-terminal@0.12.0` and `zod@4.6.6`.
+- Package: `@tencent-weixin/openclaw-weixin@2.4.10`. This version uses the OpenClaw 2026.10.5 channel-ingress, config-mutation, temp-path, and channel-outbound SDK exports. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.6.6`.
 - Locked graph: `agents/openclaw/wechat-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
@@ -168,26 +125,80 @@ The lock records the exact version, registry URL, and integrity for every transi
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
 
-## OpenClaw 2026.10.5 qualification prerequisites
+## OpenClaw 2026.10.5 runtime and restoration
 
-[PR #13697](https://github.com/NVIDIA/NemoClaw/pull/13697) prepares trusted audit and E2E controls for
-[PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which owns the runtime upgrade.
-This prerequisite retains production OpenClaw 2026.9.2 and WeChat 2.4.9.
-Their existing locks remain the primary audit identities.
-The replacement records admit only the reviewed OpenClaw 2026.10.5 and WeChat 2.4.10 lock digests, package integrities, and registry URLs.
-They do not select another production runtime or admit arbitrary locks.
-The 2026.9.5 and 2026.9.7 migration graphs are separate audit inputs; this prerequisite does not activate them on main.
+[PR #13697](https://github.com/NVIDIA/NemoClaw/pull/13697) landed the trusted audit identities, and [PR #13787](https://github.com/NVIDIA/NemoClaw/pull/13787) landed the target-specific Python setup needed by full PR E2E from main.
+Those prerequisites retained main's production runtime selection; this PR owns the cutover below.
+Candidate CI cannot authorize its own policy changes. The runtime upgrade still requires qualification against its current candidate and independent review.
 
-The archive inventory retains the versions needed by main and the upgrade.
-The audit materializes the selected graphs, applies the reviewed recipes, verifies installed-lock identity, checks advisory policy, and verifies registry signatures.
-A passing candidate audit does not approve changes to its own policy.
-Independent review must inspect those changes and the receipts for each selected lock.
+The production runtime and eight official plugins select OpenClaw 2026.10.5.
+The runtime lock is the primary audit identity. The archive inventory contains the selected runtime and official plugins.
+Separate locked graphs audit the 2026.9.5 and 2026.9.7 runtimes used only for legacy-state migration.
+Channel manifests retain their earlier integrity and tarball records while installed sandboxes can select those releases.
+The dependency-review test compares the archive inventory with the production runtime lock.
+The runtime and messaging locks replace upstream's npm 12.2.0 dependency with npm 12.2.1.
+The aggregate archive audit applies the same replacement so it audits the shipped npm dependency tree.
+The audit regression test checks that the aggregate graph selects npm 12.2.1.
 
-Full PR E2E uses trusted main for these controls.
-The Model Router target also needs the target-specific Python 3.13 setup in this prerequisite.
-The runtime upgrade still requires successful CI, managed-image activation, automated review, and full default E2E qualification.
-Retain draft status until the applicable qualification and independent review requirements pass.
-Retire superseded archive identities only when their runtime consumers and historical qualification obligations are retired.
+`remediate-openclaw-runtime-dependencies.mts` replaces npm's bundled Undici with 6.29.1 and the migration runtime's HTTP client with 8.12.3.
+The image builder applies the same npm repair to its global npm installation.
+OpenClaw's managed-project overrides select Undici 8.12.3, Zod 4.6.6, body-parser 2.4.0, and MSAL Node 7.1.0 for future plugin installs.
+Official plugin provenance is verified before bundled dependency replacement.
+The Discord, Google Chat, and Slack recipes verify source and replacement trees before replacing bundled dependencies.
+Slack's body parser keeps content-type 2.1.0 and qs 6.16.1 locally so ancestor packages cannot select incompatible versions.
+Discord's SDK retains its v3 API through `zod/v3` declarations and a bounded-collection backport in its embedded runtime.
+The backport rejects oversized bounded arrays and sets before parsing their members; it does not impose limits on unbounded schemas.
+Locks describe the repaired installed graph. Offline image builds apply the recipes before checking installed identities.
+Ordinary audit installation leaves the reviewed lock unchanged; explicit `updateLock` mode updates metadata only when producing or regenerating a reviewed graph.
+The shared writer in `bundled-npm-package.mts` serves runtime workspaces, runtime and plugin manifests, and lock metadata.
+These updates stage and verify complete bytes in the same directory before an atomic rename.
+Staging failures preserve the original file and remove the attempt's temporary file; a later retry can resume.
+After publication, the writer syncs the parent directory and reports any sync failure.
+A retry syncs the directory even when the metadata already contains the verified replacement.
+The writer preserves file permissions and ownership, rejects symlinks, and stops if it observes a replaced pathname or changed source before publication.
+The runtime helper verifies the original or patched managed-workspace digest before updating overrides.
+The shared `bundled-npm-package.mts` owns package replacement, rollback, archive-integrity checks, and backup cleanup for the ip-address and Undici repairs.
+Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.
+They validate npm identity before restoration and preserve unverified staging trees.
+Replacement stages carry private ownership markers bound to the package, parent and stage directories, and creator's host boot and process scope.
+On retry, both entrypoints remove a marked stage only after verifying that identity and confirming that its creator has exited.
+Unknown, active, unsafe, or unverifiable stages remain intact with a recovery diagnostic; a directory-name prefix alone never authorizes deletion.
+Replacement copies the original package into the private stage and verifies its complete contents before publishing a backup.
+The ownership marker records the original and backup directory identities, backup name, and a digest of file contents and entry modes.
+If interruption leaves the original live package intact, recovery can remove its sole owned backup after both trees match that receipt.
+This recovery also requires a verified inactive stage owner; changed, ambiguous, or unsafe backups remain for inspection.
+Cleanup retries remove one recognized affected backup only after verifying the live replacement.
+Ambiguous, unverifiable, or unsafe backups fail with an actionable path and remain intact.
+The migration runtime uses the same fail-closed recovery rule for its retained Undici backup.
+`test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; the package-specific suites retain identity and rollback coverage.
+`test/install/remediate-openclaw-runtime-dependencies.test.ts` covers migration cleanup and metadata boundaries.
+`test/install/bundled-npm-staging-recovery.test.ts` interrupts real child processes during copying, receipt publication, backup publication, and promotion, then checks recovery and ownership-denial behavior for both packages.
+`test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` executes npm, npx, and Discord SDK response parsing after remediating actual reviewed 2026.10.5 packages.
+It also verifies Google Chat account parsing through patched Zod and Slack Bolt HTTP body parsing through its patched local parser dependencies.
+Remove these recipes only when reviewed upstream artifacts contain the fixes and clean installation verifies every affected consumer.
+
+WeChat uses its separately locked 2.4.10 plugin and Zod 4.6.6 graph.
+Its offline install uses a disposable copy of the dedicated WeChat cache.
+Official plugins use a separate copy of the messaging cache, which contains the reviewed Zod 4.6.6 replacement.
+Both copies are removed after success or failure; neither install can write to a trusted cache.
+The messaging verifier checks nested overrides against their locked locations, including bundled descendants and hoisted aliases.
+
+The startup maintenance gate runs `openclaw-legacy-migrations.mts` before the target Doctor or gateway can write restored state.
+It checks native shared and agent schemas and configuration compatibility before running the pinned migration runtimes in release order.
+Before an intermediate runtime writes, it inspects a private native snapshot of any legacy plugin index.
+Malformed install records or derived metadata stop restoration because those older runtimes would discard them; the source database remains unchanged for recovery.
+Nonempty legacy session JSON beside a populated agent SQLite store also stops restoration before Doctor runs.
+The bridge checks native candidate paths and the historical shared index against private snapshots, preserving both originals for reconciliation or restoration from a consistent backup.
+This check includes differently named session keys because native alias repair can join them.
+The intermediate runtimes remain outside PATH. They do not run on newer state.
+Retired Telegram sources that cannot be migrated stop restoration; exact empty thread-binding files move to a private archive with their original bytes.
+A failed migration keeps the maintenance marker and gateway stop in place.
+
+The 2026.9.5 and 2026.10.5 CLI proxy signal handlers can exit before the gateway releases its native owner lease.
+`scripts/lib/patch-openclaw-container-restart.mts` keeps gateway shutdown with the native gateway lifecycle while retaining the proxy cleanup barrier and process-exit cleanup.
+Ordinary CLI invocations retain their signal handlers and exit statuses.
+The patch rejects unexpected source shapes; remove it when a reviewed upstream version gives gateway shutdown sole ownership of process exit.
+`test/agents/openclaw/openclaw-container-restart-patch.test.ts` covers both signal paths, cleanup, patch drift, and installed-package auditing.
 
 ## Bundled schema and request-body repairs
 

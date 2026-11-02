@@ -83,4 +83,54 @@ describe("OpenClaw SQLite archive sanitation", () => {
       "not a SQLite database",
     );
   });
+
+  it("retires only the archived global gateway lease without changing the source database", () => {
+    const sourcePath = databasePath();
+    const source = new DatabaseSync(sourcePath);
+    source.exec(`
+      CREATE TABLE state_leases (
+        scope TEXT NOT NULL, lease_key TEXT NOT NULL, owner TEXT NOT NULL,
+        expires_at INTEGER, payload_json TEXT, PRIMARY KEY (scope, lease_key)
+      );
+    `);
+    const insert = source.prepare("INSERT INTO state_leases VALUES (?, ?, ?, ?, ?)");
+    const expiresAt = Date.now() + 300_000;
+    const payload = '{"owner":{"host":"retired-container"}}';
+    insert.run("gateway-owner", "global", "retired-gateway", expiresAt, payload);
+    insert.run("gateway-owner", "other", "unrelated-gateway", expiresAt, payload);
+    insert.run("startup-migration", "global", "migration-owner", expiresAt, payload);
+    insert.run("other", "global", "unrelated-owner", expiresAt, payload);
+    source.close();
+    const original = readFileSync(sourcePath);
+    const result = withoutOpenClawSqliteMachineAuthority(original);
+    expect(result).toBeInstanceOf(Buffer);
+    expect((result as Buffer).byteLength).toBe(original.byteLength);
+    expect(readFileSync(sourcePath)).toEqual(original);
+    const sanitizedPath = databasePath();
+    writeFileSync(sanitizedPath, result as Buffer, { flag: "wx", mode: 0o600 });
+    const inspection = new DatabaseSync(sanitizedPath, { readOnly: true });
+    try {
+      expect(inspection.prepare("SELECT owner FROM state_leases ORDER BY owner").all()).toEqual([
+        { owner: "migration-owner" },
+        { owner: "unrelated-gateway" },
+        { owner: "unrelated-owner" },
+      ]);
+    } finally {
+      inspection.close();
+    }
+  });
+
+  it("refuses an unrecognized lease schema without changing the source database", () => {
+    const sourcePath = databasePath();
+    const source = new DatabaseSync(sourcePath);
+    source.exec(
+      "CREATE TABLE state_leases (scope TEXT); INSERT INTO state_leases VALUES ('gateway-owner');",
+    );
+    source.close();
+    const original = readFileSync(sourcePath);
+    expect(withoutOpenClawSqliteMachineAuthority(original)).toContain(
+      "could not sanitize the OpenClaw state database",
+    );
+    expect(readFileSync(sourcePath)).toEqual(original);
+  });
 });

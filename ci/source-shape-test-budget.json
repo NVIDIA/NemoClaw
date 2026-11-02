@@ -510,6 +510,11 @@
       "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
       "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
       "category": "compatibility"
+    },
+    {
+      "file": "test/repository/code-scanning-workflow.test.ts",
+      "test": "preserves complete JavaScript coverage across disjoint query partitions",
+      "category": "security"
     }
   ]
 }

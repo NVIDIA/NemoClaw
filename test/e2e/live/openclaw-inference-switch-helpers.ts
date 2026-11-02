@@ -22,6 +22,34 @@ export interface OpenClawPostSwitchInferenceAttempt {
   productMatched: boolean;
 }
 
+export interface OpenClawGatewayIdentity {
+  bootId: string;
+}
+
+export function parseOpenClawGatewayIdentity(raw: string): OpenClawGatewayIdentity | null {
+  try {
+    const status = JSON.parse(raw) as {
+      rpc?: { ok?: unknown; server?: { bootId?: unknown } };
+    } | null;
+    const bootId = status?.rpc?.server?.bootId;
+    return status?.rpc?.ok === true &&
+      typeof bootId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(bootId)
+      ? { bootId }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function openClawGatewayRestarted(
+  before: OpenClawGatewayIdentity | null,
+  after: OpenClawGatewayIdentity | null,
+): boolean {
+  // Native container restarts replace the gateway boot within the same OS process.
+  return before !== null && after !== null && before.bootId !== after.bootId;
+}
+
 export type OpenClawPostSwitchInferenceClassification =
   | { outcome: "passed" }
   | { outcome: "failed"; failureClass: RetryFailureClass };

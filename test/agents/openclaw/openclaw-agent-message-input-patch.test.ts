@@ -13,13 +13,13 @@ import {
   patchOpenClawAgentMessageInput,
 } from "../../../scripts/lib/patch-openclaw-agent-message-input.mts";
 
-const native = fs.readFileSync(
+const legacy = fs.readFileSync(
   path.join(import.meta.dirname, "fixtures/agent-message-input.js.txt"),
   "utf8",
 );
 
-function parser(
-  source = patchAgentMessageInput(native),
+function parserForSource(
+  source: string,
   options: { tty?: boolean; denied?: boolean; same?: boolean; input?: Buffer } = {},
 ) {
   const input = options.input ?? Buffer.from("ping\n");
@@ -59,7 +59,18 @@ function parser(
   return { resolve, read, open, close };
 }
 
-describe("OpenClaw agent message input", () => {
+describe.each(["2026.9.5", "2026.10.5"])("OpenClaw %s agent message input", (version) => {
+  const native =
+    version === "2026.10.5"
+      ? fs.readFileSync(
+          path.join(import.meta.dirname, "fixtures/agent-message-input-10.5.js.txt"),
+          "utf8",
+        )
+      : legacy;
+  const parser = (
+    source = patchAgentMessageInput(native),
+    options?: Parameters<typeof parserForSource>[1],
+  ) => parserForSource(source, options);
   it("waits for a slow pipe producer without failing on nonblocking stdin", async () => {
     const source = patchAgentMessageInput(native).replace(/^import .*;\n/u, "");
     const child = spawn(
@@ -259,7 +270,7 @@ resolveAgentMessageOpts(${JSON.stringify({ timeout, ...(explicit ? { messageFile
     const dist = path.join(root, "dist");
     fs.mkdirSync(dist);
     const target = path.join(dist, "agent-via-gateway-fixture.js");
-    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.2" }));
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
     fs.writeFileSync(target, native);
     try {
       expect(() => patchOpenClawAgentMessageInput(dist, true)).toThrow("patch is missing");

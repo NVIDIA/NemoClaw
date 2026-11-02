@@ -19,6 +19,7 @@ import {
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
+import { dockerfileInstructions } from "./dockerfile-tool-disclosure-contract";
 import { resolveTierPresets } from "../policy/tiers";
 import { listPresets } from "../policy";
 
@@ -199,6 +200,48 @@ describe("initial sandbox policy real preset merge", () => {
       "/run/nemoclaw/managed-gateway-expected-exit",
     );
   });
+
+  it.each(["startup", "coordinator", "sibling", "ownership"] as const)(
+    "allows the OpenClaw restore %s path as read-only code",
+    (role) => {
+      const source = fs.readFileSync(repoPath("scripts", "nemoclaw-start.sh"), "utf8");
+      const coordinator = source.match(
+        /"\$node_bin" (\/\S+\/openclaw-legacy-migrations\.mts)/u,
+      )?.[1];
+      expect(coordinator).toBeDefined();
+      const prepared = prepareInitialSandboxCreatePolicy(
+        repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        [],
+        { agentName: "openclaw" },
+      );
+      const policy = readPreparedPolicy(prepared);
+      const installation = dockerfileInstructions(fs.readFileSync(repoPath("Dockerfile"), "utf8"))
+        .find((instruction) =>
+          instruction.text.startsWith("COPY scripts/lib/openclaw-legacy-migrations.mts "),
+        )
+        ?.text.split(/\s+/u);
+      const directory = installation!.at(-1)!;
+      const installed = {
+        startup: coordinator!,
+        coordinator: path.posix.join(directory, "openclaw-legacy-migrations.mts"),
+        sibling: path.posix.join(directory, "openclaw-legacy-session-admission.mts"),
+        ownership: path.posix.join(directory, "openclaw-gateway-owner.mts"),
+      }[role];
+      const ancestors = new Set([...filesystemPolicyAncestors(installed), installed]);
+      expect(
+        policy.filesystem_policy?.read_only?.some((grant) =>
+          ancestors.has(normalizeFilesystemPolicyPath(grant)),
+        ),
+        `restore runtime cannot read ${installed}`,
+      ).toBe(true);
+      expect(
+        policy.filesystem_policy?.read_write?.some((grant) =>
+          ancestors.has(normalizeFilesystemPolicyPath(grant)),
+        ),
+        `restore runtime must not modify ${installed}`,
+      ).toBe(false);
+    },
+  );
 
   it.each(managedImagePolicyCases)(
     "uses the existing sticky temporary exchange for $agent managed startup handoff (#11905)",

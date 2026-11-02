@@ -157,6 +157,14 @@ export async function verifyWechatRuntimeLock(
       path.join(installedRoot, WECHAT_LOCATION, "dist/src/messaging/process-message.js"),
     ).href
   );
+  // The typing factory is loaded only when an inbound message reaches dispatch.
+  // Importing the handler alone does not exercise this SDK dependency.
+  const { loadTypingCallbacksFactory } = await import(
+    pathToFileURL(path.join(installedRoot, WECHAT_LOCATION, "dist/src/messaging/typing.js")).href
+  );
+  if (typeof (await loadTypingCallbacksFactory()) !== "function") {
+    throw new Error("installed WeChat typing callback factory is unavailable");
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

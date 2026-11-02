@@ -8,11 +8,51 @@ import path from "node:path";
 import { describe, expect, test } from "../../helpers/owned-test-resources";
 import {
   buildGatewayRuntimeStartScript,
+  buildOpenClawGatewayWaitScript,
   initializeGatewayForCleanup,
 } from "../fixtures/gateway-runtime-start.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 describe("Gateway restart subprocess", () => {
+  test.for([true, false] as const)(
+    "observes the selected OpenClaw startup with the remaining budget: %s",
+    (ready, { resources }) => {
+      const root = resources.home("nemoclaw-native-start-").home;
+      const modules = path.join(root, "dist/lib/actions/sandbox");
+      fs.mkdirSync(modules, { recursive: true });
+      fs.writeFileSync(
+        path.join(modules, "process-recovery.js"),
+        `exports.waitForStartedNativeGatewayProcess = async (...args) => {
+          require("node:fs").writeFileSync("observed.json", JSON.stringify(args));
+          return ${String(ready)};
+        };`,
+      );
+      const result = spawnSync(
+        process.execPath,
+        ["-e", buildOpenClawGatewayWaitScript(), "alpha", "nemoclaw-18079", "43210"],
+        {
+          cwd: root,
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            PATH: process.env.PATH,
+            HOME: root,
+            OPENSHELL_GATEWAY: "foreign",
+            NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "900",
+          },
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(ready ? 0 : 1);
+      expect(JSON.parse(fs.readFileSync(path.join(root, "observed.json"), "utf8"))).toEqual([
+        "alpha",
+        "openclaw",
+        "nemoclaw-18079",
+        { environment: {}, defaultTimeoutSeconds: 43.21 },
+      ]);
+      expect(result.stderr).toMatch(ready ? /^$/ : /remaining dashboard deadline/);
+    },
+  );
   test.for(["success", "missing", "failure"] as const)(
     "runs the startup owner with registered gateway identity: %s",
     (outcome, { resources }) => {

@@ -7,7 +7,11 @@ import path from "node:path";
 import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv";
 import type { LaunchReadinessOpenClawSessionQualification } from "../../../state/launch-readiness-lease";
 import { ROOT } from "../../../state/paths";
-import { WARMUP_TIMEOUT_MS, WATCHER_STATUS_TIMEOUT_MS } from "../auto-pair-warmup";
+import {
+  readSandboxAutoPairWatcherStatus,
+  WARMUP_TIMEOUT_MS,
+  WATCHER_STATUS_TIMEOUT_MS,
+} from "../auto-pair-warmup";
 import {
   readAutoPairApprovalPolicyModule,
   readOpenClawPairingStateModule,
@@ -15,16 +19,34 @@ import {
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
+const FAILURE_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_FAILURE__=";
+const OBSERVATION_FAILURE_REASONS = [
+  "state-read",
+  "identity",
+  "paired-device",
+  "paired-token",
+  "client-auth",
+  "pending-requests",
+  "scope-projection",
+  "state-changed",
+  "timeout",
+  "process-failed",
+  "invalid-output",
+] as const;
+export type OpenClawPairingObservationFailureReason = (typeof OBSERVATION_FAILURE_REASONS)[number];
 const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
 const INCOMPATIBLE_OBSERVATION_EXIT_STATUS = 4;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 // Reuse one fixed pairing lifecycle across ordinary onboarding and Portable.
-// A contended gateway list can consume the watcher's complete child bound, so
-// the appearance window retains room for another observation after three
-// attempts (#9817).
-export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
+// The watcher first waits up to 330 seconds for native /startupz so its CLI
+// cannot contend with gateway database migrations. /health is only liveness
+// and can pass before that wait finishes. Reserve that startup bound plus the
+// existing 60-second device-list window (#9817) before declaring pairing absent.
+// Canonical state remains the only success authority; already-settled devices
+// return immediately without spending either window.
+export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 330_000 + 60_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
 // Reserve the bounded request producer and watcher-observation windows. The
@@ -49,6 +71,15 @@ export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
 ] as const;
 
 export type OpenClawPairingQualification = LaunchReadinessOpenClawSessionQualification;
+
+/** Diagnose native startup only; canonical pairing remains the success authority. */
+export function observeOpenClawStartupFailure(
+  sandboxName: string,
+  gatewayName: string,
+): "startup-timeout" | "startup-gateway-exited" | null {
+  const state = readSandboxAutoPairWatcherStatus(sandboxName, gatewayName)?.state;
+  return state === "startup-timeout" || state === "startup-gateway-exited" ? state : null;
+}
 
 export function parseOpenClawVersionFromText(value: string): string | null {
   return value.match(OPENCLAW_VERSION_RE)?.[1] ?? null;
@@ -78,7 +109,7 @@ interface OpenClawPairingQualificationDeps {
 }
 
 export class OpenClawPairingQualificationError extends Error {
-  constructor() {
+  constructor(readonly failureReason?: OpenClawPairingObservationFailureReason) {
     super("OpenClaw pairing qualification is unavailable.");
     this.name = "OpenClawPairingQualificationError";
   }
@@ -93,7 +124,7 @@ export class OpenClawPairingIncompatibleError extends OpenClawPairingQualificati
 
 export class OpenClawPairingObservationRetryableError extends OpenClawPairingQualificationError {
   constructor() {
-    super();
+    super("state-changed");
     this.name = "OpenClawPairingObservationRetryableError";
   }
 }
@@ -265,10 +296,13 @@ REQUIRE_REPAIR_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
 STRICT_SETTLEMENT = ${mode === "settlement" ? "True" : "False"}
 ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
+failure_stage = 'state-read'
 
 incompatible_pairing = False
 
 def reject():
+    # Fixed stage names only; never serialize state, exceptions, or credentials.
+    print(${JSON.stringify(FAILURE_MARKER)} + failure_stage)
     sys.exit(${INCOMPATIBLE_OBSERVATION_EXIT_STATUS} if incompatible_pairing else 1)
 
 def retry_observation():
@@ -638,6 +672,7 @@ try:
         retry_observation()
     if first.get('layout') == 'legacy':
         assert_legacy_layout_current()
+    failure_stage = 'identity'
     identity = parse_json(first['identity'][0])
     auth = parse_json(first['auth'][0])
     paired = parse_json(first['paired'][0])
@@ -653,6 +688,7 @@ try:
     ):
         reject()
 
+    failure_stage = 'paired-device'
     local_paired = [
         (map_key, device) for map_key, device in paired.items()
         if map_key == device_id or (
@@ -679,6 +715,7 @@ try:
         or 'publicKeyPem' in paired_device
     ):
         reject()
+    failure_stage = 'paired-token'
     paired_tokens = paired_device.get('tokens')
     paired_operator = paired_tokens.get('operator') if isinstance(paired_tokens, dict) and set(paired_tokens) == {'operator'} else None
     if (
@@ -691,6 +728,7 @@ try:
         or any(alias in paired_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
     ):
         reject()
+    failure_stage = 'client-auth'
     auth_tokens = auth.get('tokens')
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
     if (
@@ -706,6 +744,7 @@ try:
     ):
         reject()
 
+    failure_stage = 'pending-requests'
     incompatible_pairing = False
     if STRICT_SETTLEMENT and pending:
         reject()
@@ -765,6 +804,7 @@ try:
         if normalized_roles(device) is None:
             reject()
 
+    failure_stage = 'scope-projection'
     # Native approval merges an earlier explicit read grant into the write grant.
     # Require the two device views to agree on one exact supported scope set.
     explicit_read_grant = (
@@ -906,29 +946,54 @@ function runOpenClawPairingObservation(
     getOpenshellBinary: execDeps?.getOpenshellBinary ?? resolveOpenshellBinary,
     spawnSync: execDeps?.spawnSync ?? spawnSync,
   };
-  const result = deps.spawnSync(
-    deps.getOpenshellBinary(),
-    ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
-    {
-      cwd: ROOT,
-      env: process.env,
-      input: script,
-      encoding: "utf8",
-      maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
-      stdio: ["pipe", "pipe", "ignore"],
-      timeout: OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
-    },
-  );
-  if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
-    throw new OpenClawPairingObservationRetryableError();
+  const observationStartedAt = performance.now();
+  for (let attempt = 0; ; attempt += 1) {
+    const timeoutMs =
+      attempt === 0
+        ? OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS
+        : Math.floor(
+            OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS - (performance.now() - observationStartedAt),
+          );
+    if (timeoutMs <= 0) throw new OpenClawPairingObservationRetryableError();
+    const result = deps.spawnSync(
+      deps.getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
+      {
+        cwd: ROOT,
+        env: process.env,
+        input: script,
+        encoding: "utf8",
+        maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
+        stdio: ["pipe", "pipe", "ignore"],
+        timeout: timeoutMs,
+      },
+    );
+    if (!result.error && !result.signal && result.status === RETRYABLE_OBSERVATION_EXIT_STATUS) {
+      // Native state may change during a descriptor-pinned read. Reobserve only
+      // that explicit retryable result, with fresh strict snapshots and the same
+      // total deadline. Authorization and malformed-state failures stay terminal.
+      if (attempt < 2) continue;
+      throw new OpenClawPairingObservationRetryableError();
+    }
+    if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
+      throw new OpenClawPairingIncompatibleError();
+    }
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+        throw new OpenClawPairingQualificationError("timeout");
+      }
+      const output = String(result.stdout ?? "").trim();
+      const reason = OBSERVATION_FAILURE_REASONS.find(
+        (value) => output === `${FAILURE_MARKER}${value}`,
+      );
+      throw new OpenClawPairingQualificationError(
+        !result.error && !result.signal && result.status === 1 && reason
+          ? reason
+          : "process-failed",
+      );
+    }
+    return { output: String(result.stdout ?? ""), policy: approvalPolicy };
   }
-  if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
-    throw new OpenClawPairingIncompatibleError();
-  }
-  if (result.error || result.signal || result.status !== 0) {
-    throw new OpenClawPairingQualificationError();
-  }
-  return { output: String(result.stdout ?? ""), policy: approvalPolicy };
 }
 
 export function observeOpenClawPairingSettlement(
@@ -948,7 +1013,7 @@ export function observeOpenClawPairingSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingSettlementObservation(executed.output);
-    if (!observation) throw new OpenClawPairingQualificationError();
+    if (!observation) throw new OpenClawPairingQualificationError("invalid-output");
     return observation;
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;
@@ -973,7 +1038,7 @@ export function observeOpenClawPairingRepairSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingRepairObservation(executed.output);
-    if (!observation) throw new OpenClawPairingQualificationError();
+    if (!observation) throw new OpenClawPairingQualificationError("invalid-output");
     return observation;
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;
@@ -998,7 +1063,7 @@ export function observeOrdinaryOpenClawPairingSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingSettlementObservation(executed.output);
-    if (!observation) throw new OpenClawPairingQualificationError();
+    if (!observation) throw new OpenClawPairingQualificationError("invalid-output");
     return observation;
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;
@@ -1025,7 +1090,7 @@ export function observeOpenClawPairingQualification(
       execDeps,
     );
     const projection = parseOpenClawPairingObservation(executed.output);
-    if (!projection) throw new OpenClawPairingQualificationError();
+    if (!projection) throw new OpenClawPairingQualificationError("invalid-output");
     return {
       schemaVersion: 1,
       kind: "openclaw-pairing",

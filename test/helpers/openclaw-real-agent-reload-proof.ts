@@ -44,6 +44,7 @@ export async function runRealOpenClawAgentReloadProof(options: {
   const env = {
     PATH: `${path.dirname(options.nodeExecutable)}:/usr/bin:/bin`,
     HOME: root,
+    TMPDIR: root,
     OPENCLAW_STATE_DIR: root,
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_SKIP_CHANNELS: "1",

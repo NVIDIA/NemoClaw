@@ -214,3 +214,52 @@ export function useOrderedNativeCapture(directory: string, entries: string[]): v
     return Reflect.apply(originalSpawn, childProcess, args);
   });
 }
+
+export function tarHeader(
+  entryPath: string,
+  content: Buffer,
+  options: { type?: string; linkTarget?: string } = {},
+): Buffer {
+  const header = Buffer.alloc(512, 0);
+  const type = options.type ?? "0";
+  header.write(entryPath, 0, Math.min(entryPath.length, 100), "utf8");
+  header.write("0000644\0", 100, 8, "utf8");
+  header.write("0001000\0", 108, 8, "utf8");
+  header.write("0001000\0", 116, 8, "utf8");
+  const size = ["0", "S", "x", "g"].includes(type) ? content.length : 0;
+  header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, 12, "utf8");
+  header.write(
+    `${Math.floor(Date.now() / 1000)
+      .toString(8)
+      .padStart(11, "0")}\0`,
+    136,
+    12,
+    "utf8",
+  );
+  header.write(type, 156, 1, "utf8");
+  if (options.linkTarget) {
+    header.write(options.linkTarget, 157, Math.min(options.linkTarget.length, 100), "utf8");
+  }
+  header.write("ustar\0", 257, 6, "utf8");
+  header.write("00", 263, 2, "utf8");
+  header.fill(0x20, 148, 156);
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "utf8");
+  return header;
+}
+
+export function paddedTarPayload(content: Buffer): Buffer {
+  const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
+  content.copy(padded);
+  return padded;
+}
+
+export function paxRecord(key: string, value: string): Buffer {
+  const body = ` ${key}=${value}\n`;
+  let length = Buffer.byteLength(body) + 1;
+  while (Buffer.byteLength(`${length}${body}`) !== length) {
+    length = Buffer.byteLength(`${length}${body}`);
+  }
+  return Buffer.from(`${length}${body}`, "utf8");
+}

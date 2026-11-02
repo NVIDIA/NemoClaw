@@ -527,11 +527,11 @@ describe("trusted npm audit workflow (#5896)", () => {
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
     );
     expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
-      "@openclaw/googlechat@2026.9.5",
+      "@openclaw/googlechat@2026.10.5",
     );
     expect(
       config.archivePackages.some(
-        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.9",
+        ({ packageSpec }) => packageSpec === "@tencent-weixin/openclaw-weixin@2.4.10",
       ),
     ).toBe(true);
     expect(config.lockedGraphs).toContainEqual(
@@ -539,7 +539,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "74856e20d229528ee7e2d107e6238e2204beea36c0deb733a7102082bcd4e5ea",
+        lockSha256: "128880428a7929f4dccec034418ff4290513ad728f8af12fbf1d3536cb468803",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

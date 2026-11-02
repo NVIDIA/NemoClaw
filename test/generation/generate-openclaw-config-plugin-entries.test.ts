@@ -39,6 +39,7 @@ const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
 const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
   { channelId: "a2a", pluginId: "a2a" },
   { channelId: "reef", pluginId: "reef" },
+  { channelId: "x", pluginId: "x" },
 ] as const;
 const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
@@ -77,7 +78,10 @@ function messagingPlanner(): MessagingWorkflowPlanner {
 describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
-    expect(config.plugins.entries.nemoclaw).toEqual({ enabled: true });
+    expect(config.plugins.entries.nemoclaw).toEqual({
+      enabled: true,
+      hooks: { allowConversationAccess: true },
+    });
     expect(config.plugins.allow).toBeUndefined();
     expect(config.tools.alsoAllow).toEqual(["bundle-mcp"]);
   });

@@ -12,6 +12,9 @@ import { parseAuditExceptionRegistry } from "../../../scripts/lib/reviewed-npm-a
 import { createBuiltInChannelManifestRegistry } from "../../../src/lib/messaging";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
+import { resolveSourcedDockerBuildShell } from "../../helpers/openclaw-build-shell";
+import { prepareOfficialPluginBuildFixture } from "../../helpers/reviewed-npm-fixture";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
@@ -37,11 +40,11 @@ const REVIEWED_NPM_ARCHIVE_HELPER = path.join(
 );
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REVIEWED_NPM_AUDIT_HELPER = path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts");
-const UNPINNED_OPENCLAW_VERSION = "2026.9.3";
-const PINNED_OPENCLAW_VERSION = "2026.9.2";
+const UNPINNED_OPENCLAW_VERSION = "2026.10.6";
+const PINNED_OPENCLAW_VERSION = "2026.10.5";
 const PINNED_OPENCLAW_INTEGRITY =
-  "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==";
-const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz";
+  "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==";
+const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz";
 const OPENCLAW_RUNTIME_LOCKFILE = path.join(
   REPO_ROOT,
   "agents",
@@ -104,19 +107,19 @@ function requiredDockerArg(name: string): string {
 }
 
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
-  "sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==";
+  "sha512-lgkU4dkclfKhVnBcHwcvIzf/BdBsVyDfmAKRgDdrqWg+7GUp7ikETL+WhLZGxWArYecv3FX0+A0KdEnQyHV1RQ==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
-  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.2.tgz";
+  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.10.5.tgz";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
-  "sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==";
+  "sha512-Dys0g/nhJXTpqmxwujnE9UoSN1EVszHWqbI5C3aNNk0zMqFUcD/YMT7TACe65aiVANHGuiMpLDm6rtJO5qq8FA==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.2.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.10.5.tgz";
 const PINNED_OPENCLAW_TAVILY_PLUGIN_INTEGRITY =
-  "sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==";
+  "sha512-PHGSdOzcNf41WdbDKT3X2UzTKWOdrSa9vEmMOjpNTzOTS8H/YGJzy1lw44w4zvEk3cR32dRFF+AQXxMzrzo8ww==";
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
-  "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==";
+  "sha512-AzWaSLfUQZWPwDdrLXzXeQ/AraXPEnkTTWKTKq4MFO39futFAxy+FulsYSStDYEd1B0YjtWGvXswBjdrmwRlBw==";
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
-  "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==";
+  "sha512-Up5NG2C0vVJBNIX92Lv7SB8qoCQ9SX86LMLh2MTow71AglyVy20OjNc/rGpOco2YTwWl7HcjhSz9MJbqWcvvDQ==";
 const LEGACY_REBUILD_OPENCLAW_VERSION = "2026.3.11";
 const LEGACY_REBUILD_OPENCLAW_INTEGRITY =
   "sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==";
@@ -179,16 +182,18 @@ function extractRunBlock(file: string, startMarker: string, endMarker: string): 
   const runIndex = source.indexOf("RUN ", start);
   expect(runIndex, `Expected RUN instruction after ${startMarker}`).toBeGreaterThanOrEqual(0);
   expect(runIndex, `Expected RUN instruction before ${endMarker}`).toBeLessThanOrEqual(end);
-  return source
-    .slice(runIndex, end)
-    .trim()
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n")
-    .replace(/\\\n\s*/g, " ")
-    .replace(/^RUN\s+/, "")
-    .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
-    .replace(/\\\s*$/, "");
+  return resolveSourcedDockerBuildShell(
+    source
+      .slice(runIndex, end)
+      .trim()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n")
+      .replace(/\\\n\s*/g, " ")
+      .replace(/^RUN\s+/, "")
+      .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "")
+      .replace(/\\\s*$/, ""),
+  );
 }
 
 function runInstallBlock(
@@ -217,6 +222,7 @@ function runInstallBlock(
     baseProvenanceSymlink?: boolean;
     auditExceptionPolicy?: string;
     failOpenClawNpmCi?: boolean;
+    failOpenClawRemediation?: boolean;
     failOpenClawVerifyInstalledLock?: boolean;
   } = {},
 ) {
@@ -244,6 +250,7 @@ function runInstallBlock(
     baseProvenanceSymlink = false,
     auditExceptionPolicy = fs.readFileSync(NPM_AUDIT_EXCEPTION_FILE, "utf-8"),
     failOpenClawNpmCi = false,
+    failOpenClawRemediation = false,
     failOpenClawVerifyInstalledLock = false,
   } = options;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-integrity-"));
@@ -366,14 +373,17 @@ function runInstallBlock(
   const script = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
+    // BSD mktemp without a template ignores TMPDIR; keep Linux image probes
+    // inside the fixture's private temporary directory on every host.
+    'mktemp() { if [ "$#" -eq 0 ]; then command mktemp "$TMPDIR/image-fixture.XXXXXX"; else command mktemp "$@"; fi; }',
     `call_log=${JSON.stringify(log)}`,
     `real_node=${JSON.stringify(process.execPath)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
     `BASE_IMAGE=${JSON.stringify(baseImage)}`,
     `openclaw_provenance_path=${JSON.stringify(provenancePath)}`,
     `openclaw_provenance_metadata=${JSON.stringify(baseProvenanceMetadata)}`,
-    `OPENCLAW_2026_9_2_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
-    `OPENCLAW_2026_9_2_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
+    `OPENCLAW_2026_10_5_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
+    `OPENCLAW_2026_10_5_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
     `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=${allowLegacyFixture ? "1" : "0"}`,
     `OPENCLAW_2026_3_11_INTEGRITY=${JSON.stringify(LEGACY_REBUILD_OPENCLAW_INTEGRITY)}`,
     `OPENCLAW_2026_3_11_TARBALL=${JSON.stringify(LEGACY_REBUILD_OPENCLAW_TARBALL)}`,
@@ -393,7 +403,9 @@ function runInstallBlock(
     `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     `fail_openclaw_npm_ci=${failOpenClawNpmCi ? "1" : "0"}`,
     `fail_openclaw_verify_installed_lock=${failOpenClawVerifyInstalledLock ? "1" : "0"}`,
+    `fail_openclaw_remediation=${failOpenClawRemediation ? "1" : "0"}`,
     "node() {",
+    `  if [ "\${1:-}" = "/scripts/lib/remediate-openclaw-runtime-dependencies.mts" ]; then printf "node %s\\n" "$*" >> "$call_log"; [ "$#" -eq 3 ] && [ "\${2:-}" = "--prefix" ] && [ "\${3:-}" = ${JSON.stringify(openclawRuntime)} ] || return 46; [ "$fail_openclaw_remediation" = "0" ] || return 45; return 0; fi`,
     '  if printf "%s\\n" "$*" | grep -q -- "--verify-installed-lock"; then printf "node %s\\n" "$*" >> "$call_log"; [ "$fail_openclaw_verify_installed_lock" = "0" ] || return 44; return 0; fi',
     `  if [ "\${1:-}" = ${JSON.stringify(path.join(openclawRuntime, "node_modules", "openclaw", "scripts", "postinstall-bundled-plugins.mjs"))} ] || [ "\${1:-}" = ${JSON.stringify(path.join(openclawGlobal, "scripts", "postinstall-bundled-plugins.mjs"))} ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi`,
     '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
@@ -463,16 +475,22 @@ function runInstallBlock(
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper)
       .replaceAll(
         "bash /scripts/lib/verify-mcporter-audit.sh",
-        `node --experimental-strip-types ${auditHelper} --directory ${mcporterRuntime} --exceptions ${auditExceptionFile} --graph mcporter-runtime --threshold high --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json`,
+        `node --experimental-strip-types ${auditHelper} --directory ${mcporterRuntime} --exceptions ${auditExceptionFile} --graph mcporter-runtime --threshold high --report ${path.join(tmp, "mcporter-npm-audit.json")} --result ${path.join(tmp, "mcporter-npm-audit-policy.json")}`,
       )
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
-      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile),
+      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile)
+      .replaceAll("/tmp/mcporter-npm-audit.json", path.join(tmp, "mcporter-npm-audit.json"))
+      .replaceAll(
+        "/tmp/mcporter-npm-audit-policy.json",
+        path.join(tmp, "mcporter-npm-audit-policy.json"),
+      ),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   const result = spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
     timeout: 10000,
+    env: { ...process.env, TMPDIR: tmp },
   });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
   const provenanceExists = fs.existsSync(provenancePath);
@@ -545,7 +563,7 @@ function runOptionalOpenClawPluginBlock(
   } = options;
   const command = extractRunBlock(
     DOCKERFILE,
-    "# Install optional plugins from verified offline archives; npm-pack preserves",
+    "# Install non-messaging OpenClaw plugins that need to match the runtime.",
     "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
@@ -603,13 +621,25 @@ function runOptionalOpenClawPluginBlock(
     ].join("\n"),
     { mode: 0o700 },
   );
+  const fixture = prepareOfficialPluginBuildFixture(command, tmp, [
+    {
+      packageSpec: `@openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION}`,
+      integrity: PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY,
+      tarballUrl: PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL,
+    },
+    {
+      packageSpec: `@openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION}`,
+      integrity: PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
+      tarballUrl: PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL,
+    },
+  ]);
   const script = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
-    `OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY)}`,
-    `OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
+    `OPENCLAW_DIAGNOSTICS_OTEL_2026_10_5_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY)}`,
+    `OPENCLAW_BRAVE_PLUGIN_2026_10_5_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
     `NEMOCLAW_OPENCLAW_OTEL=${otel ? "1" : "0"}`,
     `NEMOCLAW_WEB_SEARCH_ENABLED=${webSearch ? "1" : "0"}`,
     `export NEMOCLAW_REVIEWED_NPM_EXECUTABLE=${JSON.stringify(reviewedNpmExecutable)}`,
@@ -641,12 +671,11 @@ function runOptionalOpenClawPluginBlock(
     "  esac",
     "  return 1",
     "}",
-    command
+    fixture.command
       .replace(
-        "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives;",
+        "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives",
         "unset NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR;",
       )
-      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationFixture),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
@@ -654,6 +683,7 @@ function runOptionalOpenClawPluginBlock(
   const result = spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
     timeout: 10000,
+    env: { ...process.env, ...fixture.env },
   });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -712,7 +742,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ).toBe(false);
       });
 
-      it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.9.2 integrity", () => {
+      it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.10.5 integrity", () => {
         const teamsManifest = createBuiltInChannelManifestRegistry().get("teams");
         const teamsPackage = teamsManifest?.agentPackages?.find(
           (agentPackage) =>
@@ -799,13 +829,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
     if (group === "plugin-install") {
       it("verifies optional non-messaging OpenClaw plugin integrity before install", () => {
-        expect(requiredDockerArg("OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY")).toBe(
+        expect(requiredDockerArg("OPENCLAW_DIAGNOSTICS_OTEL_2026_10_5_INTEGRITY")).toBe(
           PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY,
         );
-        expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY")).toBe(
+        expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_10_5_INTEGRITY")).toBe(
           PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
         );
-        expect(requiredDockerArg("OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY")).toBe(
+        expect(requiredDockerArg("OPENCLAW_TAVILY_PLUGIN_2026_10_5_INTEGRITY")).toBe(
           PINNED_OPENCLAW_TAVILY_PLUGIN_INTEGRITY,
         );
         const { result, calls } = runOptionalOpenClawPluginBlock();
@@ -821,7 +851,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm pack @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/diagnostics-otel-2026\.9\.2\.tgz\n/,
+          /openclaw plugins install --force --accept-capabilities @openclaw\/diagnostics-otel@2026\.10\.5\n/,
         );
         expect(calls).not.toContain(`remediate --archive`);
         expect(calls).toContain(
@@ -834,7 +864,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           `npm pack @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} --pack-destination`,
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/brave-plugin-2026\.9\.2\.tgz\n/,
+          /openclaw plugins install --force --accept-capabilities @openclaw\/brave-plugin@2026\.10\.5\n/,
         );
         expect(calls).toContain("openclaw-env true true");
       });
@@ -921,7 +951,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           },
         );
 
-        expect(production.result.status).toBe(0);
+        expect(production.result.status, production.result.stderr).toBe(0);
         expect(base.result.status, `${base.result.stdout}${base.result.stderr}`).toBe(0);
         expect(production.calls).toContain(
           `npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`,
@@ -950,7 +980,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
     }
 
     if (group === "base") {
-      it("reuses exact protected OpenClaw and mcporter base provenance without registry work", () => {
+      it.each([
+        `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"a".repeat(64)}`,
+        `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(64)}`,
+      ])("reuses matching protected provenance from %s without registry work", (baseImage) => {
         const { result, calls, provenanceExists } = runInstallBlock(
           extractRunBlock(
             DOCKERFILE,
@@ -965,6 +998,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
             registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
             baseProvenance: openClawBaseProvenance(),
+            baseImage,
           },
         );
 
@@ -1220,7 +1254,29 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
           },
         ],
-      ])("falls back to the reviewed archive for %s", (_label, overrides) => {
+        ...[
+          "localhost:5000/nemoclaw-managed-protected-base/openclaw:latest",
+          "localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:abc",
+          `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"g".repeat(64)}`,
+          `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(65)}`,
+          `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:bad@sha256:${"a".repeat(64)}`,
+          `localhost:5000/nemoclaw-managed-protected-base/hermes@sha256:${"a".repeat(64)}`,
+          `registry.example/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(64)}`,
+        ].map(
+          (baseImage) =>
+            [
+              `unverified prepared reference ${baseImage}`,
+              { baseImage, baseProvenance: openClawBaseProvenance() },
+            ] as const,
+        ),
+        [
+          "prepared local base with mismatched provenance",
+          {
+            baseImage: `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(64)}`,
+            baseProvenance: openClawBaseProvenance().replace("schema=4", "schema=3"),
+          },
+        ],
+      ] as const)("falls back to the reviewed archive for %s", (_label, overrides) => {
         const { result, calls, provenanceExists } = runInstallBlock(
           extractRunBlock(
             DOCKERFILE,
@@ -1236,7 +1292,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           },
         );
 
-        expect(result.status).toBe(0);
+        expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toContain("lacks matching reviewed provenance");
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
@@ -1350,7 +1406,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           },
         );
         const optionalPlugin = runOptionalOpenClawPluginBlock({
-          pluginPackFilename: "../diagnostics-otel-2026.9.2.tgz",
+          pluginPackFilename: "../diagnostics-otel-2026.10.5.tgz",
         });
 
         for (const item of [
@@ -1363,7 +1419,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           {
             label: "optional OpenClaw plugin Dockerfile",
             outcome: optionalPlugin,
-            unsafeFilename: "../diagnostics-otel-2026.9.2.tgz",
+            unsafeFilename: "../diagnostics-otel-2026.10.5.tgz",
             blockedCommand: "openclaw plugins install",
           },
         ]) {
@@ -1567,23 +1623,25 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
       it("production build arg guard rejects current reviewed pin overrides", () => {
         const currentPinArgNames = declaredProductionPinArgNames();
-        expect(currentPinArgNames).toEqual([
-          "CODEX_ACP_0_11_1_INTEGRITY",
-          "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",
-          "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY",
-          "HERMES_NPM_INTEGRITY",
-          "MCPORTER_0_7_3_INTEGRITY",
-          "MCPORTER_0_7_3_TARBALL",
-          "OPENCLAW_2026_3_11_INTEGRITY",
-          "OPENCLAW_2026_3_11_TARBALL",
-          "OPENCLAW_2026_4_24_INTEGRITY",
-          "OPENCLAW_2026_4_24_TARBALL",
-          "OPENCLAW_2026_9_2_INTEGRITY",
-          "OPENCLAW_2026_9_2_TARBALL",
-          "OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY",
-          "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY",
-          "OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY",
-        ]);
+        expect(currentPinArgNames).toEqual(
+          [
+            "CODEX_ACP_0_11_1_INTEGRITY",
+            "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",
+            "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY",
+            "HERMES_NPM_INTEGRITY",
+            "MCPORTER_0_7_3_INTEGRITY",
+            "MCPORTER_0_7_3_TARBALL",
+            "OPENCLAW_2026_3_11_INTEGRITY",
+            "OPENCLAW_2026_3_11_TARBALL",
+            "OPENCLAW_2026_4_24_INTEGRITY",
+            "OPENCLAW_2026_4_24_TARBALL",
+            "OPENCLAW_2026_10_5_INTEGRITY",
+            "OPENCLAW_2026_10_5_TARBALL",
+            "OPENCLAW_BRAVE_PLUGIN_2026_10_5_INTEGRITY",
+            "OPENCLAW_DIAGNOSTICS_OTEL_2026_10_5_INTEGRITY",
+            "OPENCLAW_TAVILY_PLUGIN_2026_10_5_INTEGRITY",
+          ].sort(),
+        );
 
         const futurePinArgNames = [
           "OPENCLAW_FUTURE_PLUGIN_2099_1_1_INTEGRITY",
@@ -1678,6 +1736,31 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(outcome.provenanceExists).toBe(false);
       });
 
+      it.each([
+        [
+          DOCKERFILE,
+          "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+          "# Patch OpenClaw media fetch",
+        ],
+        [DOCKERFILE_BASE, "# Install OpenClaw CLI + PyYAML.", "# Baseline health check."],
+      ])(
+        "leaves no runtime exposure when dependency remediation fails in %s",
+        (file, start, end) => {
+          const outcome = runInstallBlock(extractRunBlock(file, start, end), {
+            openclawVersion: PINNED_OPENCLAW_VERSION,
+            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            failOpenClawRemediation: true,
+          });
+          expect(outcome.result.status, outcome.result.stderr).toBe(45);
+          expect(outcome.calls).toContain("remediate-openclaw-runtime-dependencies.mts --prefix");
+          expect(outcome.calls).not.toContain("--verify-installed-lock");
+          expect(outcome.calls).not.toContain("postinstall-bundled-plugins.mjs");
+          expect(outcome.runtimeExposed).toBe(false);
+          expect(outcome.provenanceExists).toBe(false);
+        },
+      );
+
       it("leaves no runtime exposure when installed-lock verification fails", () => {
         const installBlocks = [
           {
@@ -1766,12 +1849,12 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         const installBlock = extractRunBlock(
           DOCKERFILE,
-          "# Install optional plugins from verified offline archives; npm-pack preserves",
+          "# Install non-messaging OpenClaw plugins that need to match the runtime.",
           "USER root\nCOPY src/lib/messaging/ /src/lib/messaging/",
         );
         const installSource = dockerfile.slice(
           dockerfile.indexOf(
-            "# Install optional plugins from verified offline archives; npm-pack preserves",
+            "# Install non-messaging OpenClaw plugins that need to match the runtime.",
           ),
           dockerfile.indexOf("USER root\nCOPY src/lib/messaging/ /src/lib/messaging/"),
         );
@@ -1781,13 +1864,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
 
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:fe5baa1d9bbe53b3cf616a13ff7dcb0f21d6ce7a7d6d9856b9909e81c53a884c",
+          "ADD --chmod=0444 --checksum=sha256:8f3975fdd37cbc5793cc97c4e5695f5cad7aeef6718c40c9156910a1a403767e",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:40c0cf23e8373f2285034b8f0a575cc51ec1ed53d081b0e1592d219dd411e54d",
+          "ADD --chmod=0444 --checksum=sha256:d33631e79f9658a0e7beb14e52018bc3f2ea30bd1914d8c8bc63174215f3bf69",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:c5d65ff201a8178ec914736887802c38d33628c667be5b2453b890fe44086984 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.2.tgz /tavily-plugin-2026.9.2.tgz",
+          "ADD --chmod=0444 --checksum=sha256:3844297c05417cd619668a01c7af090c15a62b9d35f10ad6084b6859f688ce23 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.10.5.tgz /tavily-plugin-2026.10.5.tgz",
         );
         expect(archiveBlock).not.toContain("propagator-jaeger-2.9.0.tgz");
         expect(archiveBlock).not.toContain("core-2.9.0.tgz");

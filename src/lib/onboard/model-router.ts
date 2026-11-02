@@ -142,7 +142,7 @@ export type StartModelRouterDeps = {
   sleep: (milliseconds: number) => Promise<void>;
   now: () => number;
   isProcessAlive: (pid: number) => boolean;
-  terminateProcess: (pid: number) => void;
+  terminateProcess: (pid: number) => void | Promise<void>;
   getProviderKey: () => string;
 };
 
@@ -199,7 +199,7 @@ function ensureModelRouterCommand(): string {
  * Follows the same pattern as Ollama startup (spawn detached, poll health).
  * Returns the PID of the child process.
  */
-function createStartModelRouterDeps(): StartModelRouterDeps {
+function createStartModelRouterDeps(port: number): StartModelRouterDeps {
   return {
     rootDir: ROOT,
     homeDir: os.homedir(),
@@ -306,7 +306,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
         return false;
       }
     },
-    terminateProcess: (pid) => process.kill(pid, "SIGTERM"),
+    terminateProcess: (pid) => stopModelRouterProcess(pid, port),
     getProviderKey: () => (process.env.NEMOCLAW_PROVIDER_KEY || "").trim(),
   };
 }
@@ -315,9 +315,9 @@ export async function startModelRouter(
   routerCfg: BlueprintRouterConfig,
   overrides: Partial<StartModelRouterDeps> = {},
 ): Promise<number> {
-  const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(), ...overrides };
-  const routerCommand = deps.ensureModelRouterCommand();
   const port = routerCfg.port || 4000;
+  const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(port), ...overrides };
+  const routerCommand = deps.ensureModelRouterCommand();
   const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
   const poolConfigPath = path.join(
     blueprintDir,
@@ -439,6 +439,7 @@ export async function startModelRouter(
   const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
   let healthAttempts = 0;
   let lastSnapshot: RouterHealthSnapshot | null = null;
+  let lastHealthError: string | null = null;
   while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
     const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
     await deps.sleep(delayMs);
@@ -462,6 +463,9 @@ export async function startModelRouter(
     }
     healthAttempts += 1;
     lastSnapshot = observation.snapshot;
+    // A later transport failure must not erase an earlier upstream diagnosis.
+    // Retain only the bounded, redacted error, never the health response body.
+    lastHealthError = firstUnhealthyEndpointError(lastSnapshot.body) ?? lastHealthError;
     const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
@@ -471,12 +475,16 @@ export async function startModelRouter(
       break;
     }
   }
+  let cleanupDetail = "Model Router shutdown completed.";
   try {
-    deps.terminateProcess(pid);
-  } catch {
-    // already dead
+    await deps.terminateProcess(pid);
+  } catch (error) {
+    const detail = compactText(
+      redactSensitiveText(error instanceof Error ? error.message : String(error)) ||
+        "unknown shutdown error",
+    );
+    cleanupDetail = `Model Router shutdown could not be verified: ${detail}`;
   }
-  const lastHealthError = firstUnhealthyEndpointError(lastSnapshot?.body ?? null);
   const lastHealthObservation = formatHealthObservation(lastSnapshot);
   const logTail = routerLog === null ? "" : deps.readRouterLogTail(logPath, routerLog.startOffset);
   throw new Error(
@@ -484,6 +492,7 @@ export async function startModelRouter(
       (childExitDetail ? ` (${childExitDetail})` : "") +
       (lastHealthObservation ? ` (${lastHealthObservation})` : "") +
       (lastHealthError ? ` (last health error: ${lastHealthError})` : "") +
+      ` (${cleanupDetail})` +
       (routerLog === null ? "" : `. Router log: ${logPath}`) +
       (logTail ? `\n  Last router log lines:\n${logTail}` : ""),
   );

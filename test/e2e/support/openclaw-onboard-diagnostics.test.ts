@@ -48,7 +48,7 @@ describe("OpenClaw onboarding failure diagnostics", () => {
         redactionValues: options.redactionValues,
         timeoutMs: 15000,
         killGraceMs: 1000,
-        captureLimitBytes: 65536,
+        captureLimitBytes: 1024 * 1024,
       }),
     );
     expect(sandbox.openshell).toHaveBeenCalledWith(
@@ -64,7 +64,12 @@ describe("OpenClaw onboarding failure diagnostics", () => {
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       1,
       options.sandboxName,
-      expect.any(Array),
+      expect.arrayContaining([
+        "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor",
+        "/tmp/nemoclaw-post-upgrade-doctor-ready",
+        "/tmp/nemoclaw-gateway-local",
+        "/tmp/nemoclaw-gateway.pid",
+      ]),
       bounded,
     );
     expect(sandbox.exec).toHaveBeenNthCalledWith(
@@ -86,6 +91,40 @@ describe("OpenClaw onboarding failure diagnostics", () => {
     ).resolves.toBeUndefined();
     expect(sandbox.openshell).toHaveBeenCalledTimes(2);
     expect(sandbox.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains routing failure evidence when container discovery is unavailable", async () => {
+    const sandbox = clients();
+    const runtime = {
+      resolveSandboxResourceHandle: vi.fn().mockRejectedValue(new Error("runtime unavailable")),
+      command: vi.fn(),
+    };
+    const result = Object.freeze({ exitCode: 1 });
+    const artifactPrefix = "tc-inf-11-inference-set-https-pin-endpoint";
+    await expect(
+      captureOpenClawOnboardFailure(result, sandbox, { ...options, artifactPrefix, runtime }),
+    ).resolves.toBeUndefined();
+    expect(runtime.resolveSandboxResourceHandle).toHaveBeenCalledWith(
+      options.sandboxName,
+      expect.objectContaining({
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 15000,
+        killGraceMs: 1000,
+        captureLimitBytes: 1024 * 1024,
+        artifactName: `${artifactPrefix}-failure-container-id`,
+      }),
+    );
+    expect(runtime.command).not.toHaveBeenCalled();
+    expect(sandbox.openshell.mock.calls.map(([, probe]) => probe.artifactName)).toEqual([
+      `${artifactPrefix}-failure-status`,
+      `${artifactPrefix}-failure-openshell-logs`,
+    ]);
+    expect(sandbox.exec.mock.calls.map(([, , probe]) => probe.artifactName)).toEqual([
+      `${artifactPrefix}-failure-startup-logs`,
+      `${artifactPrefix}-failure-health`,
+    ]);
+    expect(result.exitCode).toBe(1);
   });
 
   it("redacts JSON-escaped quotes, backslashes and newlines from log output", async () => {
@@ -141,6 +180,60 @@ describe("OpenClaw onboarding failure diagnostics", () => {
       expect(records[4]).toMatchObject({ logOmitted: "size-limit" });
       expect(result.stdout).not.toContain(boundarySecret.slice(-24));
       expect(records.slice(4).every((record) => !("log" in record))).toBe(true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("captures complete upgrade logs within the explicit bound before value redaction", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "onboard-diagnostics-upgrade-"));
+    try {
+      const paths = ["startup", "gateway", "pairing", "doctor", "ready", "local", "pid"].map(
+        (name) => join(directory, name),
+      );
+      const secret = 'synthetic-credential-"quoted"\\with\na-newline';
+      const content = "\u0001".repeat(131_072 - Buffer.byteLength(secret)) + secret;
+      paths.forEach((file) => writeFileSync(file, content));
+      const [command, ...args] = buildOpenClawOnboardDiagnosticsCommand(paths, 131_072);
+      const result = spawnSync(command, args, {
+        encoding: "utf8",
+        timeout: 5000,
+        killSignal: "SIGKILL",
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      expect(result.status).toBe(0);
+      const records = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(records.slice(0, paths.length).map((record) => record.log)).toEqual(
+        paths.map(() => content),
+      );
+      expect(records.slice(0, paths.length).every((record) => record.truncated === false)).toBe(
+        true,
+      );
+      const sandbox = clients();
+      await captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
+        ...options,
+        logLimitBytes: 131_072,
+        redactionValues: [secret],
+      });
+      const probe = sandbox.exec.mock.calls[0][2];
+      expect(probe.captureLimitBytes).toBeGreaterThan(Buffer.byteLength(result.stdout));
+      expect(probe.timeoutMs).toBe(15000);
+      expect(redactString(result.stdout, probe.redactionValues)).not.toContain(
+        JSON.stringify(secret).slice(1, -1),
+      );
+      writeFileSync(paths[0], content + "x");
+      const oversized = spawnSync(command, args, {
+        encoding: "utf8",
+        timeout: 5000,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      expect(oversized.status).toBe(0);
+      expect(JSON.parse(oversized.stdout.split("\n")[0])).toMatchObject({
+        logOmitted: "size-limit",
+      });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

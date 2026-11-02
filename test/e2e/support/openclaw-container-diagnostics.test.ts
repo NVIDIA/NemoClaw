@@ -33,7 +33,7 @@ it("pins bounded read-only container probes to the full discovered identity", as
       "container",
       "inspect",
       "--format",
-      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
       ID,
     ],
     ["logs", "--tail", "120", ID],
@@ -98,7 +98,7 @@ it("keeps initial install failure evidence when no sandbox container was created
   expect(sandbox.openshell.mock.calls[0]![1]).toMatchObject({
     artifactName: "phase-0-install-token-a-failure-status",
     redactionValues: options.redactionValues,
-    captureLimitBytes: 65536,
+    captureLimitBytes: 1024 * 1024,
   });
 });
 
@@ -119,7 +119,46 @@ it("protects raw and JSON-escaped secrets on direct runtime probes", async () =>
   expect(client.command.mock.calls[2]![1]).toMatchObject({
     timeoutMs: 15000,
     killGraceMs: 1000,
-    captureLimitBytes: 65536,
+    captureLimitBytes: 1024 * 1024,
     redactionValues: [secret, JSON.stringify(secret).slice(1, -1)],
   });
+});
+
+it("does not copy a retained startup log after successful exec", async () => {
+  const client = { ...runtime(), hostInvocation: vi.fn() };
+  client.command.mockResolvedValue({ exitCode: 0 });
+  const host = { command: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+  await captureOpenClawContainerFailure(client, "sandbox", "resume", options, [], host);
+  expect(client.hostInvocation).not.toHaveBeenCalled();
+  expect(host.command).not.toHaveBeenCalled();
+});
+
+it("reads a retained startup log through the selected runtime after exec fails", async () => {
+  const client = {
+    ...runtime(),
+    hostInvocation: vi.fn((args: readonly string[]) => ({
+      command: "podman" as const,
+      args: ["--url", "unix:///fixture/socket", ...args],
+    })),
+  };
+  client.command.mockResolvedValue({ exitCode: 1 });
+  const host = { command: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+  await captureOpenClawContainerFailure(client, "sandbox", "resume", options, [], host);
+  expect(client.hostInvocation).toHaveBeenCalledWith(["cp", `${ID}:/tmp/nemoclaw-start.log`, "-"]);
+  expect(host.command).toHaveBeenCalledWith(
+    "bash",
+    expect.arrayContaining([
+      "pipefail",
+      "podman",
+      "--url",
+      "unix:///fixture/socket",
+      `${ID}:/tmp/nemoclaw-start.log`,
+      "-",
+    ]),
+    {
+      ...options,
+      captureLimitBytes: 128 * 1024,
+      artifactName: "resume-failure-stopped-startup-log",
+    },
+  );
 });

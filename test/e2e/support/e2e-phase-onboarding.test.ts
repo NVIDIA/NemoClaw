@@ -623,7 +623,7 @@ describe("onboarding phase fixture", () => {
           redactionValues: ['secret"token', 'secret\\"token'],
           timeoutMs: 15_000,
           killGraceMs: 1_000,
-          captureLimitBytes: 64 * 1024,
+          captureLimitBytes: 1024 * 1024,
         }),
       );
       expect(probe).toHaveBeenCalledTimes(7);

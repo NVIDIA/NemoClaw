@@ -42,6 +42,9 @@ export async function onboardNativeOpenClaw(
     allowMissingAuth: !authenticated,
     requireAuthModels: authenticated,
     llamaCppFingerprint: authenticated,
+    // The real agent prompt must fit the mock server's advertised context.
+    // Keep the production probe responsible for propagating this capacity.
+    ...(authenticated ? { maxModelLen: 131072 } : {}),
     progress,
   });
   cleanup.add(`close ${owner} endpoint`, async () => {

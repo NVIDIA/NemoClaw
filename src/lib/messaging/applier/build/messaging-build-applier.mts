@@ -27,6 +27,10 @@ import {
   remediateReviewedOpenClawPluginArchive,
 } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
+import {
+  inspectOfficialOpenClawPluginInstall,
+  OfficialPluginProvenanceError,
+} from "../../../../../scripts/lib/verify-openclaw-official-plugin.mts";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
 import {
@@ -170,25 +174,7 @@ function isPinnedHermesUvPackageSpec(spec: string): boolean {
 
 export class MessagingBuildApplierError extends Error {}
 
-type OfficialPluginProvenanceCondition =
-  | "inspection failed"
-  | "inspection timed out"
-  | "inspection did not return JSON"
-  | "did not retain trusted exact registry provenance";
-
-class OfficialPluginProvenanceError extends MessagingBuildApplierError {
-  readonly pluginId: string;
-  readonly condition: OfficialPluginProvenanceCondition;
-
-  constructor(pluginId: string, condition: OfficialPluginProvenanceCondition) {
-    super(`OpenClaw official npm plugin ${pluginId} ${condition}`);
-    this.pluginId = pluginId;
-    this.condition = condition;
-  }
-}
-
 class MessagingBuildCommandError extends MessagingBuildApplierError {}
-class MessagingBuildCommandTimeoutError extends MessagingBuildCommandError {}
 
 export class OfficialPluginRemediationError extends MessagingBuildApplierError {
   readonly pluginId: string;
@@ -793,7 +779,11 @@ export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null,
   installOpenClawPluginPackages(collectOpenClawMessagingPluginInstalls(plan, env), env);
 }
 
-function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[], env: Env): void {
+function installOpenClawPluginPackages(
+  installs: readonly OpenClawPluginInstall[],
+  env: Env,
+  preserveEnablement = false,
+): void {
   for (const install of installs) {
     const installCache = install.runtimeLock
       ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
@@ -824,29 +814,25 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         ? { ...installEnv, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true" }
         : installEnv;
       runCommand(
-        ["openclaw", "plugins", "install", "--force", "--accept-capabilities", installTarget],
+        [
+          "openclaw",
+          "plugins",
+          "install",
+          "--force",
+          "--accept-capabilities",
+          ...(preserveEnablement ? ["--no-enable"] : []),
+          installTarget,
+        ],
         commandEnv,
       );
       if (officialPluginId) {
-        let inspection: string;
-        try {
-          inspection = runCommand(
-            ["openclaw", "plugins", "inspect", officialPluginId, "--json"],
-            commandEnv,
-            { emitOutput: false, timeoutMs: 60_000 },
-          );
-        } catch (error) {
-          throw new OfficialPluginProvenanceError(
-            officialPluginId,
-            error instanceof MessagingBuildCommandTimeoutError
-              ? "inspection timed out"
-              : "inspection failed",
-          );
-        }
-        const packageDirectory = verifyTrustedOfficialNpmInstall(
-          install,
-          officialPluginId,
-          inspection,
+        const packageDirectory = inspectOfficialOpenClawPluginInstall(
+          {
+            pluginId: officialPluginId,
+            packageSpec: install.npmPackageSpec!,
+            integrity: install.integrity!,
+          },
+          commandEnv,
         );
         const homeValue = (value: string | undefined) =>
           value?.trim() && value.trim() !== "undefined" && value.trim() !== "null"
@@ -1431,11 +1417,10 @@ function requireExactNpmPackageSpec(
 function runCommand(
   args: readonly string[],
   env: Env,
-  options: { readonly emitOutput?: boolean; readonly timeoutMs?: number } = {},
+  options: { readonly emitOutput?: boolean } = {},
 ): string {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
-    ...(options.timeoutMs ? { timeout: options.timeoutMs, killSignal: "SIGKILL" as const } : {}),
     encoding: "utf8",
     env: env as NodeJS.ProcessEnv,
     maxBuffer: 64 * 1024 * 1024,
@@ -1470,8 +1455,6 @@ function runCommand(
       })}`,
     );
   }
-  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT")
-    throw new MessagingBuildCommandTimeoutError();
   if (result.error) throw new MessagingBuildCommandError();
   if (result.status !== 0) {
     throw new MessagingBuildCommandError();
@@ -1493,37 +1476,6 @@ function officialPluginIdFromManifest(spec: string, env: Env): string | undefine
       ),
   );
   return manifest?.runtime?.openclaw?.channelName;
-}
-
-function verifyTrustedOfficialNpmInstall(
-  install: OpenClawPluginInstall,
-  pluginId: string,
-  inspectOutput: string,
-): string | undefined {
-  let inspected: unknown;
-  try {
-    inspected = JSON.parse(inspectOutput);
-  } catch {
-    throw new OfficialPluginProvenanceError(pluginId, "inspection did not return JSON");
-  }
-  const inspectedRecord = isObject(inspected) ? inspected : {};
-  const record = isObject(inspectedRecord.install) ? inspectedRecord.install : {};
-  const plugin = isObject(inspectedRecord.plugin) ? inspectedRecord.plugin : {};
-  if (
-    plugin.id !== pluginId ||
-    plugin.trustedOfficialInstall !== true ||
-    record.source !== "npm" ||
-    record.sourcePath !== undefined ||
-    record.artifactKind !== undefined ||
-    record.resolvedSpec !== install.npmPackageSpec ||
-    record.integrity !== install.integrity
-  ) {
-    throw new OfficialPluginProvenanceError(
-      pluginId,
-      "did not retain trusted exact registry provenance",
-    );
-  }
-  return sanitizeOptionalString(record.installPath);
 }
 
 function packVerifiedOpenClawPluginArchive(
@@ -2086,7 +2038,9 @@ export function installManagedImageCapabilityUnion(
     );
   }
   if (agent === "openclaw") {
-    installOpenClawPluginPackages(collectManagedImageOpenClawPluginInstalls(env), env);
+    // Preinstallation must retain the neutral image's disabled plugin policy.
+    // Enabling every channel makes native inspection import unrelated setup trees.
+    installOpenClawPluginPackages(collectManagedImageOpenClawPluginInstalls(env), env, true);
     return;
   }
   installHermesUvPackages(collectManagedImageHermesUvPackages(), env);

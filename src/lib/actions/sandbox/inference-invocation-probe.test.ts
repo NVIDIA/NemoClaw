@@ -533,6 +533,30 @@ describe("sandbox inference invocation probe", () => {
     },
   );
 
+  it.each([
+    [403, 403],
+    [407, 407],
+    [503, null],
+  ])(
+    "reports proxy CONNECT refusal %s without exposing stderr or treating it as an upstream status",
+    async (proxyStatus, retainedStatus) => {
+      const result = await probeSandboxInferenceInvocation(input, {
+        execute: vi.fn(async () => ({
+          status: 56,
+          stdout: "curl-error:56\n",
+          stderr: `untrusted nvapi-private-canary\ncurl: (56) CONNECT tunnel failed, response ${proxyStatus}\n`,
+        })),
+      });
+      expect(result).toEqual({
+        ok: false,
+        detail: `sandbox inference invocation probe exited with status 56${retainedStatus ? ` (proxy CONNECT returned HTTP ${retainedStatus})` : ""}`,
+        httpStatus: null,
+        endpoint: "https://inference.local/v1/chat/completions",
+      });
+      expect(JSON.stringify(result)).not.toContain("nvapi-private-canary");
+    },
+  );
+
   it("accepts a served response body that serializes an empty tool call list (#9108)", async () => {
     const body = JSON.stringify({
       object: "chat.completion",

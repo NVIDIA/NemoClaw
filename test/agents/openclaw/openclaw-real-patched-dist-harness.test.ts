@@ -11,19 +11,29 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { interruptMetadataWrite } from "../../support/metadata-write-faults";
 import { reviewedArchiveGraphManifest } from "../../../scripts/audit-reviewed-npm-graph.mts";
-import { remediateOpenClawRuntimeDependencies } from "../../../scripts/lib/remediate-openclaw-runtime-dependencies.mts";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
+import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import { remediateOpenClawRuntimeDependencies } from "../../../scripts/lib/remediate-openclaw-runtime-dependencies.mts";
 import {
   buildConfig,
   buildManagedInferenceSafeguardCompaction,
 } from "../../../scripts/generate-openclaw-config.mts";
 import { baseOpenClawGenerationEnv } from "../../helpers/openclaw-env-fixture";
+import { proveRealOpenClawAgentOwnership } from "../../helpers/openclaw-real-agent-ownership-proof";
 import { runRealOpenClawAgentReloadProof } from "../../helpers/openclaw-real-agent-reload-proof";
 import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
 import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
-import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
+import {
+  runRealOpenClawMcpStartRetryProof,
+  runMcpStartRetryScenarios,
+} from "../../helpers/openclaw-real-mcp-start-retry-proof";
+import { runRealOpenClawWorkerProxyProof } from "../../helpers/openclaw-real-worker-proxy-proof";
+import {
+  prepareRealOpenClawWorkerDirectory,
+  proveRealOpenClawWorkerArchiveSelection,
+} from "../../helpers/openclaw-real-worker-directory";
 
 import { patchOpenClawAgentMessageInput } from "../../../scripts/lib/patch-openclaw-agent-message-input.mts";
 
@@ -71,10 +81,11 @@ const REVIEWED_NPM_VERSION = REVIEWED_RUNTIME.npmVersion;
 // reads can exceed one minute, so keep them bounded without using unit-fixture
 // timings as the real-artifact limit.
 const PATCH_COMMAND_TIMEOUT_MS = 120_000;
-// The compiled-dist classifier performs several full-tree grep/sed passes.
-// A cold 2026.9.1 materialization can exceed three minutes on macOS while the
-// same patch completes normally; keep this bounded below the 12-minute CI job.
-const DOCKERFILE_PATCH_TIMEOUT_MS = 300_000;
+// The 2026.10.5 distribution contains over 8,000 JavaScript modules. Repeated
+// cold APFS scans exceeded five minutes locally; keep the Linux CI deadline
+// unchanged while bounding the macOS artifact proof independently.
+const DOCKERFILE_PATCH_TIMEOUT_MS = process.platform === "darwin" ? 600_000 : 300_000;
+const REAL_DIST_TIMEOUT_MS = process.platform === "darwin" ? 1_200_000 : 600_000;
 
 function readRequiredDockerArg(name: string): string {
   const match = fs
@@ -123,7 +134,7 @@ function createSedWrapper(tmp: string): string {
       "    shift 2",
       "  fi",
       '  for file in "$@"; do',
-      "    tmp=$(mktemp)",
+      '    tmp=$(mktemp "$file.nemoclaw-sed.XXXXXX")',
       '    if [ "$extended" = "1" ]; then',
       '      /usr/bin/sed -E "$expr" "$file" > "$tmp"',
       "    else",
@@ -148,11 +159,12 @@ function sha512Sri(file: string): string {
   return sha512SriContent(fs.readFileSync(file));
 }
 
-function nativeUpdateCheckMigrationSource(file: string): string {
+function nativeStateAdmissionSource(file: string): string {
   const source = fs.readFileSync(file, "utf-8");
   return (
-    source.match(/^function migrateLegacyUpdateCheckState\(params\) \{\n[\s\S]*?^\}/mu)?.[0] ??
-    runtimeMismatch("missing", "one complete native update-check migration", file)
+    source.match(
+      /^function assertNoRetiredRuntimeStateFiles\(stateDir, env = process.env, homedir = os.homedir\) \{\n[\s\S]*?^\}/mu,
+    )?.[0] ?? runtimeMismatch("missing", "one complete native retired-state admission guard", file)
   );
 }
 
@@ -241,6 +253,14 @@ function dockerfilePatchCommand(dist: string): string {
     "# Native OpenClaw restart must reload",
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts",
+      JSON.stringify(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-worker-proxy.mts")),
+    )
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts",
+      shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-explicit-proxy.mts")),
+    )
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
   return `${legacy}\n${dockerfileRuntimePatchCommand(dist)}`;
 }
@@ -261,7 +281,7 @@ function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
   const fakeBin = createSedWrapper(tmp);
   return spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
-    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    env: { ...process.env, TMPDIR: tmp, PATH: `${fakeBin}:${process.env.PATH || ""}` },
     timeout: DOCKERFILE_PATCH_TIMEOUT_MS,
   });
 }
@@ -269,7 +289,10 @@ function runDockerfilePatchBlock(dist: string, tmp: string, version: string) {
 function grepRealDist(dist: string, needle: string) {
   return spawnSync(
     "bash",
-    ["-lc", `grep -RIlF --include='*.js' ${shellQuote(needle)} ${shellQuote(dist)}`],
+    [
+      "-lc",
+      `grep -RIlF --include='*.js' --include='*.mjs' ${shellQuote(needle)} ${shellQuote(dist)}`,
+    ],
     {
       encoding: "utf-8",
       timeout: PATCH_COMMAND_TIMEOUT_MS,
@@ -410,14 +433,18 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-patch-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(path.join(dist, "cli"), { recursive: true });
-    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "2026.9.2" }));
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "2026.10.5" }));
     fs.copyFileSync(
-      path.join(import.meta.dirname, "fixtures/agent-message-input.js.txt"),
-      path.join(dist, "agent-via-gateway-fixture.js"),
+      path.join(import.meta.dirname, "fixtures/agent-message-input-10.5.js.txt"),
+      path.join(dist, "agent-via-gateway-fixture.mjs"),
     );
     fs.copyFileSync(
-      path.join(import.meta.dirname, "fixtures/gateway-container-restart.js.txt"),
+      path.join(import.meta.dirname, "fixtures/gateway-container-restart-10.5.js.txt"),
       path.join(dist, "cli/gateway-lifecycle.runtime.js"),
+    );
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/gateway-proxy-signal-handlers-10.5.js.txt"),
+      path.join(dist, "cli/run-main.js"),
     );
     fs.writeFileSync(
       path.join(dist, "lifecycle-fixture.js"),
@@ -744,485 +771,643 @@ try {
       600000,
     );
 
-    it("materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches", async () => {
-      const nodeRuntime = resolveRealOpenClawNodeRuntime();
-      console.info(
-        `OpenClaw real patched-dist Node runtime: ${nodeRuntime.version} (${nodeRuntime.executable})`,
-      );
-      const npmVersion = spawnSync("npm", ["--version"], {
-        encoding: "utf-8",
-        timeout: 10_000,
-      });
-      requireSpawnSuccess(npmVersion, "probe reviewed npm runtime");
-      requireRuntimeEqual(
-        npmVersion.stdout.trim(),
-        REVIEWED_NPM_VERSION,
-        "OpenClaw real patched-dist npm runtime",
-      );
-      const version = readRequiredDockerArg("OPENCLAW_VERSION");
-      const integrity = readRequiredDockerArg("OPENCLAW_2026_9_2_INTEGRITY");
-      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_9_2_TARBALL");
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
-      try {
-        const tarballPath = materializeReviewedTarball(tarballUrl, tmp, integrity);
-
-        const runtimeRoot = path.join(tmp, "runtime");
-        const install = spawnSync(
-          "npm",
-          [
-            "install",
-            "--prefix",
-            runtimeRoot,
-            "--allow-file=all",
-            "--ignore-scripts",
-            "--no-audit",
-            "--no-fund",
-            tarballPath,
-          ],
-          {
-            encoding: "utf-8",
-            env: { ...process.env, NPM_CONFIG_CACHE: path.join(tmp, "npm-cache") },
-            maxBuffer: 10 * 1024 * 1024,
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
+    it(
+      "materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches",
+      async () => {
+        const nodeRuntime = resolveRealOpenClawNodeRuntime();
+        console.info(
+          `OpenClaw real patched-dist Node runtime: ${nodeRuntime.version} (${nodeRuntime.executable})`,
         );
-        requireSpawnSuccess(install, "install reviewed OpenClaw tarball without scripts");
-
-        const dist = path.join(runtimeRoot, "node_modules", "openclaw", "dist");
-        fs.statSync(dist).isDirectory() || runtimeMismatch("not a directory", "directory", dist);
-
-        const dockerPatch = runDockerfilePatchBlock(dist, tmp, version);
-        requireSpawnSuccess(dockerPatch, "apply Dockerfile OpenClaw patches");
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 2 applied to OpenClaw ${version}`,
-          "Patch 2",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 2b applied to OpenClaw ${version}`,
-          "Patch 2b",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 4 applied to OpenClaw ${version}`,
-          "Patch 4",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `Patch 6 applied to OpenClaw ${version}`,
-          "Patch 6",
-        );
-        const toolCatalogPatch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_TOOL_CATALOG, dist],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(toolCatalogPatch, "apply managed llama.cpp compact tool catalog patch");
-        requireRuntimeIncludes(
-          toolCatalogPatch.stdout,
-          "OpenClaw compact tool catalog patched-native-llamacpp",
-          "managed llama.cpp compact tool catalog patch output",
-        );
-        [
-          "nemoclaw: env-gated bypass",
-          "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
-          "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
-          'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
-          "nemoclaw llama.cpp compact native tool catalog (#11105)",
-          "nemoclaw llama.cpp JSON-string tool-call input (#11105)",
-        ].forEach((marker) => {
-          const grep = grepRealDist(dist, marker);
-          requireSpawnSuccess(grep, `find real-dist marker ${marker}`);
-          grep.stdout.trim().length > 0 || runtimeMismatch("empty", "non-empty", marker);
+        const npmVersion = spawnSync("npm", ["--version"], {
+          encoding: "utf-8",
+          timeout: 10_000,
         });
-
-        const npm12Patch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(npm12Patch, "apply npm 12 pack JSON compatibility patch");
-        requireRuntimeIncludes(
-          npm12Patch.stdout,
-          "OpenClaw npm 12 pack JSON parser already-patched",
-          "npm 12 pack JSON patch output",
-        );
-        const npm12PatchAudit = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(npm12PatchAudit, "audit npm 12 pack JSON compatibility patch");
-        requireRuntimeIncludes(
-          npm12PatchAudit.stdout,
-          "OpenClaw npm 12 pack JSON parser already-patched",
-          "npm 12 pack JSON patch idempotence",
-        );
-
-        const npm12ParserTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^install-source-utils-[A-Za-z0-9_-]+\.js$/u.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs.readFileSync(file, "utf-8").includes("resolveNpmJsonEntries(parsed)"),
-          );
+        requireSpawnSuccess(npmVersion, "probe reviewed npm runtime");
         requireRuntimeEqual(
-          String(npm12ParserTargets.length),
-          "1",
-          "npm 12 pack JSON real parser target count",
+          npmVersion.stdout.trim(),
+          REVIEWED_NPM_VERSION,
+          "OpenClaw real patched-dist npm runtime",
         );
-        const realParserModule = (await import(
-          `${pathToFileURL(npm12ParserTargets[0] as string).href}?nemoclaw-npm12-proof=1`
-        )) as Record<string, unknown>;
-        const realMetadataResolvers = Object.values(realParserModule).filter(
-          (value): value is ResolveRealNpmPackArchiveMetadata =>
-            typeof value === "function" && value.name === "resolveNpmPackArchiveMetadata",
-        );
-        requireRuntimeEqual(
-          String(realMetadataResolvers.length),
-          "1",
-          "npm 12 pack JSON real metadata resolver count",
-        );
-        const resolveRealMetadata = realMetadataResolvers[0] as ResolveRealNpmPackArchiveMetadata;
-        requirePackMetadata(
-          await resolveRealMetadata({
-            archivePath: tarballPath,
-            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
-          }),
-          {
-            filename: path.basename(tarballPath),
-            integrity,
-            name: "openclaw",
-            version,
-          },
-          "npm 12 pack JSON real parser",
-        );
-        const fakeNpmBin = path.join(tmp, "npm-pack-shape-bin");
-        fs.mkdirSync(fakeNpmBin);
-        const fakeNpm = path.join(fakeNpmBin, "npm");
-        const previousPath = process.env.PATH ?? "";
-        const sentinelFilename = "npm12-shape-probe.tgz";
-        const sentinelIntegrity = `sha512-${Buffer.alloc(64, 12).toString("base64")}`;
-        const sentinelVersion = "0.0.0-npm12-shape-probe";
-        const expectedMetadata = {
-          filename: sentinelFilename,
-          id: `openclaw@${sentinelVersion}`,
-          integrity: sentinelIntegrity,
-          name: "openclaw",
-          version: sentinelVersion,
-        };
-        const expectedResult = {
-          filename: sentinelFilename,
-          integrity: sentinelIntegrity,
-          name: "openclaw",
-          version: sentinelVersion,
-        };
-        const resolveFixtureMetadata = async (output: unknown) => {
-          fs.writeFileSync(
-            fakeNpm,
-            `#!/bin/sh\nprintf '%s\\n' ${shellQuote(JSON.stringify(output))}\n`,
-            { mode: 0o700 },
-          );
-          return resolveRealMetadata({
-            archivePath: tarballPath,
-            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
-          });
-        };
+        const version = readRequiredDockerArg("OPENCLAW_VERSION");
+        const integrity = readRequiredDockerArg("OPENCLAW_2026_10_5_INTEGRITY");
+        const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_10_5_TARBALL");
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
         try {
-          process.env.PATH = `${fakeNpmBin}:${previousPath}`;
-          requirePackMetadata(
-            await resolveFixtureMetadata([expectedMetadata]),
-            expectedResult,
-            "npm 12 pack JSON real parser array compatibility",
+          const tarballPath = materializeReviewedTarball(tarballUrl, tmp, integrity);
+
+          const runtimeRoot = path.join(tmp, "runtime");
+          fs.mkdirSync(runtimeRoot);
+          fs.copyFileSync(
+            path.join(REPO_ROOT, "agents/openclaw/openclaw-runtime/package.json"),
+            path.join(runtimeRoot, "package.json"),
           );
-          requirePackMetadata(
-            await resolveFixtureMetadata(expectedMetadata),
-            expectedResult,
-            "npm 12 pack JSON real parser direct object compatibility",
+          fs.copyFileSync(
+            path.join(REPO_ROOT, "agents/openclaw/openclaw-runtime/package-lock.json"),
+            path.join(runtimeRoot, "package-lock.json"),
           );
-          requirePackMetadata(
-            await resolveFixtureMetadata({ openclaw: expectedMetadata }),
-            expectedResult,
-            "npm 12 pack JSON real parser keyed object compatibility",
+          const install = spawnSync(
+            "npm",
+            [
+              "ci",
+              "--prefix",
+              runtimeRoot,
+              "--ignore-scripts",
+              "--omit=dev",
+              "--no-audit",
+              "--no-fund",
+            ],
+            {
+              encoding: "utf-8",
+              env: { ...process.env, NPM_CONFIG_CACHE: path.join(tmp, "npm-cache") },
+              maxBuffer: 10 * 1024 * 1024,
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            },
           );
-        } finally {
-          process.env.PATH = previousPath;
-        }
+          requireSpawnSuccess(install, "install reviewed OpenClaw runtime lock without scripts");
+          remediateOpenClawRuntimeDependencies(runtimeRoot);
+          const lockfilePath = path.join(runtimeRoot, "package-lock.json");
+          const expectedLockSha256 = crypto
+            .createHash("sha256")
+            .update(fs.readFileSync(lockfilePath))
+            .digest("hex");
+          const verifyRuntimeGraph = () =>
+            verifyInstalledNpmLock({
+              installRoot: runtimeRoot,
+              lockfilePath,
+              expectedLockSha256,
+              label: "real artifact harness runtime",
+              omitDev: true,
+            });
+          verifyRuntimeGraph();
 
-        patchOpenClawAgentMessageInput(dist, true);
+          const dist = path.join(runtimeRoot, "node_modules", "openclaw", "dist");
+          fs.statSync(dist).isDirectory() || runtimeMismatch("not a directory", "directory", dist);
 
-        patchOpenClawContainerRestart(dist, true);
-
-        const issue4434Patch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, dist],
-          {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
-        );
-        requireSpawnSuccess(issue4434Patch, "apply #4434 diagnostics patch");
-        requireRuntimeIncludes(
-          issue4434Patch.stdout,
-          "patched OpenClaw #4434 diagnostics",
-          "#4434 patch output",
-        );
-
-        const issue4434Audit = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, "--audit", dist],
-          {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
-          },
-        );
-        requireSpawnSuccess(issue4434Audit, "audit #4434 diagnostics patch");
-        requireRuntimeIncludes(
-          issue4434Audit.stdout,
-          "assistant error formatter:",
-          "#4434 assistant error formatter audit",
-        );
-        requireRuntimeIncludes(
-          issue4434Audit.stdout,
-          "issue-4434-diagnostics: already-applied",
-          "#4434 patch state audit",
-        );
-
-        const stateMigrationTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^state-migrations[.-].+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs
-              .readFileSync(file, "utf-8")
-              .includes("function migrateLegacyUpdateCheckState(params) {"),
+          const dockerPatch = runDockerfilePatchBlock(dist, tmp, version);
+          requireSpawnSuccess(dockerPatch, "apply Dockerfile OpenClaw patches");
+          requireRuntimeIncludes(
+            dockerPatch.stdout,
+            `Patch 2 applied to OpenClaw ${version}`,
+            "Patch 2",
           );
-        requireRuntimeEqual(
-          String(stateMigrationTargets.length),
-          "1",
-          "native update-check migration target count",
-        );
-        const stateMigrationIntegrity = stateMigrationTargets.map((file) =>
-          sha512SriContent(nativeUpdateCheckMigrationSource(file)),
-        );
-
-        const sharedStatePatch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(sharedStatePatch, "apply shared-state permission patch");
-        requireRuntimeIncludes(
-          sharedStatePatch.stdout,
-          "SQLite state permissions patched",
-          "shared-state patch output",
-        );
-
-        const sharedStateAudit = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(sharedStateAudit, "audit shared-state permission patch");
-        requireRuntimeIncludes(
-          sharedStateAudit.stdout,
-          "SQLite state permissions already-patched",
-          "shared-state patch idempotence",
-        );
-
-        const sharedStateTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^openclaw-state-db-.+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs.readFileSync(file, "utf-8").includes("/* nemoclaw: group-shared OpenClaw state */"),
+          requireRuntimeIncludes(
+            dockerPatch.stdout,
+            `Patch 2b applied to OpenClaw ${version}`,
+            "Patch 2b",
           );
-        requireRuntimeEqual(
-          String(sharedStateTargets.length),
-          "1",
-          "shared-state patch target count",
-        );
-        const agentStateTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^openclaw-agent-db-.+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs
-              .readFileSync(file, "utf-8")
-              .includes("/* nemoclaw: group-shared OpenClaw agent state */"),
+          requireRuntimeIncludes(
+            dockerPatch.stdout,
+            `Patch 4 applied to OpenClaw ${version}`,
+            "Patch 4",
           );
-        requireRuntimeEqual(
-          String(agentStateTargets.length),
-          "1",
-          "per-agent state patch target count",
-        );
-        const privateStoreTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^secret-file-.+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) => {
-            const source = fs.readFileSync(file, "utf-8");
-            return (
-              (source.includes("const PRIVATE_SECRET_DIR_MODE = 448;") &&
-                source.includes("const PRIVATE_SECRET_FILE_MODE = 384;")) ||
-              (source.includes('from "@openclaw/fs-safe/secret";') &&
-                source.includes("PRIVATE_SECRET_DIR_MODE") &&
-                source.includes("PRIVATE_SECRET_FILE_MODE") &&
-                (source.includes("writeSecretFileAtomic as writePrivateSecretFileAtomic") ||
-                  (source.includes("async function writePrivateSecretFileAtomic(params) {") &&
-                    source.includes("await tightenSecretDirectoryModes(params);") &&
-                    source.includes("await writeSecretFileAtomic(params);"))))
-            );
+          requireRuntimeIncludes(
+            dockerPatch.stdout,
+            `Patch 6 applied to OpenClaw ${version}`,
+            "Patch 6",
+          );
+          const toolCatalogPatch = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_TOOL_CATALOG, dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            toolCatalogPatch,
+            "apply managed llama.cpp compact tool catalog patch",
+          );
+          requireRuntimeIncludes(
+            toolCatalogPatch.stdout,
+            "OpenClaw compact tool catalog patched-native-llamacpp",
+            "managed llama.cpp compact tool catalog patch output",
+          );
+          [
+            "nemoclaw: validated OpenShell explicit proxy",
+            "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
+            "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
+            'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
+            "nemoclaw llama.cpp compact native tool catalog (#11105)",
+            "nemoclaw llama.cpp JSON-string tool-call input (#11105)",
+          ].forEach((marker) => {
+            const grep = grepRealDist(dist, marker);
+            requireSpawnSuccess(grep, `find real-dist marker ${marker}`);
+            grep.stdout.trim().length > 0 || runtimeMismatch("empty", "non-empty", marker);
           });
-        requireRuntimeEqual(
-          String(privateStoreTargets.length),
-          "1",
-          "owner-only private-store target count",
-        );
-        requireRuntimeEqual(
-          String(
-            privateStoreTargets.some((file) =>
-              fs
-                .readFileSync(file, "utf-8")
-                .includes("/* nemoclaw: group-shared OpenClaw private store */"),
-            ),
-          ),
-          "false",
-          "generic private-store sharing marker",
-        );
-        stateMigrationTargets.forEach((file, index) => {
+
+          const npm12Patch = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(npm12Patch, "apply npm 12 pack JSON compatibility patch");
+          requireRuntimeIncludes(
+            npm12Patch.stdout,
+            "OpenClaw npm 12 pack JSON parser already-patched",
+            "npm 12 pack JSON patch output",
+          );
+          const npm12PatchAudit = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(npm12PatchAudit, "audit npm 12 pack JSON compatibility patch");
+          requireRuntimeIncludes(
+            npm12PatchAudit.stdout,
+            "OpenClaw npm 12 pack JSON parser already-patched",
+            "npm 12 pack JSON patch idempotence",
+          );
+
+          const npm12ParserTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^install-source-utils-[A-Za-z0-9_-]+\.m?js$/u.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) =>
+              fs.readFileSync(file, "utf-8").includes("resolveNpmJsonEntries(parsed)"),
+            );
           requireRuntimeEqual(
-            sha512SriContent(nativeUpdateCheckMigrationSource(file)),
-            stateMigrationIntegrity[index],
-            "native update-check migration remains unchanged",
+            String(npm12ParserTargets.length),
+            "1",
+            "npm 12 pack JSON real parser target count",
           );
-        });
-        const fileStoreTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^(?:file-store|private-file-store)-.+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) => {
-            const source = fs.readFileSync(file, "utf-8");
-            return (
-              (source.includes("function fileStore(options) {") &&
-                source.includes("function fileStoreSync(options) {") &&
-                source.includes("const dirMode = options.dirMode ?? 448;") &&
-                source.includes("const mode = options.mode ?? 384;")) ||
-              (source.includes(
-                'import { fileStore, fileStoreSync } from "@openclaw/fs-safe/store";',
-              ) &&
-                source.includes("function privateFileStore(rootDir) {") &&
-                source.includes("function privateFileStoreSync(rootDir) {") &&
-                source.split("private: true").length === 3)
+          const realParserModule = (await import(
+            `${pathToFileURL(npm12ParserTargets[0] as string).href}?nemoclaw-npm12-proof=1`
+          )) as Record<string, unknown>;
+          const realMetadataResolvers = Object.values(realParserModule).filter(
+            (value): value is ResolveRealNpmPackArchiveMetadata =>
+              typeof value === "function" && value.name === "resolveNpmPackArchiveMetadata",
+          );
+          requireRuntimeEqual(
+            String(realMetadataResolvers.length),
+            "1",
+            "npm 12 pack JSON real metadata resolver count",
+          );
+          const resolveRealMetadata = realMetadataResolvers[0] as ResolveRealNpmPackArchiveMetadata;
+          requirePackMetadata(
+            await resolveRealMetadata({
+              archivePath: tarballPath,
+              timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            }),
+            {
+              filename: path.basename(tarballPath),
+              integrity,
+              name: "openclaw",
+              version,
+            },
+            "npm 12 pack JSON real parser",
+          );
+          const fakeNpmBin = path.join(tmp, "npm-pack-shape-bin");
+          fs.mkdirSync(fakeNpmBin);
+          const fakeNpm = path.join(fakeNpmBin, "npm");
+          const previousPath = process.env.PATH ?? "";
+          const sentinelFilename = "npm12-shape-probe.tgz";
+          const sentinelIntegrity = `sha512-${Buffer.alloc(64, 12).toString("base64")}`;
+          const sentinelVersion = "0.0.0-npm12-shape-probe";
+          const expectedMetadata = {
+            filename: sentinelFilename,
+            id: `openclaw@${sentinelVersion}`,
+            integrity: sentinelIntegrity,
+            name: "openclaw",
+            version: sentinelVersion,
+          };
+          const expectedResult = {
+            filename: sentinelFilename,
+            integrity: sentinelIntegrity,
+            name: "openclaw",
+            version: sentinelVersion,
+          };
+          const resolveFixtureMetadata = async (output: unknown) => {
+            fs.writeFileSync(
+              fakeNpm,
+              `#!/bin/sh\nprintf '%s\\n' ${shellQuote(JSON.stringify(output))}\n`,
+              { mode: 0o700 },
             );
-          });
-        requireRuntimeEqual(
-          String(fileStoreTargets.length),
-          "1",
-          "owner-only file-store defaults target count",
-        );
-        requireRuntimeEqual(
-          String(
-            fileStoreTargets.some((file) =>
+            return resolveRealMetadata({
+              archivePath: tarballPath,
+              timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            });
+          };
+          try {
+            process.env.PATH = `${fakeNpmBin}:${previousPath}`;
+            requirePackMetadata(
+              await resolveFixtureMetadata([expectedMetadata]),
+              expectedResult,
+              "npm 12 pack JSON real parser array compatibility",
+            );
+            requirePackMetadata(
+              await resolveFixtureMetadata(expectedMetadata),
+              expectedResult,
+              "npm 12 pack JSON real parser direct object compatibility",
+            );
+            requirePackMetadata(
+              await resolveFixtureMetadata({ openclaw: expectedMetadata }),
+              expectedResult,
+              "npm 12 pack JSON real parser keyed object compatibility",
+            );
+          } finally {
+            process.env.PATH = previousPath;
+          }
+
+          patchOpenClawAgentMessageInput(dist, true);
+
+          patchOpenClawContainerRestart(dist);
+          patchOpenClawContainerRestart(dist, true);
+
+          const issue4434Patch = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, dist],
+            {
+              encoding: "utf-8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            },
+          );
+          requireSpawnSuccess(issue4434Patch, "apply #4434 diagnostics patch");
+          requireRuntimeIncludes(
+            issue4434Patch.stdout,
+            "patched OpenClaw #4434 diagnostics",
+            "#4434 patch output",
+          );
+
+          const issue4434Audit = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, "--audit", dist],
+            {
+              encoding: "utf-8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            },
+          );
+          requireSpawnSuccess(issue4434Audit, "audit #4434 diagnostics patch");
+          requireRuntimeIncludes(
+            issue4434Audit.stdout,
+            "assistant error formatter:",
+            "#4434 assistant error formatter audit",
+          );
+          requireRuntimeIncludes(
+            issue4434Audit.stdout,
+            "issue-4434-diagnostics: already-applied",
+            "#4434 patch state audit",
+          );
+
+          const stateMigrationTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^state-migrations[.-].+\.m?js$/.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) =>
               fs
                 .readFileSync(file, "utf-8")
-                .includes("/* nemoclaw: group-shared OpenClaw file-store defaults */"),
-            ),
-          ),
-          "false",
-          "generic file-store sharing marker",
-        );
-        const modelsConfigTargets = fs
-          .readdirSync(dist)
-          .filter((file) => /^models-config-.+\.js$/.test(file))
-          .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs
-              .readFileSync(file, "utf-8")
-              .includes("/* nemoclaw: group-shared OpenClaw models file */"),
+                .includes(
+                  "function assertNoRetiredRuntimeStateFiles(stateDir, env = process.env, homedir = os.homedir) {",
+                ),
+            );
+          requireRuntimeEqual(
+            String(stateMigrationTargets.length),
+            "1",
+            "native retired-state admission target count",
           );
-        requireRuntimeEqual(
-          String(modelsConfigTargets.length),
-          "1",
-          "generated models file mode patch target count",
-        );
-        [
-          ...sharedStateTargets,
-          ...agentStateTargets,
-          ...privateStoreTargets,
-          ...stateMigrationTargets,
-          ...fileStoreTargets,
-          ...modelsConfigTargets,
-        ].forEach((target) => {
-          const syntax = spawnSync(nodeRuntime.executable, ["--check", target], {
-            encoding: "utf-8",
-            timeout: PATCH_COMMAND_TIMEOUT_MS,
+          const stateMigrationIntegrity = stateMigrationTargets.map((file) =>
+            sha512SriContent(nativeStateAdmissionSource(file)),
+          );
+
+          const sharedStatePatch = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(sharedStatePatch, "apply shared-state permission patch");
+          requireRuntimeIncludes(
+            sharedStatePatch.stdout,
+            "SQLite state permissions patched",
+            "shared-state patch output",
+          );
+
+          const sharedStateAudit = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(sharedStateAudit, "audit shared-state permission patch");
+          requireRuntimeIncludes(
+            sharedStateAudit.stdout,
+            "SQLite state permissions already-patched",
+            "shared-state patch idempotence",
+          );
+
+          const webhookPatch = path.join(
+            REPO_ROOT,
+            "scripts",
+            "lib",
+            "patch-openclaw-webhook-completion.mts",
+          );
+          requireSpawnSuccess(
+            spawnSync(nodeRuntime.executable, [webhookPatch, dist], {
+              encoding: "utf8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            }),
+            "apply native webhook completion after shared-state patches",
+          );
+          requireSpawnSuccess(
+            spawnSync(nodeRuntime.executable, [webhookPatch, "--audit", dist], {
+              encoding: "utf8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            }),
+            "audit native webhook completion after shared-state patches",
+          );
+
+          const sharedStateTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^openclaw-state-db-.+\.m?js$/.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) =>
+              fs
+                .readFileSync(file, "utf-8")
+                .includes("/* nemoclaw: group-shared OpenClaw state */"),
+            );
+          requireRuntimeEqual(
+            String(sharedStateTargets.length),
+            "1",
+            "shared-state patch target count",
+          );
+          const agentStateTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^openclaw-agent-db-.+\.m?js$/.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) =>
+              fs
+                .readFileSync(file, "utf-8")
+                .includes("/* nemoclaw: group-shared OpenClaw agent state */"),
+            );
+          requireRuntimeEqual(
+            String(agentStateTargets.length),
+            "1",
+            "per-agent state patch target count",
+          );
+          const privateStoreTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^secret-file-.+\.m?js$/.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) => {
+              const source = fs.readFileSync(file, "utf-8");
+              return (
+                (source.includes("const PRIVATE_SECRET_DIR_MODE = 448;") &&
+                  source.includes("const PRIVATE_SECRET_FILE_MODE = 384;")) ||
+                (source.includes('from "@openclaw/fs-safe/secret";') &&
+                  source.includes("PRIVATE_SECRET_DIR_MODE") &&
+                  source.includes("PRIVATE_SECRET_FILE_MODE") &&
+                  (source.includes("writeSecretFileAtomic as writePrivateSecretFileAtomic") ||
+                    (source.includes("async function writePrivateSecretFileAtomic(params) {") &&
+                      source.includes("await tightenSecretDirectoryModes(params);") &&
+                      source.includes("await writeSecretFileAtomic(params);"))))
+              );
+            });
+          requireRuntimeEqual(
+            String(privateStoreTargets.length),
+            "1",
+            "owner-only private-store target count",
+          );
+          requireRuntimeEqual(
+            String(
+              privateStoreTargets.some((file) =>
+                fs
+                  .readFileSync(file, "utf-8")
+                  .includes("/* nemoclaw: group-shared OpenClaw private store */"),
+              ),
+            ),
+            "false",
+            "generic private-store sharing marker",
+          );
+          stateMigrationTargets.forEach((file, index) => {
+            requireRuntimeEqual(
+              sha512SriContent(nativeStateAdmissionSource(file)),
+              stateMigrationIntegrity[index],
+              "native retired-state admission remains unchanged",
+            );
           });
-          requireSpawnSuccess(syntax, `validate reviewed OpenClaw dist syntax: ${target}`);
-        });
+          const fileStoreTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^(?:file-store|private-file-store)-.+\.m?js$/.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) => {
+              const source = fs.readFileSync(file, "utf-8");
+              return (
+                (source.includes("function fileStore(options) {") &&
+                  source.includes("function fileStoreSync(options) {") &&
+                  source.includes("const dirMode = options.dirMode ?? 448;") &&
+                  source.includes("const mode = options.mode ?? 384;")) ||
+                (source.includes(
+                  'import { fileStore, fileStoreSync } from "@openclaw/fs-safe/store";',
+                ) &&
+                  source.includes("function privateFileStore(rootDir) {") &&
+                  source.includes("function privateFileStoreSync(rootDir) {") &&
+                  source.split("private: true").length === 3)
+              );
+            });
+          requireRuntimeEqual(
+            String(fileStoreTargets.length),
+            "1",
+            "owner-only file-store defaults target count",
+          );
+          requireRuntimeEqual(
+            String(
+              fileStoreTargets.some((file) =>
+                fs
+                  .readFileSync(file, "utf-8")
+                  .includes("/* nemoclaw: group-shared OpenClaw file-store defaults */"),
+              ),
+            ),
+            "false",
+            "generic file-store sharing marker",
+          );
+          const modelsConfigTargets = fs
+            .readdirSync(dist)
+            .filter((file) => /^models-config-.+\.m?js$/.test(file))
+            .map((file) => path.join(dist, file))
+            .filter((file) =>
+              fs
+                .readFileSync(file, "utf-8")
+                .includes("/* nemoclaw: group-shared OpenClaw models file */"),
+            );
+          requireRuntimeEqual(
+            String(modelsConfigTargets.length),
+            "1",
+            "generated models file mode patch target count",
+          );
+          [
+            ...sharedStateTargets,
+            ...agentStateTargets,
+            ...privateStoreTargets,
+            ...stateMigrationTargets,
+            ...fileStoreTargets,
+            ...modelsConfigTargets,
+          ].forEach((target) => {
+            const syntax = spawnSync(nodeRuntime.executable, ["--check", target], {
+              encoding: "utf-8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            });
+            requireSpawnSuccess(syntax, `validate reviewed OpenClaw dist syntax: ${target}`);
+          });
 
-        // These proofs install the reviewed shrinkwrapped runtime dependencies
-        // with lifecycle scripts disabled. Keep them after every shape-only
-        // dist scan so dependency materialization cannot perturb their timing.
-        const transportDiagnosticsPatch = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, dist],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(transportDiagnosticsPatch, "apply managed transport diagnostics patch");
-        const transportDiagnosticsAudit = spawnSync(
-          nodeRuntime.executable,
-          [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, "--audit", dist],
-          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(transportDiagnosticsAudit, "audit managed transport diagnostics patch");
+          // These proofs use the already-installed reviewed runtime lock.
+          // Keep the graph unchanged through every native behavioral proof.
+          const mcpNpxPatch = spawnSync(
+            nodeRuntime.executable,
+            [path.join(REPO_ROOT, "scripts", "patch-openclaw-mcp-npx.mts"), dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(mcpNpxPatch, "apply MCP npx normalization to the real distribution");
+          const transportDiagnosticsPatch = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            transportDiagnosticsPatch,
+            "apply managed transport diagnostics patch",
+          );
+          const transportDiagnosticsAudit = spawnSync(
+            nodeRuntime.executable,
+            [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, "--audit", dist],
+            { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            transportDiagnosticsAudit,
+            "audit managed transport diagnostics patch",
+          );
 
-        runRealOpenClawMcpStartRetryProof({
-          dist,
-          nodeExecutable: nodeRuntime.executable,
-          patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
-          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
-        });
+          runRealOpenClawMcpStartRetryProof({
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+            patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+          });
 
-        runRealOpenClawCompactionRetryProof({
-          dist,
-          nodeExecutable: nodeRuntime.executable,
-          compaction: buildManagedInferenceSafeguardCompaction(
-            "inference",
-            "vllm-local",
-            "https://inference.local/v1",
-            "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
-            32768,
-            4096,
-          ),
-          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
-        });
+          runRealOpenClawCompactionRetryProof({
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+            compaction: buildManagedInferenceSafeguardCompaction(
+              "inference",
+              "vllm-local",
+              "https://inference.local/v1",
+              "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4",
+              32768,
+              4096,
+            ),
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+          });
 
-        await runRealOpenClawAgentReloadProof({
-          gatewayConfig: buildConfig(baseOpenClawGenerationEnv()).gateway,
-          dist,
-          nodeExecutable: nodeRuntime.executable,
-        });
+          proveRealOpenClawAgentOwnership(dist, nodeRuntime.executable);
 
-        runRealOpenClawInstallPathProof({
-          dist,
-          nodeExecutable: nodeRuntime.executable,
-          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
-          tmp,
-        });
+          await runRealOpenClawAgentReloadProof({
+            gatewayConfig: buildConfig(baseOpenClawGenerationEnv()).gateway,
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+          });
 
-        await runRealOpenClawDeviceSelfApprovalProof({
-          dist,
-          nodeExecutable: nodeRuntime.executable,
-          patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.mts"),
-          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
-          tmp,
-          version,
-        });
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    }, 600000);
+          runRealOpenClawInstallPathProof({
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            tmp,
+          });
+
+          const workerStage = prepareRealOpenClawWorkerDirectory({
+            dist,
+            tmp,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+          });
+          requireRuntimeEqual(
+            String(workerStage.archived),
+            "true",
+            "10.5 publishes its worker graph as an archive",
+          );
+          const archivedWorkerDirectory = workerStage.directory;
+          proveRealOpenClawWorkerArchiveSelection({
+            dist,
+            tmp,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            nodeExecutable: nodeRuntime.executable,
+          });
+          runMcpStartRetryScenarios({
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            archivedWorkerDirectory,
+            graph: "embedded",
+          });
+          runMcpStartRetryScenarios({
+            dist,
+            nodeExecutable: nodeRuntime.executable,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            archivedWorkerDirectory,
+            graph: "split",
+          });
+          await runRealOpenClawDeviceSelfApprovalProof({
+            dist,
+            archivedWorkerDirectory,
+            nodeExecutable: nodeRuntime.executable,
+            patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.mts"),
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            tmp,
+            version,
+          });
+          runRealOpenClawWorkerProxyProof({
+            dist,
+            archivedWorkerDirectory,
+            nodeExecutable: nodeRuntime.executable,
+            timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+            tmp,
+          });
+          const worker = path.join(
+            workerStage.directory,
+            workerStage.archived ? "sqlite-store.worker.mjs" : "worker.mjs",
+          );
+          const workerSource = fs.readFileSync(worker, "utf8");
+          requireRuntimeIncludes(
+            workerSource,
+            "/* nemoclaw: worker media proxy */",
+            "reviewed worker proxy patch",
+          );
+          requireRuntimeIncludes(
+            workerSource,
+            "/* nemoclaw: worker explicit proxy */",
+            "reviewed worker proxy patch",
+          );
+          requireRuntimeIncludes(
+            workerSource,
+            "/* nemoclaw: worker host gateway */",
+            "reviewed worker proxy patch",
+          );
+          requireRuntimeIncludes(
+            workerSource,
+            "/* nemoclaw: worker strict proxy */",
+            "reviewed worker proxy patch",
+          );
+          requireRuntimeIncludes(
+            workerSource,
+            "/* nemoclaw: worker cron proxy */",
+            "reviewed worker proxy patch",
+          );
+          requireRuntimeIncludes(
+            workerSource,
+            "/* nemoclaw: worker handshake timeout */",
+            "reviewed worker proxy patch",
+          );
+          const syntaxFailures = workerStage.modifiedModules
+            .map((module) => ({
+              module,
+              result: spawnSync(nodeRuntime.executable, ["--check", module], {
+                encoding: "utf8",
+                timeout: PATCH_COMMAND_TIMEOUT_MS,
+              }),
+            }))
+            .filter(({ result }) => result.status !== 0);
+          requireRuntimeEqual(
+            JSON.stringify(syntaxFailures),
+            "[]",
+            "all modified worker modules parse",
+          );
+          verifyRuntimeGraph();
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+      REAL_DIST_TIMEOUT_MS,
+    );
   },
 );

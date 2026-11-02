@@ -86,7 +86,7 @@ export async function captureSandboxFailureDiagnostics(
         [
           "inspect",
           "--format",
-          "{{.State.Status}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}",
+          "{{.State.Status}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.FinishedAt}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
           containerId,
         ],
         { ...diagnosticOptions, artifactName: `${prefix}-container-state` },

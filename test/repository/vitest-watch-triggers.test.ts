@@ -42,6 +42,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "test/e2e/lib/issue-4462-admin-request-selector.py",
   ".github/workflows/release-daily-brev-image.yaml",
   "test/helpers/onboard-script-mocks.cjs",
   "scripts/release-daily-brev-image.sh",
@@ -213,6 +214,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
       "test/generation/providerless-agent-config.test.ts",
+      "test/networking/dashboard-remote-bind-lifecycle.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
       "test/mcp/mcp-tool-discovery-image-contract.test.ts",

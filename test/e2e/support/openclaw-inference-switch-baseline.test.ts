@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { assertManagedGatewayStateDirectoryParentTrusted } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 const captured = vi.hoisted(() => ({ test: vi.fn() }));
@@ -34,6 +35,10 @@ vi.mock("../fixtures/e2e-test.ts", async () => ({
 vi.mock("../fixtures/managed-image-receipt.ts", () => ({
   selectedE2eManagedImageReference: () => "example.invalid/openclaw@sha256:" + "a".repeat(64),
 }));
+
+// The live registration is mocked above. Collect its fixture module once so
+// cold source transformation is setup work; each case still resets module state.
+import "../live/openclaw-inference-switch.test.ts";
 
 const disposables: Array<() => unknown> = [];
 const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -175,7 +180,7 @@ it.each(
     });
     await expect(
       run({
-        artifacts: { target: { declare: vi.fn() } },
+        artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
         cleanup: {
           trackDisposable: (_name: string, dispose: () => unknown) => disposables.push(dispose),
           trackGateway: vi.fn(),
@@ -183,6 +188,7 @@ it.each(
         },
         host: {
           nemoclaw,
+          cleanupGatewayRegistration: vi.fn(async () => undefined),
           command: vi.fn(async () => result),
         },
         progress,
@@ -205,6 +211,9 @@ it.each(
     );
     const options = nemoclaw.mock.calls[0]![1];
     const environment = options.env;
+    expect(() =>
+      assertManagedGatewayStateDirectoryParentTrusted(`${environment.HOME}/gateway-state`),
+    ).not.toThrow();
     expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
     expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe(
       nativeCustom ? "baseline.trycloudflare.com" : "host.openshell.internal",
@@ -244,7 +253,7 @@ it.each([
     const getKey = vi.fn(required);
     await expect(
       run({
-        artifacts: { target: { declare: vi.fn() } },
+        artifacts: { target: { declare: vi.fn() }, writeJson: vi.fn(async () => "artifact.json") },
         cleanup: { trackDisposable: vi.fn() },
         progress,
         runtimeProvider: { requireAvailable: vi.fn() },

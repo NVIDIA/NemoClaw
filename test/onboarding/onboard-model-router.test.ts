@@ -575,60 +575,115 @@ describe("onboard Model Router setup", () => {
     assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
   });
 
-  it("terminates a live router whose semantic health requests exhaust the deadline (#12089)", async () => {
-    const pid = 12_345;
-    let nowMs = 0;
-    const sleep = vi.fn(async (milliseconds: number) => {
-      nowMs += milliseconds;
-    });
-    const terminateProcess = vi.fn();
-    const getRouterHealthSnapshot = vi.fn(
-      async (_port: number, timeoutMs = 0, _signal?: AbortSignal) => {
-        nowMs += timeoutMs;
-        return healthSnapshot(false, null, {
-          elapsedMs: timeoutMs,
-          outcome: "timeout",
-        });
+  it.each([
+    {
+      shutdown: async () => undefined,
+      cleanupMessage: /Model Router shutdown completed/,
+    },
+    {
+      shutdown: async () => {
+        throw new Error("shutdown failed: api_key nvapi-CLEANUPSECRET invalid");
       },
-    );
-
-    await assert.rejects(
-      startModelRouter(
-        { port: 45_680, pool_config_path: "router/test-pool.yaml" },
-        {
-          rootDir: "/test/repo",
-          homeDir: "/test/home",
-          ensureModelRouterCommand: () => "/test/model-router",
-          mkdirSync: () => undefined,
-          runProxyConfig: () => ({ status: 0 }),
-          spawnProxy: () => ({
-            pid,
-            onError: () => undefined,
-            onExit: () => undefined,
-            unref: () => undefined,
-          }),
-          resolveProviderCredential: () => null,
-          buildSubprocessEnv: () => ({}),
-          isRouterResponsive: async () => false,
-          getRouterHealthSnapshot,
-          sleep,
-          now: () => nowMs,
-          isProcessAlive: () => true,
-          terminateProcess,
-          getProviderKey: () => "",
+      cleanupMessage:
+        /Model Router shutdown could not be verified: shutdown failed: api_key <REDACTED> invalid/,
+    },
+  ])(
+    "awaits router shutdown after the semantic health deadline [case %#]",
+    async ({ shutdown, cleanupMessage }) => {
+      const pid = 12_345;
+      let nowMs = 0;
+      const sleep = vi.fn(async (milliseconds: number) => {
+        nowMs += milliseconds;
+      });
+      let startCleanup!: () => void;
+      const cleanupStarted = new Promise<void>((resolve) => {
+        startCleanup = resolve;
+      });
+      let finishCleanup!: () => void;
+      const cleanupGate = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      const terminateProcess = vi.fn(async () => {
+        startCleanup();
+        await cleanupGate;
+        await shutdown();
+      });
+      const getRouterHealthSnapshot = vi.fn(
+        async (_port: number, timeoutMs = 0, _signal?: AbortSignal) => {
+          nowMs += timeoutMs;
+          return healthSnapshot(false, null, {
+            elapsedMs: timeoutMs,
+            outcome: "timeout",
+          });
         },
-      ),
-      /failed to become healthy on port 45680 within 600 seconds \(completed health checks: 1\) \(last health check: timeout, no HTTP status, 598000 ms, 0 body bytes\)/,
-    );
+      );
 
-    assert.equal(nowMs, 600_000);
-    assert.equal(getRouterHealthSnapshot.mock.calls.length, 1);
-    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[0], 45_680);
-    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[1], 598_000);
-    assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[2] instanceof AbortSignal, true);
-    assert.equal(sleep.mock.calls.length, 1);
-    assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
-  });
+      const rejection = assert.rejects(
+        startModelRouter(
+          { port: 45_680, pool_config_path: "router/test-pool.yaml" },
+          {
+            rootDir: "/test/repo",
+            homeDir: "/test/home",
+            ensureModelRouterCommand: () => "/test/model-router",
+            mkdirSync: () => undefined,
+            runProxyConfig: () => ({ status: 0 }),
+            spawnProxy: () => ({
+              pid,
+              onError: () => undefined,
+              onExit: () => undefined,
+              unref: () => undefined,
+            }),
+            resolveProviderCredential: () => null,
+            buildSubprocessEnv: () => ({}),
+            isRouterResponsive: async () => false,
+            getRouterHealthSnapshot,
+            sleep,
+            now: () => nowMs,
+            isProcessAlive: () => true,
+            terminateProcess,
+            getProviderKey: () => "",
+          },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.match(
+            error.message,
+            /failed to become healthy on port 45680 within 600 seconds \(completed health checks: 1\) \(last health check: timeout, no HTTP status, 598000 ms, 0 body bytes\)/,
+          );
+          assert.match(error.message, cleanupMessage);
+          assert.doesNotMatch(error.message, /CLEANUPSECRET|nvapi-CLEA/);
+          return true;
+        },
+      );
+
+      let settled = false;
+      const completed = rejection.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await cleanupStarted;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      try {
+        assert.equal(settled, false, "startup rejected before shutdown verification settled");
+      } finally {
+        finishCleanup();
+      }
+      await completed;
+      await rejection;
+
+      assert.equal(nowMs, 600_000);
+      assert.equal(getRouterHealthSnapshot.mock.calls.length, 1);
+      assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[0], 45_680);
+      assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[1], 598_000);
+      assert.equal(getRouterHealthSnapshot.mock.calls[0]?.[2] instanceof AbortSignal, true);
+      assert.equal(sleep.mock.calls.length, 1);
+      assert.deepEqual(terminateProcess.mock.calls, [[pid]]);
+    },
+  );
 
   it("sets OPENAI_API_KEY to the routed credential when an ambient OPENAI_API_KEY exists (#8962)", async () => {
     const pid = 12_345;
@@ -736,13 +791,14 @@ describe("onboard Model Router setup", () => {
     );
   });
 
-  it("redacts a credential-shaped health error from the startup error (#8962)", async () => {
+  it("retains a redacted upstream health error after a later transport timeout", async () => {
     const pid = 12_345;
     const secret = "nvapi-HEALTHSECRETHEALTHSECRETHEALTHSECRETHEALTH";
     const credentialBody = JSON.stringify({
       healthy_endpoints: [],
       unhealthy_endpoints: [{ error: `AuthenticationError: api_key ${secret} invalid` }],
     });
+    let observations = 0;
 
     await assert.rejects(
       startModelRouter(
@@ -762,7 +818,16 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
           isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(false, credentialBody),
+          getRouterHealthSnapshot: async () => {
+            observations += 1;
+            return observations === 1
+              ? healthSnapshot(true, credentialBody)
+              : {
+                  ...healthSnapshot(false, null),
+                  outcome: "timeout",
+                  statusCode: null,
+                };
+          },
           sleep: async () => undefined,
           isProcessAlive: () => true,
           terminateProcess: () => undefined,
@@ -770,6 +835,7 @@ describe("onboard Model Router setup", () => {
         },
       ),
       (error: Error) => {
+        assert.match(error.message, /last health check: timeout, no HTTP status/);
         assert.match(
           error.message,
           /last health error: AuthenticationError: api_key <REDACTED> invalid/,
@@ -779,6 +845,7 @@ describe("onboard Model Router setup", () => {
         return true;
       },
     );
+    assert.equal(observations > 1, true);
   });
 
   it("rejects a completed 2xx snapshot with zero healthy endpoints (#8962)", async () => {

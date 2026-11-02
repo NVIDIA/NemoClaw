@@ -10,7 +10,7 @@ import {
 } from "./channels/wechat/contract";
 import { authorizeMessagingManagedStartupFields } from "./managed-startup-placeholders";
 
-const TEAMS_WEBHOOK = { path: "/api/messages", port: 3978 };
+const TEAMS_WEBHOOK = { path: "/api/messages" };
 const TEAMS_ENTRY = {
   channelId: "teams",
   renderId: "teams-openclaw-channel",
@@ -20,7 +20,7 @@ const TEAMS_ENTRY = {
   agent: "openclaw",
   target: "openclaw.json",
   path: "channels.msteams",
-  value: { webhook: TEAMS_WEBHOOK },
+  value: { webhook: TEAMS_WEBHOOK, legacyWebhook: { port: 3978 } },
 };
 const WECHAT_VALUE = {
   path: "openclaw-weixin/accounts/managed-startup.json",
@@ -49,7 +49,7 @@ describe("managed-startup messaging field authorization", () => {
     const webhook = nullPrototype({ ...TEAMS_WEBHOOK });
     const teamsEntry = nullPrototype({
       ...TEAMS_ENTRY,
-      value: nullPrototype({ webhook }),
+      value: nullPrototype({ webhook, legacyWebhook: nullPrototype({ port: 3978 }) }),
     });
     const content = nullPrototype({ ...WECHAT_VALUE.content });
     const wechatValue = nullPrototype({ ...WECHAT_VALUE, content });
@@ -110,7 +110,7 @@ describe("managed-startup messaging field authorization", () => {
   it("rejects surplus fields inside authorized credential values", () => {
     const teamsEntry = {
       ...TEAMS_ENTRY,
-      value: { webhook: { ...TEAMS_WEBHOOK, token: "unexpected" } },
+      value: { ...TEAMS_ENTRY.value, webhook: { ...TEAMS_WEBHOOK, token: "unexpected" } },
     };
     const wechatValue = {
       ...WECHAT_VALUE,
