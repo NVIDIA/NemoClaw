@@ -13,7 +13,11 @@
 #[cfg(unix)]
 mod capabilities;
 
-use nemoclaw_test_fixtures::{Bundle, openshell::Fixture, tofu::TofuWorkspace};
+use nemoclaw_test_fixtures::{
+    Bundle,
+    openshell::{self, Fixture},
+    tofu::TofuWorkspace,
+};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -57,19 +61,7 @@ fn catalog_json() -> String {
 /// Every Fabric type is used by a module with native tests.
 #[test]
 fn every_fabric_type_has_a_contract_test() {
-    let mut sources = String::new();
-    for module in fs::read_dir(CONTRACT).unwrap() {
-        let module = module.unwrap().path();
-        if !module.join("tests").is_dir() {
-            continue;
-        }
-        for file in fs::read_dir(module).unwrap() {
-            let file = file.unwrap().path();
-            if file.extension().is_some_and(|extension| extension == "tf") {
-                sources += &fs::read_to_string(file).unwrap();
-            }
-        }
-    }
+    let sources = nemoclaw_test_fixtures::tofu::native_sources(CONTRACT);
     let used: BTreeSet<&str> = ["fabric_agent", "fabric_harnesses"]
         .into_iter()
         .filter(|kind| sources.contains(&format!("\"{kind}\"")))
@@ -82,28 +74,10 @@ fn every_fabric_type_has_a_contract_test() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn pi_agent_lifecycle() {
-    let root = std::sync::Arc::new(workspace());
+    let root = workspace();
     root.copy(Path::new(CONTRACT).join("fixtures"));
-    let catalog = std::sync::Arc::new(catalog_json());
-    let mut runs = Vec::new();
-    for file in root.test_files() {
-        let gateway = Fixture::start().await;
-        let control = gateway.control().await;
-        let (root, catalog) = (root.clone(), catalog.clone());
-        runs.push(tokio::task::spawn_blocking(move || {
-            root.test(
-                &file,
-                &[
-                    ("TF_VAR_endpoint", &gateway.endpoint),
-                    ("TF_VAR_catalog_json", &catalog),
-                    ("NEMOCLAW_FIXTURE_CONTROL", &control.endpoint),
-                ],
-            );
-        }));
-    }
-    for run in runs {
-        run.await.unwrap();
-    }
+    let catalog = catalog_json();
+    openshell::test_against_gateways(root, &[("TF_VAR_catalog_json", &catalog)]).await;
 }
 
 /// The Pi sandbox in `fixtures/main.tf`, run with OpenTofu's plan and apply

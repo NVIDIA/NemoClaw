@@ -47,7 +47,7 @@ Each production provider's `contract` binary, under `tests/contract`, applies it
 Its coverage test is not ignored and runs with the unit tests; the remaining tests are ignored and run in the `lifecycle` step.
 
 Scenarios live in authored modules beside the binary: a directory under `tests/contract` with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.12/cli/commands/test/) files in its `tests` directory.
-A Rust test starts the module's fixtures and runs each test file with `TofuWorkspace::test`; the files of one module run side by side, each against its own fixtures.
+A Rust test starts the module's fixtures and runs its test files with `TofuWorkspace`; `openshell::test_against_gateways` runs them side by side, each against its own fake OpenShell gateway.
 To run one module, name its Rust test, for example `cargo test -p openshell-provider --test contract standalone_resources -- --ignored`.
 A module that observes a fixture reads `data.fixture_state` from `nemoclaw-fixture-control`, which reports what the fixture holds and can remove objects as though they were deleted outside OpenTofu.
 An `observe_` run applies the previous run's configuration again, so it changes nothing, and checks what the fixture holds.

@@ -92,55 +92,14 @@ const SECRETS: [(&str, &str); 5] = [
 /// fake gateway and with `extra` environment, and require that OpenTofu's
 /// output repeats no secret.
 pub async fn native(module: &str, extra: &[(&str, &str)]) {
-    let root = std::sync::Arc::new(workspace());
+    let root = workspace();
     root.copy(Path::new(CONTRACT).join(module));
-    let mut runs = Vec::new();
-    for file in root.test_files() {
-        let gateway = Fixture::start().await;
-        let control = gateway.control().await;
-        let root = root.clone();
-        let extra: Vec<(String, String)> = extra
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect();
-        runs.push(tokio::task::spawn_blocking(move || {
-            let mut environment = vec![
-                ("TF_VAR_endpoint", gateway.endpoint.as_str()),
-                ("NEMOCLAW_FIXTURE_CONTROL", control.endpoint.as_str()),
-            ];
-            environment.extend(SECRETS);
-            environment.extend(
-                extra
-                    .iter()
-                    .map(|(name, value)| (name.as_str(), value.as_str())),
-            );
-            let output = root.test(&file, &environment);
-            for (_, secret) in SECRETS {
-                assert!(!output.contains(secret), "{file}:\n{output}");
-            }
-        }));
-    }
-    for run in runs {
-        run.await.unwrap();
-    }
-}
-
-/// The configuration of every authored module with native tests.
-fn native_sources() -> String {
-    let mut sources = String::new();
-    for module in fs::read_dir(CONTRACT).unwrap() {
-        let module = module.unwrap().path();
-        if !module.join("tests").is_dir() {
-            continue;
-        }
-        for file in fs::read_dir(module).unwrap() {
-            let file = file.unwrap().path();
-            if file.extension().is_some_and(|extension| extension == "tf") {
-                sources += &fs::read_to_string(file).unwrap();
-            }
+    let environment: Vec<_> = SECRETS.into_iter().chain(extra.iter().copied()).collect();
+    for output in openshell::test_against_gateways(root, &environment).await {
+        for (_, secret) in SECRETS {
+            assert!(!output.contains(secret), "{module}:\n{output}");
         }
     }
-    sources
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -294,7 +253,7 @@ fn every_type_has_a_contract_test() {
                 .into_keys(),
         )
         .collect();
-    let mut sources = native_sources();
+    let mut sources = nemoclaw_test_fixtures::tofu::native_sources(CONTRACT);
     sources += &[
         include_str!("api.rs"),
         include_str!("capabilities.rs"),

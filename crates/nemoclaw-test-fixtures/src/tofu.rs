@@ -144,6 +144,15 @@ impl TofuWorkspace {
         files
     }
 
+    /// Run each native test file in turn with `environment`, and return
+    /// OpenTofu's outputs.
+    pub fn test_all(&self, environment: &[(&str, &str)]) -> Vec<String> {
+        self.test_files()
+            .iter()
+            .map(|file| self.test(file, environment))
+            .collect()
+    }
+
     /// Run one native test file with `tofu test` and `environment`, and
     /// return OpenTofu's output. Panics with that output unless every run
     /// passed and the file's state was destroyed.
@@ -162,6 +171,26 @@ impl TofuWorkspace {
         assert!(output.status.success(), "tofu test {file}\n{text}");
         text
     }
+}
+
+/// The configuration of every module under `contract` with native tests,
+/// for a contract binary's coverage test.
+#[must_use]
+pub fn native_sources(contract: impl AsRef<Path>) -> String {
+    let mut sources = String::new();
+    for module in fs::read_dir(contract).unwrap() {
+        let module = module.unwrap().path();
+        if !module.join("tests").is_dir() {
+            continue;
+        }
+        for file in fs::read_dir(module).unwrap() {
+            let file = file.unwrap().path();
+            if file.extension().is_some_and(|extension| extension == "tf") {
+                sources += &fs::read_to_string(file).unwrap();
+            }
+        }
+    }
+    sources
 }
 
 #[cfg(all(test, unix))]

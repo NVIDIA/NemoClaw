@@ -43,27 +43,7 @@ pub const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract"
 pub fn native(module: &str, environment: &[(&str, &str)]) {
     let root = workspace();
     root.copy(std::path::Path::new(CONTRACT).join(module));
-    for file in root.test_files() {
-        root.test(&file, environment);
-    }
-}
-
-/// The configuration of every module with native tests.
-fn native_sources() -> String {
-    let mut sources = String::new();
-    for module in std::fs::read_dir(CONTRACT).unwrap() {
-        let module = module.unwrap().path();
-        if !module.join("tests").is_dir() {
-            continue;
-        }
-        for file in std::fs::read_dir(module).unwrap() {
-            let file = file.unwrap().path();
-            if file.extension().is_some_and(|extension| extension == "tf") {
-                sources += &std::fs::read_to_string(file).unwrap();
-            }
-        }
-    }
-    sources
+    root.test_all(environment);
 }
 
 /// The runtime contracts in `runtime/tests`, computed without any service.
@@ -151,7 +131,7 @@ fn every_type_has_a_contract_test() {
         ))
         .chain(served("host", nemoclaw_provider::HostProvider::default()))
         .collect();
-    let native = native_sources();
+    let native = tofu::native_sources(CONTRACT);
     let sources = [
         include_str!("discovery.rs"),
         include_str!("readiness_refs.rs"),

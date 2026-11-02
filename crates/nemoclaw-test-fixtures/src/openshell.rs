@@ -199,6 +199,41 @@ impl Fixture {
         .await
     }
 }
+/// Run the native test files in `root` side by side, each against a new fake
+/// gateway at `TF_VAR_endpoint` and its control endpoint, with `environment`,
+/// and return OpenTofu's outputs.
+pub async fn test_against_gateways(
+    root: crate::tofu::TofuWorkspace,
+    environment: &[(&str, &str)],
+) -> Vec<String> {
+    let root = Arc::new(root);
+    let mut runs = Vec::new();
+    for file in root.test_files() {
+        let gateway = Fixture::start().await;
+        let control = gateway.control().await;
+        let mut environment: Vec<(String, String)> = environment
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        environment.push(("TF_VAR_endpoint".into(), gateway.endpoint.clone()));
+        environment.push(("NEMOCLAW_FIXTURE_CONTROL".into(), control.endpoint.clone()));
+        let root = root.clone();
+        runs.push(tokio::task::spawn_blocking(move || {
+            let environment: Vec<(&str, &str)> = environment
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+            let output = root.test(&file, &environment);
+            drop((gateway, control));
+            output
+        }));
+    }
+    let mut outputs = Vec::new();
+    for run in runs {
+        outputs.push(run.await.unwrap());
+    }
+    outputs
+}
 impl State {
     /// Remove the object kinds that `{"remove": [...]}` names, such as
     /// `"providers"`, as though they were deleted behind OpenTofu.
