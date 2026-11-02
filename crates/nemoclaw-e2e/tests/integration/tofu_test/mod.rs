@@ -372,6 +372,26 @@ async fn run_shard(shard: usize) {
     ]
     .map(|(name, value)| (name.to_owned(), value))
     .into();
+    // Windows programs need these to find system libraries, temporary
+    // directories, and executables.
+    if cfg!(windows) {
+        for name in [
+            "SystemRoot",
+            "SystemDrive",
+            "windir",
+            "ComSpec",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ] {
+            if let Ok(value) = std::env::var(name) {
+                base.insert(name.into(), value);
+            }
+        }
+    }
     // Coverage-instrumented providers write their profiles where the caller asks.
     if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
         base.insert("LLVM_PROFILE_FILE".into(), profile);
@@ -400,7 +420,14 @@ async fn run_shard(shard: usize) {
         fixtures.reset(scenario.credentials.clone());
         let mut environment = base.clone();
         environment.extend(scenario.environment.clone());
-        let filter = format!("-filter=tests/{}.tftest.hcl", scenario.name);
+        // OpenTofu matches the filter against its own platform path, which
+        // uses backslashes on Windows.
+        let filter = format!(
+            "-filter={}",
+            Path::new("tests")
+                .join(format!("{}.tftest.hcl", scenario.name))
+                .display()
+        );
         let (_, output) = tofu(&bundle, &work, &environment, ["test", "-no-color", &filter]).await;
         let problem = check(&output, &scenario.credentials, &diagnostics)
             .or_else(|| fixtures.teardown_problem());
