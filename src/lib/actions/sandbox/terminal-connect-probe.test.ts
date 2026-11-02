@@ -153,7 +153,11 @@ describe("terminal-agent connect inference route", () => {
           ...otherTerminalAgent,
           name: "pi",
           displayName: "Pi",
-          runtime: { ...otherTerminalAgent.runtime, smoke_commands: ["pi --version"] },
+          runtime: {
+            kind: "terminal",
+            interactive_command: "pi",
+            smoke_commands: ["pi --version"],
+          },
           versionCommand: "pi --version",
           expectedVersion: "0.84.1",
           versionScheme: "semver",
