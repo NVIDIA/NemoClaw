@@ -329,7 +329,9 @@ function runVersionPinTarget(options: {
   installedVersion: string;
   unsafeActiveDirectory?: { mode: number; location: "bin" | "parent"; pretendRootOwned?: boolean };
 }): void {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
+  const tmp = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-openshell-version-pin-"),
+  );
   try {
     const fakeBin = path.join(tmp, "bin");
     const downloadLog = path.join(tmp, "downloads.log");
