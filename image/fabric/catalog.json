@@ -518,7 +518,7 @@
               "properties": {
                 "api": {
                   "additionalProperties": false,
-                  "description": "Hermes's API server, run by a gateway child. After both interfaces start, the adapter writes its bearer token to interfaces/api.token in the Hermes home: <artifact root>/.fabric/hermes/runtimes/<runtime-id>, or the agent's state folder with runtime.keep_state.",
+                  "description": "Hermes's API server, run by a gateway child. After every enabled interface starts, the adapter writes its bearer token to interfaces/api.token in the Hermes home: <artifact root>/.fabric/hermes/runtimes/<runtime-id>, or the agent's state folder with runtime.keep_state.",
                   "properties": {
                     "enabled": {
                       "default": true,
@@ -526,7 +526,7 @@
                       "type": "boolean"
                     },
                     "port": {
-                      "description": "Exact loopback port for the API server. Start fails if it is in use or equals the dashboard port.",
+                      "description": "Exact loopback port for the API server. Start fails if it is in use.",
                       "maximum": 65535,
                       "minimum": 1,
                       "type": "integer"
@@ -547,7 +547,7 @@
                       "type": "boolean"
                     },
                     "port": {
-                      "description": "Exact loopback port for the dashboard. Start fails if it is in use or equals the api port.",
+                      "description": "Exact loopback port for the dashboard. Start fails if it is in use.",
                       "maximum": 65535,
                       "minimum": 1,
                       "type": "integer"
@@ -610,7 +610,7 @@
             },
             "startup_timeout_seconds": {
               "default": 60,
-              "description": "Time for every enabled interface to pass its health check, within NeMo Fabric's 90-second start limit.",
+              "description": "Time from the start of the runtime for every enabled interface to pass its health check, within NeMo Fabric's 90-second start limit.",
               "exclusiveMinimum": 0,
               "maximum": 75,
               "type": "number"
@@ -1028,7 +1028,8 @@
         },
         "requirements": {
           "binaries": [
-            "node"
+            "node",
+            "dcode"
           ]
         },
         "runner": {
@@ -1044,12 +1045,6 @@
                 "auto",
                 "yolo"
               ],
-              "type": "string"
-            },
-            "dcode_command": {
-              "default": "dcode",
-              "description": "Deep Agents Code executable name or path. Paths containing a directory resolve from the NeMo Fabric base directory.",
-              "minLength": 1,
               "type": "string"
             },
             "insecure_http_model_hosts": {
@@ -1080,13 +1075,6 @@
                 }
               },
               "type": "object"
-            },
-            "startup_timeout_seconds": {
-              "default": 60,
-              "description": "Time for Deep Agents Code's ACP session to start, within NeMo Fabric's 90-second start limit.",
-              "exclusiveMinimum": 0,
-              "maximum": 75,
-              "type": "number"
             }
           },
           "required": [
@@ -1623,19 +1611,10 @@
                       "type": "boolean"
                     },
                     "port": {
-                      "description": "Exact loopback Gateway base port, which serves the Control UI. Start fails if it or port + 2 is in use, and OpenClaw reserves ports through port + 110. Can't be combined with port_range.",
+                      "description": "Exact loopback Gateway base port, which serves the Control UI. Start fails if it or port + 2 is in use. OpenClaw allocates browser ports through port + 110 on demand, so keep that range free. Can't be combined with port_range.",
                       "maximum": 65425,
                       "minimum": 1,
                       "type": "integer"
-                    },
-                    "public_origins": {
-                      "description": "Browser origins accepted in addition to http://127.0.0.1:<port> and http://localhost:<port>. OpenClaw accepts any loopback origin regardless.",
-                      "items": {
-                        "pattern": "^https?://[^/?#@\\s]+$",
-                        "type": "string"
-                      },
-                      "type": "array",
-                      "uniqueItems": true
                     }
                   },
                   "required": [
@@ -2358,8 +2337,8 @@
       ]
     }
   ],
-  "fabric_revision": "a3b57155593877135f2557ef37d5e18161a1ad82",
+  "fabric_revision": "ddf59e875d50d925991cd40c44dc63facf391bac",
   "schema_version": 2,
-  "source_sha256": "449bd7bc94c3effc53713f5beb1bcd559d02242da591196fa165186d8c9b7f03",
+  "source_sha256": "cb9c16677323a087ff1e69fc848188792c953d3f3145e6b0d81533a0d40ad1d0",
   "targets": []
 }
