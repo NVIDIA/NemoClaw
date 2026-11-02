@@ -28,8 +28,8 @@ Files that survive a transition aren't enough: each phase needs fresh native dis
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
 Preconditions: the [launch](../SKILL.md#launch) seeded the supplied skill below before the first apply, `bindings.md` records the skill path's YAML field, the native discovery and view mechanism, the `skill-authoring tool` and `skill directory` lines, and the native state and skill roots, and the phase's [fresh phase input](README.md#driving-conventions) is written: `fixtures/probe-input.json` holds this phase's `NONCE`.
-Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) does, again after every transition.
 
+Save each request's runtime skill list or loading record for the turn in `$CHECK_DIR/NAME.skills.txt`, from the record `bindings.md` names, beside its `NAME.calls.txt`.
 1. **Seed:** `seed "$WORKSPACE_VOLUME" skills/capability-probe/SKILL.md`, with this content as standard input, for `/sandbox/workspace/skills/capability-probe/SKILL.md`:
 
    ```markdown
@@ -57,15 +57,7 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
 
    The launch seeds it once, before the first apply, and records its hash in `$EVIDENCE/seeded.sha256`.
    This skill's recipe stays in this file and the volume; no prompt repeats it.
-2. **Set up the request helpers** from the [driving conventions](README.md#driving-conventions), and print the two skill bindings they read:
-
-   ```sh
-   echo "$SKILL_AUTHORING | $NATIVE_SKILL_DIR"
-   ```
-
-   Result: both values print and match `bindings.md`.
-   Save each request's current-turn native calls in `$CHECK_DIR/NAME.calls.txt`, and the runtime's native skill list or loading record for the turn in `$CHECK_DIR/NAME.skills.txt`, from the records `bindings.md` names.
-3. **Supplied skill requests.** The supplied-skill checks use these commands, one request per prompt, in their own `CHECK_DIR`; steps 4 to 7 say which each sends. Before each `run`, remove the stale output:
+2. **Supplied skill requests.** The supplied-skill checks use these commands, one request per prompt, in their own `CHECK_DIR`; steps 3 to 6 say which each sends. Before each `run`, remove the stale output:
 
    ```sh
    openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/skills/capability-probe/SKILL.md | tee "$CHECK_DIR/hash.txt"
@@ -86,18 +78,18 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    - **Discovery:** `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `capability-probe` from `/sandbox/workspace/skills/capability-probe/`, and a native view of its content.
    - **Loading:** `run.calls.txt` shows a current-turn native skill view or load of `capability-probe`, or a file read of the path native discovery listed, before the input read.
    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/skill-result.json`.
-4. **`mounted-skill-first-start`:** run it first in the Initial phase, before any other request in this run, including `inference`:
+3. **`mounted-skill-first-start`:** run it first in the Initial phase, before any other request in this run, including `inference`:
 
    ```sh
    CASE=mounted-skill-first-start; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
    ```
 
-   Save the runtime's startup log or first native skill enumeration in `$CHECK_DIR/startup.txt`, then send step 3's two prompts.
+   Save the runtime's startup log or first native skill enumeration in `$CHECK_DIR/startup.txt`, then send step 2's two prompts.
    Write `$CHECK_DIR/discovery.md`: whether the harness scanned the directory or needed explicit per-item registration in the YAML, and which.
-   Result: step 3's four results, with no install, reload, activation restart, or manual import before them.
+   Result: step 2's four results, with no install, reload, activation restart, or manual import before them.
    Missing observable discovery or no supported binding is Failed with a missing-implementation finding; discovery that ran but omitted the skill is Failed.
    Disclose any per-item enablement; it doesn't support a claim about a default path.
-5. **`mounted-skill-yaml`:** it sends no request; it pairs the configuration evidence with step 4's discovery and run:
+4. **`mounted-skill-yaml`:** it sends no request; it pairs the configuration evidence with step 3's discovery and run:
 
    ```sh
    CASE=mounted-skill-yaml; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
@@ -108,12 +100,12 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    Result: `yaml.txt` shows the skill-path field the adapter declares and the workspace mount; `native-config.txt` lists `/sandbox/workspace/skills` as a discovery root; and `$EVIDENCE/initial/mounted-skill-first-start/` shows discovery and a passing run.
    Record directory configuration and per-item discovery as separate evidence.
    No declared skill-path field is Failed with a finding; don't invent a key.
-6. **`skill-discovery` and `skill-execution`:** set `CASE` and `CHECK_DIR` for each, then send step 3's `discover` prompt for `skill-discovery` and its `run` prompt, with the stale-output removal, for `skill-execution`.
+5. **`skill-discovery` and `skill-execution`:** set `CASE` and `CHECK_DIR` for each, then send step 2's `discover` prompt for `skill-discovery` and its `run` prompt, with the stale-output removal, for `skill-execution`.
    Result: discovery's result for `skill-discovery`, and loading and output for `skill-execution`. Model prose that names the skill without a native record is Failed.
-7. **`mounted-supplied-skill`:** set `CASE=mounted-supplied-skill` and its `CHECK_DIR`, and send both of step 3's prompts in every phase it lists, including After runtime restart.
+6. **`mounted-supplied-skill`:** set `CASE=mounted-supplied-skill` and its `CHECK_DIR`, and send both of step 2's prompts in every phase it lists, including After runtime restart.
    Write `$CHECK_DIR/result.md` with persistence, discovery, loading, and output as four separate lines.
    Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
-8. **Create the generated skill:** in the Initial phase only, as part of `generated-skill`. Choose the run-scoped name and marker, then send the creation prompt once:
+7. **Create the generated skill:** in the Initial phase only, as part of `generated-skill`. Choose the run-scoped name and marker, then send the creation prompt once:
 
    ```sh
    CASE=generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -144,7 +136,7 @@ MARKER=%s
    Keep any authoring retry's request, reply, and calls in `$CHECK_DIR` before sealing the hash.
    The configured read paths and the agent's reply can't establish that no skill exists; record "no skill" only after the search.
    If no skill was saved, don't create one for the agent: link every later `generated-skill` and `mounted-generated-skill` row to the creation finding, Failed for missing support and Not tested for a runner or access problem.
-9. **`mounted-generated-skill-save`:** resolve it from step 8's evidence; it sends no request:
+8. **`mounted-generated-skill-save`:** resolve it from step 7's evidence; it sends no request:
 
    ```sh
    CASE=mounted-generated-skill-save; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
@@ -158,19 +150,19 @@ MARKER=%s
    - Record a missing YAML write-target setting in the finding without inventing one.
 
    Never copy, move, or link the skill to make this or any later check pass.
-10. **`generated-skill`:** in every phase it lists, including Initial after step 8, send discovery in a separate request:
+9. **`generated-skill`:** in every phase it lists, including Initial after step 7, send discovery in a separate request:
 
-    ```sh
-    CASE=generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
-    . "$EVIDENCE/generated-skill.env"
-    fill - <<'EOF' | ask discover
-    Use native skill discovery to list your skills, then view <skill-name>. Report what discovery returned. Do not create, edit or run any skill.
-    EOF
-    ```
+   ```sh
+   CASE=generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
+   . "$EVIDENCE/generated-skill.env"
+   fill - <<'EOF' | ask discover
+   Use native skill discovery to list your skills, then view <skill-name>. Report what discovery returned. Do not create, edit or run any skill.
+   EOF
+   ```
 
-    Result: `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `$SKILL_NAME`, and its native view contains `$MARKER`.
-    Missing discovery is Failed even when the file remains on disk.
-11. **`mounted-generated-skill`:** in every phase it lists, check the original, discover it, and run it on fresh input:
+   Result: `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `$SKILL_NAME`, and its native view contains `$MARKER`.
+   Missing discovery is Failed even when the file remains on disk.
+10. **`mounted-generated-skill`:** in every phase it lists, check the original, discover it, and run it on fresh input:
 
     ```sh
     CASE=mounted-generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -196,9 +188,6 @@ MARKER=%s
     - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, written by current-turn native file calls.
 
     Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
-12. **After config change:** the change disables only the shell. Skills use file tools, so every check here expects the same results as in other phases; a skill check that fails only because the shell is gone is Failed: the change removed more than the shell.
-13. **Record:** fill in each row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](README.md#proof-rules) require. A check blocked by an earlier finding's unusable runtime is Not tested, linked to that finding.
-
 ## Gotchas
 
 - Never paste a skill's contents or its expected output into a prompt. The run prompts name the skill only, so a correct result proves the agent loaded it.

@@ -17,7 +17,7 @@ None yet.
 
 ## Fabric-Boundary YAML Edits
 
-First choose the run-scoped extension names: run [mounted-extensions](../features/mounted-extensions.md) step 2's name block, and note the generated plugin's ID, `fb-plugin-$UID8`, as [plugins](../features/plugins.md) step 5 derives it.
+First choose the run-scoped extension names: run [mounted-extensions](../features/mounted-extensions.md) step 2's name block, and note the generated plugin's ID, `fb-plugin-$UID8`, as [plugins](../features/plugins.md) step 4 derives it.
 Save the image's adapter descriptor, then list the settings and interfaces it declares:
 
 ```sh

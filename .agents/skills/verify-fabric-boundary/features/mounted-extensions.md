@@ -29,10 +29,10 @@ Files that survive a transition aren't enough: each phase needs fresh registrati
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
 Preconditions: the [launch](../SKILL.md#launch) wrote `bindings.md` with the `file-write tool` and `native call record` lines and seeded the supplied fixtures below before the first apply, and the phase's [fresh phase input](README.md#driving-conventions) is written: `fixtures/probe-input.json` holds this phase's `NONCE`.
-Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) does, again after every transition and after any activation restart.
 The generated cases reuse the plugin that [plugins](plugins.md) has the agent write in `agent-plugin-author`: `$EVIDENCE/agent-plugin.env`, `$EVIDENCE/agent-plugin.sha256`, its directory `/sandbox/workspace/extensions/plugins/fb-plugin-<uid8>`, its trigger `results/agent-plugin-trigger.txt`, and its ledger `results/agent-plugin-ledger.jsonl`.
 The supplied cases use two fixtures of their own, a tool and a hook plugin, with `supplied` as their origin.
 
+Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.env"`; `$SUPPLIED_TOOL` and `$SUPPLIED_PLUGIN_ID` must match the seeded fixtures.
 1. **Record the mounted-extension bindings.** Before the first apply, add a `## Mounted Extensions` section to `$EVIDENCE/bindings.md`. For the supplied tool, the supplied plugin, and the generated plugin, resolve each entry against the selected YAML, the image's adapter descriptor, and the image's harness source and executable help:
    - **Source location:** the YAML field and value that point the native loader at the mounted directory, and the native setting it resolves to.
    - **Enablement:** the YAML field for the item's ID and its tool allow-list entry, if the harness needs them, recorded separately from the source location. An enabled plugin ID doesn't mean its tools are allowed.
@@ -62,6 +62,9 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
    - **Native tool,** in `$SUPPLIED_TOOL_DIR`, with ID `$SUPPLIED_TOOL_ID`: registers one native tool named `$SUPPLIED_TOOL` that takes one string argument, `nonce`, and returns a JSON object with exactly three keys: `origin` set to `supplied`, `nonce` set to the argument, and `kind` set to `native-tool`. It registers no hook. If the harness adds custom tools only through plugins, the fixture is a plugin that registers only this tool.
    - **Plugin,** in `$SUPPLIED_PLUGIN_DIR`, with ID `$SUPPLIED_PLUGIN_ID`: registers one hook that runs after each native file-write tool call. When the written path is exactly `/sandbox/workspace/results/supplied-plugin-trigger.txt`, it appends one line to `/sandbox/workspace/results/supplied-plugin-ledger.jsonl`: a JSON object with `origin` set to `supplied`, `nonce` set to the first line of the trigger file, `tool` set to the native tool name, and `call_id` set to the tool call ID if the event carries one. For any other path it does nothing. It registers no tool.
 
+   The agent file's fixtures use the plugin format its hints describe, the same format the agent-authored plugin uses, and its fixture notes name the hook and argument names they assume.
+   If the selected image uses other names, change only those names before seeding and record the change in `bindings.md`.
+
    The agent file's fixtures write the run-scoped names as `FB_TOOL_ID`, `FB_TOOL_NAME`, and `FB_PLUGIN_ID`. For each fixture file, set `FILE` to the path its heading names and pipe its fenced content into the matching line, which fills in those names:
 
    ```sh
@@ -81,15 +84,7 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
    ```
 
    If the bindings record an installed copy, seal it after the first apply in `$EVIDENCE/supplied-tool-installed.sha256` or `$EVIDENCE/supplied-plugin-installed.sha256` the same way, through `openshell sandbox exec`.
-4. **Set up the request helpers** from the [driving conventions](README.md#driving-conventions), and read the names:
-
-   ```sh
-   . "$EVIDENCE/mounted-extensions.env"; echo "$FILE_WRITE_TOOL $SUPPLIED_TOOL $SUPPLIED_PLUGIN_ID"
-   ```
-
-   Result: the file-write tool matches `bindings.md`, and both names match the seeded fixtures.
-   Save each request's current-turn native calls in `$CHECK_DIR/NAME.calls.txt`, as the conventions describe.
-5. **Check the source and send the request.** Every check below that sends a request first saves the runtime ID, hashes its fixture tree, and compares the hashes with its seal, without repairing anything:
+4. **Check the source and send the request.** Every check below that sends a request first saves the runtime ID, hashes its fixture tree, and compares the hashes with its seal, without repairing anything:
 
    ```sh
    mkdir -p "$CHECK_DIR"; echo "$RUNTIME_ID" > "$CHECK_DIR/runtime.txt"
@@ -121,7 +116,7 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
    The count must be 0 before the request. After either request, save the registration record that `bindings.md` names, for `$RUNTIME_ID` only, in `$CHECK_DIR/registration.txt`.
    A tool check's effect holds when `use.calls.txt` shows a current-turn call of `$TOOL`, by its native name, returning a JSON object with exactly `origin` set to the case's origin, `nonce` set to `$NONCE`, and `kind` set to `native-tool`.
    A hook check's effect holds when `use.calls.txt` shows a current-turn native write of `$TRIGGER`, and `ledger.after.txt` holds exactly one new line, absent from `ledger.before.txt`, with the expected `origin`, `nonce` equal to `$NONCE`, `tool` naming that call's native tool, and `call_id` matching it when the event carries one.
-6. **`mounted-native-tool-first-start`:** in the Initial phase, first, before any request that changes content and before any install, reload, or activation restart. Save the startup log or first native enumeration for this first runtime in `$CHECK_DIR/startup.txt`, then run step 5's tool request:
+5. **`mounted-native-tool-first-start`:** in the Initial phase, first, before any request that changes content and before any install, reload, or activation restart. Save the startup log or first native enumeration for this first runtime in `$CHECK_DIR/startup.txt`, then run step 4's tool request:
 
    ```sh
    CASE=mounted-native-tool-first-start; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -131,7 +126,7 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
    Write `$CHECK_DIR/result.md` with the discovery mode, whether the evidence shows startup loading or discovery on demand, and any per-item YAML enablement the route needed.
    Result: `same`; `startup.txt` or `registration.txt` shows `$SUPPLIED_TOOL` and its schema registered from `$SUPPLIED_TOOL_DIR` in this runtime; and the tool effect holds with origin `supplied`.
    Lazy enumeration proves discovery on demand, not startup loading. Missing observable discovery or no supported binding is Failed with the missing-implementation finding; a supported discovery that omits the tool is Failed.
-7. **`mounted-plugin-first-start`:** in the Initial phase, right after step 6. Save the startup log or first native enumeration in `$CHECK_DIR/startup.txt`, then run step 5's hook request:
+6. **`mounted-plugin-first-start`:** in the Initial phase, right after step 5. Save the startup log or first native enumeration in `$CHECK_DIR/startup.txt`, then run step 4's hook request:
 
    ```sh
    CASE=mounted-plugin-first-start; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -139,21 +134,21 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
    TRIGGER=/sandbox/workspace/results/supplied-plugin-trigger.txt; LEDGER=/sandbox/workspace/results/supplied-plugin-ledger.jsonl
    ```
 
-   Write `$CHECK_DIR/result.md` as in step 6.
+   Write `$CHECK_DIR/result.md` as in step 5.
    Result: `same`; the record shows `$SUPPLIED_PLUGIN_ID` registered from `$SUPPLIED_PLUGIN_DIR` in this runtime; and the hook effect holds with origin `supplied`.
-   The same failure rules as step 6 apply.
-8. **`mounted-native-tool-yaml`** and **`mounted-plugin-yaml`:** in the Initial phase, right after step 7, with no new request. For each, copy the native configuration the adapter generated from the YAML, redacting credentials, into `$CHECK_DIR/config.txt`, and write `$CHECK_DIR/yaml.md`: each YAML field and value from `bindings.md`, the native setting it resolved to, and links to step 6's or step 7's `registration.txt` and `use.calls.txt`.
-   Result: `config.txt` shows the declared mounted source location and enablement reaching the native runtime, and step 6 or step 7 passed its registration and effect with no manual configuration or loader call.
+   The same failure rules as step 5 apply.
+7. **`mounted-native-tool-yaml`** and **`mounted-plugin-yaml`:** in the Initial phase, right after step 6, with no new request. For each, copy the native configuration the adapter generated from the YAML, redacting credentials, into `$CHECK_DIR/config.txt`, and write `$CHECK_DIR/yaml.md`: each YAML field and value from `bindings.md`, the native setting it resolved to, and links to step 5's or step 6's `registration.txt` and `use.calls.txt`.
+   Result: `config.txt` shows the declared mounted source location and enablement reaching the native runtime, and step 5 or step 6 passed its registration and effect with no manual configuration or loader call.
    An enabled bundled plugin or toolset alone can't pass. A route other than YAML, such as a native installer, passes only its own case.
    No supported declarative binding is Failed with the missing-implementation finding; binding evidence that can't decide is Not tested, with the cause in a finding.
-9. **`mounted-supplied-native-tool`:** in every phase it lists. In Initial, send no second request: link step 6's evidence in `$CHECK_DIR/result.md`. After each transition, use step 6's `SRC_DIR`, `SEAL`, and `TOOL` with this `CASE`, and run step 5's tool request. Write `$CHECK_DIR/result.md` with three separate lines:
+8. **`mounted-supplied-native-tool`:** in every phase it lists. In Initial, send no second request: link step 5's evidence in `$CHECK_DIR/result.md`. After each transition, use step 5's `SRC_DIR`, `SEAL`, and `TOOL` with this `CASE`, and run step 4's tool request. Write `$CHECK_DIR/result.md` with three separate lines:
    - **Source:** `same`, and the installed copy, if any, matches its seal.
    - **Registration:** `registration.txt` shows `$SUPPLIED_TOOL` and its schema registered in the runtime with `$RUNTIME_ID`.
    - **Effect:** the tool effect holds with origin `supplied`.
 
    Result: all three hold. No loading binding is Failed with the missing-implementation finding.
-10. **`mounted-supplied-plugin`:** in every phase it lists. In Initial, link step 7's evidence. After each transition, use step 7's `SRC_DIR`, `SEAL`, `TRIGGER`, and `LEDGER` with this `CASE`, and run step 5's hook request. Write `result.md` as in step 9, with the hook effect and origin `supplied`. Result: all three hold.
-11. **Activate the generated plugin.** In the Initial phase, after [plugins](plugins.md)' `agent-plugin-author` sealed `$EVIDENCE/agent-plugin.sha256`:
+9. **`mounted-supplied-plugin`:** in every phase it lists. In Initial, link step 6's evidence. After each transition, use step 6's `SRC_DIR`, `SEAL`, `TRIGGER`, and `LEDGER` with this `CASE`, and run step 4's hook request. Write `result.md` as in step 8, with the hook effect and origin `supplied`. Result: all three hold.
+10. **Activate the generated plugin.** In the Initial phase, after [plugins](plugins.md)' `agent-plugin-author` sealed `$EVIDENCE/agent-plugin.sha256`:
 
     ```sh
     . "$EVIDENCE/agent-plugin.env"; echo "$AGENT_PLUGIN_ID $AGENT_PLUGIN_TOOL $AGENT_PLUGIN_DIR"
@@ -163,16 +158,16 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
     Activate the plugin only through the route `bindings.md` records for the generated plugin. If that route needs a restart and the harness has no supported live reload, restart the runtime once through the supported control that [lifecycle-and-retention](lifecycle-and-retention.md) uses for Runtime restart, record it as setup in `$EVIDENCE/initial/mounted-generated-native-tool/activation-restart.md`, with who did it and the old and new runtime IDs, and read `RUNTIME_ID` again.
     If `agent-plugin-activate` already restarted the runtime after the seal, record that instead of restarting again. The Runtime restart phase still runs later.
     Never enable, copy, install, or load the plugin for the agent. No supported activation route is Failed with the missing-implementation finding.
-12. **`mounted-generated-native-tool`:** in every phase it lists, starting in Initial after step 11. Run step 5's tool request with:
+11. **`mounted-generated-native-tool`:** in every phase it lists, starting in Initial after step 10. Run step 4's tool request with:
 
     ```sh
     CASE=mounted-generated-native-tool; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
     SRC_DIR=$AGENT_PLUGIN_DIR; SEAL=$EVIDENCE/agent-plugin.sha256; TOOL=$AGENT_PLUGIN_TOOL
     ```
 
-    Write `result.md` as in step 9, for `$AGENT_PLUGIN_TOOL`. Result: all three hold, with origin `agent-generated`.
+    Write `result.md` as in step 8, for `$AGENT_PLUGIN_TOOL`. Result: all three hold, with origin `agent-generated`.
     A script the shell tool runs never passes; the call must be the registered native tool.
-13. **`mounted-generated-plugin`:** in every phase it lists, after step 12. Run step 5's hook request with:
+12. **`mounted-generated-plugin`:** in every phase it lists, after step 11. Run step 4's hook request with:
 
     ```sh
     CASE=mounted-generated-plugin; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -180,10 +175,7 @@ The supplied cases use two fixtures of their own, a tool and a hook plugin, with
     TRIGGER=/sandbox/workspace/results/agent-plugin-trigger.txt; LEDGER=/sandbox/workspace/results/agent-plugin-ledger.jsonl
     ```
 
-    Write `result.md` as in step 9, for `$AGENT_PLUGIN_ID`. Result: all three hold, with origin `agent-generated`. Retained source alone doesn't pass. No supported loading or reload route is Failed with the missing-implementation finding.
-14. **After config change:** the change disables only the shell. These checks use file tools and native tools, so they expect the same results as in other phases; record any actual dependency on the shell in a finding instead of bypassing the restriction.
-15. **Record:** fill in each row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](README.md#proof-rules) require. A check blocked by an earlier finding's unusable runtime is Not tested, linked to that finding.
-
+    Write `result.md` as in step 8, for `$AGENT_PLUGIN_ID`. Result: all three hold, with origin `agent-generated`. Retained source alone doesn't pass. No supported loading or reload route is Failed with the missing-implementation finding.
 ## Gotchas
 
 - Keep the origins separate: the supplied tool, the supplied plugin, the agent-written plugin, the bundled plugin, and the agent-installed plugin in [plugins](plugins.md) each need their own evidence. A pass for one covers no other.

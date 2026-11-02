@@ -26,7 +26,6 @@ When the configuration change disables the shell, every shell request is rejecte
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
 Preconditions: the [launch](../SKILL.md#launch) seeded the supplied script below, and the phase's [fresh phase input](README.md#driving-conventions) is written: `fixtures/probe-input.json` and `fixtures/$PHASE-script-input.txt` hold this phase's `NONCE`.
-Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) does, again after every transition.
 
 1. **Seed:** `seed "$WORKSPACE_VOLUME" scripts/supplied-script.sh`, with this content as standard input, for `/sandbox/workspace/scripts/supplied-script.sh`:
 
@@ -40,15 +39,7 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    The launch seeds it once, before the first apply, and records its hash in `$EVIDENCE/seeded.sha256`.
-2. **Set up the request helpers** from the [driving conventions](README.md#driving-conventions), and print the two tool names they read:
-
-   ```sh
-   echo "$SHELL_TOOL $FILE_WRITE_TOOL"
-   ```
-
-   Result: both names print and match `bindings.md`.
-   Save each request's current-turn native calls in `$CHECK_DIR/NAME.calls.txt`, as the conventions describe.
-3. **`inference`:** use a separate nonce, so later file checks can't answer from conversation history:
+2. **`inference`:** use a separate nonce, so later file checks can't answer from conversation history:
 
    ```sh
    CASE=inference; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -61,7 +52,7 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
 
    Result: `exit 0`; `run` is `succeeded`, `error` is `null`, `same_runtime` is `true`, and `response` is `INFERENCE_OK-` followed by `$INF_NONCE`.
    Record the runtime ID and any request ID the reply carries in `ids.txt`.
-4. **`file-read`:**
+3. **`file-read`:**
 
    ```sh
    CASE=file-read; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -71,7 +62,7 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    Result: `response` is `nonce=$NONCE`, and `request.calls.txt` shows a current-turn native file-read call on `/sandbox/workspace/fixtures/probe-input.json`.
-5. **`file-write`:** remove the stale output first, then ask:
+4. **`file-write`:** remove the stale output first, then ask:
 
    ```sh
    CASE=file-write; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -84,7 +75,7 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    Result: `{"keys":["nonce","phase","status"],"ok":true}`, and `request.calls.txt` shows a current-turn native write of the file, then a native edit or second write that changes the status.
-6. **`shell-success`:**
+5. **`shell-success`:**
 
    ```sh
    CASE=shell-success; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -96,8 +87,8 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    Result: `request.calls.txt` shows a current-turn `$SHELL_TOOL` call with that command, stdout `shell-ok`, and exit 0, and the reply reports the same.
-   After config change, see step 10.
-7. **`shell-failure`:**
+   After config change, see step 9.
+6. **`shell-failure`:**
 
    ```sh
    CASE=shell-failure; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -109,8 +100,8 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    Result: `request.calls.txt` shows a current-turn `$SHELL_TOOL` call with that command, stderr `expected-failure`, and exit status 7, and the reply reports a failure with status 7, not success.
-   Exit 7 is the passing result of this check. After config change, see step 10.
-8. **`mounted-supplied-script`:**
+   Exit 7 is the passing result of this check. After config change, see step 9.
+7. **`mounted-supplied-script`:**
 
    ```sh
    CASE=mounted-supplied-script; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -125,8 +116,8 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    Result: `grep` prints the seeded hash's line; `run.calls.txt` shows a current-turn `$SHELL_TOOL` call with that command, stdout `supplied-script:` immediately followed by `$NONCE`, and exit 0.
-   After config change, see step 10; the hash must still match.
-9. **`mounted-generated-script`:** in the Initial phase only, ask the agent to write the script, then review it without changing it:
+   After config change, see step 9; the hash must still match.
+8. **`mounted-generated-script`:** in the Initial phase only, ask the agent to write the script, then review it without changing it:
 
    ```sh
    CASE=mounted-generated-script; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -155,20 +146,18 @@ Read `RUNTIME_ID` as [deploy-and-answer](../../verify-yaml-deployment/features/d
    ```
 
    Result: `same`; `run.calls.txt` shows a current-turn `$SHELL_TOOL` call with that command, stdout `generated-script:` immediately followed by `$NONCE`, with no space, and exit 0.
-   After config change, see step 10; the hash must still match.
-10. **After config change:** the shell is disabled, so the four shell checks expect rejection with no other execution path.
-    Send the same prompts with the same `fill`.
-    For `shell-success`, `shell-failure`, `mounted-supplied-script`, and `mounted-generated-script`, pass when:
-    - the runtime's native tool list for this turn lacks `$SHELL_TOOL`, or its call returns a native policy rejection;
-    - no current-turn call runs the command through another tool, such as a code-execution, process, or UI terminal tool;
-    - for the scripts, the hash still matches; and
-    - the reply reports the tool disabled.
+   After config change, see step 9; the hash must still match.
+9. **After config change:** the shell is disabled, so the four shell checks expect rejection with no other execution path.
+   Send the same prompts with the same `fill`.
+   For `shell-success`, `shell-failure`, `mounted-supplied-script`, and `mounted-generated-script`, pass when:
+   - the runtime's native tool list for this turn lacks `$SHELL_TOOL`, or its call returns a native policy rejection;
+   - no current-turn call runs the command through another tool, such as a code-execution, process, or UI terminal tool;
+   - for the scripts, the hash still matches; and
+   - the reply reports the tool disabled.
 
-    Save the runtime's tool list for the turn in `$CHECK_DIR/tools.txt`.
-    A model that declines while the tool is still exposed doesn't pass: the restriction didn't take effect, and the check is Failed.
-    `inference`, `file-read`, and `file-write` expect the same results as the other phases: the change keeps file access.
-11. **Record:** fill in each row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](README.md#proof-rules) require.
-
+   Save the runtime's tool list for the turn in `$CHECK_DIR/tools.txt`.
+   A model that declines while the tool is still exposed doesn't pass: the restriction didn't take effect, and the check is Failed.
+   `inference`, `file-read`, and `file-write` expect the same results as the other phases: the change keeps file access.
 ## Gotchas
 
 - The script checks use the existing native shell-launch tool; they prove nothing about a newly registered native tool, which [mounted-extensions](mounted-extensions.md) checks.

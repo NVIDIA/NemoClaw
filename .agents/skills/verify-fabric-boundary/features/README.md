@@ -15,7 +15,7 @@
 
 - Use the variables the launch sets, as [verify-yaml-deployment's conventions](../../verify-yaml-deployment/features/README.md#driving-conventions) list, plus `SKILL_DIR`, `WORKSPACE_VOLUME`, `ARTIFACTS_VOLUME`, and the `seed` function.
   For each check, set `PHASE` to the phase's directory name from [Lifecycle Phases](#lifecycle-phases), `CASE` to its Sub-feature ID, and save its files in `CHECK_DIR=$EVIDENCE/$PHASE/$CASE`.
-- Send requests with [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md)'s `fabric-agent-ctl invoke` command, and read the runtime ID again after every transition.
+- Send requests with [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md)'s `fabric-agent-ctl invoke` command, and read the runtime ID again after every transition and after any activation restart.
   Reach native interfaces through the entry points apply prints.
 - **Native evidence.** Exercise each capability through the agent's native mechanism in the managed runtime: its tool calls, skill discovery, plugin registration and events, or interface.
   A headless request can't substitute for native interaction.
@@ -39,6 +39,7 @@
 - **Prompts.** Send each feature file's prompt exactly. Replace only its `<...>` placeholders, with values from `bindings.md`, and send the same text in every phase.
   Save the exact text sent in `CHECK_DIR`.
   The agent file may add a harness constraint; it must not change the requested behavior or the expected output.
+  Append the agent file's **Prompt Constraints** after the prompt's last line, and end every request with `Don't use slash commands.`: a slash command sent through `fabric-agent-ctl invoke` isn't native command execution.
   Write and review prompts by these rules:
   - Put each command alone on the line after `Run this exact command:`. Don't end that line with punctuation: the agent can pass a trailing `.` to the command as an argument.
   - Send one script run or installer command per request, so one timeout or refusal affects one check.
@@ -89,6 +90,12 @@
 
   Pass `-` as `fill`'s argument when the prompt has no `<script>`.
   After each request, save the current turn's native calls, with their arguments, output, and exit status, from the record `bindings.md` names, in `$CHECK_DIR/NAME.calls.txt`; keep earlier turns out of that file.
+  Once, after defining them, print `$SHELL_TOOL`, `$FILE_WRITE_TOOL`, `$SKILL_AUTHORING`, and `$NATIVE_SKILL_DIR`; each must match `bindings.md`.
+- **Record each check.** When a check finishes, fill in its row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](#proof-rules) require.
+- **Product assertions and command syntax.** Each Sub-feature line and `Result` states intended behavior, which the selected revision may not implement yet; keep it as written.
+  A command or API marked *(syntax unverified)* shows the expected shape of a control that v1's docs don't document.
+  Before first use, save the tool's own help or reference output in `$CHECK_DIR`, use the syntax it shows, and record any difference in `bindings.md`.
+  When no supported control exists, the check is Failed with a missing-implementation finding; never change the assertion to fit what the revision offers.
 
 - Read any interface credential into a shell variable just before a request and unset it after.
 - A feature that needs a supplied fixture gives it in a fenced block under a **Seed** step; the [launch](../SKILL.md#provision-and-seed-the-volumes) writes it into the volume once.
@@ -129,6 +136,17 @@ Phases run in this order, once each. A transition phase holds one lifecycle chec
 | Restore | `restore` | Restore the exact baseline YAML, then plan/apply | 1 |
 | After restore | `after-restore` | Re-run every check that lists this phase; shell execution returns | 22 / 21 |
 | Teardown | `teardown` | Preview and destroy, then list the retained caller volumes, model cache, and evidence | 1 |
+
+After config change, the feature files expect these results; the change disables only the shell-launch tool:
+
+| Feature | Expected after config change |
+|---|---|
+| [invoke-and-tools](invoke-and-tools.md) | `shell-success`, `shell-failure`, `mounted-supplied-script`, and `mounted-generated-script` expect rejection with no other execution path, by its step 9's criteria; `inference`, `file-read`, and `file-write` expect the same results as the other phases: the change keeps file access |
+| [native-interfaces](native-interfaces.md) | Both checks expect the same results: the turns use no shell, and the file-write tool stays available |
+| [skills](skills.md) | Every check expects the same results, since skills use file tools; a skill check that fails only because the shell is gone is Failed: the change removed more than the shell |
+| [plugins](plugins.md) | Every check expects the same results, since plugin effects don't use the shell; record any actual dependency on the shell in a finding instead of bypassing the restriction |
+| [mounted-extensions](mounted-extensions.md) | Every check expects the same results, since they use file tools and native tools; record any actual dependency on the shell in a finding instead of bypassing the restriction |
+| [lifecycle-and-retention](lifecycle-and-retention.md) | `retention` expects the same results |
 
 [lifecycle-and-retention](lifecycle-and-retention.md) drives each transition and gives its commands.
 

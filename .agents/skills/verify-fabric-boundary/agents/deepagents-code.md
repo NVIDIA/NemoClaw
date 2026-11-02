@@ -18,7 +18,7 @@ None yet.
 
 ## Fabric-Boundary YAML Edits
 
-First choose the run-scoped extension names: run [mounted-extensions](../features/mounted-extensions.md) step 2's name block, and note the generated plugin's ID, `fb-plugin-$UID8`, as [plugins](../features/plugins.md) step 5 derives it.
+First choose the run-scoped extension names: run [mounted-extensions](../features/mounted-extensions.md) step 2's name block, and note the generated plugin's ID, `fb-plugin-$UID8`, as [plugins](../features/plugins.md) step 4 derives it.
 Save the image's adapter descriptor, then list what its public configuration accepts and the settings and interfaces it declares, and check for `dcode`, which [docs/build.md](../../../../docs/build.md) says the image installs in `/opt/deepagents-code`:
 
 ```sh

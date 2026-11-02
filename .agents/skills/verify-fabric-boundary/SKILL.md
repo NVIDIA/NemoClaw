@@ -27,18 +27,19 @@ A pair that isn't listed is unproven: say so with the result.
 
 ## Choose the Agent and Target
 
-| Agent file | `AGENT` | Harness | Checks |
-|---|---|---|---|
-| [agents/hermes.md](agents/hermes.md) | `hermes` | `nvidia.fabric.hermes` | 136 |
-| [agents/openclaw.md](agents/openclaw.md) | `openclaw` | `nvidia.fabric.openclaw` | 136 |
-| [agents/deepagents-code.md](agents/deepagents-code.md) | `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` | 131 |
+| Agent file | `AGENT` | Harness (`ADAPTER_ID`) |
+|---|---|---|
+| [agents/hermes.md](agents/hermes.md) | `hermes` | `nvidia.fabric.hermes` |
+| [agents/openclaw.md](agents/openclaw.md) | `openclaw` | `nvidia.fabric.openclaw` |
+| [agents/deepagents-code.md](agents/deepagents-code.md) | `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` |
 
 | Target file | `TARGET` |
 |---|---|
 | [../verify-yaml-deployment/targets/dgx-spark.md](../verify-yaml-deployment/targets/dgx-spark.md) | `dgx-spark` |
 
 Read the chosen agent file here, the matching [verify-yaml-deployment agent file](../verify-yaml-deployment/agents/), and the target file before launching: they set variables and add steps that this file refers to.
-The agent file here holds the Fabric-boundary YAML edits, the native binding hints, and the prompt constraints for that harness.
+The agent file here holds only that harness's differences: its YAML edits, shell restriction, native binding hints, prompt constraints, and extension fixtures.
+Shared rules live in this file and the [feature map](features/README.md).
 
 Ask the user before every run: each run uses the Spark's GPU through its inference source, and some sources need credentials or a paid service.
 Also ask before a run that downloads a model, uses sudo, or installs a plugin package from the network.
@@ -75,28 +76,38 @@ Run [Write the YAML](../verify-yaml-deployment/SKILL.md#write-the-yaml), all fiv
 
 ### Add the Fabric-Boundary YAML Edits
 
-Every agent gets the same two caller volumes:
+Make these edits for every agent, then the chosen agent file's **Fabric-Boundary YAML Edits**: its native tool and plugin locations under `/sandbox/workspace/extensions`, its plugin and tool settings, and its interfaces.
 
-1. Under `spec.gateway.config`, add `openshell.drivers.docker` with `allow_driver_config: true`.
-2. Under `spec.sandboxes.assistant`, add `driverConfig.docker.mounts`:
+1. **Volumes.** Merge the managed Docker gateway fragment from [Keep Agent Files on Mounted Volumes](../../../docs/state.md#keep-agent-files-on-mounted-volumes), replacing its sources `assistant-workspace` and `assistant-artifacts` with `$WORKSPACE_VOLUME` and `$ARTIFACTS_VOLUME`.
+   Keep the fragment's targets, `/sandbox/workspace` and `/sandbox/artifacts`, and `read_only: false` on both.
+2. **Skills.** List `/sandbox/workspace/skills` in `harness.config.skills.paths`, as [Skills on a Mounted Volume](../../../docs/agents.md#skills-on-a-mounted-volume) shows.
+   The directory is on the workspace volume, so it needs no mount of its own.
+   When the descriptor's public configuration doesn't accept `skills`, leave the field out; the skill checks that need it fail with a finding.
+3. **Extension names.** Choose the run-scoped names before any agent edit that uses them: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
+4. **Adapter fields.** Save the image's adapter descriptor and list what it accepts and declares:
 
-   ```yaml
-   driverConfig:
-     docker:
-       mounts:
-         - type: volume
-           source: REPLACE_WITH_WORKSPACE_VOLUME
-           target: /sandbox/workspace
-           read_only: false
-         - type: volume
-           source: REPLACE_WITH_ARTIFACTS_VOLUME
-           target: /sandbox/artifacts
-           read_only: false
+   ```sh
+   case $AGENT in
+     hermes) ADAPTER_ID=nvidia.fabric.hermes ;;
+     openclaw) ADAPTER_ID=nvidia.fabric.openclaw ;;
+     deepagents-code) ADAPTER_ID=nvidia.fabric.langchain.deepagents-code ;;
+   esac
+   docker image inspect "$IMAGE" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}' |
+     jq --arg id "$ADAPTER_ID" '.adapters[] | select(.descriptor.adapter_id == $id) | .descriptor' > "$EVIDENCE/descriptor.json"
+   jq -c '.config.accepts' "$EVIDENCE/descriptor.json"
+   jq -c '.settings_schema.properties | keys' "$EVIDENCE/descriptor.json"
+   jq -c '.settings_schema.properties.interfaces.properties | keys' "$EVIDENCE/descriptor.json"
    ```
 
-   Replace the two sources with `$WORKSPACE_VOLUME` and `$ARTIFACTS_VOLUME`.
-   [Keep Agent Files on Mounted Volumes](../../../docs/state.md#keep-agent-files-on-mounted-volumes) explains each field.
-3. Add the edits in the chosen agent file's **Fabric-Boundary YAML Edits** section: its skill path for `/sandbox/workspace/skills`, its native tool and plugin locations under `/sandbox/workspace/extensions`, its plugin and tool settings, and its interfaces.
+   If `descriptor.json` is empty, or no image matches the selected revision, the adapter or its image is absent.
+   Create no resources: skip [Provision and Seed the Volumes](#provision-and-seed-the-volumes) and [Plan and Apply](#plan-and-apply), and write one absence finding, F1, that names what is missing with the revision and image digest.
+   Mark every selected check in `checks.md` Failed and linked to F1, except `teardown`, which is Not tested and linked to F1, then run [Report](#report).
+   If access or credentials prevent the check, mark the rows Not tested with that cause instead.
+   An image that has the adapter but fails to start is a failure with its own finding.
+5. **Merge rules.** Merge the agent file's fields into `spec.sandboxes.assistant`, keeping the base `harness.kind`, `harness.execution`, and inference route.
+   Unless the agent file says otherwise, keep the route's `overrides.maxTokens` at 4096 for these multistep checks ([docs/reference/configuration.md](../../../docs/reference/configuration.md)); if the base sets another value, change it and record the override in `$EVIDENCE/identity.txt`.
+   Use only fields that v1's docs document or the descriptor declares, and record each field's source in `bindings.md`.
+   A field the descriptor doesn't declare fails the matching checks; never add it to see whether plan accepts it.
 
 The workspace volume has this layout; the feature files seed or read each path:
 
@@ -111,8 +122,6 @@ The workspace volume has this layout; the feature files seed or read each path:
 | `/sandbox/workspace/retained/` | The workspace retention marker |
 
 The artifacts volume holds `/sandbox/artifacts/retained/` with the artifacts retention marker, beside the adapter's native state.
-Use only fields the selected image's adapter declares.
-A capability with no declared field is not a reason to invent a key: the matching checks fail with a finding.
 
 Save the baseline that Config change and Restore compare against:
 
@@ -127,6 +136,7 @@ sha256sum "$EVIDENCE/baseline.yaml" > "$EVIDENCE/baseline.sha256"
 Before the first apply, write `$EVIDENCE/bindings.md`: for each feature, the YAML fields it relies on, the native mechanism it uses, and the evidence for that choice.
 Resolve each binding against the selected YAML, the image's adapter descriptor, and that image's harness source and executable help, in that order.
 The agent file's hints are observed at a named revision; re-resolve them against the selected image and record any difference.
+Record each runtime's actual native home from its generated configuration or startup log, never from the process environment, which holds credentials; [docs/state.md](../../../docs/state.md) lists each adapter's documented home.
 Fill in every prompt placeholder that the [driving conventions](features/README.md#driving-conventions) list.
 Start it with these lines, which the [request helpers](features/README.md#driving-conventions) read:
 
@@ -152,7 +162,7 @@ Run the plan line from [Plan and Apply](../verify-yaml-deployment/SKILL.md#plan-
 grep -F "$WORKSPACE" "$EVIDENCE/plan.txt"
 ```
 
-Create both volumes with OpenShell's admission labels and this run's UID, and give them to the sandbox identity `10001:10001`:
+Create both volumes with the admission labels and sandbox identity that [Keep Agent Files on Mounted Volumes](../../../docs/state.md#keep-agent-files-on-mounted-volumes) requires, plus this run's UID label:
 
 ```sh
 for v in "$WORKSPACE_VOLUME" "$ARTIFACTS_VOLUME"; do

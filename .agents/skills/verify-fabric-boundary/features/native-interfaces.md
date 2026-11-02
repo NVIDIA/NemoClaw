@@ -86,9 +86,6 @@ Never send these prompts through `ask`: a headless request isn't a UI turn.
    From the record `binding` prints, save the calls of turn 2 in `$CHECK_DIR/turn2.calls.txt`; they must show a native `$FILE_WRITE_TOOL` call that wrote the result file, made during this session.
    Pass when all three turns were answered through the interface, the file is correct, and the reconnected session answered.
    A reconnected session doesn't have to resume the earlier conversation; record what it showed.
-6. **After config change:** the shell is disabled, and both checks expect the same results: the turns use no shell, and the file-write tool stays available.
-7. **Record:** fill in each row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](README.md#proof-rules) require.
-
 ## Gotchas
 
 - A listener, a `200` page, or a forward that connects proves no UI; only answered turns and the independent file effect do.
