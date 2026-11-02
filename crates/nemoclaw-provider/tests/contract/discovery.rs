@@ -3,14 +3,8 @@
 
 use crate::http_fixture as transport;
 use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
+use serde_json::json;
+use std::fs;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
@@ -102,6 +96,11 @@ output "status" {{
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn compiled_discovery_requires_the_image_runtime_metadata() {
     use nemoclaw_sdk::{compile::compile, config::Document};
+    use serde_json::Value;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let document =
         Document::parse(include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice())
             .unwrap();
