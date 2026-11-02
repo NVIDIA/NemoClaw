@@ -213,7 +213,7 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
 The agent calls the selected provider API hostname, and OpenShell permits only the approved destination and request paths.
 Qualifying custom hosted endpoints use sandbox-attached providers.
-New Deep Agents Code, Hermes, and OpenClaw selections also use sandbox-attached native providers for Ollama, standalone vLLM, Local NVIDIA NIM, llama.cpp, and qualifying host-local compatible endpoints.
+New Deep Agents Code, Hermes, OpenClaw, and Pi selections also use sandbox-attached native providers for Ollama, standalone vLLM, Local NVIDIA NIM, llama.cpp, and qualifying host-local compatible endpoints.
 Retained shared custom endpoints, unchanged published Pi shared local selections, and retained OpenClaw shared local selections retain `inference.local` on OpenShell `0.0.x`.
 Hermes live qualification for the new local lifecycle remains pending.
 Legacy Deep Agents Code standalone local sandboxes require backup and fresh recreation before native-provider onboarding; NemoClaw blocks their resume and rebuild. An older OpenClaw Ollama, standalone vLLM, or llama.cpp sandbox without an attachment can retain its supported shared-route model switches, but cannot resume or rebuild. Back it up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`. New Local NVIDIA NIM sandboxes also use their recorded native attachment for resume and rebuild. Back up and recreate older shared-route NIM sandboxes before upgrading OpenShell.
