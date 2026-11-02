@@ -22,7 +22,7 @@ Files that survive a transition aren't enough: each phase needs fresh native dis
 ## How to get to it (user POV)
 
 - A request through `fabric-agent-ctl invoke`, as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) sends it, naming a skill or asking the agent to create one.
-- The mounted skill directory `/sandbox/workspace/skills/`, which the agent file's [Fabric-boundary YAML edits](../SKILL.md#add-the-fabric-boundary-yaml-edits) configure as a native skill path.
+- The mounted skill directory `/sandbox/workspace/skills/`, which the launch makes the agent's skill path.
 - The agent's native skill discovery, viewing, and authoring, as `bindings.md` records them.
 
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
@@ -191,10 +191,10 @@ MARKER=%s
 ## Gotchas
 
 - Never paste a skill's contents or its expected output into a prompt. The run prompts name the skill only, so a correct result proves the agent loaded it.
-- Some harnesses list skills in the system prompt instead of through a tool. Then the discovery evidence is the runtime's loaded skill list for the turn, not the reply. The agent file's binding hints say which mechanism did what at a named revision; re-resolve them against the selected image.
+- Some harnesses list skills in the system prompt instead of through a tool. Then the discovery evidence is the runtime's loaded skill list for the turn, not the reply.
 - `skill-execution` and `mounted-supplied-skill` both write `results/skill-result.json`. Remove it before each run so one check can't pass on the other's output.
 - Retained files prove neither discovery nor fresh execution. [lifecycle-and-retention](lifecycle-and-retention.md)'s `retention` check tracks the supplied skill's hash; these checks need a fresh native discovery in each phase.
 - The agent creates its skill once, in the Initial phase. Never re-create, rewrite, reseed, or move it after a transition, and never create it for the agent; a missing or changed skill is evidence.
 - Don't ask the agent to search for where it saved the skill; resolve the location from native evidence yourself.
 - A native file tool can write to a virtual backend instead of the mount. Read every skill file and result through `openshell sandbox exec`.
-- Write the plain prompt; a harness constraint from the agent file may be added, but it must not change the requested behavior or expected output.
+- Write the plain prompt; a harness constraint that `bindings.md` records may be added, but it must not change the requested behavior or expected output.

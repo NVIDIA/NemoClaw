@@ -38,8 +38,8 @@
   Never put the input nonce or a skill's hidden recipe in a file or skill prompt; use a unique request ID when the harness supports one.
 - **Prompts.** Send each feature file's prompt exactly. Replace only its `<...>` placeholders, with values from `bindings.md`, and send the same text in every phase.
   Save the exact text sent in `CHECK_DIR`.
-  The agent file may add a harness constraint; it must not change the requested behavior or the expected output.
-  Append the agent file's **Prompt Constraints** after the prompt's last line, and end every request with `Don't use slash commands.`: a slash command sent through `fabric-agent-ctl invoke` isn't native command execution.
+  A harness constraint that `bindings.md` records, such as the plugin format, may be appended after the prompt's last line; it must not change the requested behavior or the expected output.
+  End every request with `Don't use slash commands.`: a slash command sent through `fabric-agent-ctl invoke` isn't native command execution.
   Write and review prompts by these rules:
   - Put each command alone on the line after `Run this exact command:`. Don't end that line with punctuation: the agent can pass a trailing `.` to the command as an argument.
   - Send one script run or installer command per request, so one timeout or refusal affects one check.
@@ -92,10 +92,11 @@
   After each request, save the current turn's native calls, with their arguments, output, and exit status, from the record `bindings.md` names, in `$CHECK_DIR/NAME.calls.txt`; keep earlier turns out of that file.
   Once, after defining them, print `$SHELL_TOOL`, `$FILE_WRITE_TOOL`, `$SKILL_AUTHORING`, and `$NATIVE_SKILL_DIR`; each must match `bindings.md`.
 - **Record each check.** When a check finishes, fill in its row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](#proof-rules) require.
-- **Product assertions and command syntax.** Each Sub-feature line and `Result` states intended behavior, which the selected revision may not implement yet; keep it as written.
-  A command or API marked *(syntax unverified)* shows the expected shape of a control that v1's docs don't document.
-  Before first use, save the tool's own help or reference output in `$CHECK_DIR`, use the syntax it shows, and record any difference in `bindings.md`.
+- **Product assertions and commands.** Each Sub-feature line and `Result` states intended behavior, which the selected revision may not implement yet; keep it as written.
+  Take each control's command from the tool's own help or documentation, save that help in `$CHECK_DIR`, and record the command in `bindings.md` or the check's evidence.
   When no supported control exists, the check is Failed with a missing-implementation finding; never change the assertion to fit what the revision offers.
+- **Native records.** Read session databases and logs from a copy, without starting the harness or loading its plugins.
+  Never edit generated native configuration or redirect the harness's home through the environment to make a check pass, and never forward or expose a server that an interface starts beyond the entry points apply prints.
 
 - Read any interface credential into a shell variable just before a request and unset it after.
 - A feature that needs a supplied fixture gives it in a fenced block under a **Seed** step; the [launch](../SKILL.md#provision-and-seed-the-volumes) writes it into the volume once.

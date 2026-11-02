@@ -20,10 +20,10 @@ Teardown removes the deployment's compute and leaves the caller volumes, model d
 
 ## How to get to it (user POV)
 
-- The `nemoclaw` CLI's `plan`, `apply`, `plan --destroy`, and `destroy`, as [Plan and Apply](../../verify-yaml-deployment/SKILL.md#plan-and-apply) and [Cleanup](../../verify-yaml-deployment/SKILL.md#cleanup) run them through `nc`. [Updates and Recovery](../../../../docs/usage.md#updates-and-recovery) says how plan and apply treat a stopped runtime.
-- OpenShell's sandbox stop and start control, which stops a sandbox while preserving its workspace and starts it again. v1's docs don't document its command yet; step 7's `openshell sandbox stop` and `openshell sandbox start` are *(syntax unverified)*.
-- Fabric's `fabric-agent-ctl stop` inside the sandbox, the control [docs/provider.md](../../../../docs/provider.md) says NemoClaw uses to stop an agent.
-- The two caller volumes, as [Keep Agent Files on Mounted Volumes](../../../../docs/state.md#keep-agent-files-on-mounted-volumes) describes them.
+- The `nemoclaw` CLI's `plan`, `apply`, `plan --destroy`, and `destroy`, as [Plan and Apply](../../verify-yaml-deployment/SKILL.md#plan-and-apply) and [Cleanup](../../verify-yaml-deployment/SKILL.md#cleanup) run them through `nc`.
+- OpenShell's control for stopping a sandbox while keeping its workspace, and starting it again.
+- Fabric's control for stopping only the agent's runtime inside the sandbox.
+- The two caller volumes the launch mounted.
 
 ## Driving it with the nemoclaw CLI, the OpenShell CLI, and fabric-agent-ctl
 
@@ -90,37 +90,26 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 5. **After a transition:** set `PHASE` to the next phase's directory, write its [fresh phase input](README.md#driving-conventions), and re-run every check whose Phases list names that phase, in the [map's order](README.md#features).
    The [lifecycle phases](README.md#lifecycle-phases) table gives each After-phase's check count; run exactly those.
    Record the transition's own row in `$EVIDENCE/checks.md` once its result is known.
-6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3, then stop only the runtime through Fabric's control, and confirm that plan sees it stopped. [docs/provider.md](../../../../docs/provider.md) names `fabric-agent-ctl stop`; its flags below are *(syntax unverified)*, so save its help first:
+6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3, then stop only the runtime through Fabric's supported control, and confirm that plan sees it stopped. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
 
-   ```sh
-   openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl stop --help > "$CHECK_DIR/stop-help.txt" 2>&1
-   openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl stop --agent assistant --runtime-id "$RUNTIME_ID" > "$CHECK_DIR/stop.json"; echo "exit $?"
-   jq -c '{operation, status, error}' "$CHECK_DIR/stop.json"
-   ```
-
-   Result: `exit 0` and `{"operation":"stop","status":"succeeded","error":null}`.
-   These arguments are the ones NemoClaw's provider passes at revision `52be614713`; check them against `stop-help.txt` from the selected image, and record any difference in `bindings.md`.
+   Result: the control reports a stop that succeeded, with no error.
    Run step 4; `plan.txt` must say `agent runtime is not running` and must not replace the sandbox.
    Pass when `container-before.txt` and `container-after.txt` match, `runtime-after.txt` differs from `runtime-before.txt`, and the request in step 4 succeeds on the new runtime.
    A stop with no supported control is Failed, linked to one missing-implementation finding; a runtime that plan/apply doesn't bring back is Failed.
    Then run step 5 with `PHASE=after-runtime-restart`.
-7. **`stop-start`:** with `PHASE=stop-start` and `CASE=stop-start`, run step 3, then stop the same sandbox through OpenShell, confirm it is stopped and unreachable, and start it again. The `stop` and `start` commands are *(syntax unverified)*: save `openshell sandbox --help` in `$CHECK_DIR/help.txt` first and use the syntax it shows:
+7. **`stop-start`:** with `PHASE=stop-start` and `CASE=stop-start`, run step 3, then stop the same sandbox through OpenShell's supported control, confirm it is stopped and unreachable, and start it again. Save the control's help, each command, and its output in `$CHECK_DIR`. While the sandbox is stopped, record:
 
    ```sh
-   openshell sandbox stop assistant > "$CHECK_DIR/stop.txt" 2>&1; echo "stop exit $?"
-   openshell sandbox get assistant > "$CHECK_DIR/stopped.txt" 2>&1
    docker inspect "$SANDBOX_CONTAINER" --format '{{.Id}} {{.State.Status}}' | tee "$CHECK_DIR/stopped-container.txt"
    openshell sandbox exec -n assistant --no-tty -- true > "$CHECK_DIR/stopped-exec.txt" 2>&1; echo "stopped exec exit $?"
-   openshell sandbox start assistant > "$CHECK_DIR/start.txt" 2>&1; echo "start exit $?"
-   openshell sandbox list | tee "$CHECK_DIR/started.txt"
    ```
 
-   Result: `stop exit 0`; `stopped.txt` shows the sandbox stopped, the container keeps its ID and isn't `running`, and the exec exits nonzero; `start exit 0`, and `assistant` returns to `Ready`.
+   Result: the stop and the start succeed; while stopped, OpenShell shows the sandbox stopped, the container keeps its ID and isn't `running`, and the exec exits nonzero; after the start, `assistant` returns to `Ready`.
    Wait for `Ready` before step 4; the gateway, model service, and Docker daemon keep running throughout.
    Run step 4 with the YAML unchanged.
    Pass when the container IDs match, the plan doesn't replace the sandbox, and the request in step 4 succeeds.
    The desired contract is that the same sandbox recovers with a usable runtime after unchanged plan/apply; anything else is Failed, including a recovery that replaces the sandbox.
-   If the pinned OpenShell CLI has no supported stop or start, mark the check Failed with a missing-implementation finding; if the runner can't run them safely, mark it Not tested.
+   If OpenShell offers no supported stop or start, mark the check Failed with a missing-implementation finding; if the runner can't run them safely, mark it Not tested.
    Then run step 5 with `PHASE=after-stop-start`.
 8. **`recreate`:** with `PHASE=recreate` and `CASE=recreate`, run step 3, then preview and destroy the deployment through NemoClaw, keeping the state directory, bundle, and caller volumes:
 
@@ -146,7 +135,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    Pass when the plan's listed creations match what apply created, the destroy removed what `destroy-plan.txt` listed, and the request in step 4 succeeds; the markers are checked by `retention` in the next phase.
    Then run step 5 with `PHASE=after-recreate`.
 9. **`change`:** with `PHASE=config-change` and `CASE=change`, run step 3 and confirm that the YAML is still the baseline, with the same `sha256sum` comparison as step 8.
-   Edit `$RUN_DIR/deployment.yaml` by hand to change only the shell restriction that the [agent file](../agents/) names, then save the change:
+   Edit `$RUN_DIR/deployment.yaml` by hand to remove only the shell-launch tool from the tool allow-list that the launch added, as `bindings.md` records it, then save the change:
 
    ```sh
    cp "$RUN_DIR/deployment.yaml" "$EVIDENCE/changed.yaml"
@@ -158,7 +147,8 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    Run step 4; `plan.txt` must show the agent's change, and every other resource as the plan lists it.
    Compare `owned-before.txt` with `owned-after.txt`: the model service and gateway keep their container IDs unless the plan lists a change to them.
    Pass when the plan shows the change, apply completes, the request in step 4 succeeds, and `shell-success` in After config change shows the shell tool absent or rejected; settle this row after that check.
-   When the agent file names no supported shell restriction, or the adapter declares none, mark `change` Failed with one missing-implementation finding, don't plan or apply a guessed key, and link the four shell checks in After config change to that finding, as [invoke-and-tools](invoke-and-tools.md#gotchas) says.
+   When the adapter offers no supported way to remove only the shell-launch tool, mark `change` Failed with one missing-implementation finding, don't plan or apply a guessed key, and link the four shell checks in After config change to that finding, as [invoke-and-tools](invoke-and-tools.md#gotchas) says.
+   An approval policy or classifier that declines a command isn't the shell restriction: judge by tool exposure and actual calls.
    Never test the unchanged baseline as the changed phase.
    Then run step 5 with `PHASE=after-config-change`.
 10. **`restore`:** with `PHASE=restore` and `CASE=restore`, run step 3, then put back the exact baseline:
@@ -195,9 +185,9 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 - Retained files prove neither discovery, registration, fresh execution, nor conversation resume. [skills](skills.md) tracks rediscovery of a generated skill separately; don't infer conversation resume from `retention`.
 - Each transition starts a new runtime or sandbox: an old `RUNTIME_ID` fails with `runtime_unavailable`, and old interface entry points or tokens are gone. Step 4 reads both again.
 - Stop only what the check names. `extension-runtime-restart` stops the Fabric runtime, not the sandbox; `stop-start` stops the sandbox, not the gateway, model service, or Docker daemon.
-- Don't substitute `docker stop`, `docker restart`, or killing the runtime's process for the supported commands. A killed runtime can leave interface markers behind, as [docs/interfaces.md](../../../../docs/interfaces.md) describes.
+- Don't substitute `docker stop`, `docker restart`, or killing the runtime's process for the supported controls; a killed runtime can leave interface markers behind.
 - An explicit `fabric-agent-ctl start`, or a runtime started by hand, is at most a separately recorded diagnostic. Never put its handle in state, and stop it before teardown.
-- If a plan after `extension-runtime-restart` or `stop-start` replaces the sandbox, the check is Failed. Save the plan and ask the user before applying it: [replacement](../../../../docs/usage.md#replace-workloads-after-an-unusable-runtime) deletes the sandbox's own files.
+- If a plan after `extension-runtime-restart` or `stop-start` replaces the sandbox, the check is Failed. Save the plan and ask the user before applying it: replacement deletes the sandbox's own files.
 - Never edit OpenTofu state, erase state to force recovery, or invent plan flags. Keep the state directory and bundle until cleanup.
 - The caller volumes carry no `nemoclaw.nvidia.com/uid` label, so destroy keeps them; adding that label blocks teardown.
 - Don't keep applying an unchanged YAML that already failed without new evidence; record the failure and continue with the checks that don't need the runtime.

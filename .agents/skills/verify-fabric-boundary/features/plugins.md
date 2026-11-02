@@ -20,7 +20,7 @@ Files that survive a transition aren't enough: each phase needs fresh registrati
 
 ## How to get to it (user POV)
 
-- The plugin and tool settings that the agent file's [Fabric-boundary YAML edits](../SKILL.md#add-the-fabric-boundary-yaml-edits) add, which enable the bundled plugin.
+- The bundled plugin that the launch enables, with its plugin and tool settings.
 - A request through `fabric-agent-ctl invoke`, as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) sends it, asking the agent to act, to write a plugin, or to run its native installer and enablement.
 - The mounted plugin directory `/sandbox/workspace/extensions/plugins/`, where the agent writes its plugin, and the harness's native plugin install location, as `bindings.md` records them.
 
@@ -63,7 +63,7 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
    Result: `request.calls.txt` shows the current-turn native action that fires the recorded event, and `effect.after.txt` holds one new entry with the exact recorded effect, attributable to this runtime and turn, that `effect.before.txt` lacks.
    Missing supported hooks are Failed with the missing-implementation finding; an effect you can't attribute to this turn is Not tested, with the cause in a finding.
    Never call the hook by hand or count an old entry, and don't clean up the effect path.
-4. **`agent-plugin-author`:** in the Initial phase only. Choose the run-scoped names, then send the authoring prompt once; the agent file may add a constraint naming the plugin format from `bindings.md`:
+4. **`agent-plugin-author`:** in the Initial phase only. Choose the run-scoped names, then send the authoring prompt once, with the `plugin format` constraint that `bindings.md` records appended:
 
    ```sh
    CASE=agent-plugin-author; CHECK_DIR=$EVIDENCE/$PHASE/$CASE

@@ -22,7 +22,7 @@ Files that survive a transition aren't enough: each phase needs fresh registrati
 
 ## How to get to it (user POV)
 
-- The mounted extension locations, enablement, and tool allow-list that the agent file's [Fabric-boundary YAML edits](../SKILL.md#add-the-fabric-boundary-yaml-edits) add.
+- The mounted extension locations, enablement, and tool allow-list that the launch adds.
 - The mounted directories `/sandbox/workspace/extensions/tools/` and `/sandbox/workspace/extensions/plugins/`, where the user seeds the supplied fixtures and the agent writes its plugin.
 - A request through `fabric-agent-ctl invoke`, as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) sends it, asking the agent to call a tool by name or to write a file that a hook observes.
 
@@ -58,18 +58,17 @@ Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.
      "$SUPPLIED_TOOL_ID" "$SUPPLIED_TOOL" "$SUPPLIED_TOOL_DIR" "$SUPPLIED_PLUGIN_ID" "$SUPPLIED_PLUGIN_DIR" > "$EVIDENCE/mounted-extensions.env"
    ```
 
-3. **Seed:** the two supplied fixtures, before the first apply. Their format depends on the harness, so the agent file gives the fixture, as one fenced block per file headed by its path inside the fixture directory. Each fixture does exactly this and nothing else, with no dependencies, network access, or other file access:
+3. **Seed:** the two supplied fixtures, before the first apply. Write each in the harness's native format, as the `plugin format` line in `bindings.md` records it; the agent-authored plugin uses the same format. Each fixture does exactly this and nothing else, with no dependencies, network access, or other file access:
    - **Native tool,** in `$SUPPLIED_TOOL_DIR`, with ID `$SUPPLIED_TOOL_ID`: registers one native tool named `$SUPPLIED_TOOL` that takes one string argument, `nonce`, and returns a JSON object with exactly three keys: `origin` set to `supplied`, `nonce` set to the argument, and `kind` set to `native-tool`. It registers no hook. If the harness adds custom tools only through plugins, the fixture is a plugin that registers only this tool.
    - **Plugin,** in `$SUPPLIED_PLUGIN_DIR`, with ID `$SUPPLIED_PLUGIN_ID`: registers one hook that runs after each native file-write tool call. When the written path is exactly `/sandbox/workspace/results/supplied-plugin-trigger.txt`, it appends one line to `/sandbox/workspace/results/supplied-plugin-ledger.jsonl`: a JSON object with `origin` set to `supplied`, `nonce` set to the first line of the trigger file, `tool` set to the native tool name, and `call_id` set to the tool call ID if the event carries one. For any other path it does nothing. It registers no tool.
 
-   The agent file's fixtures use the plugin format its hints describe, the same format the agent-authored plugin uses, and its fixture notes name the hook and argument names they assume.
-   If the selected image uses other names, change only those names before seeding and record the change in `bindings.md`.
+   Record each fixture file's source and format reference in `bindings.md`. When `plugin format` is `none`, seed nothing: step 1 marks the rows Failed.
 
-   The agent file's fixtures write the run-scoped names as `FB_TOOL_ID`, `FB_TOOL_NAME`, and `FB_PLUGIN_ID`. For each fixture file, set `FILE` to the path its heading names and pipe its fenced content into the matching line, which fills in those names:
+   Write each file the format needs with the run-scoped names in place, then seed it into the matching directory:
 
    ```sh
-   sed -e "s/FB_TOOL_ID/$SUPPLIED_TOOL_ID/g" -e "s/FB_TOOL_NAME/$SUPPLIED_TOOL/g" | seed "$WORKSPACE_VOLUME" "extensions/tools/$SUPPLIED_TOOL_ID/$FILE"
-   sed -e "s/FB_PLUGIN_ID/$SUPPLIED_PLUGIN_ID/g" | seed "$WORKSPACE_VOLUME" "extensions/plugins/$SUPPLIED_PLUGIN_ID/$FILE"
+   seed "$WORKSPACE_VOLUME" "extensions/tools/$SUPPLIED_TOOL_ID/FILE" < TOOL_FILE
+   seed "$WORKSPACE_VOLUME" "extensions/plugins/$SUPPLIED_PLUGIN_ID/FILE" < PLUGIN_FILE
    ```
 
    Then seal both trees, still before the first apply, and add them to `$EVIDENCE/seeded.sha256`:

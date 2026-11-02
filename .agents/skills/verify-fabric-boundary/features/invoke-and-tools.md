@@ -161,7 +161,7 @@ Preconditions: the [launch](../SKILL.md#launch) seeded the supplied script below
 ## Gotchas
 
 - The script checks use the existing native shell-launch tool; they prove nothing about a newly registered native tool, which [mounted-extensions](mounted-extensions.md) checks.
-- Name the tool that launches a new command. A UI terminal or process-control tool may need an existing session and isn't interchangeable with it; asking for a "terminal" can select a different capability. The agent file's binding hints say which tool did what at a named revision; re-resolve them against the selected image.
+- Name the tool that launches a new command. A UI terminal or process-control tool may need an existing session and isn't interchangeable with it; asking for a "terminal" can select a different capability.
 - Don't ask the agent to run a command "another way" or allow any alternative: the shell-disabled phase passes only on rejection.
 - Keep each prompt the same across phases. If wording changes during diagnosis, record the change and compare both prompts on the same healthy runtime before blaming a transition.
 - A native file tool can write to a virtual backend instead of the mount. Read every result through `openshell sandbox exec`; a file only in the tool's ephemeral state fails `file-write`.

@@ -16,14 +16,14 @@ For `deepagents-code`, `web-ui` is out of this skill's scope; the check log omit
 
 ## How to get to it (user POV)
 
-- The **Agent interfaces** block that apply prints, for the interfaces the chosen [agent file](../agents/)'s YAML edits declare under `harness.settings.interfaces`. [docs/interfaces.md](../../../../docs/interfaces.md#reach-an-agent-interface) documents each interface's `Open`, `Forward`, `Token`, and `Sign in` lines.
+- The **Agent interfaces** block that apply prints for the interfaces the launch enabled, with each interface's `Open`, `Forward`, `Token`, and `Sign in` lines.
 - **Terminal UI:** the `Open` command apply prints, run from a terminal on the client host, as [deepagents-code-terminal](../../verify-yaml-deployment/features/deepagents-code-terminal.md) drives it for `deepagents-code`.
 - **Web UI:** the `Forward` command apply prints, then a browser on `http://127.0.0.1:PORT`, signed in as the `Sign in` line says. [openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md) drives OpenClaw's Control UI with its token; [hermes-interfaces](../../verify-yaml-deployment/features/hermes-interfaces.md) drives Hermes's dashboard, which has no sign-in.
 
 | Agent | `tui` entry point | `web-ui` entry point |
 |---|---|---|
-| `hermes` | The terminal UI entry that apply lists for the interface [agents/hermes.md](../agents/hermes.md) declares | `assistant/dashboard`: its browser chat |
-| `openclaw` | The terminal UI entry that apply lists for the interface [agents/openclaw.md](../agents/openclaw.md) declares | `assistant/dashboard`: the Control UI chat |
+| `hermes` | The terminal UI entry that apply lists | `assistant/dashboard`: its browser chat |
+| `openclaw` | The terminal UI entry that apply lists | `assistant/dashboard`: the Control UI chat |
 | `deepagents-code` | `assistant/terminal`: its `Open` command | Out of scope |
 
 ## Driving it with the OpenShell CLI, util-linux `script`, and Chromium
@@ -41,7 +41,7 @@ Never send these prompts through `ask`: a headless request isn't a UI turn.
    ```
 
    Result: the block lists the agent's terminal UI entry, and for `hermes` and `openclaw` also its web UI entry.
-   If an in-scope entry is missing, check the image's declared interfaces with the command in the matching [verify-yaml-deployment agent file](../../verify-yaml-deployment/agents/).
+   If an in-scope entry is missing, check `$EVIDENCE/descriptor.json` for the interface the adapter declares.
    When the adapter declares no such interface, or apply lists none for a declared one, mark the check Failed without driving it, linked to one shared finding with the descriptor output and the revision.
 2. **Prepare the check:** with `CASE` set to `tui` or `web-ui`, remove its stale output, choose two new words, and save the three prompts:
 
