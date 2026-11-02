@@ -1050,6 +1050,8 @@ To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNOR
 ### Generated Sandbox Image Build Requires the Selected Local Engine
 
 On a local Docker gateway, NemoClaw builds each generated OpenClaw, Hermes, or Deep Agents Code sandbox image with host-side BuildKit.
+When `DOCKER_HOST` and `DOCKER_CONTEXT` are unset, NemoClaw can use Docker's saved current context.
+For a reachable supported local Unix socket that differs from Docker's default socket, NemoClaw exports the endpoint as `DOCKER_HOST`.
 NemoClaw stops before sandbox creation in these cases:
 
 - The local build is disabled.
@@ -1058,7 +1060,7 @@ NemoClaw stops before sandbox creation in these cases:
 - The build exits with an error.
 - The local build exceeds 20 minutes.
 - On the Docker path, `DOCKER_HOST` names an unsupported endpoint instead of an absolute local `unix://` socket.
-- On the Docker path, a non-default Docker context is selected while `DOCKER_HOST` is unset.
+- On the Docker path, `DOCKER_CONTEXT` selects a non-default context while `DOCKER_HOST` remains unset after endpoint resolution.
 
 It does not send that generated Dockerfile to the OpenShell gateway's classic Docker API builder because that builder cannot enforce the same instructions.
 
