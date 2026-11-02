@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The fixtures every scenario runs against, reset between scenarios: the
 //! OpenShell gRPC fixture, a fake Docker engine, an inference upstream that
-//! lists only the models a scenario declares, and the control endpoint of the
-//! `fixture` provider. A scenario declares what the engine, gateway, and
-//! upstream report, may change what the gateway holds between runs, and reads
-//! what they recorded.
+//! answers nothing, and the control endpoint of the `fixture` provider. A
+//! scenario declares what the engine and gateway report, and reads what they
+//! recorded.
 
 use crate::docker_engine::{self, DATA_ROOT};
 use nemoclaw_e2e::{http_fixture, openshell};
@@ -29,8 +28,6 @@ pub struct Shared {
     containers: Mutex<Vec<Value>>,
     upstream_endpoint: OnceLock<String>,
     upstream_requests: Mutex<Vec<String>>,
-    /// The model IDs the upstream lists.
-    models: Mutex<Vec<String>>,
     /// Fixture credential values by environment variable.
     credentials: Mutex<BTreeMap<String, String>>,
 }
@@ -159,11 +156,7 @@ impl Shared {
         }
     }
 
-    /// Apply a case's declaration, if any, and return the observations. A
-    /// declaration replaces the declared images, containers, models, driver,
-    /// and sandbox creation delay. Its optional `change` alters what the
-    /// gateway holds once, as an outage between runs would: it stops one
-    /// sandbox's Fabric runtime, or forgets every provider registration.
+    /// Apply a case's declaration, if any, and return the observations.
     fn control_reply(&self, request: &http_fixture::Request) -> (u16, Vec<u8>) {
         let Ok(declared) = serde_json::from_slice::<Value>(&request.body) else {
             return (400, b"declare must be JSON".to_vec());
@@ -172,43 +165,7 @@ impl Shared {
             let list = |key: &str| declared[key].as_array().cloned().unwrap_or_default();
             *self.images.lock().unwrap() = list("images");
             *self.containers.lock().unwrap() = list("containers");
-            *self.models.lock().unwrap() = list("models")
-                .iter()
-                .filter_map(|model| model.as_str().map(str::to_owned))
-                .collect();
-            let mut gateway = self.gateway.lock().unwrap();
-            gateway.driver = declared["compute_driver"].as_str().map(str::to_owned);
-            gateway.sandbox_create_delay = std::time::Duration::from_millis(
-                declared["sandbox_create_delay_ms"].as_u64().unwrap_or(0),
-            );
-            gateway.delete_delay = std::time::Duration::from_millis(
-                declared["sandbox_delete_delay_ms"].as_u64().unwrap_or(0),
-            );
-            let change = &declared["change"];
-            let sandbox_id = |gateway: &openshell::State, name: &str| {
-                gateway
-                    .sandboxes
-                    .values()
-                    .filter_map(|sandbox| sandbox.metadata.as_ref())
-                    .find(|metadata| metadata.name == name)
-                    .map(|metadata| metadata.id.clone())
-            };
-            if let Some(name) = change["stop_agent_runtime"].as_str() {
-                let id = sandbox_id(&gateway, name);
-                gateway
-                    .fabric_runtimes
-                    .retain(|_, sandbox| Some(&*sandbox) != id.as_ref());
-            }
-            // Someone changes the agent's model inside its sandbox, outside OpenTofu.
-            if let Some(name) = change["change_agent_model"].as_str()
-                && let Some(id) = sandbox_id(&gateway, name)
-                && let Some(configuration) = gateway.fabric_configurations.get_mut(&id)
-            {
-                configuration["models"]["default"]["model"] = json!("changed-inside-the-sandbox");
-            }
-            if change["forget_registrations"] == true {
-                gateway.providers.clear();
-            }
+            self.gateway.lock().unwrap().declare(&declared);
         }
         (
             200,
@@ -221,7 +178,7 @@ impl Shared {
     pub fn observations(&self) -> Value {
         let containers = self.containers.lock().unwrap().clone();
         let credentials = self.credentials.lock().unwrap().clone();
-        let source = |value: &String| {
+        let source = |value: &str| {
             let file = containers.iter().find_map(|container| {
                 let (path, _) = container["files"]
                     .as_object()?
@@ -236,60 +193,10 @@ impl Shared {
                 .or(file)
                 .unwrap_or_else(|| "unrecognized".into())
         };
-        let state = self.gateway.lock().unwrap();
-        let providers: Vec<Value> = state.created_providers.iter().map(|provider| {
-            let meta = provider.metadata.clone().unwrap_or_default();
-            json!({"name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
-                "config": provider.config,
-                "credentials": provider.credentials.iter()
-                    .map(|(name, value)| (name.clone(), source(value))).collect::<BTreeMap<_, _>>()})
-        }).collect();
-        let sandboxes: Vec<Value> = state.created_sandboxes.iter().map(|sandbox| {
-            let meta = sandbox.metadata.clone().unwrap_or_default();
-            let spec = sandbox.spec.clone().unwrap_or_default();
-            let endpoints: Vec<String> = spec.policy.iter()
-                .flat_map(|policy| policy.network_policies.values())
-                .flat_map(|rule| &rule.endpoints)
-                .map(|endpoint| format!("{}:{}{}", endpoint.host, endpoint.port, endpoint.path))
-                .collect();
-            json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
-                "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints})
-        }).collect();
-        let execs: Vec<Value> = state.exec_calls.iter().zip(&state.exec_sandboxes).zip(&state.exec_stdin)
-            .map(|((command, sandbox), stdin)| {
-                json!({"sandbox": sandbox, "command": command, "stdin": String::from_utf8_lossy(stdin)})
-            })
-            .collect();
-        let live: BTreeMap<&str, &str> = state
-            .sandboxes
-            .values()
-            .filter_map(|sandbox| sandbox.metadata.as_ref())
-            .map(|metadata| (metadata.name.as_str(), metadata.id.as_str()))
-            .collect();
-        let registrations: Vec<&str> = state
-            .providers
-            .values()
-            .filter_map(|provider| provider.metadata.as_ref())
-            .map(|metadata| metadata.name.as_str())
-            .collect();
-        let rpcs: Vec<&str> = state
-            .rpcs
-            .iter()
-            .map(|rpc| rpc.trim_start_matches("/openshell.v1.OpenShell/"))
-            .collect();
+        let mut openshell = self.gateway.lock().unwrap().observations(source);
+        openshell["endpoint"] = json!(self.gateway_endpoint);
         json!({
-            "openshell": {
-                "endpoint": self.gateway_endpoint, "rpcs": rpcs,
-                "created_providers": providers, "created_sandboxes": sandboxes, "execs": execs,
-                "fabric_starts": state.fabric_starts,
-                "workspaces": state.workspaces.keys().collect::<Vec<_>>(),
-                // Gateway mutations so far, which an unchanged apply leaves as they were.
-                "effects": state.effects,
-                "peak_sandbox_creates": state.peak_sandbox_creates,
-                "sandbox_deletes": state.delete_calls,
-                // What the gateway holds now: sandbox IDs by name, and registration names.
-                "sandboxes": live, "registrations": registrations,
-            },
+            "openshell": openshell,
             "engine": {
                 "endpoint": self.engine_endpoint,
                 "requests": *self.engine_requests.lock().unwrap(),
@@ -347,76 +254,42 @@ pub struct Fixtures {
         http_fixture::Fixture,
         http_fixture::Fixture,
     ),
-    /// The fixed engine socket this run owns, on Unix.
-    socket: Option<PathBuf>,
+    socket: PathBuf,
 }
 
 impl Drop for Fixtures {
     fn drop(&mut self) {
-        if let Some(socket) = &self.socket {
-            let _ = std::fs::remove_file(socket);
-        }
+        let _ = std::fs::remove_file(&self.socket);
     }
 }
 
 impl Fixtures {
-    /// On Unix, one fixed engine socket gives every scenario the same Docker
-    /// provider alias and image addresses, which test files name. Elsewhere
-    /// the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh`
-    /// relay that the lifecycle step puts on `PATH` as `ssh` forwards; only
-    /// image reads use it there, because managed Docker gateway storage needs
-    /// a local engine socket.
+    /// One fixed engine socket gives every scenario the same Docker provider
+    /// alias and image addresses, which test files name.
     pub async fn start() -> Self {
+        let socket = PathBuf::from("/tmp/nemoclaw-integration/engine.sock");
+        std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        assert!(
+            std::os::unix::net::UnixStream::connect(&socket).is_err(),
+            "another integration run is active"
+        );
+        let _ = std::fs::remove_file(&socket);
         let gateway = openshell::Fixture::start().await;
-        let mut shared = Shared {
+        let shared = Arc::new(Shared {
             gateway: gateway.state.clone(),
             gateway_endpoint: gateway.endpoint.clone(),
+            engine_endpoint: format!("unix://{}", socket.display()),
             ..Default::default()
-        };
-        // The engine serves through `shared`, which holds the engine's endpoint.
-        let cell = Arc::new(OnceLock::<Arc<Shared>>::new());
-        let serving = cell.clone();
-        #[cfg(unix)]
-        let (engine, socket) = {
-            let socket = PathBuf::from("/tmp/nemoclaw-integration/engine.sock");
-            std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
-            assert!(
-                std::os::unix::net::UnixStream::connect(&socket).is_err(),
-                "another integration run is active"
-            );
-            let _ = std::fs::remove_file(&socket);
-            let engine = http_fixture::Fixture::start_at_with_headers(&socket, move |request| {
-                Some(serving.get()?.engine_reply(&request))
-            })
-            .await;
-            (engine, Some(socket))
-        };
-        #[cfg(not(unix))]
-        let (engine, socket) = {
-            let mut engine = http_fixture::Fixture::start_tcp(move |request| {
-                let (status, _, body) = serving.get()?.engine_reply(&request);
-                Some((status, body))
-            })
-            .await;
-            engine.endpoint = engine.endpoint.replacen("http://", "ssh://", 1);
-            (engine, None)
-        };
-        shared.engine_endpoint = engine.endpoint.clone();
-        let shared = Arc::new(shared);
-        let _ = cell.set(shared.clone());
+        });
+        let serving = shared.clone();
+        let engine = http_fixture::Fixture::start_at_with_headers(&socket, move |request| {
+            Some(serving.engine_reply(&request))
+        })
+        .await;
         let serving = shared.clone();
         let upstream = http_fixture::Fixture::start_tcp(move |request| {
             let target = format!("{} {}", request.method, request.path);
             serving.upstream_requests.lock().unwrap().push(target);
-            let models = serving.models.lock().unwrap();
-            if request.method == "GET" && request.path.ends_with("/models") && !models.is_empty() {
-                let data: Vec<Value> = models
-                    .iter()
-                    .map(|id| json!({"id": id, "object": "model"}))
-                    .collect();
-                let list = json!({"object": "list", "data": data});
-                return Some((200, list.to_string().into_bytes()));
-            }
             Some((404, Vec::new()))
         })
         .await;
@@ -475,7 +348,6 @@ impl Fixtures {
         shared.images.lock().unwrap().clear();
         shared.containers.lock().unwrap().clear();
         shared.upstream_requests.lock().unwrap().clear();
-        shared.models.lock().unwrap().clear();
         *shared.credentials.lock().unwrap() = credentials;
     }
 
@@ -483,18 +355,13 @@ impl Fixtures {
     /// Fabric runtimes, deleted engine storage, or unrecognized engine requests.
     pub fn teardown_problem(&self) -> Option<String> {
         let state = self.shared.gateway.lock().unwrap();
-        let left: Vec<String> = [
-            ("sandbox", state.sandboxes.keys().collect::<Vec<_>>()),
-            ("provider", state.providers.keys().collect()),
-            ("profile", state.profiles.keys().collect()),
-            ("workspace", state.workspaces.keys().collect()),
-            ("Fabric runtime", state.fabric_runtimes.keys().collect()),
-        ]
-        .into_iter()
-        .flat_map(|(kind, keys)| keys.into_iter().map(move |key| format!("{kind} {key}")))
-        .collect();
-        if !left.is_empty() {
-            return Some(format!("teardown left gateway objects: {left:?}"));
+        if !(state.sandboxes.is_empty()
+            && state.providers.is_empty()
+            && state.profiles.is_empty()
+            && state.workspaces.is_empty()
+            && state.fabric_runtimes.is_empty())
+        {
+            return Some("teardown left gateway objects or Fabric runtimes".into());
         }
         let mutations = &self.shared.engine.lock().unwrap().mutations;
         mutations

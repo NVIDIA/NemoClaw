@@ -4,17 +4,17 @@
 # Agent: OpenClaw
 
 `AGENT=openclaw`, harness `nvidia.fabric.openclaw`, image target `openclaw`.
-The adapter runs OpenClaw's gateway inside the sandbox; Fabric invocations reach it, and its own interfaces are the Control UI and an OpenAI-compatible chat endpoint.
+The adapter runs OpenClaw's gateway inside the sandbox; Fabric invocations reach it, and it can serve the Control UI with browser chat.
 
 ## Proven Pairs
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | all, including [openclaw-dashboard](../features/openclaw-dashboard.md) with the patched image and the URL from apply output | `783b7ae247` | 2026-10-30 |
+| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [openclaw-dashboard](../features/openclaw-dashboard.md) | `24b35280fb` | 2026-11-02 |
 
 ## YAML Edits
 
-For the [openclaw-dashboard](../features/openclaw-dashboard.md) feature, add to `spec.sandboxes.assistant`:
+For the [openclaw-dashboard](../features/openclaw-dashboard.md) feature, add to `spec.sandboxes.assistant`, with `URL` from that feature:
 
 ```yaml
 serviceExposures:
@@ -23,13 +23,22 @@ serviceExposures:
     authorizationMode: BEARER_PASSTHROUGH
 harness:
   settings:
-    port_range:
-      start: 43000
-      end: 43110
+    interfaces:
+      dashboard:
+        port: 43000
+        public_origins:
+          - REPLACE_WITH_URL
 ```
 
-`port_range` spans exactly 111 ports, so the adapter binds OpenClaw's gateway to 43000, which the exposure targets.
 Merge `settings` into the example's `harness`; keep its `kind` and `execution`.
+The interface's `port` and the exposure's `targetPort` must match. `public_origins` lets the browser load the page from the exposure's URL; the forward's loopback origin needs no entry.
+Check the image's adapter declares the interface before relying on it:
+
+```sh
+docker image inspect "nc-fabric:openclaw" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}' | jq -c '.adapters[] | select(.descriptor.adapter_id == "nvidia.fabric.openclaw") | .descriptor.settings_schema.properties.interfaces.properties | keys'
+```
+
+Result: `["dashboard"]`.
 
 ## Readiness
 
@@ -38,11 +47,9 @@ The first request after apply can take about 30 seconds.
 
 ## Extra Features
 
-- [openclaw-dashboard](../features/openclaw-dashboard.md): the Control UI and chat endpoint through a service exposure.
-  It needs a patched image, built before writing the YAML, which replaces `IMAGE`.
-  Cleanup removes it: `docker image rm "nc-fabric:openclaw-ui-$RUN"`.
+- [openclaw-dashboard](../features/openclaw-dashboard.md): the Control UI through a service exposure and through `openshell forward service`.
 
 ## Known Gaps
 
-- **Control UI off.** The pinned adapter writes `"controlUi": {"enabled": False}` with no setting ([NVIDIA/NeMo-Fabric#541](https://github.com/NVIDIA/NeMo-Fabric/issues/541), [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360)); the dashboard feature patches one line.
-- **Sign-in token.** The token lives only in the OpenClaw gateway process's environment, which `openshell sandbox exec` can't read ([#13973](https://github.com/NVIDIA/NemoClaw/issues/13973)); the dashboard feature reads it from the host's `/proc` with sudo.
+- **The agent can sign in to itself.** The agent's own tools can read the token file and reach the port ([docs/interfaces.md](../../../../docs/interfaces.md#who-can-use-an-interface)).
+- **Origins.** `public_origins` is the only way to load the page from the exposure's URL; OpenClaw accepts any loopback origin with the token.

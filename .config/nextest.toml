@@ -61,6 +61,12 @@ slow-timeout = { period = "12s", terminate-after = 2 }
 filter = 'binary_id(=openshell-provider::contract)'
 slow-timeout = { period = "8s", terminate-after = 2 }
 
+# This test applies each generated fixture shape side by side, so it runs
+# alone instead of slowing the partition's other tests.
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=openshell-provider::contract) & test(=each_generated_fixture_shape_reads_back_unchanged)'
+threads-required = "num-test-threads"
+
 
 # The tofu test integration shards share one fixed engine socket.
 [[profile.lifecycle.overrides]]
