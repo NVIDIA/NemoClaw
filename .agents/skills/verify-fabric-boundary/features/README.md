@@ -61,6 +61,35 @@
   | `<input-file>` | `/sandbox/workspace/fixtures/$PHASE-script-input.txt` |
   | `<install-command>` | The reviewed native installer command |
 
+- **Request helpers.** After writing `bindings.md`, define these in the run's shell; every feature file sends its prompts with them.
+  `fill` replaces the placeholders, and `ask` saves the exact prompt, refuses one with an unfilled placeholder, and sends one request:
+
+  ```sh
+  binding() { sed -n "s/^- $1: \`\(.*\)\`\$/\1/p" "$EVIDENCE/bindings.md"; }
+  SHELL_TOOL=$(binding 'shell-launch tool'); FILE_WRITE_TOOL=$(binding 'file-write tool')
+  SKILL_AUTHORING=$(binding 'skill-authoring tool'); NATIVE_SKILL_DIR=$(binding 'skill directory')
+  esc() { printf '%s' "$1" | sed 's/[|&\\]/\\&/g'; }
+  fill() {  # fill SCRIPT < PROMPT; unset SKILL_NAME, MARKER, or INSTALL_COMMAND leave their placeholders
+    sed -e "s|<shell-tool>|$(esc "$SHELL_TOOL")|g" -e "s|<file-write-tool>|$(esc "$FILE_WRITE_TOOL")|g" \
+      -e "s|<skill-authoring>|$(esc "$SKILL_AUTHORING")|g" -e "s|<skill-dir>|$(esc "$NATIVE_SKILL_DIR")|g" \
+      -e "s|<skill-name>|$(esc "${SKILL_NAME:-<skill-name>}")|g" -e "s|<marker>|$(esc "${MARKER:-<marker>}")|g" \
+      -e "s|<install-command>|$(esc "${INSTALL_COMMAND:-<install-command>}")|g" \
+      -e "s|<script>|$(esc "$1")|g" -e "s|<input-file>|/sandbox/workspace/fixtures/$PHASE-script-input.txt|g"
+  }
+  ask() {  # ask NAME < FILLED_PROMPT
+    mkdir -p "$CHECK_DIR"
+    cat > "$CHECK_DIR/$1.prompt.txt"
+    if grep -n '<[a-z-]*>' "$CHECK_DIR/$1.prompt.txt"; then echo 'unfilled placeholder'; return 1; fi
+    jq -Rs . "$CHECK_DIR/$1.prompt.txt" |
+      openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - > "$CHECK_DIR/$1.reply.json"
+    echo "exit $?"
+    jq --arg rt "$RUNTIME_ID" '{run: .result.status, error: .result.error, same_runtime: (.result.runtime_id == $rt), response: .result.output.response}' "$CHECK_DIR/$1.reply.json"
+  }
+  ```
+
+  Pass `-` as `fill`'s argument when the prompt has no `<script>`.
+  After each request, save the current turn's native calls, with their arguments, output, and exit status, from the record `bindings.md` names, in `$CHECK_DIR/NAME.calls.txt`; keep earlier turns out of that file.
+
 - Read any interface credential into a shell variable just before a request and unset it after.
 - A feature that needs a supplied fixture gives it in a fenced block under a **Seed** step; the [launch](../SKILL.md#provision-and-seed-the-volumes) writes it into the volume once.
 

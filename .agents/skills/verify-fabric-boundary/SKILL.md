@@ -128,6 +128,19 @@ Before the first apply, write `$EVIDENCE/bindings.md`: for each feature, the YAM
 Resolve each binding against the selected YAML, the image's adapter descriptor, and that image's harness source and executable help, in that order.
 The agent file's hints are observed at a named revision; re-resolve them against the selected image and record any difference.
 Fill in every prompt placeholder that the [driving conventions](features/README.md#driving-conventions) list.
+Start it with these lines, which the [request helpers](features/README.md#driving-conventions) read:
+
+```text
+- shell-launch tool: `NAME`
+- file-write tool: `NAME`
+- skill-authoring tool: `NAME`
+- skill directory: `PATH`
+- install command: `COMMAND`
+- native call record: `PATH OR COMMAND`
+```
+
+When no supported mechanism exists, write `none`, record the finding, and mark the checks that need it Failed without sending their prompts; for the skill-authoring tool, write `your native file tools` instead.
+Resolve the install command when [plugins](features/plugins.md) reviews it, before `agent-plugin-install`.
 Stop researching a binding once the evidence shows the route or the missing layer; a missing layer is a finding, not a reason to try speculative settings.
 
 ### Provision and Seed the Volumes
