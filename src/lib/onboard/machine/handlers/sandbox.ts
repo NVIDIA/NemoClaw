@@ -120,6 +120,7 @@ import {
   sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
+  assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
@@ -825,6 +826,13 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    assertHermesSwitchyardRoutingReusable({
+      agentName: (this.options.agent as { name?: string } | null)?.name,
+      entry: registryEntry,
+      env: this.options.env,
+      recreate: this.options.recreateSandbox(false),
+      sandboxState: sandboxReuseState,
+    });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,

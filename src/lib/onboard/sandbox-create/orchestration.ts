@@ -2432,6 +2432,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       })
     ) {
       const existingSandboxState = getSandboxReuseState(sandboxName);
+      sandboxReuse.assertHermesSwitchyardRoutingReusable({
+        agentName: getRequestedSandboxAgentName(agent),
+        entry: registry.getSandbox(sandboxName),
+        env: process.env,
+        recreate: isRecreateSandbox(createIntent?.recreate),
+        sandboxState: existingSandboxState,
+      });
       const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
       let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 
