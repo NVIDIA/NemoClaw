@@ -1713,8 +1713,9 @@ export async function waitForStartedNativeGatewayProcess(
   nativeAgent: "openclaw" | "hermes",
   gatewayName: string,
   options: {
-    environment?: NodeJS.ProcessEnv;
+    /** OpenClaw fallback; the recovery environment override takes precedence. */
     defaultTimeoutSeconds?: number;
+    environment?: NodeJS.ProcessEnv;
     probe?: typeof isSandboxGatewayRunningForStatus;
     delay?: (delayMs: number) => Promise<void>;
     now?: () => number;

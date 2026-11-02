@@ -5286,8 +5286,11 @@ jobs:
   # This lane runs after managed-image startup succeeds. Manual PR qualification
   # requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
-  # This GPU lane imports the exact candidate build cache and its complete
-  # locked npm cache seed, then rebuilds with BuildKit networking disabled.
+  # This GPU lane imports the candidate build cache and locked npm cache seed.
+  # It reuses the completed sandbox-user OpenClaw image only from this attempt,
+  # after checking the receipt, archive, image identity, and isolated-registry
+  # publication. Earlier-attempt and legacy root OpenClaw inputs still rebuild.
+  # Hermes and Deep Agents Code also rebuild with BuildKit networking disabled.
   # invalidState: Cold managed-image builds on the protected GPU runner can
   # stall in npm and terminate with "Exit handler never called!" before any
   # GPU, Ollama, NIM, or vLLM assertion executes.
