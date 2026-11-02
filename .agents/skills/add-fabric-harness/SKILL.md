@@ -42,7 +42,7 @@ The stage:
 
 - **Example:** `examples/fabric-<name>.yaml`, copied from a sibling example, with `harness.kind` set to the adapter ID.
 - **Lists of harnesses:** [the Bake tests](../../../crates/nemoclaw-build/tests/bake.rs) and both lists in [the SDK's configuration tests](../../../crates/nemoclaw-sdk/tests/config.rs).
-- **Contract fixture:** add `fabric_<name> => "fabric-<name>"` to [the OpenShell contract fixtures](../../../crates/openshell-provider/tests/contract/main.rs), then write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+- **Contract fixture:** add `fabric_<name> => "fabric-<name>"` to [the OpenShell contract fixtures](../../../crates/openshell-provider/tests/contract/main.rs), then write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test e2e openshell_contract_fixtures`.
 
 ## 4. Document It
 

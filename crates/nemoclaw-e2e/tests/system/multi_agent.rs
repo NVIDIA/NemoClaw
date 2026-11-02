@@ -14,7 +14,8 @@ use std::{collections::BTreeMap, fs, process::Command};
 /// its own model: assistant, researcher, and reviewer.
 fn three_agents() -> Document {
     let mut document =
-        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+        Document::parse(include_str!("../../../../examples/fabric-openclaw.yaml").as_bytes())
+            .unwrap();
     let primary = document.spec.sandboxes["assistant"].clone();
     for (name, model) in [("researcher", "qwen3:8b"), ("reviewer", "qwen3:14b")] {
         let mut sandbox = primary.clone();

@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! End-to-end fixture and opt-in live tests, linked into one binary.
-//! Each file is a module; shared helpers are declared once here.
+//! Live end-to-end tests, opt-in through `#[ignore]`, against real Docker,
+//! Kubernetes, images, and inference, with the offline checks of the fixtures
+//! and clients they use. The system tests against local fixtures are the
+//! `system` binary's. Each file is a module; shared helpers are declared once
+//! here.
 
 #[path = "agent_compatibility.rs"]
 mod agent_compatibility;
 #[path = "cache_provider.rs"]
 mod cache_provider;
-#[path = "deployment.rs"]
-mod deployment;
-#[path = "../../test-support/docker_engine.rs"]
-mod docker_engine;
 #[path = "docker_fixture.rs"]
 mod docker_fixture;
 #[path = "docker_provider_proxy.rs"]
@@ -18,12 +17,8 @@ mod docker_provider_proxy;
 #[cfg(unix)]
 #[path = "dummy_agent.rs"]
 mod dummy_agent;
-#[path = "export_observations.rs"]
-mod export_observations;
 #[path = "fabric_bridge.rs"]
 mod fabric_bridge;
-#[path = "fabric_deployment.rs"]
-mod fabric_deployment;
 #[path = "fabric_live.rs"]
 mod fabric_live;
 // Unix only, as before it moved here from nemoclaw-sdk.
@@ -31,20 +26,10 @@ mod fabric_live;
 mod docker_registry;
 #[path = "hcl_live.rs"]
 mod hcl_live;
-#[cfg(unix)]
-#[path = "helm_recovery.rs"]
-mod helm_recovery;
-// Scenarios with managed Docker gateway storage, which takes only a local
-// engine socket, run only on Unix; the runner skips them elsewhere.
-#[path = "hcl_integration/mod.rs"]
-mod hcl_integration;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
 #[path = "interfaces_live.rs"]
 mod interfaces_live;
-#[cfg(unix)]
-#[path = "../../test-support/kube_api.rs"]
-mod kube_api;
 #[path = "kubernetes_chart.rs"]
 mod kubernetes_chart;
 #[path = "kubernetes_live.rs"]
@@ -56,21 +41,15 @@ mod managed;
 mod managed_gateway;
 #[path = "model_live.rs"]
 mod model_live;
-#[path = "multi_agent.rs"]
-mod multi_agent;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
 #[path = "pseudo_terminal.rs"]
 mod pseudo_terminal;
 mod registry_fixture;
-#[path = "remote_service.rs"]
-mod remote_service;
 #[path = "spark.rs"]
 mod spark;
 #[path = "tls.rs"]
 mod tls;
-#[path = "../../test-support/http.rs"]
-mod transport;
 #[path = "web_search.rs"]
 mod web_search;
 

@@ -83,7 +83,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 
 Each fixture in `crates/openshell-provider/tests/contract/fixtures` is applied against a fake OpenShell gateway; it must plan no managed changes after apply, and teardown must remove every sandbox, provider registration, and profile while the gateway keeps the workspace.
 The fixtures are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
-`nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+`nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test e2e openshell_contract_fixtures`.
 
 The `capabilities` tests check gateway preconditions, saved-plan rechecks, and capability reads deferred until bootstrap inputs are known.
 The `standalone` tests apply the authored resources in `tests/contract/standalone` through lost create and delete replies, foreign or missing objects, failed observations, deferred bootstrap endpoints, and registration replacement and rotation.
@@ -106,7 +106,7 @@ On Unix, the `capabilities` test reads `fabric_harnesses` from a fake Docker eng
 
 ## System Tests
 
-The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module.
+The system tests are the ignored tests in `nemoclaw-e2e`'s `system` binary, under `crates/nemoclaw-e2e/tests/system`, which the `lifecycle` profile selects. Live end-to-end tests are in the separate `e2e` binary; see [live tests](live-tests.md).
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts.
 
 Choose the layer by what the behavior needs:
@@ -119,7 +119,7 @@ To run the Rust system tests:
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
+  cargo test -p nemoclaw-e2e --test system -- deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
 ```
 
 Append a test name to run one scenario, or `--test-threads=4` to match CI's concurrency.
@@ -156,7 +156,7 @@ In `multi_agent`:
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=1 hcl_integration::
+  cargo test -p nemoclaw-e2e --test system -- --ignored --test-threads=1 hcl_integration::
 ```
 
 A scenario is an integration test file, `hcl/integration/tests/<scenario>.tftest.hcl`, whose runs name the modules they apply.
@@ -218,7 +218,7 @@ Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tf
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, naming any it finds, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
 In CI / Bundle, each `Lifecycle` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
-An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/hcl_integration/fixtures.rs`.
+An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/system/hcl_integration/fixtures.rs`.
 
 Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:
 
@@ -251,7 +251,7 @@ On Unix, run them with:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=4 helm_recovery::
+  cargo test -p nemoclaw-e2e --test system -- --ignored --test-threads=4 helm_recovery::
 ```
 
 `cargo test` runs the tests as threads of one process, and on Linux a child that one thread forks can briefly hold the deployment lock of another test, which then fails with "another operation holds the deployment lock"; `--test-threads=4` keeps that rare.
@@ -268,7 +268,7 @@ No request in the test may write to any of them, and the final destroy must leav
 
 ### SSH Service Fixtures
 
-Run `cargo test -p nemoclaw-e2e --test integration remote_service:: -- --ignored` with the bundle set as above.
+Run `cargo test -p nemoclaw-e2e --test system remote_service:: -- --ignored` with the bundle set as above.
 The tests exercise the bundled CLI and providers with an isolated Docker-over-SSH simulator and the OpenShell fixture, for remote models and Ollama, managed Pi, and bearer credentials.
 They check recovery after failed startup, export and unchanged reapply, failed observation without lost bindings, and replacement of credentials outside state.
 Destroy removes disposable containers and service networks while retaining storage; the partial-runtime tests tear down after failed creation without first creating the missing compute.
