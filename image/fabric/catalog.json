@@ -610,7 +610,7 @@
             },
             "startup_timeout_seconds": {
               "default": 60,
-              "description": "Time for every enabled interface to pass its health check, within NeMo Fabric's 90-second start limit.",
+              "description": "Time from the start of the runtime for every enabled interface to pass its health check, within NeMo Fabric's 90-second start limit.",
               "exclusiveMinimum": 0,
               "maximum": 75,
               "type": "number"
@@ -1028,7 +1028,8 @@
         },
         "requirements": {
           "binaries": [
-            "node"
+            "node",
+            "dcode"
           ]
         },
         "runner": {
@@ -1610,7 +1611,7 @@
                       "type": "boolean"
                     },
                     "port": {
-                      "description": "Exact loopback Gateway base port, which serves the Control UI. Start fails if it or port + 2 is in use, and OpenClaw reserves ports through port + 110. Can't be combined with port_range.",
+                      "description": "Exact loopback Gateway base port, which serves the Control UI. Start fails if it or port + 2 is in use. OpenClaw allocates browser ports through port + 110 on demand, so keep that range free. Can't be combined with port_range.",
                       "maximum": 65425,
                       "minimum": 1,
                       "type": "integer"
@@ -2336,8 +2337,8 @@
       ]
     }
   ],
-  "fabric_revision": "88099b37c1e146faa6f70e8c8df1f6b5a288ff56",
+  "fabric_revision": "ddf59e875d50d925991cd40c44dc63facf391bac",
   "schema_version": 2,
-  "source_sha256": "5adb8acba480245453c3f8b06919e7053c080f6b043d8c7c72ef883e46de12e3",
+  "source_sha256": "cb9c16677323a087ff1e69fc848188792c953d3f3145e6b0d81533a0d40ad1d0",
   "targets": []
 }
