@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
 import {
+  providerNeutralResponses,
+  runProviderNeutralScript,
   runSmokeScript,
   writeFakeCurl,
   writeFakeSleep,
@@ -117,177 +118,6 @@ const allAgentProofAuthorities = [
     },
   },
 ] as const satisfies readonly { agentName: string; authority: ProviderNeutralAuthority }[];
-
-function providerNeutralResponses(
-  model: string,
-  includeToolCall = true,
-  toolArguments: unknown = "{}",
-): unknown[] {
-  return [
-    { model, choices: [{ message: { content: "PONG" } }] },
-    {
-      model,
-      choices: [
-        {
-          message: {
-            tool_calls: includeToolCall
-              ? [
-                  {
-                    function: {
-                      name: "nemoclaw_route_probe",
-                      arguments: toolArguments,
-                    },
-                  },
-                ]
-              : [],
-          },
-        },
-      ],
-    },
-  ];
-}
-
-function runProviderNeutralScript(options: {
-  authority: ProviderNeutralAuthority;
-  model?: string;
-  script?: string;
-  responses?: unknown[];
-  denial?: unknown;
-  denialBytes?: readonly number[];
-  denialOversized?: boolean;
-  directError?: "connection-refused" | "dns" | "timeout";
-  managedProxyResponses?: unknown[];
-}) {
-  const model = options.model ?? "qwen3.5-9b";
-  const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
-  const responses = options.responses ?? providerNeutralResponses(model);
-  const denial =
-    options.denial ??
-    ({
-      error: "policy_denied",
-      detail: `POST ${directAuthority}/v1/chat/completions not permitted by policy`,
-    } satisfies Record<string, string>);
-  const denialBytes =
-    options.denialBytes ?? Array.from(Buffer.from(JSON.stringify(denial), "utf8"));
-  const denialBody = options.denialOversized
-    ? 'b"x" * 1048577'
-    : `bytes(${JSON.stringify(denialBytes)})`;
-  const prelude = `
-import atexit
-import errno
-import io
-import json
-import socket
-import time
-import urllib.error
-import urllib.request
-
-responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
-managed_proxy_responses = json.loads(${JSON.stringify(
-    JSON.stringify(options.managedProxyResponses ?? []),
-  )})
-managed_proxy_enabled = ${options.managedProxyResponses === undefined ? "False" : "True"}
-denial_bytes = ${denialBody}
-inference_request_tokens = []
-direct_request_count = []
-direct_request_urls = []
-managed_proxy_request_count = []
-managed_proxy_request_urls = []
-sleep_delays = []
-direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
-
-def emit_request_evidence():
-    print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
-    print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
-    print("DIRECT_REQUEST_URLS=" + ",".join(direct_request_urls))
-    print("MANAGED_PROXY_REQUEST_COUNT=" + str(len(managed_proxy_request_count)))
-    print("MANAGED_PROXY_REQUEST_URLS=" + ",".join(managed_proxy_request_urls))
-    print("SLEEP_DELAYS=" + ",".join(str(value) for value in sleep_delays))
-
-atexit.register(emit_request_evidence)
-
-class FakeResponse:
-    def __init__(self, status, payload):
-        self.status = status
-        self.payload_source = payload
-        self.payload = json.dumps(payload).encode("utf-8")
-    def __enter__(self):
-        return self
-    def __exit__(self, exc_type, exc, traceback):
-        return False
-    def read(self, size=-1):
-        if isinstance(self.payload_source, dict) and self.payload_source.get("__oversized__") is True:
-            return b"x" * (size if size >= 0 else 1048577)
-        return self.payload if size < 0 else self.payload[:size]
-
-class FakeOpener:
-    def open(self, request, timeout):
-        if request.full_url.startswith("https://inference.local/"):
-            if not responses:
-                raise RuntimeError("test response queue exhausted")
-            request_data = json.loads(request.data.decode("utf-8"))
-            inference_request_tokens.append(
-                request_data.get("max_tokens", request_data.get("max_completion_tokens"))
-            )
-            if responses[0] == "__timeout__":
-                raise TimeoutError("timed out after %s seconds" % timeout)
-            if responses[0] == "__wrapped_timeout__":
-                raise urllib.error.URLError(TimeoutError("timed out after %s seconds" % timeout))
-            return FakeResponse(200, responses.pop(0))
-        direct_request_count.append(1)
-        direct_request_urls.append(request.full_url)
-        if direct_error == "connection-refused":
-            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
-        if direct_error == "dns":
-            raise urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "not known"))
-        if direct_error == "timeout":
-            raise urllib.error.URLError(TimeoutError("timed out"))
-        raise urllib.error.HTTPError(
-            request.full_url,
-            403,
-            "Forbidden",
-            {},
-            io.BytesIO(denial_bytes),
-        )
-
-class ManagedProxyOpener:
-    def open(self, request, timeout):
-        managed_proxy_request_count.append(1)
-        managed_proxy_request_urls.append(request.full_url)
-        if not managed_proxy_responses:
-            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
-        request_data = json.loads(request.data.decode("utf-8"))
-        inference_request_tokens.append(
-            request_data.get("max_tokens", request_data.get("max_completion_tokens"))
-        )
-        return FakeResponse(200, managed_proxy_responses.pop(0))
-
-def build_test_opener(*handlers):
-    proxy_disabled = any(
-        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
-        for handler in handlers
-    )
-    if managed_proxy_enabled and not proxy_disabled:
-        return ManagedProxyOpener()
-    return FakeOpener()
-
-urllib.request.build_opener = build_test_opener
-time.sleep = lambda seconds: sleep_delays.append(seconds)
-`;
-  const script =
-    options.script ?? buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
-  return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
-    encoding: "utf8",
-    env:
-      options.managedProxyResponses === undefined
-        ? process.env
-        : {
-            ...process.env,
-            HTTPS_PROXY: "http://openshell-runtime-proxy.invalid:8080",
-            NO_PROXY: "",
-          },
-  });
-}
 
 describe("compatible endpoint sandbox smoke helpers", () => {
   const providerMetadata = (name: string): string =>
@@ -723,12 +553,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         `host.openshell.internal:${String(port)}/v1/chat/completions`,
       );
       expect(sandboxCommand[7]).toContain('direct_method = "POST"');
-      expect(sandboxCommand[7]).toContain("method=direct_method");
       expect(sandboxCommand[7]).toContain('response_data.get("model") != model');
       expect(sandboxCommand[7]).toContain('"tool_choice"');
       expect(sandboxCommand[7]).toContain('direct_denial_error = "policy_denied"');
       expect(sandboxCommand[7]).toContain('denial.get("error") != direct_denial_error');
-      expect(sandboxCommand[7]).toContain("ProxyHandler({})");
       expect(sandboxCommand[7]).not.toContain("curl");
     },
   );
@@ -794,16 +622,13 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).toContain('denial.get("error") != direct_denial_error');
     expect(script).toContain("host.openshell.internal:8001/v1/chat/completions");
     expect(script).toContain('direct_method = "POST"');
-    expect(script).toContain("method=direct_method");
     expect(script).toContain("max_tokens_field: 1");
     expect(script).toContain('response_data.get("model") != model');
     expect(script).toContain('"tool_choice"');
     expect(script).toContain("direct_denial_contract_version = 1");
     expect(script).toContain('direct_denial_error = "policy_denied"');
-    expect(script).toContain("error.read(max_response_bytes + 1)");
     expect(script).toContain('denial_bytes.decode("utf-8", errors="strict")');
     expect(script).toContain("direct_deny_timeout_seconds = 10");
-    expect(script).toContain("ProxyHandler({})");
     expect(script).not.toContain("curl");
   });
 
@@ -816,6 +641,9 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
       expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
       expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+      expect(result.stdout).toContain(
+        `DIRECT_REQUEST_HOSTS=host.openshell.internal:${String(authority.directHostPort)}`,
+      );
     },
   );
 
@@ -1004,7 +832,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   );
 
   it.each(allAgentProofAuthorities)(
-    "accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)",
+    "accepts refused direct access after authorized inference for $agentName (#9211)",
     ({ authority }) => {
       const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
 
@@ -1012,6 +840,81 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
     },
   );
+
+  it.each(["network-unreachable", "host-unreachable"] as const)(
+    "checks IPv4 after a %s IPv6 host bridge (#13518)",
+    (ipv6Outcome) => {
+      const result = runProviderNeutralScript({
+        authority: allAgentProofAuthorities[0].authority,
+        directAddresses: ["fdc4:f303:9324::254", "192.168.65.254"],
+        directOutcomes: {
+          "fdc4:f303:9324::254": ipv6Outcome,
+          "192.168.65.254": "connection-refused",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stdout).toContain(
+        "DIRECT_REQUEST_ADDRESSES=fdc4:f303:9324::254,192.168.65.254",
+      );
+    },
+  );
+
+  it("rejects a reachable IPv4 route after an unreachable IPv6 host bridge (#13518)", () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      directAddresses: ["fdc4:f303:9324::254", "192.168.65.254"],
+      directOutcomes: {
+        "fdc4:f303:9324::254": "network-unreachable",
+        "192.168.65.254": "http-200",
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "direct host inference response was not an OpenShell policy denial",
+    );
+    expect(result.stderr).toContain("fdc4:f303:9324::254 (network-unreachable)");
+    expect(result.stderr).toContain("192.168.65.254 (unexpected-response)");
+    expect(result.stdout).toContain("DIRECT_REQUEST_ADDRESSES=fdc4:f303:9324::254,192.168.65.254");
+  });
+
+  it("checks every resolved address after a valid policy denial (#13518)", () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      directAddresses: ["fdc4:f303:9324::254", "192.168.65.254"],
+      directOutcomes: { "192.168.65.254": "http-200" },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "direct host inference response was not an OpenShell policy denial",
+    );
+    expect(result.stderr).toContain("fdc4:f303:9324::254 (policy-denied)");
+    expect(result.stderr).toContain("192.168.65.254 (unexpected-response)");
+    expect(result.stdout).toContain("DIRECT_REQUEST_ADDRESSES=fdc4:f303:9324::254,192.168.65.254");
+  });
+
+  it("keeps direct failure diagnostics bounded and names the failing address", () => {
+    const directAddresses = Array.from({ length: 10 }, (_, index) => `192.0.2.${index + 1}`);
+    const directOutcomes: Record<string, "network-unreachable" | "http-200"> = Object.fromEntries(
+      directAddresses.map((address) => [address, "network-unreachable"]),
+    );
+    directOutcomes["192.0.2.10"] = "http-200";
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      directAddresses,
+      directOutcomes,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("192.0.2.1 (network-unreachable)");
+    expect(result.stderr).toContain("192.0.2.10 (unexpected-response)");
+    expect(result.stderr).toContain("2 earlier outcomes omitted");
+    expect(result.stderr).not.toContain("192.0.2.8 (");
+    expect(result.stderr.length).toBeLessThan(600);
+  });
 
   it.each(["dns", "timeout"] as const)(
     "does not accept a %s transport error as a direct-host deny proof (#9211)",

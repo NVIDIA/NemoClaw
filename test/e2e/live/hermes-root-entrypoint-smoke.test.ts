@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { type DockerCommandResult, DockerProbe, resultText } from "../fixtures/docker-probe.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
+import { HERMES_SWITCHYARD_PACKAGE_PROBE } from "../fixtures/hermes-switchyard-package.ts";
 
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
 // NEMOCLAW_HERMES_TEST_IMAGE is supplied, starts /usr/local/bin/nemoclaw-start
@@ -225,12 +226,6 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
   await expectContainerSh(
     probe,
     container,
-    "required Hermes v0.14 directories are missing",
-    'for dir in hooks image_cache audio_cache logs/curator; do test -d "/sandbox/.hermes/$dir"; done',
-  );
-  await expectContainerSh(
-    probe,
-    container,
     "Hermes runtime, API authorization, or native dashboard config contract failed",
     String.raw`set -eu
 /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -euc 'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p"; rm -f "$p"; done'
@@ -354,6 +349,12 @@ async function runCleanVariant(
     { artifactName: "start-clean-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
   );
   await waitForHealth(probe, container);
+  await expectContainerSh(
+    probe,
+    container,
+    "switchyard-package-contract",
+    HERMES_SWITCHYARD_PACKAGE_PROBE,
+  );
   await assertImageCapabilitiesAndStageRecovery(probe, container);
 
   // Exercise the root entrypoint's recovery posture from the exact restrictive
@@ -690,6 +691,8 @@ test(
           "gateway log has no PID race or config load failure",
           "Hermes v0.14 writable runtime directories are present",
           "selected Hermes optional capabilities import from the shipped image",
+          "Switchyard 0.3.0 is complete, immutable, and inactive in the supervised gateway",
+          "an isolated Hermes 0.21.3 / Relay 0.8.3 process loads and closes the released native plugin",
           "the manifest-declared Hermes executable resolves and runs at its final-image path",
           "root retains sandbox supplementary-group membership in the shipped image",
           "build-only upstream tests and root caches are absent from the runtime image",

@@ -17,6 +17,7 @@ import { dockerSpawnSync } from "./exec";
 
 const DOCKER_ENV_NAMES = [
   "CONTAINERS_CONF",
+  "CONTAINERS_STORAGE_CONF",
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",
   "DOCKER_CONFIG",

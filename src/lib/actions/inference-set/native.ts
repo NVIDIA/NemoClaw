@@ -4,6 +4,7 @@
 import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../inference-credential";
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
+import { redactInferenceSetRouteDiagnostic } from "../inference-set-provider-diagnostics";
 import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
 import {
   isLocalInferenceProvider,
@@ -53,6 +54,7 @@ import {
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
 import { prepareCustomNativeProvider } from "../../inference/native-provider/custom-setup";
+import { cliOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy-cli";
 import { isHostedCustomEndpoint } from "../../inference/native-provider/custom";
 
 /** Preserve shared-route config unless a custom native endpoint is explicit. */
@@ -210,6 +212,20 @@ export async function prepareNativeSelection(input: {
     )
       throw new InferenceSetError("Native hosted provider ownership storage is unavailable");
     const credentialEnv = input.credentialEnv || customNativeCredentialEnv(input.provider);
+    const policy = await (
+      input.deps.sandboxPolicyReader ?? cliOpenShellSandboxPolicyReader
+    ).readSandboxPolicy({
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      // Exclude the previous attachment's generated rule, which is detached
+      // before replacement. The sandbox's base rules remain in place.
+      scope: "base",
+    });
+    if (!policy.ok) {
+      throw new InferenceSetError(
+        `Cannot inspect the sandbox policy before selecting a custom endpoint: ${redactInferenceSetRouteDiagnostic(policy.error.message)} Resolve the policy-read error before retrying. No provider was changed.`,
+      );
+    }
     const receipt = await prepareCustomNativeProvider({
       gatewayName: input.gatewayName,
       provider: input.provider,
@@ -222,6 +238,7 @@ export async function prepareNativeSelection(input: {
       credentialEnv,
       credentialValue: input.deps.resolveCredentialValue(credentialEnv) || null,
       adapter: input.deps.providerAdapter,
+      sandboxPolicyDocument: policy.value.document,
       recordedAttachment: input.expectedAttachment,
       recordedSandboxName: input.sandboxName,
       readAuthority: input.deps.getNativeHostedProviderAuthority,

@@ -14,8 +14,8 @@ interface TerminalVersionEnforcementOptions {
 }
 
 /**
- * Require the manifest-declared terminal-agent version before onboarding can
- * record agent setup as complete.
+ * Require the manifest-declared terminal-agent version before reporting
+ * completed onboarding or successful terminal readiness.
  */
 export async function enforceTerminalAgentVersion(
   sandboxName: string,

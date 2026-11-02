@@ -601,106 +601,122 @@ describe("managed workload onboard orchestration", () => {
     });
   });
 
-  it("returns a typed managed-image launch without raw create placeholders", async () => {
-    const profile = buildManagedStartupOnboardProfile({
-      agentName: "openclaw",
-      inference: {
-        routeProvider: "openai",
-        upstreamProvider: "openai-api",
-        model: "gpt-5.4",
-        routedBaseUrl: "https://inference.local/v1",
-        upstreamEndpointUrl: null,
-        api: "openai-responses",
-        primaryModelRef: "openai/gpt-5.4",
-        compatibility: {},
-      },
-      chatUiUrl: "http://127.0.0.1:18789",
-      effectiveDashboardPort: 18_789,
-      manageDashboard: true,
-      dashboardBindAddress: undefined,
-      wslExposure: false,
-      hermesDashboardState: { config: null, enabled: false },
-      webSearch: null,
-      toolDisclosure: "progressive",
-      hermesToolGateways: [],
-      messagingPlan: null,
-      dcodeAutoApprovalMode: "disabled",
-      observabilityEnabled: false,
-      environment: {},
-      corporateCa: null,
-    });
-    const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
-      runtime: {
-        runtimeProvider: {
-          gateway: { prepareHostRuntime: () => ({}) },
+  it.each([
+    ["openclaw", undefined, false, false],
+    ["openclaw", "0.0.0.0", false, true],
+    ["hermes", undefined, true, false],
+    ["hermes", "0.0.0.0", true, true],
+    ["hermes", "0.0.0.0", false, false],
+  ] as const)(
+    "records %s remote preparation for bind=%s dashboard=%s",
+    async (agentName, dashboardBindAddress, enabled, expected) => {
+      const hermesDashboardState = {
+        enabled,
+        config: enabled
+          ? { enabled: true, port: 18_789, internalPort: 28_789, tuiEnabled: false }
+          : null,
+      };
+      const profile = buildManagedStartupOnboardProfile({
+        agentName,
+        inference: {
+          routeProvider: "openai",
+          upstreamProvider: "openai-api",
+          model: "gpt-5.4",
+          routedBaseUrl: "https://inference.local/v1",
+          upstreamEndpointUrl: null,
+          api: "openai-responses",
+          primaryModelRef: agentName === "openclaw" ? "openai/gpt-5.4" : null,
+          compatibility: agentName === "openclaw" ? {} : null,
         },
-        ensurePreparedWorkload: vi.fn(),
-        ensurePreparedProfile: () => profile,
-      },
-      workload: {
-        source: { kind: "managed-image", reference: "managed@example.invalid" },
-      },
-      legacy: {},
-      plan: {
-        intent: { sandboxGpuLogMessage: null },
-        rebindMessagingTokenDefs: async () => [],
-        upsertMessagingProviders: vi.fn(() => []),
-        getHermesToolGatewayProviderName: vi.fn(() => "unused"),
-        discloseInitialSandboxPolicy: vi.fn(),
-      },
-      launchInput: {
-        agent: null,
         chatUiUrl: "http://127.0.0.1:18789",
-        sandboxName: "managed-openclaw",
-        env: {},
-        extraPlaceholderKeys: [],
-        getDashboardForwardPort: () => "18789",
-        hermesDashboardState: { enabled: false, config: null },
+        effectiveDashboardPort: 18_789,
         manageDashboard: true,
-        openshellShellCommand: (args: string[]) => args.join(" "),
-      },
-      plannedMessagingPlan: null,
-      gpu: {
-        provider: "openai",
-        config: {
-          mode: "0",
-          hostGpuDetected: false,
-          hostGpuPlatform: null,
-          sandboxGpuEnabled: false,
-          sandboxGpuDevice: null,
-          errors: [],
+        dashboardBindAddress,
+        wslExposure: false,
+        hermesDashboardState,
+        webSearch: null,
+        toolDisclosure: "progressive",
+        hermesToolGateways: [],
+        messagingPlan: null,
+        dcodeAutoApprovalMode: "disabled",
+        observabilityEnabled: false,
+        environment: {},
+        corporateCa: null,
+      });
+      const preparedLaunch = await prepareOnboardSandboxWorkloadLaunch({
+        runtime: {
+          runtimeProvider: {
+            gateway: { prepareHostRuntime: () => ({}) },
+          },
+          ensurePreparedWorkload: vi.fn(),
+          ensurePreparedProfile: () => profile,
         },
-        dockerDriverGateway: false,
-        gatewayPort: 8080,
-      },
-      dependencies: {
-        materializeSandboxCreatePlan: vi.fn(async () => ({
-          activeMessagingChannels: [],
-          compatibilityPolicyPath: null,
-          createArgs: null,
-          createRequest: {
-            sandboxName: "managed-openclaw",
-            source: { reference: "managed@example.invalid" },
-            policyPath: "/tmp/nemoclaw-policy.yaml",
+        workload: {
+          source: { kind: "managed-image", reference: "managed@example.invalid" },
+        },
+        legacy: {},
+        plan: {
+          intent: { sandboxGpuLogMessage: null },
+          rebindMessagingTokenDefs: async () => [],
+          upsertMessagingProviders: vi.fn(() => []),
+          getHermesToolGatewayProviderName: vi.fn(() => "unused"),
+          discloseInitialSandboxPolicy: vi.fn(),
+        },
+        launchInput: {
+          agent: null,
+          chatUiUrl: "http://127.0.0.1:18789",
+          sandboxName: "managed-openclaw",
+          env: { NEMOCLAW_DASHBOARD_BIND: dashboardBindAddress },
+          extraPlaceholderKeys: [],
+          getDashboardForwardPort: () => "18789",
+          hermesDashboardState,
+          manageDashboard: true,
+          openshellShellCommand: (args: string[]) => args.join(" "),
+        },
+        plannedMessagingPlan: null,
+        gpu: {
+          provider: "openai",
+          config: {
+            mode: "0",
+            hostGpuDetected: false,
+            hostGpuPlatform: null,
+            sandboxGpuEnabled: false,
+            sandboxGpuDevice: null,
+            errors: [],
           },
-          gpuRoutePlan: "none",
-          initialSandboxPolicy: {
-            appliedPresets: [],
-            policyPath: "/tmp/nemoclaw-policy.yaml",
-          },
-          messagingProviders: [],
-          sandboxGpuLogMessage: null,
-          activateDeferredProviderEffects: null,
-        })),
-        prepareSandboxBuildPatchConfig: vi.fn(),
-      },
-    } as never);
+          dockerDriverGateway: false,
+          gatewayPort: 8080,
+        },
+        dependencies: {
+          materializeSandboxCreatePlan: vi.fn(async () => ({
+            activeMessagingChannels: [],
+            compatibilityPolicyPath: null,
+            createArgs: null,
+            createRequest: {
+              sandboxName: "managed-openclaw",
+              source: { reference: "managed@example.invalid" },
+              policyPath: "/tmp/nemoclaw-policy.yaml",
+            },
+            gpuRoutePlan: "none",
+            initialSandboxPolicy: {
+              appliedPresets: [],
+              policyPath: "/tmp/nemoclaw-policy.yaml",
+            },
+            messagingProviders: [],
+            sandboxGpuLogMessage: null,
+            activateDeferredProviderEffects: null,
+          })),
+          prepareSandboxBuildPatchConfig: vi.fn(),
+        },
+      } as never);
 
-    expect(preparedLaunch.createRequestPlan).not.toBeNull();
-    expect(preparedLaunch.launch).not.toHaveProperty("createCommand");
-    expect(preparedLaunch.launch).not.toHaveProperty("createArgv");
-    expect(preparedLaunch.launch.prebuild).not.toHaveProperty("createArgs");
-  });
+      expect(preparedLaunch.dashboardRemoteBindPrepared).toBe(expected);
+      expect(preparedLaunch.createRequestPlan).not.toBeNull();
+      expect(preparedLaunch.launch).not.toHaveProperty("createCommand");
+      expect(preparedLaunch.launch).not.toHaveProperty("createArgv");
+      expect(preparedLaunch.launch.prebuild).not.toHaveProperty("createArgs");
+    },
+  );
 
   it("launches an external image by exact digest without a build", async () => {
     const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
