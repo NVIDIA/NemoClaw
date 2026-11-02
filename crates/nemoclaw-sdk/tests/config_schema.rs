@@ -995,6 +995,36 @@ fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
 }
 
 #[test]
+fn a_model_containers_gpu_is_one_uuid_or_index_in_the_schema_and_the_parser() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    for (file, service) in [
+        ("spark/vllm.yaml", "qwen"),
+        ("managed-ollama.yaml", "ollama-server"),
+    ] {
+        for (gpu, accepted) in [
+            (json!("0"), true),
+            (json!("12"), true),
+            (json!("GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3"), true),
+            (json!("all"), false),
+            (json!(""), false),
+            (json!("device=0"), false),
+            (json!("0,1"), false),
+            (json!("01"), false),
+            (json!(" 0"), false),
+            (json!("1000"), false),
+            (json!("GPU-79B44E99-D10D-A381-8CD6-5CCB073EAEA3"), false),
+            (json!("GPU-79b44e99"), false),
+            (json!("MIG-79b44e99-d10d-a381-8cd6-5ccb073eaea3"), false),
+            (json!(0), false),
+        ] {
+            let mut value = input(file);
+            value["spec"]["services"][service]["container"]["gpu"] = gpu.clone();
+            agrees(&validator, &value, accepted);
+        }
+    }
+}
+
+#[test]
 fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     let mut value = input("fabric-openclaw.yaml");

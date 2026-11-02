@@ -66,6 +66,9 @@ pub struct Process {
     pub cpu_limit_millis: Option<u32>,
     pub memory_bytes: u64,
     pub gpu: bool,
+    /// With `gpu`, the one GPU to expose instead of every GPU.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_device: Option<String>,
 }
 
 /// Launch settings when the image owns its entrypoint, command, and health check.
@@ -683,7 +686,12 @@ impl Spec {
                 host["CpuQuota"] = json!(cpu_quota_micros(limit));
             }
             if process.gpu {
-                host["DeviceRequests"] = json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]);
+                host["DeviceRequests"] = match &process.gpu_device {
+                    Some(device) => {
+                        json!([{"Driver":"","DeviceIDs":[device],"Capabilities":[["gpu"]]}])
+                    }
+                    None => json!([{"Driver":"","Count":-1,"Capabilities":[["gpu"]]}]),
+                };
             }
             if process.image_owned.is_none() {
                 host["Ulimits"] = json!(

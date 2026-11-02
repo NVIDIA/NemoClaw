@@ -1203,6 +1203,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `cpuLimitMillis` | integer | No | — | CPU usage limit in millicores. Omission leaves Docker CPU usage unrestricted. Changing the limit replaces the model container. Constraints: minimum 1; maximum 4294967295. |
+| `gpu` | string | No | — | The one GPU the model container gets on a host with several, as `docker run --gpus device=` names it: a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing it replaces the model container. Constraints: pattern `^(?:GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\|0\|[1-9][0-9]{0,2})$`. |
 | `ipc` | [ServiceIpc](#serviceipc) | No | — | IPC namespace. Omission uses private; host shares the execution host's IPC namespace. |
 | `memoryLimitGiB` | integer | No | — | Container memory limit in GiB, independent of the model's GPU budget. Omission retains Docker's 104 GiB limit. Changing the limit replaces the model container. Constraints: minimum 1; maximum 8589934591. |
 | `sharedMemoryGiB` | integer | No | — | Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead. Constraints: minimum 1; maximum 64. |

@@ -107,8 +107,10 @@ There are no built-in model-specific backends.
 The hosted runtime checks named profiles against its GPU family, CPU architecture, driver, and memory.
 Configuration parsing validates the profile declaration without collecting host measurements.
 They do not choose a model, runtime image, or GPU count.
-Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU reported by the execution host's `nvidia-smi`; multi-GPU and multi-host serving are not implemented.
-The collectors do not filter devices, so a DGX Station with an additional RTX/display GPU is rejected even when `CUDA_VISIBLE_DEVICES` selects only GB300.
+Every profile currently requires Linux, driver major 580 or newer, and exactly one GPU visible to `nvidia-smi` in the model container; multi-GPU and multi-host serving are not implemented.
+Without [`container.gpu`](inference.md#set-container-limits-and-update-policy), the model container sees every GPU, so the runtime stops on a host with two or more, such as a DGX Station with an additional RTX or display GPU.
+`CUDA_VISIBLE_DEVICES` doesn't select one, because `nvidia-smi` ignores it.
+`container.gpu` asks Docker for one named GPU, as `docker run --gpus device=` does, but managed vLLM and Ollama haven't been run with it on a host with two or more GPUs ([#13743](https://github.com/NVIDIA/NemoClaw/issues/13743)).
 The backend uses tensor parallel size 1.
 GB200/GB300 profiles describe one observed GPU in a Grace Blackwell system; they do not enable a full compute tray or NVL72 rack.
 

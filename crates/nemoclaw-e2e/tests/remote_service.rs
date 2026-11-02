@@ -262,11 +262,12 @@ async fn remote_ollama_recovers_reapplies_and_stops_on_observation_failure_keepi
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn remote_vllm_preserve_refuses_image_change_and_recreate_plans_replacement() {
+async fn remote_vllm_preserve_refuses_image_and_gpu_changes_and_recreate_replaces_the_container() {
     let s = Scenario::new("nvidia.fabric.openclaw", false, "vllm").await;
     let stable = s.apply().await;
     let state = s.runtime_state();
     image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
+    gpu_change_replaces_the_container_with_one_device(&s, &stable, &state).await;
     assert_no_probes(&s);
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -670,6 +671,29 @@ async fn memory_change_plans_compute_replacement_without_effects(
     let mut changed = read(&s.root, "config.yaml");
     changed["spec"]["services"]["qwen"]["container"]["memoryLimitGiB"] = json!(32);
     change_plans_compute_replacement_without_effects(s, stable, state, changed).await;
+}
+
+// Docker can't move a container to another GPU, so naming one replaces the model
+// container, and Preserve refuses it. After Recreate, the container's device
+// request names only that GPU, and an unchanged apply leaves it as it is.
+async fn gpu_change_replaces_the_container_with_one_device(
+    s: &Scenario,
+    stable: &Value,
+    state: &[u8],
+) {
+    const GPU: &str = "GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3";
+    let mut changed = read(&s.root, "config.yaml");
+    changed["spec"]["services"]["qwen"]["container"]["gpu"] = json!(GPU);
+    change_plans_compute_replacement_without_effects(s, stable, state, changed.clone()).await;
+    changed["spec"]["services"]["qwen"]["updatePolicy"] = json!("Recreate");
+    save(&s.root, "gpu.yaml", &changed);
+    s.run("apply", "gpu.yaml", true).await;
+    let replaced = read(&s.root, "engine.json");
+    let requests = &replaced["container"]["HostConfig"]["DeviceRequests"];
+    assert_eq!(requests.as_array().map(Vec::len), Some(1), "{requests}");
+    assert_eq!(requests[0]["DeviceIDs"], json!([GPU]), "{requests}");
+    s.run("apply", "gpu.yaml", true).await;
+    assert_eq!(read(&s.root, "engine.json"), replaced);
 }
 
 async fn change_plans_compute_replacement_without_effects(

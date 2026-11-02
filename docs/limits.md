@@ -22,6 +22,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Linux AMD64 deployment has not reached an agent reply end to end | [#11997](https://github.com/NVIDIA/NemoClaw/issues/11997) |
 | No general DGX Station setup procedure; most Station configurations are untested | [#12122](https://github.com/NVIDIA/NemoClaw/issues/12122) |
 | Managed Ollama with OpenClaw on DGX Station | [#12154](https://github.com/NVIDIA/NemoClaw/issues/12154) |
+| Managed vLLM or Ollama on a host with two or more GPUs, using `container.gpu` to pick one, has not been run on such a host | [#13743](https://github.com/NVIDIA/NemoClaw/issues/13743) |
+| The `vllm_capacity` and `ollama_capacity` data sources refuse a host with two or more GPUs, even when the service names one with `container.gpu` | [#13928](https://github.com/NVIDIA/NemoClaw/issues/13928) |
 | AMD64 Nemotron image and GPU inference | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Local GPU deployment on Windows/WSL or macOS | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |

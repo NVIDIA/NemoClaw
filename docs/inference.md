@@ -98,7 +98,7 @@ An accepted example is a configuration contract, not evidence that the combinati
 
 ## Set Container Limits and Update Policy
 
-Managed `kind: vllm` and `kind: ollama` services use `container` for CPU and system-memory limits on Docker.
+Managed `kind: vllm` and `kind: ollama` services use `container` for CPU and system-memory limits and GPU selection on Docker.
 Set these fields under the service, alongside its model and serving settings:
 
 ```yaml
@@ -113,12 +113,18 @@ updatePolicy: Preserve
 These fields do not set the GPU budget: `memory.gpuMemoryGiB`, `memory.gpuMemoryUtilization`, and backend-specific cache settings retain their runtime meanings.
 The runtime's resident host-memory monitor reads `/proc`, not cgroup memory pressure, so the kernel can OOM-kill a container that reaches `memoryLimitGiB` before the monitor stops inference.
 Docker defaults to a 104 GiB memory limit and no CPU cap when these limits are omitted.
+
+On a host with two or more GPUs, `container.gpu` names the one GPU to request for the container, as `docker run --gpus device=` does.
+Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`.
+An index also works, but it can change when the host boots, and YAML needs it quoted, as in `gpu: "1"`, because the field is a string.
+Without `gpu`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
+Managed vLLM and Ollama haven't been run with `gpu` on a host with two or more GPUs ([#13743](https://github.com/NVIDIA/NemoClaw/issues/13743)).
 Native managed inference on Podman remains unsupported; a Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields do not change [platform qualification limits](limits.md#platforms-models-and-placement).
 
 The service-level `updatePolicy` defaults to `Preserve`.
 For Docker, this refuses an update that would replace a running managed model container.
-Changing the image, model, serving settings, `cpuLimitMillis`, or `memoryLimitGiB` replaces the container; declaring the omitted 104 GiB default as `memoryLimitGiB: 104` does not.
+Changing the image, model, serving settings, `cpuLimitMillis`, `memoryLimitGiB`, or `gpu` replaces the container; declaring the omitted 104 GiB default as `memoryLimitGiB: 104` does not.
 Earlier bundles replaced a running Docker model container for image, model, and serving changes without a policy; to keep that behavior, for example when automation updates images, set `spec.services.<name>.updatePolicy: Recreate`.
 Set `updatePolicy: Recreate` only when accepting sequential replacement and possible downtime if the replacement cannot start.
 The opt-in persists for later updates until removed or changed to `Preserve`; changing only this policy does not restart the workload.
