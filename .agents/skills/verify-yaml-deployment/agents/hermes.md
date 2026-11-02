@@ -4,22 +4,36 @@
 # Agent: Hermes
 
 `AGENT=hermes`, harness `nvidia.fabric.hermes`, image target `hermes`.
-The pinned adapter embeds Hermes in the adapter process, so Fabric invocations are its only interface.
+The adapter runs Hermes in the sandbox, keeps its state across runtimes in `/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/assistant`, and can serve its API server and dashboard.
 
 ## Proven Pairs
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change | `691bf43c51` | 2026-10-30 |
+| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [hermes-interfaces](../features/hermes-interfaces.md) | `24b35280fb` | 2026-11-02 |
 
 ## YAML Edits
 
-None beyond the skill's and the target's.
-The adapter's settings are `max_tokens`, `plugins_enabled`, `reasoning_config`, `save_trajectories`, and `terminal_timeout`; check the image's catalog label before relying on others:
+For the [hermes-interfaces](../features/hermes-interfaces.md) feature, add to `spec.sandboxes.assistant.harness`:
+
+```yaml
+settings:
+  interfaces:
+    api:
+      port: 8642
+    dashboard:
+      port: 9119
+```
+
+Merge `settings` into the example's `harness`; keep its `kind` and `execution`.
+Declare no service exposure: with none, [exposure-change](../features/exposure-change.md) adds a `probe` exposure instead of switching a mode.
+Check the image's adapter declares the interfaces before relying on them:
 
 ```sh
-docker image inspect "nc-fabric:hermes" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}' | jq -r '.adapters[] | select(.descriptor.adapter_id == "nvidia.fabric.hermes") | .descriptor.settings_schema.properties | keys[]'
+docker image inspect "nc-fabric:hermes" --format '{{index .Config.Labels "io.nemoclaw.fabric.catalog"}}' | jq -c '.adapters[] | select(.descriptor.adapter_id == "nvidia.fabric.hermes") | .descriptor.settings_schema.properties.interfaces.properties | keys'
 ```
+
+Result: `["api","dashboard"]`.
 
 ## Readiness
 
@@ -27,9 +41,9 @@ docker image inspect "nc-fabric:hermes" --format '{{index .Config.Labels "io.nem
 
 ## Extra Features
 
-None yet.
+- [hermes-interfaces](../features/hermes-interfaces.md): the API server and dashboard through `openshell forward service`.
 
 ## Known Gaps
 
-- **No native interfaces.** Hermes's API server, dashboard, and browser chat need a service shape in Fabric's Hermes adapter ([NVIDIA/NeMo-Fabric#540](https://github.com/NVIDIA/NeMo-Fabric/issues/540), [#13969](https://github.com/NVIDIA/NemoClaw/issues/13969)). The image already carries their assets (#13971); add a feature here when the adapter serves them.
-- **Service exposures.** With no listener in the sandbox, [exposure-change](../features/exposure-change.md) checks only that the gateway records the exposure; nothing answers at its URL.
+- **Dashboard without sign-in.** Anyone who reaches its forward can use it, including browser chat without approvals ([docs/interfaces.md](../../../../docs/interfaces.md#who-can-use-an-interface)).
+- **Interface failures stay silent.** A Hermes interface process that exits leaves the agent running and plan unchanged until the next runtime start.
