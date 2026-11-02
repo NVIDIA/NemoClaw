@@ -28,6 +28,12 @@ variable "sandbox_create_delay_ms" {
   default     = 0
 }
 
+variable "sandbox_delete_delay_ms" {
+  description = "How long the gateway takes to answer each sandbox deletion."
+  type        = number
+  default     = 0
+}
+
 variable "gateway_change" {
   description = "A change to what the gateway holds, made once when declared; see the harness."
   type        = any
@@ -87,6 +93,7 @@ output "declare" {
   value = jsonencode(merge({
     compute_driver          = local.driver
     sandbox_create_delay_ms = var.sandbox_create_delay_ms
+    sandbox_delete_delay_ms = var.sandbox_delete_delay_ms
     change                  = var.gateway_change
     # Only a managed Docker gateway's engine holds images and containers.
     }, [for docker in [local.docker] : {

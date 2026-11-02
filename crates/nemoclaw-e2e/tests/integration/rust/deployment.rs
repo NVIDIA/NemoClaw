@@ -697,32 +697,6 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; exercises a slow graceful sandbox stop"]
-async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let deployment = Deployment::new(directory.path(), &bundle);
-    let cancel = CancellationToken::new();
-    deployment.apply(&document, &cancel).await.unwrap();
-    fixture.state.lock().unwrap().delete_delay = std::time::Duration::from_secs(31);
-    assert_eq!(
-        deployment.destroy(&cancel).await.unwrap().outcome,
-        Outcome::Destroyed
-    );
-    let state = fixture.state.lock().unwrap();
-    assert!(state.sandboxes.is_empty());
-    assert!(state.workspaces.is_empty()); // Destroy deletes the workspace too.
-    assert_eq!(state.delete_calls, 1);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapply() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());

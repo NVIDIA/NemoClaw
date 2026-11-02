@@ -99,10 +99,21 @@ run "verify" {
     condition     = module.observed.http.requests == []
     error_message = "Deploying called the inference upstream."
   }
+
+  assert {
+    condition = alltrue([
+      for exec in module.observed.openshell.execs : !anytrue([
+        for argument in exec.command :
+        contains(["probe", "health", "--message"], argument) || strcontains(argument, "-probe")
+      ])
+    ])
+    error_message = "Deploying ran an inference or runtime probe in a sandbox."
+  }
 }
 
 # Verify's apply changed nothing: no gateway mutation and no agent start since
-# deploy. The same run then stops the researcher's runtime inside its sandbox.
+# deploy. The same run then stops the researcher's runtime inside its sandbox,
+# and changes the reviewer's model inside its sandbox, outside OpenTofu.
 run "stop_researcher_runtime" {
   command = plan
 
@@ -111,7 +122,7 @@ run "stop_researcher_runtime" {
   }
 
   variables {
-    gateway_change = { stop_agent_runtime = "researcher" }
+    gateway_change = { stop_agent_runtime = "researcher", change_agent_model = "reviewer" }
     baseline       = run.verify.baseline
   }
 
@@ -141,7 +152,8 @@ run "restart_researcher" {
 }
 
 # The researcher's agent started again in the same sandbox; the others did not
-# start again. The same run then makes the gateway forget the registration.
+# start again. Fabric reports no applied configuration, so the reviewer's
+# changed model is not drift. The same run then makes the gateway forget the registration.
 run "forget_registration" {
   command = plan
 
@@ -160,14 +172,14 @@ run "forget_registration" {
 
   assert {
     condition     = jsondecode(data.fixture_state.setup.observations).openshell.sandboxes == var.baseline.sandboxes
-    error_message = "Restarting the researcher's agent replaced a sandbox."
+    error_message = "Restarting the researcher's agent, or the reviewer's model changed inside its sandbox, replaced a sandbox."
   }
 
   assert {
     condition = {
       for name, id in var.baseline.sandboxes : name => jsondecode(data.fixture_state.setup.observations).openshell.fabric_starts[id]
     } == { assistant = 1, researcher = 2, reviewer = 1 }
-    error_message = "Only the stopped researcher should have started again."
+    error_message = "Only the stopped researcher should have started again; the reviewer's changed model is not drift."
   }
 }
 

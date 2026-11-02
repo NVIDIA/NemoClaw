@@ -181,17 +181,30 @@ impl Shared {
             gateway.sandbox_create_delay = std::time::Duration::from_millis(
                 declared["sandbox_create_delay_ms"].as_u64().unwrap_or(0),
             );
+            gateway.delete_delay = std::time::Duration::from_millis(
+                declared["sandbox_delete_delay_ms"].as_u64().unwrap_or(0),
+            );
             let change = &declared["change"];
-            if let Some(name) = change["stop_agent_runtime"].as_str() {
-                let id = gateway
+            let sandbox_id = |gateway: &openshell::State, name: &str| {
+                gateway
                     .sandboxes
                     .values()
                     .filter_map(|sandbox| sandbox.metadata.as_ref())
                     .find(|metadata| metadata.name == name)
-                    .map(|metadata| metadata.id.clone());
+                    .map(|metadata| metadata.id.clone())
+            };
+            if let Some(name) = change["stop_agent_runtime"].as_str() {
+                let id = sandbox_id(&gateway, name);
                 gateway
                     .fabric_runtimes
                     .retain(|_, sandbox| Some(&*sandbox) != id.as_ref());
+            }
+            // Someone changes the agent's model inside its sandbox, outside OpenTofu.
+            if let Some(name) = change["change_agent_model"].as_str()
+                && let Some(id) = sandbox_id(&gateway, name)
+                && let Some(configuration) = gateway.fabric_configurations.get_mut(&id)
+            {
+                configuration["models"]["default"]["model"] = json!("changed-inside-the-sandbox");
             }
             if change["forget_registrations"] == true {
                 gateway.providers.clear();
@@ -273,6 +286,7 @@ impl Shared {
                 // Gateway mutations so far, which an unchanged apply leaves as they were.
                 "effects": state.effects,
                 "peak_sandbox_creates": state.peak_sandbox_creates,
+                "sandbox_deletes": state.delete_calls,
                 // What the gateway holds now: sandbox IDs by name, and registration names.
                 "sandboxes": live, "registrations": registrations,
             },

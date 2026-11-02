@@ -22,10 +22,17 @@ variable "sandbox_create_delay_ms" {
   default     = 0
 }
 
+variable "sandbox_delete_delay_ms" {
+  description = "How long the fixture gateway takes to answer each sandbox deletion."
+  type        = number
+  default     = 0
+}
+
 variable "gateway_change" {
-  description = "A change to what the fixture gateway holds, made once by a run that targets data.fixture_state.setup: stop_agent_runtime names a sandbox whose Fabric runtime stops; forget_registrations forgets every provider registration."
+  description = "A change to what the fixture gateway holds, made once by a run that targets data.fixture_state.setup: stop_agent_runtime names a sandbox whose Fabric runtime stops; change_agent_model names a sandbox whose agent model changes inside it; forget_registrations forgets every provider registration."
   type = object({
     stop_agent_runtime   = optional(string)
+    change_agent_model   = optional(string)
     forget_registrations = optional(bool, false)
   })
   default = null
@@ -42,6 +49,7 @@ module "fixtures" {
   document                = "${path.module}/nemoclaw.yaml"
   compute_driver          = var.compute_driver
   sandbox_create_delay_ms = var.sandbox_create_delay_ms
+  sandbox_delete_delay_ms = var.sandbox_delete_delay_ms
   gateway_change          = var.gateway_change
 }
 
