@@ -52,6 +52,12 @@ export const localCodeRelationshipPrompts = [
   "Find where handleRequest is called in src.",
   "Search config.dev.json for the port.",
   "Read Makefile.in and configure.ac.",
+  "Find the code that runs on startup",
+  "Find the function that reads from stdin",
+  "Find the code that implements OAuth in src",
+  "Find the handler that writes to Redis",
+  "Read the latest release notes from CHANGELOG.md",
+  "Get the latest version from package.json",
 ];
 
 // URLs coordinated only with each other, or with a local file, keep their grants.
@@ -64,7 +70,7 @@ export const suppliedUrlListPrompts = [
   { prompt: "Read https://a.example/x and README.md", local: true, urls: ["https://a.example/x"] },
 ];
 
-// A hostname is a web source, and a supplied URL exempts only itself, not a coordinated target.
+// A hostname or public code host is a web source, and a supplied URL exempts only itself.
 export const webTargetPrompts = [
   "Get the latest news from docs.nvidia.com",
   "Find the latest release notes on developer.nvidia.com.",
@@ -78,4 +84,12 @@ export const webTargetPrompts = [
   "Search https://example.org, https://example.net and the web for NVIDIA news",
   "Find all callers of handleRequest in src using Tavily.",
   "Find the function that handles authentication online.",
+  "Search for code that implements OAuth on GitHub",
+  "Search for code that implements OAuth on github.com",
+  "Find the function that handles authentication on GitLab",
+  "Find all callers of handleRequest in GitHub",
+  "Find code which parses YAML from Stack Overflow",
+  "Get the latest news from nvidia.tech",
+  "Find the latest release notes on nvidia.tech.",
+  "Read the official docs from nemoclaw.build",
 ];

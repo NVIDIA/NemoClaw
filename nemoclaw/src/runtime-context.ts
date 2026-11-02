@@ -140,6 +140,31 @@ const HOSTNAME =
 function localPath(value: string): boolean {
   return LOCAL_PATH.test(value) && !HOSTNAME.test(value);
 }
+// Public code and package hosts are web sources, like a hostname or the web itself.
+const WEB_PLACE =
+  /^(?:the\s+)?(?:web|internet|online|github|gitlab|bitbucket|codeberg|sourceforge|sourcegraph|stack\s*overflow|hugging\s*face|npm(?:js)?|pypi|docker\s*hub)$/iu;
+const PLACE =
+  /\b(?:on|from|at|via|in|inside|within|across|throughout)\s+((?:the\s+)?[\w.:/-]+(?:\s+(?:overflow|face|hub))?)/giu;
+function webPlace(place: string): boolean {
+  const name = place.replace(/[.,;:!?]+$/u, "");
+  return HOSTNAME.test(name) || WEB_PLACE.test(name);
+}
+function namesWebPlace(value: string): boolean {
+  return Array.from(value.matchAll(PLACE)).some(([, place]) => webPlace(place!));
+}
+// Where published information is requested, a bare dotted name is a web host unless it
+// ends in a file extension. Elsewhere an unfamiliar suffix still names a local file.
+const PUBLISHED_INFORMATION =
+  /\b(?:news|headlines|announcements|press\s+releases?|release\s+notes|blog\s+posts?|articles|documentation|docs)\b/iu;
+const BARE_DOTTED_NAME = /(?<![\w./\\@-])(?:[a-z\d][\w-]*\.)+[a-z][\w-]*(?![\w/\\-]|\.[\w-])/giu;
+const FILE_EXTENSION =
+  /\.(?:md|mdx|markdown|txt|rst|adoc|html?|pdf|json[c5]?|ya?ml|toml|ini|cfg|conf|config|env|properties|xml|csv|tsv|log|out|err|lock|[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|ps1|sql|ipynb|proto|gradle|tf)$/iu;
+function publishedSourceHosts(source: string): string {
+  if (!PUBLISHED_INFORMATION.test(source)) return source;
+  return source.replace(BARE_DOTTED_NAME, (name) =>
+    FILE_EXTENSION.test(name) || HOSTNAME.test(name) ? name : "the web",
+  );
+}
 const LOCAL_TOOL =
   /^(?:web_fetch|read|edit|write|apply_patch|exec|process|memory_get|memory_search|(?:(?:available|local|filesystem|shell|memory)\s+)+tools?)(?:\s+tool)?$/iu;
 const LOCAL_STATE =
@@ -244,18 +269,19 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
     // A code relationship stays local when it also names a local place to look.
     const codeQuery = target.replace(
       /\s+(?:in|inside|within|under|across|throughout)\s+(?:the\s+)?(?!(?:web|internet)\b)([\w./-]+)(?:\s+(?:director(?:y|ies)|folders?|modules?|packages?))?$/iu,
-      (location, place: string) => (HOSTNAME.test(place) ? location : ""),
+      (location, place: string) => (webPlace(place) ? location : ""),
     );
     const codeTarget =
       /^(?:(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+)|(?:files?|director(?:y|ies)|folders?|functions?|methods?|class(?:es)?|modules?|symbols?|variables?|constants?|types?|interfaces?|structs?|enums?|traits?|propert(?:y|ies)|namespaces?|parameters?|arguments?|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?|named|called|covers?|covering|exercises?|exercising|calling|testing|importing|for)\s+(.+)|where\s+(.+)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(.+)['’]s\s+(?:callers?|call\s+sites?))$/iu.exec(
         codeQuery,
       );
     if (codeTarget?.slice(1).some((value) => value && IDENTIFIER.test(value))) return "source";
-    // Code described by its behavior is local code, whatever the behavior is.
+    // Code described by its behavior is local code, unless the request places it on the web.
     if (
       /^(?:functions?|methods?|class(?:es)?|modules?|components?|handlers?|hooks?|helpers?|middleware|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?|code)\s+(?:that|which)\s+\w+\s+\S/iu.test(
         target,
-      )
+      ) &&
+      !namesWebPlace(target)
     )
       return "source";
     // A query uses the same source grammar; a code relationship must still name valid code.
@@ -375,7 +401,7 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
     // A supplied URL is a retrieval target; its path words are not user intent.
     // Remove conversational and tool-invocation wrappers, not a leading task
     // instruction. A later keyword can name code ("fix the search button").
-    const source = request
+    const stripped = request
       .replace(/\bhttps?:\/\/\S+/giu, "")
       .trimStart()
       .replace(
@@ -383,6 +409,7 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
         "",
       )
       .replace(/^(?:don't|do not)\s+know\s+/iu, "");
+    const source = publishedSourceHosts(stripped);
     const action =
       /\b(?:(?:do|run|perform|conduct)\s+(?:(?:a|an|some)\s+)?(?:search|research|investigation)|(?:use|run|ask)\s+(?:(?:a|the)\s+)?(?:tavily|brave|google|bing|duckduckgo|web[_ -]?search)|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look(?:\s+(?:up|for|on))?|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|want|tell|list|report|return|print|output|present|identify|describe|explain|where|which|what|who|when|how)\b/iu.exec(
         source,
