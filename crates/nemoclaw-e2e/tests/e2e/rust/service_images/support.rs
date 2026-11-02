@@ -230,7 +230,7 @@ impl Scenario {
     }
     pub async fn proxy_document(&self, count: usize) -> Document {
         let mut value: Value = serde_saphyr::from_str(include_str!(
-            "../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+            "../../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
         ))
         .unwrap();
         value["metadata"]["uid"] = json!(self.uid);
