@@ -45,12 +45,12 @@ jobs:
       - name: Build live test executable
         run: |
           set -euo pipefail
-          cargo test --locked -p nemoclaw-e2e --test brev --no-run --message-format=json \
+          cargo test --locked -p nemoclaw-e2e --test integration --no-run --message-format=json \
             | tee "${RUNNER_TEMP}/brev-build.json" >/dev/null
-          binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "brev" and .profile.test == true) | .executable' "${RUNNER_TEMP}/brev-build.json" | tail -1)"
+          binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "integration" and .profile.test == true) | .executable' "${RUNNER_TEMP}/brev-build.json" | tail -1)"
           test -x "${binary}"
           mkdir candidate
-          cp "${binary}" candidate/brev-test
+          cp "${binary}" candidate/integration
           cp -a dist/linux_amd64 candidate/bundle
           # Tar retains executable bits; no credential is present in this job.
           tar -cf "${RUNNER_TEMP}/brev-candidate.tar" candidate
@@ -178,12 +178,13 @@ jobs:
           INSTANCE_NAME: ${{ needs.prepare.outputs.instance }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: bash tools/e2e/brev-v1-host.sh qualify
+      # The HCL scenario's outcome reports, the destroy receipt, and fresh-host checks.
       - name: Upload sanitized evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: brev-proof-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/brev-evidence/brev-proof.json
+          path: ${{ runner.temp }}/brev-evidence/*.json
           if-no-files-found: warn
           retention-days: 14
 

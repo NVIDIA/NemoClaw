@@ -3,11 +3,14 @@
 # Parsed and defaulted form of the raw v0 export produced by NVIDIA/NemoClaw
 # b6934c6300c4e1e175757e9281ae3a641d9a5b1f.
 # 2026-09-17: refreshed from the public v0 config export contract in #11977.
+# The live E2E lifecycle deploys this document; tests/hosted_parity.rs compares
+# it with the raw export in fixtures/openclaw-nvidia-hosted.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
   name: openclaw-nvidia-hosted
+  # CI gives each run a fresh identity.
   uid: b8f25ac9-8e58-4c0b-98c3-17648f9a5575
 spec:
   gateway:
@@ -29,7 +32,8 @@ spec:
       harness:
         kind: nvidia.fabric.openclaw
       image:
-        ref: nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0
+        # CI binds this template to its candidate OpenClaw image.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         policy:
           explicit:

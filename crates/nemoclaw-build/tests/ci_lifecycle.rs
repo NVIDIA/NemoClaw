@@ -236,6 +236,11 @@ fi
         for (path, content) in [
             ("dist/linux_arm64/manifest.json", "{}"),
             ("image/ollama/Dockerfile", "FROM ollama/ollama@sha256:0\n"),
+            // The HCL E2E case the suite binds to its run.
+            (
+                "crates/nemoclaw-e2e/hcl/cases/docker-dummy.yaml",
+                include_str!("../../nemoclaw-e2e/hcl/cases/docker-dummy.yaml"),
+            ),
         ] {
             let file = self.0.path().join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();

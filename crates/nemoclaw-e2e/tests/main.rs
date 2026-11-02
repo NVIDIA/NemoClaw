@@ -17,16 +17,12 @@ mod docker_fixture;
 #[path = "docker_provider_proxy.rs"]
 mod docker_provider_proxy;
 #[cfg(unix)]
-#[path = "dummy_agent.rs"]
-mod dummy_agent;
 #[path = "export_observations.rs"]
 mod export_observations;
 #[path = "fabric_bridge.rs"]
 mod fabric_bridge;
 #[path = "fabric_deployment.rs"]
 mod fabric_deployment;
-#[path = "fabric_live.rs"]
-mod fabric_live;
 // Unix only, as before it moved here from nemoclaw-sdk.
 #[cfg(target_os = "linux")]
 mod docker_registry;
@@ -58,8 +54,6 @@ mod managed;
 #[cfg(unix)]
 #[path = "managed_gateway.rs"]
 mod managed_gateway;
-#[path = "model_live.rs"]
-mod model_live;
 #[path = "multi_agent.rs"]
 mod multi_agent;
 #[path = "multiple_providers.rs"]

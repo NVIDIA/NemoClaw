@@ -13,10 +13,6 @@ autotests = false
 name = "integration"
 path = "tests/main.rs"
 
-[[test]]
-name = "brev"
-path = "tests/brev.rs"
-
 [dependencies]
 rcgen = "0.14.10"
 rustls.workspace = true
