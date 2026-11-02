@@ -505,6 +505,11 @@
       "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
       "test": "runs npm and messaging consumers after retrying an interrupted %s manifest write",
       "category": "compatibility"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
+      "category": "compatibility"
     }
   ]
 }

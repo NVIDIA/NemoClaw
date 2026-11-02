@@ -361,4 +361,39 @@ describe("sandbox readiness container identity boundary", () => {
     expect(output).not.toContain("\u001b");
     expect(output).toContain('openshell.ai/sandbox-workspace="other\\\\u001b[31mworkspace"');
   });
+
+  it("names the foreign workspace instead of suggesting a longer timeout (#12799)", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(120_001);
+    const harness = unmatchedIdentityHarness({
+      listOutputs: ["alpha Provisioning"],
+      sandboxNameLabeledContainers: observed([FOREIGN_WORKSPACE]),
+    });
+
+    await expect(harness.waitForSandboxReadyOrExit("alpha")).rejects.toThrow(EXIT_ONE);
+
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Timed out after 120s waiting for sandbox 'alpha'.");
+    expect(output).toContain("1 container(s) carry the 'openshell.ai/sandbox-name=alpha' label:");
+    expect(output).toContain('openshell.ai/sandbox-workspace="other-workspace"');
+    expect(output).toContain("Then rerun 'nemoclaw alpha connect'.");
+    expect(output).not.toContain("NEMOCLAW_CONNECT_TIMEOUT");
+  });
+
+  it("keeps the timeout guidance when the timed-out sandbox owns its container (#12799)", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(120_001);
+    const harness = unmatchedIdentityHarness({
+      listOutputs: ["alpha Provisioning"],
+      dockerRuntime: { containerName: "openshell-alpha", running: true },
+      sandboxNameLabeledContainers: observed([FOREIGN_WORKSPACE]),
+    });
+
+    await expect(harness.waitForSandboxReadyOrExit("alpha")).rejects.toThrow(EXIT_ONE);
+
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 nemoclaw alpha connect",
+    );
+    expect(output).not.toContain("No Docker container matches");
+    expect(harness.inspectSandboxNameLabeledContainersSpy).not.toHaveBeenCalled();
+  });
 });

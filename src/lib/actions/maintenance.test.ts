@@ -1175,10 +1175,7 @@ describe("backupAll", () => {
   });
 
   it("does not let the unreachable waiver bypass installer-strict backup (#6114)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-bad" }],
-      defaultSandbox: null,
-    });
+    mocks.listSandboxes.mockReturnValue({ sandboxes: [{ name: "sb-bad" }], defaultSandbox: null });
     readySandboxNames = new Set(["sb-bad"]);
     mocks.backupSandboxState.mockReturnValue({
       success: false,
@@ -1190,15 +1187,18 @@ describe("backupAll", () => {
     });
     process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
     await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    const output = [...logSpy.mock.calls, ...errorSpy.mock.calls].flat().join("\n");
+    expect(output).toContain("sb-bad: backup failed");
+    expect(output).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(output).not.toContain("Skipped 'sb-bad'");
+    expect(output).toMatch(/cannot skip these sandboxes[\s\S]*applies only to a standalone/);
   });
 
   it.each([
