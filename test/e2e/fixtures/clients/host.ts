@@ -304,19 +304,18 @@ export class HostCliClient {
         artifactName: `${artifactName}-listener-after`,
       }),
     ]);
-    const [{ buildCliOpenShellForwardServiceArgs }, authority] = await Promise.all([
-      import("../../../../src/lib/adapters/openshell/forward-cli-args.ts"),
-      forwardListenerAuthority(options.env ?? process.env),
-    ]);
+    const [{ buildCliOpenShellForwardServiceArgs, matchesCliOpenShellForwardCommand }, authority] =
+      await Promise.all([
+        import("../../../../src/lib/adapters/openshell/forward-cli-args.ts"),
+        forwardListenerAuthority(options.env ?? process.env),
+      ]);
     const target = {
       ...authority,
       sandboxName,
       localHost: "127.0.0.1" as const,
       port: Number(port),
     };
-    const expectedCommandLine = [commandPath, ...buildCliOpenShellForwardServiceArgs(target)].join(
-      " ",
-    );
+    const expectedArgs = buildCliOpenShellForwardServiceArgs(target);
     const afterPids = [
       ...new Set(
         after.stdout
@@ -330,7 +329,7 @@ export class HostCliClient {
     const valid =
       probes.every((probe) => probe.exitCode === 0 && !probe.timedOut) &&
       actualExecutable.stdout.trim() === expectedExecutable.stdout.trim() &&
-      commandLine.stdout.trim() === expectedCommandLine &&
+      matchesCliOpenShellForwardCommand(commandLine.stdout.trim(), commandPath, expectedArgs) &&
       afterPids.length === 1 &&
       afterPids[0] === pid;
     return {
