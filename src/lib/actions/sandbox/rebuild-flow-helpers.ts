@@ -67,6 +67,7 @@ export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 export { resolveSandboxGatewayName };
 export {
   delegateRebuildToOwningRegistry,
+  rebuildGatewayStateDirIssue,
   restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild/owning-registry";
 

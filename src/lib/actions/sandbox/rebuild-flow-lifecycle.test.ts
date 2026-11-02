@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
+import { writeSdkTlsFiles } from "../../../../test/helpers/openshell-sdk-tls";
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
@@ -17,12 +19,22 @@ import {
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import { ensureManagedGatewayStateRoot } from "../../onboard/gateway/state-dir";
 import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "../../onboard/hermes-api-port";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import { registry } from "../../../../test/helpers/rebuild-flow-harness";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
+
+/** Rebuild preflight validates the effective gateway state directory, so use real marked roots. */
+function markedGatewayStateDir(label: string): { stateDir: string; cleanup: () => void } {
+  const stateDir = fs.mkdtempSync(path.join(os.homedir(), `.nemoclaw-rebuild-${label}-`));
+  fs.chmodSync(stateDir, 0o700);
+  ensureManagedGatewayStateRoot({ gatewayName: "nemoclaw", gatewayPort: 8080, stateDir });
+  writeSdkTlsFiles(stateDir);
+  return { stateDir, cleanup: () => fs.rmSync(stateDir, { force: true, recursive: true }) };
+}
 
 function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSnapshot {
   return {
@@ -43,10 +55,13 @@ function dockerGpuRuntimeSnapshot(device = "nvidia.com/gpu=0"): SandboxRuntimeSn
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
 
-  it.each([undefined, "/srv/nemoclaw/recreated-gateway"])(
-    "uses the recorded gateway directory during rebuild unless explicitly overridden (%s)",
-    async (explicitStateDir) => {
-      const originalStateDir = "/srv/nemoclaw/original-gateway";
+  it.each([false, true])(
+    "uses the recorded gateway directory during rebuild unless explicitly overridden (explicit=%s)",
+    async (explicit) => {
+      const original = markedGatewayStateDir("original");
+      const recreated = explicit ? markedGatewayStateDir("recreated") : null;
+      const originalStateDir = original.stateDir;
+      const explicitStateDir = recreated?.stateDir;
       const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
       try {
         process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = explicitStateDir ?? "";
@@ -73,17 +88,20 @@ describe("rebuildSandbox flow: lifecycle", () => {
         expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(explicitStateDir ?? "");
       } finally {
         restoreEnv();
+        original.cleanup();
+        recreated?.cleanup();
       }
     },
   );
 
   it("restores the caller gateway directory after rebuild preflight fails", async () => {
+    const original = markedGatewayStateDir("original");
     const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
     try {
       process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = "";
       let observed: string | undefined;
       const harness = createRebuildFlowHarness({
-        sandboxEntry: { openshellGatewayStateDir: "/srv/nemoclaw/original-gateway" },
+        sandboxEntry: { openshellGatewayStateDir: original.stateDir },
         preflightAuthoritativeRebuildTarget: () => {
           observed = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
           throw new Error("injected preflight failure");
@@ -92,11 +110,12 @@ describe("rebuildSandbox flow: lifecycle", () => {
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).rejects.toThrow("Replacement onboarding preflight failed");
-      expect(observed).toBe("/srv/nemoclaw/original-gateway");
+      expect(observed).toBe(original.stateDir);
       expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("");
       expectNoSandboxDelete(harness.runOpenshellSpy);
     } finally {
       restoreEnv();
+      original.cleanup();
     }
   });
 

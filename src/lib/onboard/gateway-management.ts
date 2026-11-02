@@ -88,7 +88,12 @@ export type GatewayManagementParseResult =
  * funnels through `reason`, so this one class covers the whole class of
  * contract-validation failures.
  */
-export class GatewayManagementDeclarationError extends Error {}
+export class GatewayManagementDeclarationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GatewayManagementDeclarationError";
+  }
+}
 
 const GATEWAY_MANAGEMENT_ERROR_CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;

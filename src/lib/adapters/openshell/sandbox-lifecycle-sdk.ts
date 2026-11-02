@@ -72,7 +72,15 @@ function lifecycleError(
   if (timedOut) {
     return { kind: "timeout", message: "OpenShell timed out." };
   }
-  if (error instanceof Error && error.name === "OpenShellSdkPreflightUnavailableError") {
+  if (
+    error instanceof Error &&
+    [
+      "OpenShellSdkPreflightUnavailableError",
+      "UnsafeGatewayStateDirectoryError",
+      "GatewayManagementDeclarationError",
+    ].includes(error.name)
+  ) {
+    // Local gateway configuration failures happen before any RPC; show their own reason.
     return { kind: "transport", reason: "unreachable", message: error.message };
   }
   const code =

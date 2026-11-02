@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { GatewayManagementDeclarationError } from "../../onboard/gateway-management";
 import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import { createSdkOpenShellSandboxStateLifecycle } from "./sandbox-lifecycle-sdk";
 
@@ -225,6 +229,57 @@ describe("OpenShell SDK sandbox lifecycle", () => {
         kind: "transport",
         reason: "unreachable",
         message: "OpenShell is unavailable (Error, code ERR_MODULE_NOT_FOUND).",
+      },
+    });
+  });
+
+  it("shows why a configured gateway state directory was rejected (#13330)", async () => {
+    // An unmarked directory that is not this gateway's state root, as when a host-wide
+    // NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR points somewhere else.
+    const stateDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-lifecycle-state-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const loadSdk = vi.fn();
+      const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+        env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+        homeDir: "/unused",
+        loadSdk,
+      });
+
+      const result = await lifecycle.stopSandbox(request);
+
+      expect(result).toMatchObject({
+        kind: "failed",
+        error: {
+          kind: "transport",
+          reason: "unreachable",
+          message: expect.stringMatching(
+            /^Unsafe OpenShell gateway state directory: .*managed gateway state root marker/u,
+          ),
+        },
+      });
+      expect(loadSdk).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
+  });
+
+  it("shows an external gateway declaration conflict instead of a generic error (#13330)", async () => {
+    const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+      connect: async () =>
+        Promise.reject(
+          new GatewayManagementDeclarationError(
+            "The external gateway declaration conflicts with the state directory override.",
+          ),
+        ),
+    });
+
+    await expect(lifecycle.startSandbox(request)).resolves.toEqual({
+      kind: "failed",
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "The external gateway declaration conflicts with the state directory override.",
       },
     });
   });

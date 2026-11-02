@@ -320,6 +320,43 @@ describe("compiled rebuild owning-registry worker", () => {
     }
   });
 
+  it.each(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "NEMOCLAW_GATEWAY_MANAGEMENT"] as const)(
+    "forwards %s to the owning worker and stops before backup or deletion",
+    async (name) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-gateway-preflight-"));
+      try {
+        writeSiblingRegistry(home, { provider: "nvidia-prod" });
+        const registryFile = path.join(home, ".nemoclaw", "gateways", "9000", "sandboxes.json");
+        const registryBefore = fs.readFileSync(registryFile, "utf8");
+        const invalidPath = path.join(home, "invalid-gateway-state");
+        fs.mkdirSync(invalidPath, { mode: 0o700 });
+        vi.stubEnv("HOME", home);
+        vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "");
+        vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", "");
+        vi.stubEnv(name, invalidPath);
+
+        await expect(
+          rebuildOwningRegistryDependencies.runWorker(
+            {
+              operation: "rebuild",
+              sandboxName: "alpha",
+              options: { yes: true },
+              executionOptions: {},
+            },
+            9000,
+          ),
+        ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+        expect(fs.readFileSync(registryFile, "utf8")).toBe(registryBefore);
+        expect(
+          fs.existsSync(path.join(home, ".nemoclaw", "gateways", "9000", "rebuild-backups")),
+        ).toBe(false);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("waits for the owning sandbox lifecycle lock before retiring recovery", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-retirement-lock-"));
     let releaseLock: () => void = vi.fn();
