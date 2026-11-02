@@ -108,7 +108,7 @@ Before registration, configure an HTTPS endpoint that meets these requirements:
 - The endpoint exposes only the required MCP path and methods.
 
 If the endpoint certificate chains to a private CA, provide that CA with `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
-Rebuild an existing sandbox after adding or changing the CA to update its clients' trust.
+Managed-image rebuilds preserve the recorded CA profile and do not import a newly exported bundle.
 On OpenShell `0.1.5` with Docker, this image import does not install the CA in the separate supervisor that verifies upstream TLS.
 Private-CA MCP connections remain unqualified; refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust#understand-image-and-runtime-trust).
 For source validation and custom-image requirements, refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust).
