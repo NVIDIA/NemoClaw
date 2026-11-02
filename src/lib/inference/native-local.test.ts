@@ -937,6 +937,7 @@ describe("native OpenClaw Model Router (#13560)", () => {
     const upsertProvider = vi.fn();
     const setInferenceRoute = vi.fn();
     const verifyInferenceRoute = vi.fn();
+    const verifyOnboardInferenceSmoke = vi.fn(async () => {});
     const lock = async <T>(name: string | number, operation: () => Promise<T> | T) => {
       events.push(`lock:${name}`);
       try {
@@ -963,7 +964,7 @@ describe("native OpenClaw Model Router (#13560)", () => {
       runOpenshell: vi.fn(),
       inferenceRouteMutator: { setInferenceRoute },
       verifyInferenceRoute,
-      verifyOnboardInferenceSmoke: vi.fn(async () => {}),
+      verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       hydrateCredentialEnv: () => "test-only-secret",
@@ -981,12 +982,12 @@ describe("native OpenClaw Model Router (#13560)", () => {
         throw new Error(`exit ${code}`);
       },
     } as unknown as SetupInferenceDeps);
-    const run = () =>
+    const run = (endpointUrl = "http://localhost:4000/v1") =>
       setup(
         "alice",
         "nvidia-routed",
         "nvidia-router",
-        "http://localhost:4000/v1",
+        endpointUrl,
         "NVIDIA_INFERENCE_API_KEY",
         null,
         [],
@@ -1000,58 +1001,70 @@ describe("native OpenClaw Model Router (#13560)", () => {
       upsertProvider,
       setInferenceRoute,
       verifyInferenceRoute,
+      verifyOnboardInferenceSmoke,
     };
   }
 
-  it("imports before creation and publishes native authority on fresh setup and repeat", async () => {
-    const f = routedSetup();
-    const result = {
-      ok: true,
-      nativeInference: {
-        endpointUrl: routerBinding.endpointUrl,
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      },
-    };
-    await expect(f.run()).resolves.toEqual(result);
-    await expect(f.run()).resolves.toEqual(result);
-    expect(f.adapter.importProviderProfile.mock.invocationCallOrder[0]).toBeLessThan(
-      f.adapter.createProvider.mock.invocationCallOrder[0],
-    );
-    expect(f.adapter.createProvider).toHaveBeenCalledOnce();
-    expect(f.adapter.updateProvider).toHaveBeenCalledWith(
-      expect.objectContaining({
-        target: { kind: "named", gatewayName: "nemoclaw" },
-        providerName: nativeLocalIdentity(routerBinding).providerName,
-      }),
-    );
-    expect(f.upsertProvider).not.toHaveBeenCalled();
-    expect(f.setInferenceRoute).not.toHaveBeenCalled();
-    expect(f.verifyInferenceRoute).not.toHaveBeenCalled();
-    const expected = f.input.readAuthority()!;
-    expect(f.updateSandbox).toHaveBeenCalledWith(
-      "alice",
-      expect.objectContaining({
-        endpointUrl: routerBinding.endpointUrl,
-        nativeLocalProviderAttachment: expected,
-      }),
-    );
-    expect(f.events.slice(0, 7)).toEqual([
-      "lock:alice",
-      "lock:nemoclaw",
-      "lock:4000",
-      "router",
-      "unlock:4000",
-      "unlock:nemoclaw",
-      "unlock:alice",
-    ]);
-    expect(JSON.stringify(f.updateSandbox.mock.calls)).not.toContain("test-only-secret");
-    const profilePath = f.adapter.importProviderProfile.mock.calls[0][0].profilePath;
-    expect(fs.existsSync(profilePath)).toBe(false);
-    await ensureNativeLocalProviderAttached({ adapter: f.adapter, expected, sandboxName: "alice" });
-    expect(f.adapter.inspectProviderProfile.mock.invocationCallOrder[0]).toBeLessThan(
-      f.adapter.attachProvider.mock.invocationCallOrder[0],
-    );
-  });
+  it.each(["http://localhost:4000/v1", "http://host.openshell.internal:4000/v1"])(
+    "probes the host and preserves native authority from %s on setup and repeat",
+    async (endpointUrl) => {
+      const f = routedSetup();
+      const result = {
+        ok: true,
+        nativeInference: {
+          endpointUrl: routerBinding.endpointUrl,
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        },
+      };
+      await expect(f.run(endpointUrl)).resolves.toEqual(result);
+      await expect(f.run(endpointUrl)).resolves.toEqual(result);
+      expect(f.verifyOnboardInferenceSmoke).toHaveBeenCalledTimes(2);
+      expect(f.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+        expect.objectContaining({ endpointUrl: "http://127.0.0.1:4000/v1" }),
+      );
+      expect(f.adapter.importProviderProfile.mock.invocationCallOrder[0]).toBeLessThan(
+        f.adapter.createProvider.mock.invocationCallOrder[0],
+      );
+      expect(f.adapter.createProvider).toHaveBeenCalledOnce();
+      expect(f.adapter.updateProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: nativeLocalIdentity(routerBinding).providerName,
+        }),
+      );
+      expect(f.upsertProvider).not.toHaveBeenCalled();
+      expect(f.setInferenceRoute).not.toHaveBeenCalled();
+      expect(f.verifyInferenceRoute).not.toHaveBeenCalled();
+      const expected = f.input.readAuthority()!;
+      expect(f.updateSandbox).toHaveBeenCalledWith(
+        "alice",
+        expect.objectContaining({
+          endpointUrl: routerBinding.endpointUrl,
+          nativeLocalProviderAttachment: expected,
+        }),
+      );
+      expect(f.events.slice(0, 7)).toEqual([
+        "lock:alice",
+        "lock:nemoclaw",
+        "lock:4000",
+        "router",
+        "unlock:4000",
+        "unlock:nemoclaw",
+        "unlock:alice",
+      ]);
+      expect(JSON.stringify(f.updateSandbox.mock.calls)).not.toContain("test-only-secret");
+      const profilePath = f.adapter.importProviderProfile.mock.calls[0][0].profilePath;
+      expect(fs.existsSync(profilePath)).toBe(false);
+      await ensureNativeLocalProviderAttached({
+        adapter: f.adapter,
+        expected,
+        sandboxName: "alice",
+      });
+      expect(f.adapter.inspectProviderProfile.mock.invocationCallOrder[0]).toBeLessThan(
+        f.adapter.attachProvider.mock.invocationCallOrder[0],
+      );
+    },
+  );
 
   it.each(["collision", "import failure"])(
     "stops before mutation after a profile %s",

@@ -1264,6 +1264,7 @@ export function createSetupInference(
         let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
         let nativeProviderEndpoint: string | undefined;
+        let nativeProviderSmokeEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
         let retainedNativeHostedCredential = false;
@@ -1427,6 +1428,9 @@ export function createSetupInference(
             });
             if (name === "nvidia-router") {
               nativeProviderEndpoint = hostReachableEndpoint;
+              const hostSmokeUrl = new URL(hostReachableEndpoint);
+              hostSmokeUrl.hostname = "127.0.0.1";
+              nativeProviderSmokeEndpoint = hostSmokeUrl.href;
               nativeHostedCredentialEnv = sourceCredentialEnv;
             }
             return { ok: true };
@@ -1933,6 +1937,7 @@ export function createSetupInference(
               provider,
               model,
               endpointUrl:
+                nativeProviderSmokeEndpoint ??
                 nativeProviderEndpoint ??
                 nativeHostedProviderAttachment?.endpointUrl ??
                 hostedNativeProvider(provider)?.endpoint ??
