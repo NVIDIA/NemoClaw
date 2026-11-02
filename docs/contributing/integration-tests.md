@@ -112,7 +112,7 @@ They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts.
 Choose the directory by what the behavior needs:
 
 - `hcl/`: a [`tofu test` scenario](#tofu-test-cases) for a graph outcome: registrations, bindings, policy, agent configuration, isolation between agents or deployments, unchanged reconciliation, recovery of what the gateway lost, replacement, and cleanup.
-- `failure_cases/`: a Rust test for what OpenTofu's test framework cannot observe: the SDK's stage order, saved state and intent, the CLI's output and exit status, export, interrupted and cancelled operations, saved plans, and provider errors, which `expect_failures` cannot expect.
+- `rust/`: a Rust test for what OpenTofu's test framework cannot observe: the SDK's stage order, saved state and intent, the CLI's output and exit status, export, interrupted and cancelled operations, saved plans, and provider errors, which `expect_failures` cannot expect.
 
 The binary's other modules are offline checks of the fixtures and clients these tests use, and run with the unit tests.
 
