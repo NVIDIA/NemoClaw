@@ -1196,7 +1196,9 @@ The flag wins over `NEMOCLAW_SANDBOX_NAME`. When prompting is possible, `NEMOCLA
 
 ### `$$nemoclaw onboard --from`
 
-Use a custom Dockerfile for the sandbox image. This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image. NemoClaw builds the staged context in the selected local Docker engine and checks the image before sandbox creation.
+Use a custom Dockerfile for the sandbox image.
+This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image.
+NemoClaw builds the staged context in the selected local Docker engine and checks the image before sandbox creation.
 
 ```bash
 $$nemoclaw onboard --from ./Dockerfile.custom
