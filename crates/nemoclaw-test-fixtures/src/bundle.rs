@@ -49,12 +49,14 @@ impl Bundle {
     }
 
     /// The bundle's `registry.opentofu.org/nvidia/{name}` provider, such as
-    /// `nemoclaw`, `openshell`, or `fabric`.
+    /// `nemoclaw`, `openshell`, or `fabric`, or another namespace's, such as
+    /// `kreuzwerker/docker`.
     #[must_use]
     pub fn provider(&self, name: &str) -> PathBuf {
-        // providers/registry.opentofu.org/nvidia/NAME/VERSION/PLATFORM/terraform-provider-NAME_vVERSION
-        let source = ["providers", "registry.opentofu.org", "nvidia", name]
-            .iter()
+        // providers/registry.opentofu.org/NAMESPACE/TYPE/VERSION/PLATFORM/terraform-provider-TYPE_vVERSION
+        let address = crate::tofu::provider_address(name);
+        let source = std::iter::once("providers")
+            .chain(address.split('/'))
             .fold(self.root.clone(), |path, part| path.join(part));
         assert!(
             source.is_dir(),
@@ -64,8 +66,9 @@ impl Bundle {
         let version = only_entry(&source);
         let platform = only_entry(&version);
         let version = version.file_name().unwrap().to_string_lossy();
+        let kind = address.rsplit('/').next().unwrap();
         let provider = platform.join(crate::executable(&format!(
-            "terraform-provider-{name}_v{version}"
+            "terraform-provider-{kind}_v{version}"
         )));
         assert!(provider.is_file(), "{} is missing", provider.display());
         provider

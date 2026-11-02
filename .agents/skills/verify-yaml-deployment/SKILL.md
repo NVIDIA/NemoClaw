@@ -86,7 +86,7 @@ echo "$IMAGE" > "$EVIDENCE/image.txt"
 
 Copy the bundle so a later `cargo ci bundle` can't change it mid-run, as [Spark and Fabric](../../../docs/contributing/live-tests.md#spark-and-fabric) advises.
 `ls dist` must print one platform; remove stale platform directories first.
-The agent file says when to replace `IMAGE`, such as with a patched image for a native interface.
+The agent file names any other image it needs.
 
 ### Choose the Inference Source
 
@@ -139,6 +139,7 @@ tail -20 "$EVIDENCE/apply.txt"
 The target file gives the `nc` variant for its Docker access and credential passing.
 The first plan lists the gateway, provider, sandbox, and workspace to create; apply ends with `Apply complete` and prints `OpenShell workspace: $WORKSPACE`.
 When the YAML declares `serviceExposures`, apply also lists each one's URL under **Service URLs**, as `assistant/SERVICE: URL`; plan never does, because the gateway assigns the URL at creation.
+When it declares `harness.settings.interfaces`, apply lists each interface under **Agent interfaces** with its `Forward`, `Token`, and `Sign in` commands, and never a token value.
 It also prints `Model and agent responses were not tested.`: the deployment isn't ready until [deploy-and-answer](features/deploy-and-answer.md) gets a reply.
 
 ## Doctor
@@ -164,7 +165,7 @@ Never act on a workspace or UID other than this run's.
 ## Drive
 
 Follow the [feature map](features/README.md), and the agent file's extra features.
-Run [deploy-and-answer](features/deploy-and-answer.md) first: it establishes readiness for the others.
+Run [deploy-and-answer](features/deploy-and-answer.md) first: it establishes readiness for the others. The [feature map](features/README.md) gives the order.
 Run one step at a time: two model requests at once can make a reply arrive after the check that waits for it, and two builds at once wait on Cargo's lock and can run stale code.
 
 ## Evidence
@@ -218,7 +219,7 @@ ls "$EVIDENCE"
 ```
 
 Both counts must be 0, and the evidence must still list.
-Remove images only when this run built them and no other deployment uses them; the agent file names any it builds.
+Remove images only when this run built them and no other deployment uses them.
 Keep a downloaded model when the user may reuse it; removing it is the user's decision.
 Never remove anything without this run's UID; never stop processes or containers by name.
 Run cleanup after a failed run too.
