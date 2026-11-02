@@ -6,6 +6,7 @@ import path from "node:path";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { withDiscordEnrollmentFixture } from "../fixtures/discord-enrollment-env.ts";
 import {
   cleanupWhenCommandAvailable,
   cleanupWhenOpenShellAvailable,
@@ -74,7 +75,7 @@ function stripAnsi(value: string): string {
 }
 
 function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
-  return {
+  return withDiscordEnrollmentFixture({
     ...sandboxAccessEnv(),
     COMPATIBLE_API_KEY: "token-rotation-compatible-e2e",
     TELEGRAM_BOT_TOKEN: tokens.telegram,
@@ -92,7 +93,7 @@ function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
     NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
     NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN,
-  };
+  });
 }
 
 function readSandboxRegistryEntry(): RegistrySandboxEntry {

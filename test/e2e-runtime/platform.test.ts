@@ -272,6 +272,7 @@ describe("platform helpers", () => {
           env: {},
           platform: "linux",
           uid: 1000,
+          inspectCurrentDockerContext: () => null,
           existsSync: (candidate) => sockets.has(candidate),
           probeDockerHost: (dockerHost) => {
             probes.push(dockerHost);
@@ -601,6 +602,7 @@ describe("platform helpers", () => {
           env: {},
           platform: "linux",
           uid: 1000,
+          inspectCurrentDockerContext: () => null,
           existsSync: (candidate) => sockets.has(candidate),
           probeDockerHost: (dockerHost) => {
             probes.push(dockerHost);

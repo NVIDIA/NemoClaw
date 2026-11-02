@@ -58,7 +58,18 @@ The host firewall must allow the outbound DNS, HTTPS, image-registry, package-re
 
 ## Keep Remote Access on Loopback
 
-The OpenShell gateway binds to `127.0.0.1` by default. Dashboard and API forwards also stay on loopback outside WSL unless you explicitly change the bind setting.
+The OpenShell gateway binds to `127.0.0.1` by default.
+Dashboard forwards stay on loopback outside WSL unless you explicitly change `NEMOCLAW_DASHBOARD_BIND`.
+
+<AgentOnly variant="hermes">
+New and successfully migrated Hermes API forwards bind to `127.0.0.1`, including on WSL and when the dashboard bind setting is enabled.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Run `$$nemoclaw headless-agent status` and `$$nemoclaw headless-agent recover`, then follow any refusal diagnostic.
+Do not assume loopback isolation until recovery succeeds.
+Use the [SSH forwarding procedure](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details) for remote API access.
+</AgentOnly>
 
 Connect to the server from your workstation:
 
@@ -267,7 +278,15 @@ Print the Hermes dashboard URL:
 $$nemoclaw headless-agent dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API uses the loopback forward on the sandbox's own API port, which onboarding allocates from `8642` through `8652`. Run `openshell forward list` and select the `headless-agent` row whose local port is in that range. Replace `<api-port>` below with that port. For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract. Use it as a bearer token, then clear the shell variable:
+The Hermes OpenAI-compatible API uses the sandbox's own API port, which onboarding allocates from `8642` through `8652`.
+Replace `<api-port>` below with the port in the OpenAI-compatible API URL printed after onboarding.
+Run `$$nemoclaw headless-agent status` to check sandbox readiness.
+Run `$$nemoclaw headless-agent recover` to verify or restore its required forwards.
+If recovery refuses a legacy wildcard migration, stop and follow its diagnostic before sending a token.
+The refused listener remains unchanged and can still accept remote connections.
+`openshell forward list` lists legacy and user-managed forwards; it can omit NemoClaw's receipt-owned API forward.
+For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract.
+Use it as a bearer token, then clear the shell variable:
 
 ```bash
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)

@@ -461,12 +461,21 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it("completes ordinary uninstall when managed OpenClaw registration records its explicit agent (#10073)", async () => {
-    const host = scope("nemoclaw-uninstall-managed-openclaw-");
-    completedOpenClawAuthority(host, "default", "openclaw");
+  it.each(["docker", "podman"])(
+    "completes ordinary %s uninstall when OpenClaw registration records its explicit agent (#10073)",
+    async (driver) => {
+      const host = scope("nemoclaw-uninstall-managed-openclaw-");
+      completedOpenClawAuthority(host, "default", "openclaw");
+      mutateJsonFile(path.join(host.stateDir, "sandboxes.json"), (registry) => {
+        const row = (registry.sandboxes as Record<string, Record<string, unknown>>)[
+          "openclaw-sandbox"
+        ];
+        row.openshellDriver = driver;
+      });
 
-    await expectOrdinaryUninstall(host);
-  });
+      await expectOrdinaryUninstall(host);
+    },
+  );
 
   it("reports the registry agent field and recovery when completed onboarding identity drifts (#10073)", async () => {
     const host = scope("nemoclaw-uninstall-agent-drift-");
@@ -488,14 +497,14 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it("refuses a default-profile session when the selected registry row uses Podman", async () => {
-    const host = scope("nemoclaw-uninstall-default-podman-registry-");
+  it("refuses a default-profile session when the selected registry row uses an unsupported driver", async () => {
+    const host = scope("nemoclaw-uninstall-default-unsupported-registry-");
     completedOpenClawAuthority(host, "default");
     mutateJsonFile(path.join(host.stateDir, "sandboxes.json"), (registry) => {
       const row = (registry.sandboxes as Record<string, Record<string, unknown>>)[
         "openclaw-sandbox"
       ];
-      row.openshellDriver = "podman";
+      row.openshellDriver = "mxc";
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
