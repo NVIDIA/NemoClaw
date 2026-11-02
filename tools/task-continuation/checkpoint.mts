@@ -6,7 +6,8 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
-  lstatSync,
+  constants,
+  fstatSync,
   openSync,
   readFileSync,
   renameSync,
@@ -14,7 +15,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 
 export interface Checkpoint {
@@ -116,8 +116,13 @@ export function parseCheckpoint(value: unknown): Checkpoint {
 }
 
 export function readCheckpoint(file: string): Checkpoint {
-  if (!lstatSync(file).isFile()) throw new Error("Checkpoint must be a regular file");
-  return parseCheckpoint(JSON.parse(readFileSync(file, "utf8")));
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("Checkpoint must be a regular file");
+    return parseCheckpoint(JSON.parse(readFileSync(fd, "utf8")));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function checkTransition(previous: Checkpoint, next: Checkpoint, owner: string): void {
@@ -221,7 +226,7 @@ export function resumeCheckpoint(file: string) {
   };
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   try {
     const [command, file, revision, owner] = process.argv.slice(2);
     if (command === "resume" && file && process.argv.length === 4)

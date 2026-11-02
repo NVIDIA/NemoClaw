@@ -38,6 +38,7 @@ import {
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
 import {
   type OperationsWorkflow,
+  MANUAL_PR_CANCEL_IN_PROGRESS,
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
@@ -2134,10 +2135,7 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
       "workflow concurrency must isolate baseline comparisons and each Launchable dispatch",
     );
   }
-  if (
-    concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && inputs.checkout_sha != inputs.base_sha && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
-  ) {
+  if (concurrency["cancel-in-progress"] !== MANUAL_PR_CANCEL_IN_PROGRESS) {
     errors.push(
       "workflow concurrency must not cancel an active baseline, Jetson, or Launchable dispatch",
     );

@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -42,6 +42,36 @@ afterEach(() => {
 });
 
 describe("task checkpoint recovery", () => {
+  it("saves and resumes through a symlinked checkout path", () => {
+    const { root, state } = fixture();
+    const alias = join(root, "checkout");
+    symlinkSync(resolve("."), alias, "dir");
+    const helper = join(alias, "tools/task-continuation/checkpoint.mts");
+    const file = join(root, "new-state.json");
+    const saved = spawnSync(process.execPath, [helper, "save", file, "-1", state.owner], {
+      input: JSON.stringify(state),
+      encoding: "utf8",
+      env: {},
+    });
+    expect(saved.status, saved.stderr).toBe(0);
+    expect(readCheckpoint(file)).toEqual(state);
+    const resumed = spawnSync(process.execPath, [helper, "resume", file], {
+      encoding: "utf8",
+      env: {},
+    });
+    expect(resumed.status, resumed.stderr).toBe(0);
+    expect(JSON.parse(resumed.stdout).revision).toBe(0);
+  });
+
+  it("rejects symlinks and directories without reading their contents", () => {
+    const { root, file } = fixture();
+    const alias = join(root, "state-link.json");
+    symlinkSync(file, alias);
+    expect(() => readCheckpoint(alias)).toThrow();
+    expect(() => readCheckpoint(root)).toThrow(/regular file/);
+    expect(readCheckpoint(file).revision).toBe(0);
+  });
+
   it("retains completed validation after the worker terminates", () => {
     const { file, state } = fixture();
     const stopped = spawnSync(process.execPath, ["-e", "process.kill(process.pid, 'SIGKILL')"], {

@@ -12,6 +12,7 @@ import {
 } from "../helpers/vitest-watch-triggers";
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/manual-pr-concurrency.test.ts",
   "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",

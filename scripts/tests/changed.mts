@@ -3,7 +3,6 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { resolveVitestWatchTests } from "../../test/helpers/vitest-watch-triggers.ts";
 
 export const sourceProjects = ["cli", "integration", "plugin", "e2e-support"];
@@ -34,6 +33,7 @@ export function relatedArguments(files: string[], extra: string[] = []): string[
     "related",
     ...inputs,
     "--run",
+    "--passWithNoTests",
     ...sourceProjects.flatMap((project) => ["--project", project]),
     "--coverage=false",
     ...extra,
@@ -80,7 +80,7 @@ export function main(argv = process.argv.slice(2)): number {
   return result.status ?? 1;
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   try {
     process.exitCode = main();
   } catch (error) {

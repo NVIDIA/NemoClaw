@@ -39,6 +39,9 @@ Before expensive work, check the capabilities needed for the planned route: targ
 publication access, required reviewer availability, execution environment, and effective timeout limits.
 Distinguish verified prerequisites from unknown ones. Report an external blocker early and continue independent authorized work.
 Use [Task Continuation](../_shared/task-continuation.md) for work that spans waits or handoffs.
+When live qualification is part of the accepted upgrade task, record its execution scope once and
+follow [E2E execution authorization](../nemoclaw-maintainer-e2e/SKILL.md#carry-execution-authorization-through-the-task)
+through repair and requalification. Do not stop for renewed dispatch approval after every run or commit.
 
 ## Discover current contracts
 

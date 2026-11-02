@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -71,6 +71,49 @@ describe("changed-test selection", () => {
     ]);
     expect(() => changedInputs(root, "missing-base")).toThrow();
     expect(() => relatedArguments(["--help"])).toThrow(/options/);
+  });
+
+  it("executes the changed-test CLI through a symlinked checkout", () => {
+    const root = directory();
+    symlinkSync(resolve("."), join(root, "checkout"), "dir");
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "checkout/scripts/tests/changed.mts"), "--changed=missing-base"],
+      {
+        encoding: "utf8",
+        timeout: 10000,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("missing-base");
+  });
+
+  it("reports success when an unrelated document selects no tests", () => {
+    const root = directory();
+    const config = join(root, "vitest.config.mjs");
+    writeFileSync(
+      config,
+      `export default { test: { projects: [{ test: { name: 'integration', root: ${JSON.stringify(root)}, include: ['**/*.test.ts'] } }] } };`,
+    );
+    writeFileSync(join(root, "notes.md"), "Documentation only");
+    const result = spawnSync(
+      process.execPath,
+      [
+        resolve("node_modules/vitest/vitest.mjs"),
+        ...relatedArguments(["notes.md"]),
+        "--config",
+        config,
+        "--root",
+        root,
+      ],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH },
+        timeout: 30000,
+      },
+    );
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout + result.stderr).toContain("No test files found");
   });
 
   it("executes a mapped integration test and propagates a real contract failure", () => {
