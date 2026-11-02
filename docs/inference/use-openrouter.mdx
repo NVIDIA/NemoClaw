@@ -41,6 +41,13 @@ NemoClaw configures the agent to send the required `HTTP-Referer` and `X-OpenRou
 The native provider restricts the endpoint and executables allowed to use the credential.
 New OpenRouter selections do not need the legacy host adapter.
 
+<AgentOnly variant="hermes">
+
+For a Hermes sandbox on the managed OpenRouter route, rebuild preserves the three managed `${OPENROUTER_API_KEY}` placeholders in the native configuration.
+NemoClaw strips raw credentials and unrecognized credential references from the rebuilt native state.
+
+</AgentOnly>
+
 ## Validation
 
 Host-side catalog, model, and smoke validation use `/v1/chat/completions` only.

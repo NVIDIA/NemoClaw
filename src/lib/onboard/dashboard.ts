@@ -49,6 +49,7 @@ import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
 } from "./messaging-host-forward";
+import { createHermesApiForwardMigration } from "../agent/hermes-api-forward";
 import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -89,6 +90,7 @@ export interface OnboardDashboardDeps {
   /** Sandbox lookup used to resolve the per-sandbox Hermes API port. */
   getSandbox?(name: string):
     | {
+        agent?: string | null;
         gatewayName?: string | null;
         openshellDriver?: string | null;
         gatewayPort?: number | null;
@@ -416,14 +418,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     forward: OpenShellForwardIdentity,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
+    allowHermesApiMigration = false,
   ): Promise<void> {
     const adapter = forwardAdapterForAuthority(authority);
-    const assertCurrent = () =>
-      assertForwardGatewayCurrent(
-        authority,
-        revalidateSandboxIdentity,
-        `accept ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
-      );
+    const migration = createHermesApiForwardMigration({
+      adapter,
+      forward,
+      readSandbox: () => (allowHermesApiMigration ? getSandbox?.(sandboxName) : null),
+      assertCurrent: () =>
+        assertForwardGatewayCurrent(
+          authority,
+          revalidateSandboxIdentity,
+          `accept ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
+        ),
+    });
+    const { assertCurrent } = migration;
     let result = await adapter.startForward({ forward, assertCurrent });
     if (result.state === "refused" && result.observation.state === "stale") {
       const retirement = await adapter.retireLegacyForward({
@@ -441,6 +450,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         throw new Error(forwardResultMessage(retirement));
       }
       result = await adapter.startForward({ forward, assertCurrent });
+    }
+    if (result.state === "refused" && result.observation.state === "foreign") {
+      result = (await migration.migrate()) ?? result;
     }
     if (result.state !== "started" && result.state !== "reused") {
       throw new Error(forwardResultMessage(result));
@@ -621,6 +633,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       sandboxName,
       agent,
       ensureDashboardForward,
+      ensureLoopbackForward: async (name, port, revalidateIdentity) => {
+        await ensureAgentFixedForward(name, port, "agent API", revalidateIdentity, true);
+      },
       chatUiUrl,
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
@@ -662,6 +677,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     port: number,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
+    throwOnFailure = false,
   ): Promise<boolean> {
     const gatewayName = resolveForwardServiceGateway(sandboxName, {
       revalidateSandboxIdentity,
@@ -680,9 +696,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         forwardIdentity(sandboxName, authority, port, "loopback"),
         label,
         revalidateSandboxIdentity,
+        true,
       );
       return true;
     } catch (error) {
+      if (throwOnFailure) throw error;
       const diagnostic = error instanceof Error ? error.message : String(error);
       console.warn(`! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`);
       console.warn(

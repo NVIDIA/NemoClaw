@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import os from "node:os";
 
 import {
@@ -12,15 +13,18 @@ import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
+import {
+  buildDashboardRemoteBindEnv,
+  dashboardRemoteBindSandboxName,
+  REMOTE_API_REFUSAL_PROBE,
+} from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
-// Leaves 20 minutes of the 80-minute catalogue job for the shared 10-minute
-// cleanup and workflow finalization. Real runs take 6 to 8 minutes; the per-step
-// budgets below are ceilings, not expected durations.
+// Keep the OpenClaw test bounded at 60 minutes. The shared target also runs
+// Hermes and reserves additional time for cleanup and workflow finalization.
 const TEST_TIMEOUT_MS = 60 * 60_000;
 const REBUILD_TIMEOUT_MS = 25 * 60_000;
 const EXTRA_DASHBOARD_ORIGIN = "https://launchpad.example.test:8443";
@@ -28,17 +32,14 @@ const EXTRA_DASHBOARD_ORIGIN = "https://launchpad.example.test:8443";
 const AMBIENT_CHAT_UI_URL = "https://ambient-ui.example.test";
 const AMBIENT_DASHBOARD_ORIGIN = "https://ambient.example.test:9443";
 
-function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return buildDashboardRemoteBindEnv(SANDBOX_NAME, extra);
-}
-
 /** Read the running gateway's allowed browser origins from inside the sandbox. */
 async function readAllowedOrigins(
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  sandboxName: string,
   artifactName: string,
 ): Promise<string[]> {
   const result = await sandbox.exec(
-    SANDBOX_NAME,
+    sandboxName,
     [
       "python3",
       "-c",
@@ -54,11 +55,19 @@ function remoteHostCandidate(): string {
   const externalIpv4 = Object.values(os.networkInterfaces())
     .flat()
     .find((iface) => iface && iface.family === "IPv4" && !iface.internal)?.address;
-  return process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4 || os.hostname();
+  const host = process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4;
+  assert.ok(
+    host &&
+      Object.values(os.networkInterfaces())
+        .flat()
+        .some((iface) => iface?.family === "IPv4" && !iface.internal && iface.address === host),
+    "Remote-bind coverage requires a host non-loopback IPv4 address",
+  );
+  return host;
 }
 
-runDashboardRemoteBindTest(
-  "clean-host remote bind keeps audit risks active and binds all interfaces",
+runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
+  "%s remote dashboard retains agent security boundaries",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
@@ -67,13 +76,21 @@ runDashboardRemoteBindTest(
         "install and onboard dashboard sandbox",
         "stop sandbox and restart dashboard with remote binding",
         "verify all-interface dashboard forward",
-        "audit exposed dashboard controls",
-        "rebuild and verify recorded dashboard origins",
+        "verify agent security boundary",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-    const sandboxName = SANDBOX_NAME;
+  async (agent, { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    const sandboxName = dashboardRemoteBindSandboxName(SANDBOX_NAME, agent);
+    const apiPort = process.env.NEMOCLAW_HERMES_API_PORT || "8642";
+    function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+      return buildDashboardRemoteBindEnv(sandboxName, {
+        ...extra,
+        NEMOCLAW_AGENT: agent,
+        NEMOCLAW_HERMES_DASHBOARD: "1",
+        NEMOCLAW_HERMES_API_PORT: apiPort,
+      });
+    }
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
     const remoteHost = remoteHostCandidate();
     const hosted = requireHostedInferenceConfig(secrets);
@@ -89,8 +106,14 @@ runDashboardRemoteBindTest(
       contracts: [
         "install.sh onboards a real OpenShell sandbox on the unified Ubuntu E2E runner",
         "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 creates an all-interface dashboard forward",
-        "remote binding does not suppress the insecure dashboard audit findings",
-        "onboarding and rebuild apply the --dashboard-origin origin, and rebuild ignores exported CHAT_UI_URL and NEMOCLAW_DASHBOARD_ORIGINS",
+        agent === "openclaw"
+          ? "remote binding does not suppress the insecure dashboard audit findings"
+          : "Hermes API health is reachable only through the loopback host forward",
+        ...(agent === "openclaw"
+          ? [
+              "onboarding and rebuild apply recorded dashboard origins and ignore conflicting exported values",
+            ]
+          : []),
         "terminal cleanup removes the sandbox and gateway",
       ],
     });
@@ -150,12 +173,87 @@ runDashboardRemoteBindTest(
       env: testEnv({
         ...hosted.env,
         NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
-        NEMOCLAW_DASHBOARD_ORIGINS: EXTRA_DASHBOARD_ORIGIN,
+        ...(agent === "openclaw" ? { NEMOCLAW_DASHBOARD_ORIGINS: EXTRA_DASHBOARD_ORIGIN } : {}),
       }),
       redactionValues,
       timeoutMs: 25 * 60_000,
     });
     expect(install.exitCode, resultText(install)).toBe(0);
+
+    switch (agent) {
+      case "openclaw":
+        expect(
+          await readAllowedOrigins(
+            sandbox,
+            sandboxName,
+            "dashboard-remote-bind-origins-after-onboard",
+          ),
+        ).toContain(EXTRA_DASHBOARD_ORIGIN);
+        break;
+      case "hermes": {
+        const initialDashboard = await host.command(
+          process.execPath,
+          [
+            "-e",
+            [
+              'const net = require("node:net");',
+              "const socket = net.connect({ host: process.argv[1], port: Number(process.argv[2]) });",
+              "const deadline = setTimeout(() => { socket.destroy(); process.exit(1); }, 5000);",
+              "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(0); });",
+              "socket.once('error', () => { clearTimeout(deadline); process.exit(1); });",
+            ].join("\n"),
+            remoteHost,
+            dashboardPort,
+          ],
+          {
+            artifactName: "dashboard-remote-bind-hermes-initial-dashboard",
+            env: testEnv(),
+            timeoutMs: 10_000,
+          },
+        );
+        expect(
+          initialDashboard.exitCode,
+          `Hermes dashboard is unreachable after onboarding\n${resultText(initialDashboard)}`,
+        ).toBe(0);
+
+        expect(await isSandboxPortForwardHealthy(sandboxName, Number(apiPort), "127.0.0.1")).toBe(
+          true,
+        );
+        const apiHealth = await host.command(
+          "curl",
+          [
+            "--noproxy",
+            "*",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "10",
+            `http://127.0.0.1:${apiPort}/health`,
+          ],
+          {
+            artifactName: "dashboard-remote-bind-hermes-api-loopback",
+            env: testEnv(),
+            timeoutMs: 15_000,
+          },
+        );
+        expect(apiHealth.exitCode, resultText(apiHealth)).toBe(0);
+        const remoteApi = await host.command(
+          process.execPath,
+          ["-e", REMOTE_API_REFUSAL_PROBE, remoteHost, apiPort],
+          {
+            artifactName: "dashboard-remote-bind-hermes-api-remote-refusal",
+            env: testEnv(),
+            timeoutMs: 10_000,
+          },
+        );
+        expect(
+          remoteApi.exitCode,
+          "Hermes API must refuse non-loopback TCP connections after onboarding",
+        ).toBe(0);
+        break;
+      }
+    }
 
     const cliProbe = await host.command(
       "bash",
@@ -172,9 +270,6 @@ runDashboardRemoteBindTest(
     expect(cliProbe.exitCode, `required CLI probe failed\n${resultText(cliProbe)}`).toBe(0);
     expect(cliProbe.stdout).toContain("nemoclaw");
     expect(cliProbe.stdout).toContain("openshell");
-    expect(
-      await readAllowedOrigins(sandbox, "dashboard-remote-bind-origins-after-onboard"),
-    ).toContain(EXTRA_DASHBOARD_ORIGIN);
 
     progress.phase("stop sandbox and restart dashboard with remote binding");
     const stop = await host.nemoclaw([sandboxName, "stop"], {
@@ -226,7 +321,49 @@ runDashboardRemoteBindTest(
       `Dashboard forward is unreachable after connect handoff\n${resultText(forwardReachable)}`,
     ).toBe(0);
 
-    progress.phase("audit exposed dashboard controls");
+    progress.phase("verify agent security boundary");
+    switch (agent) {
+      case "hermes": {
+        expect(await isSandboxPortForwardHealthy(sandboxName, Number(apiPort), "127.0.0.1")).toBe(
+          true,
+        );
+        const apiHealth = await host.command(
+          "curl",
+          [
+            "--noproxy",
+            "*",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "10",
+            `http://127.0.0.1:${apiPort}/health`,
+          ],
+          {
+            artifactName: "dashboard-remote-bind-hermes-api-loopback-after-restart",
+            env: testEnv(),
+            timeoutMs: 15_000,
+          },
+        );
+        expect(apiHealth.exitCode, resultText(apiHealth)).toBe(0);
+        const remoteApi = await host.command(
+          process.execPath,
+          ["-e", REMOTE_API_REFUSAL_PROBE, remoteHost, apiPort],
+          {
+            artifactName: "dashboard-remote-bind-hermes-api-remote-refusal-after-restart",
+            env: testEnv(),
+            timeoutMs: 10_000,
+          },
+        );
+        expect(
+          remoteApi.exitCode,
+          "Hermes API must refuse non-loopback TCP connections after restart",
+        ).toBe(0);
+        return;
+      }
+      case "openclaw":
+        break;
+    }
     const audit = await sandbox.execShell(
       sandboxName,
       trustedSandboxShellScript("openclaw security audit --json"),
@@ -254,7 +391,6 @@ runDashboardRemoteBindTest(
       ]),
     );
 
-    progress.phase("rebuild and verify recorded dashboard origins");
     // Conflicting exported values must not replace the recorded origins.
     const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
       artifactName: "dashboard-remote-bind-rebuild",
@@ -268,6 +404,7 @@ runDashboardRemoteBindTest(
     expect(rebuild.exitCode, `Sandbox rebuild failed\n${resultText(rebuild)}`).toBe(0);
     const rebuiltOrigins = await readAllowedOrigins(
       sandbox,
+      sandboxName,
       "dashboard-remote-bind-origins-after-rebuild",
     );
     expect(rebuiltOrigins).toContain(EXTRA_DASHBOARD_ORIGIN);

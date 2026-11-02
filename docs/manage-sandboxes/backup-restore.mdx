@@ -48,7 +48,12 @@ For Hermes, the restored complete home may contain the retired `profiles/dashboa
 
 `$$nemoclaw backup-all` remains an installer-facing safety operation. It normally captures the same complete native home/workspace for every eligible registered sandbox before an OpenShell upgrade. A standalone run with `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` can skip a running sandbox whose SSH endpoint is unreachable; changes in that skipped sandbox are absent from the new backup. The installer uses strict pre-upgrade mode, which rejects ordinary skipped or failed sandboxes instead of treating the batch as complete. Refer to [`$$nemoclaw backup-all`](../../reference/commands#$$nemoclaw-backup-all) for the exact skip and strict-mode behavior. It is not a general snapshot create/list/restore interface.
 
-For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation. This path is available only for a registered sandbox whose lifecycle identity resolves to a supported container provider, whose ownership probe finds exactly one attributed container, and whose container state is `exited` or `created`. After OpenShell accepts the start, one lifecycle transaction covers readiness, complete native-home capture, and returning the sandbox to `Stopped`. Other ordinary non-ready sandboxes that do not meet those conditions are skipped; strict pre-upgrade mode rejects the batch when a registered sandbox is skipped this way.
+For a stopped sandbox, `backup-all` first asks OpenShell to start it in a separate bounded operation.
+This path is available only for a registered sandbox whose lifecycle identity resolves to a supported container provider, whose ownership probe finds exactly one attributed container, and whose container state is `exited` or `created`.
+After OpenShell accepts the start, one lifecycle transaction covers readiness, complete native-home capture, and returning the sandbox to `Stopped`.
+If native-home capture reports process churn while the started sandbox is still booting, NemoClaw retries capture until it settles or the capture deadline expires.
+It does not retry other capture failures.
+Other ordinary non-ready sandboxes that do not meet those conditions are skipped; strict pre-upgrade mode rejects the batch when a registered sandbox is skipped this way.
 
 If native-home capture throws after it creates a backup directory, NemoClaw removes that new directory. If cleanup fails, the error identifies the retained incomplete backup path. Preserve that path until you can inspect or remove it safely.
 

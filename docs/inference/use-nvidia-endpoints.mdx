@@ -52,6 +52,7 @@ Recreate the sandbox during onboarding to use the native provider path.
 
 NemoClaw validates NVIDIA Endpoints through `/v1/chat/completions` only.
 It skips `/v1/responses` because NVIDIA Build does not expose that route.
+During onboarding or resume, host-side validation uses NVIDIA's native endpoint when saved endpoint metadata is `inference.local` or absent.
 Readiness sends the same request from inside the sandbox through the attached OpenShell provider.
 The wizard retries transient upstream failures before it reports a provider failure.
 

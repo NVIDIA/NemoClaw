@@ -43,6 +43,8 @@ Live qualification of the Hermes native local lifecycle is pending.
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
 Managed llama.cpp instead runs a repository-owned GGUF recipe with one request slot and no general launch-flag overrides.
+For a managed runtime, each fingerprint request can run for up to 30 seconds within a shared 90-second fingerprint deadline during onboarding, status, and context-window checks.
+An operator-managed server retains the five-second request limit.
 Refer to [Choose a Local Inference Server](choose-local-inference-server) for the complete comparison.
 
 ## Attach an Existing llama.cpp Server
