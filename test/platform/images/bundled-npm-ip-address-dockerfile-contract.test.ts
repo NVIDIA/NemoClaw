@@ -113,3 +113,37 @@ describe("bundled npm ip-address image remediation contract", () => {
     expect(ipAddressPatch.commandStart, file).toBeGreaterThan(bracePatch);
   });
 });
+
+describe("bundled npm Undici image remediation contract", () => {
+  it.each([
+    ...baseDockerfiles,
+    ...finalDockerfiles,
+    "agents/pi/Dockerfile.base",
+    "agents/pi/Dockerfile",
+  ])("patches global npm after the reviewed upgrade in %s", (file) => {
+    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const count = file === "Dockerfile" ? 2 : 1;
+    const copies = requireDockerfileCopySources(
+      source,
+      "scripts/lib/patch-bundled-npm-undici.mts",
+      "/scripts/lib/patch-bundled-npm-undici.mts",
+      count,
+    );
+    const previous = requireReviewedDockerfileRunCommands(
+      source,
+      patchCommand,
+      npmRootArguments,
+      count,
+    );
+    const patches = requireReviewedDockerfileRunCommands(
+      source,
+      "node /scripts/lib/patch-bundled-npm-undici.mts",
+      npmRootArguments,
+      count,
+    );
+    patches.forEach((patch, index) => {
+      expect(patch.commandStart, file).toBeGreaterThan(copies[index].start);
+      expect(patch.commandStart, file).toBeGreaterThan(previous[index].commandStart);
+    });
+  });
+});

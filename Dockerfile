@@ -15,7 +15,7 @@ FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
 FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS npm12
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u7 && rm -rf /var/lib/apt/lists/*
-COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
+COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/patch-bundled-npm-undici.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
@@ -28,6 +28,8 @@ RUN node /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modul
 RUN node /scripts/patch-bundled-npm-brace-expansion.mts --npm-root /usr/local/lib/node_modules/npm
 # hadolint ignore=DL3059
 RUN node /scripts/lib/patch-bundled-npm-ip-address.mts --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm
 FROM npm12 AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -655,7 +657,7 @@ COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
-COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
+COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/patch-bundled-npm-undici.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
@@ -707,11 +709,8 @@ FROM ${BASE_IMAGE} AS openclaw-system
 # credential chains from attempting an impossible metadata discovery path.
 ENV AWS_EC2_METADATA_DISABLED=true
 
-# Upgrade the final runtime even when an install or rebuild starts from a
-# published sandbox base with Node 22.22.2. OpenClaw 2026.9.1 requires the
-# SQLite WAL fix in Node 22.22.3 or newer. The trusted managed-image staging
-# path removes this one instruction when it has just built Dockerfile.base from
-# the same Node image, avoiding a redundant 125 MB layer in that local-only case.
+# Upgrade Node on older bases. Trusted managed-image staging omits this COPY
+# when Dockerfile.base already uses the same Node image, saving a 125 MB layer.
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
 # Preserve existing parent metadata while creating one final-image layer.
@@ -722,9 +721,7 @@ RUN node /scripts/upgrade-bundled-npm.mts --npm-root /usr/local/lib/node_modules
 # hadolint ignore=DL3059
 RUN rm /tmp/npm-12.0.2.tgz
 
-# OpenClaw 2026.9.1 loads some generated source through jiti. Disable its
-# filesystem transform cache so source fragments that mention provider marker
-# names do not persist under /tmp/jiti inside the sandbox.
+# Keep provider markers out of jiti's filesystem cache.
 ENV JITI_FS_CACHE=false
 
 # Onboard can bake this public corporate CA into the OpenShell trust bundle (#6210).
@@ -754,9 +751,8 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 
 # The runtime entrypoint builds its own merged OpenShell and corporate CA bundle.
 
-# The final image owns the shipped dependency boundary independently of base
-# freshness. Reassert the idempotent npm-private fixes after corporate CA setup
-# so cold registry-backed remediation can use the operator-supplied trust root.
+# Repair npm-private dependencies even on older bases, using the corporate CA
+# for registry downloads when supplied.
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -773,8 +769,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node /scripts/patch-bundled-npm-brace-expansion.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the final filesystem. When
-# onboarding supplied a corporate CA, use it for the registry-backed download.
+# Reassert the npm-private ip-address fix with corporate CA support.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -782,6 +777,8 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     fi; \
     node /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
+# hadolint ignore=DL3059
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; fi; node /scripts/lib/patch-bundled-npm-undici.mts --npm-root /usr/local/lib/node_modules/npm
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -1099,14 +1096,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     fi; \
     rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json
 
-# Keep future official plugin installs on the reviewed security versions.
-# hadolint ignore=DL3059
-RUN if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then \
-      node /scripts/lib/patch-openclaw-dependency-overrides.mts \
-        /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw; \
-    fi
-
-# Patch OpenClaw media fetch through the OpenShell proxy (#1755).
+# Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 # Route strict-mode requests through the trusted OpenShell egress proxy.
 # The proxy enforces policy before connecting to the destination.
 
@@ -1525,6 +1515,10 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
+
+# Keep future official plugin installs on the reviewed security versions.
+# hadolint ignore=DL3059
+RUN if [ "$OPENCLAW_VERSION" = "2026.9.2" ]; then node /scripts/lib/patch-openclaw-dependency-overrides.mts /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw; fi
 
 # Blueprint files stay immutable; apply root ownership after copying because
 # /sandbox/.nemoclaw permits plugin writes (#804).

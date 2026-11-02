@@ -265,3 +265,7 @@ Remove this remediation when every supported WhatsApp archive ships a fixed pars
 Node.js image pins already use `24.22.1`, outside the affected ranges for CVE-2026-106069, CVE-2026-111497, and CVE-2026-105483.
 Existing Slack and Discord remediation replaces bundled proxy-addr and Undici copies after provenance verification.
 Their vulnerable versions remain in upstream archive inventory entries; those entries describe original archives, not the final patched installation.
+
+The final image scan also found npm 12.0.2’s private `undici@6.27.0`, affected by CVE-2026-87018.
+All managed base and final images now invoke the existing registry- and SRI-verified `patch-bundled-npm-undici.mts` helper after the npm upgrade to install `6.29.1`.
+Final images repeat the check so older bases cannot restore the affected package.

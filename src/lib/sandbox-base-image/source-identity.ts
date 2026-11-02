@@ -21,6 +21,7 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/lib/bundled-npm-package.mts",
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
+  "scripts/lib/patch-bundled-npm-undici.mts",
   "scripts/patch-bundled-npm-tar.mts",
   "scripts/upgrade-bundled-npm.mts",
 ];

@@ -303,6 +303,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
     writeFixture(path.join("scripts", "lib", "patch-bundled-npm-ip-address.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-bundled-npm-undici.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-tar.mts"));
     writeFixture(path.join("scripts", "upgrade-bundled-npm.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
