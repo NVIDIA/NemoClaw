@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Planned actions for the sandbox settings in `sandbox/main.tf`, which
-//! `sandbox/tests` applies: `tofu test` does not expose a plan's actions.
+//! Planned actions for the sandbox settings in `hcl/sandbox/main.tf`, which
+//! `hcl/sandbox/tests` applies: `tofu test` does not expose a plan's actions.
 use super::*;
 use serde_json::json;
 
@@ -15,7 +15,7 @@ async fn sandbox_settings_read_back_and_drift_replaces_the_sandbox() {
     let fixture = Fixture::start().await;
     let root = workspace();
     fs::copy(
-        Path::new(CONTRACT).join("sandbox/main.tf"),
+        Path::new(HCL).join("sandbox/main.tf"),
         root.path().join("main.tf"),
     )
     .unwrap();

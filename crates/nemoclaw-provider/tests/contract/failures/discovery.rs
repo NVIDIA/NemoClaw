@@ -101,9 +101,10 @@ async fn compiled_discovery_requires_the_image_runtime_metadata() {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    let document =
-        Document::parse(include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice())
-            .unwrap();
+    let document = Document::parse(
+        include_bytes!("../../../../../examples/onboarding/openclaw.yaml").as_slice(),
+    )
+    .unwrap();
     let image = document.spec.sandboxes["assistant"].image.ref_.clone();
     let mode = Arc::new(AtomicUsize::new(0));
     let current = mode.clone();

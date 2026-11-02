@@ -3,12 +3,14 @@
 //! Contract tests: OpenShell types through pinned OpenTofu against the fake
 //! OpenShell gateway.
 //!
-//! Authored modules, such as `standalone/`, keep their scenarios in native
-//! `tests/*.tftest.hcl` files. Each generated fixture in `fixtures/`, the
-//! OpenShell resources the SDK compiles for an example, applies, reads back
-//! unchanged, and is removed by destroy. The Rust tests in the other files
-//! check what `tofu test` cannot express: a failed command, a saved plan,
-//! planned actions, or the state file.
+//! - `hcl/`: scenarios that pass, as native `tests/*.tftest.hcl` files beside
+//!   the configuration they apply. This file starts their fakes and runs them.
+//! - `failures/`: Rust tests of commands that must fail, which `tofu test`
+//!   cannot expect.
+//! - `fixtures/`: the OpenShell resources the SDK compiles for each example;
+//!   each shape applies, reads back unchanged, and is removed by destroy.
+//! - The other files check what `tofu test` cannot show: planned actions,
+//!   and Kubernetes objects changed between steps.
 
 use nemoclaw_test_fixtures::{openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::Value;
@@ -28,21 +30,9 @@ mod kube_api;
 use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
-mod api;
-mod capabilities;
-// Gateway installation: Docker gateway reads, the Podman gateway and its
-// storage, and the Kubernetes gateway types.
-// A managed gateway needs a local engine, which only Unix clients reach.
-#[cfg(unix)]
-mod gateway_installation;
-mod gateway_readiness;
-// Managed gateway resources take only a local engine socket, which only Unix
-// clients reach.
-#[cfg(unix)]
-mod gateway_storage;
+mod failures;
 mod kubernetes_lifecycle;
 mod sandbox;
-mod standalone;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
 
@@ -75,6 +65,8 @@ pub fn workspace() -> TofuWorkspace {
 }
 
 pub const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract");
+/// The authored modules whose scenarios run with `tofu test`.
+pub const HCL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/hcl");
 
 /// The credential variables authored modules name, and their secret values.
 const SECRETS: [(&str, &str); 5] = [
@@ -93,7 +85,7 @@ const SECRETS: [(&str, &str); 5] = [
 /// output repeats no secret.
 pub async fn native(module: &str, extra: &[(&str, &str)]) {
     let root = workspace();
-    root.copy(Path::new(CONTRACT).join(module));
+    root.copy(Path::new(HCL).join(module));
     let environment: Vec<_> = SECRETS.into_iter().chain(extra.iter().copied()).collect();
     for output in openshell::test_against_gateways(root, &environment).await {
         for (_, secret) in SECRETS {
@@ -118,6 +110,36 @@ async fn sandbox_settings() {
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn tool_credentials() {
     native("credentials", &[]).await;
+}
+
+/// A Docker engine that answers reads only.
+#[cfg(unix)]
+pub(crate) async fn read_only_engine() -> http_fixture::Fixture {
+    http_fixture::Fixture::engine(|request| {
+        assert_eq!(request.method, "GET", "a prerequisite read mutated the engine");
+        let path = request.path.split('?').next().unwrap();
+        let body = if path.ends_with("/libpod/info") {
+            serde_json::json!({"host":{"security":{"rootless":false}}})
+        } else if path.ends_with("/version") {
+            serde_json::json!({"Version":"28.0", "ApiVersion":"1.47", "Components":[{"Name":"Engine", "Version":"28.0"}]})
+        } else if path.ends_with("/info") {
+            serde_json::json!({"ID":"engine"})
+        } else {
+            panic!("unexpected engine query {path}")
+        };
+        Some((200, serde_json::to_vec(&body).unwrap()))
+    })
+    .await
+}
+
+/// `hcl/gateway`: the Docker gateway launch, engine prerequisites, and the
+/// Kubernetes resources plan from typed settings.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn gateway_settings_plan_without_contacting_a_host() {
+    let engine = read_only_engine().await;
+    native("gateway", &[("TF_VAR_engine", &engine.endpoint)]).await;
 }
 
 /// Failed apply may record new data-source observations and condition

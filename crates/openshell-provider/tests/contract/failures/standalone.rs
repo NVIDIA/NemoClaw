@@ -3,11 +3,11 @@
 //! Authored OpenShell resources through OpenTofu: lost replies, foreign or
 //! missing objects, bootstrap endpoints, and registration rotation.
 
-use super::*;
+use crate::*;
 use serde_json::json;
 use std::process::Output;
 
-const STANDALONE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/standalone");
+const STANDALONE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/hcl/standalone");
 
 struct Standalone {
     root: TofuWorkspace,

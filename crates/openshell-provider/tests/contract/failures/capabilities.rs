@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Gateway capability observations, and their preconditions through OpenTofu.
 
-use super::*;
+use crate::*;
 use nemoclaw_backend::ObservationError;
 use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::json;
@@ -83,7 +83,8 @@ impl Local {
 async fn gateway_capabilities_gate_plans_and_saved_plan_applies() {
     let gateway = Fixture::start().await;
     let local = Local::new(&gateway.endpoint);
-    let versions: Value = serde_json::from_str(include_str!("../../../../versions.json")).unwrap();
+    let versions: Value =
+        serde_json::from_str(include_str!("../../../../../versions.json")).unwrap();
     let version = versions["openshell"].as_str().unwrap();
     for failure in ["version", "unavailable"] {
         {

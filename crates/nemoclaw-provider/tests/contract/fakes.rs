@@ -1,29 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Host checks in `host/main.tf` against a fake engine and a fake HTTP
-//! server for health and models. `host/tests` covers passing checks; failed
-//! reads fail the plan, which `tofu test` cannot expect.
+//! Fakes the `hcl/host` and `hcl/storage` scenarios and their failure tests
+//! share: a Docker engine, health and model server, and a volume store.
 
 use crate::http_fixture::Fixture;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
-    fs,
+    collections::BTreeMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
 
 /// The fixtures, which pass every check while `healthy` holds, and the
 /// variables that name them.
-struct Host {
-    healthy: Arc<AtomicBool>,
+pub(crate) struct Host {
+    pub(crate) healthy: Arc<AtomicBool>,
     _fixtures: [Fixture; 2],
-    variables: Vec<(&'static str, String)>,
+    pub(crate) variables: Vec<(&'static str, String)>,
 }
 
 impl Host {
-    async fn start() -> Self {
+    pub(crate) async fn start() -> Self {
         let healthy = Arc::new(AtomicBool::new(true));
         let state = healthy.clone();
         let engine = Fixture::engine(move |request| {
@@ -94,68 +93,44 @@ impl Host {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated host fixtures"]
-async fn host_checks_pass_for_a_healthy_host() {
-    let host = Host::start().await;
-    crate::native("host", &host.variables);
+#[derive(Default)]
+pub(crate) struct Volumes {
+    pub(crate) volumes: BTreeMap<String, Value>,
+    pub(crate) creates: usize,
+    /// Create the next volume but close the connection before replying.
+    pub(crate) lose_create: bool,
 }
 
-/// An incompatible image, an unhealthy container, and a server that stops
-/// listing its model each fail the plan that reads them; invalid readiness
-/// inputs fail before any read.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated host fixtures"]
-async fn failed_host_checks_stop_the_plan() {
-    let host = Host::start().await;
-    let workspace = crate::workspace();
-    let main = workspace.path().join("main.tf");
-    fs::copy(
-        std::path::Path::new(crate::CONTRACT).join("host/main.tf"),
-        &main,
-    )
-    .unwrap();
-    let plan = |variables: &[&str]| {
-        let output = workspace
-            .command()
-            .args(["plan", "-input=false", "-no-color"])
-            .args(variables)
-            .envs(host.variables.clone())
-            .output()
-            .unwrap();
-        assert!(!output.status.success(), "{variables:?} passed");
-        // OpenTofu wraps diagnostic text.
-        String::from_utf8_lossy(&output.stderr)
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    host.healthy.store(false, Ordering::SeqCst);
-    let stderr = plan(&[]);
-    let expected = [
-        "Image compatibility check failed",
-        "Container health observation failed",
-        r#"data.host_container_health.application["engine"]"#,
-        r#"data.host_container_health.application["http"]"#,
-        r#"data.host_container_health.application["status"]"#,
-        "qwen",
-    ];
-    for expected in expected {
-        assert!(stderr.contains(expected), "{expected}: {stderr}");
-    }
-    host.healthy.store(true, Ordering::SeqCst);
-    // Endpoint readiness serves unauthenticated servers only.
-    let stderr = plan(&["-var=authentication=bearer"]);
-    assert!(stderr.contains("unauthenticated"), "{stderr}");
-    // Endpoint and container inputs are separate modes.
-    let source = fs::read_to_string(&main).unwrap();
-    let endpoint = "  sandbox_endpoint     = var.sandbox_endpoint\n";
-    assert!(source.contains(endpoint));
-    let mixed = source.replace(endpoint, &format!("{endpoint}  name = \"qwen\"\n"));
-    fs::write(&main, mixed).unwrap();
-    let stderr = plan(&[]);
-    assert!(
-        stderr.contains("either endpoint or the container inputs"),
-        "{stderr}"
-    );
+/// A Docker engine that stores named volumes and counts creations.
+pub(crate) async fn volume_engine() -> (Fixture, Arc<Mutex<Volumes>>) {
+    let volumes = Arc::new(Mutex::new(Volumes::default()));
+    let shared = volumes.clone();
+    let fixture = Fixture::engine(move |request| {
+        let mut volumes = shared.lock().unwrap();
+        let path = request.path.split('?').next().unwrap();
+        let (status, value) = match (request.method.as_str(), path) {
+            ("GET", "/info") => (200, json!({"ID":"engine"})),
+            ("POST", "/volumes/create") => {
+                let request: Value = serde_json::from_slice(&request.body).unwrap();
+                let name = request["Name"].as_str().unwrap().to_owned();
+                let volume = json!({"Name":name, "Driver":"local", "Mountpoint":"/fixture", "CreatedAt":"2026-10-08T00:00:00Z", "Labels":request["Labels"], "Options":{}, "Scope":"local"});
+                volumes.volumes.insert(name, volume.clone());
+                volumes.creates += 1;
+                if std::mem::take(&mut volumes.lose_create) {
+                    return None;
+                }
+                (201, volume)
+            }
+            ("GET", path) if path.starts_with("/volumes/") => {
+                match volumes.volumes.get(path.trim_start_matches("/volumes/")) {
+                    Some(volume) => (200, volume.clone()),
+                    None => (404, json!({"message":"missing"})),
+                }
+            }
+            _ => panic!("unexpected Docker operation {} {path}", request.method),
+        };
+        Some((status, serde_json::to_vec(&value).unwrap()))
+    })
+    .await;
+    (fixture, volumes)
 }

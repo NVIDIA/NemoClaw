@@ -46,7 +46,12 @@ On failure, read the OpenTofu diagnostic in the test output and check that the b
 Each production provider's `contract` binary, under `tests/contract`, applies its types through OpenTofu against fakes.
 Its coverage test is not ignored and runs with the unit tests; the remaining tests are ignored and run in the `lifecycle` step.
 
-Scenarios live in authored modules beside the binary: a directory under `tests/contract` with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.12/cli/commands/test/) files in its `tests` directory.
+Each `tests/contract` directory separates the two kinds of test:
+
+- `hcl/`: scenarios that pass, as authored modules with `.tf` files and [`tofu test`](https://opentofu.org/docs/v1.12/cli/commands/test/) files in their `tests` directory.
+- `failures/`: Rust tests of commands that must fail, which `tofu test` cannot expect.
+
+`main.rs` starts each module's fakes and runs it; the other Rust files hold shared fakes and checks of plans and state that `tofu test` cannot show.
 A Rust test starts the module's fixtures and runs its test files with `TofuWorkspace`; `openshell::test_against_gateways` runs them side by side, each against its own fake OpenShell gateway.
 To run one module, name its Rust test, for example `cargo test -p openshell-provider --test contract standalone_resources -- --ignored`.
 A module that observes the fake gateway reads `data.fixture_state` from `nemoclaw-fixture-control`; the system tests read the same observations, from `openshell::State::observations`.
@@ -66,14 +71,14 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 
 | Module | Checks |
 |---|---|
-| `runtime` | The vLLM, Ollama, and Ollama proxy runtime contracts, and the vLLM launch and requirements, computed from typed settings without any service |
-| `host` | Host checks against a fake engine, health endpoint, and model server: engine facts, image compatibility, container health by engine state, HTTP, or status file, and endpoint readiness; failed checks stop the plan |
-| `storage` | Retained credential storage keeps its authored or generated identity on its volume |
+| `hcl/runtime` | The vLLM, Ollama, and Ollama proxy runtime contracts, and the vLLM launch and requirements, computed from typed settings without any service |
+| `hcl/host` | Host checks against a fake engine, health endpoint, and model server: engine facts, image compatibility, container health by engine state, HTTP, or status file, and endpoint readiness; failed checks stop the plan |
+| `hcl/storage` | Retained credential storage keeps its authored or generated identity on its volume |
 | `provider_protocol` | The fixture provider from `nemoclaw-fixture-provider`, and on Unix the provider against a fake Docker API: network and image planning, including prerequisite changes before saved-plan application |
-| `service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
-| `service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
-| `service_storage` | Runs `storage`, and checks an invalid owner, missing, foreign, or substituted storage, and a lost creation reply |
-| `discovery` | Fabric requirements and compiled discovery that read image metadata |
+| `failures/service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
+| `failures/service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
+| `failures/service_storage` | Checks an invalid owner, missing, foreign, or substituted storage, and a lost creation reply |
+| `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |
 | `replacement_cleanup` | On Unix, the plans and state the SDK reads after a container replacement whose cleanup is unfinished |
 
 `every_type_has_a_contract_test` requires a contract test for every type the provider serves, or an `ELSEWHERE` entry naming where it is tested instead.
@@ -107,8 +112,8 @@ The first fixture of each shape is applied against its own fake gateway; it must
 `nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
 
 The `capabilities` tests check gateway preconditions, saved-plan rechecks, and capability reads deferred until bootstrap inputs are known.
-The `standalone` tests apply `standalone/main.tf` through lost create and delete replies, foreign objects, a missing workspace, failed observations, and deferred bootstrap endpoints.
-The `api` tests check that invalid API bindings and foreign or substituted credentials stop planning, and that a failed readback recovers; the `sandbox` test checks that settings changed outside OpenTofu replace the sandbox.
+The `failures/standalone` tests apply `hcl/standalone/main.tf` through lost create and delete replies, foreign objects, a missing workspace, failed observations, and deferred bootstrap endpoints.
+The `failures/api` tests check that invalid API bindings and foreign or substituted credentials stop planning, and that a failed readback recovers; the `sandbox` test checks that settings changed outside OpenTofu replace the sandbox.
 The fake gateway refuses to delete a referenced profile or an attached provider, as the pinned API does.
 On Unix, the `gateway_storage` test checks Docker gateway storage against a fake engine.
 The `gateway_readiness` test checks managed-gateway exit diagnostics, bootstrap state kept after failure, corrected retry, unchanged-apply rechecks, and teardown without the readiness data source.
@@ -122,8 +127,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p fabric-provider --test contract -- --ignored
 ```
 
-`pi_agent_lifecycle` runs the `fixtures` module, a `fabric_agent` that starts a Pi agent in a sandbox: planning does not start it, an unchanged apply does not restart it, a changed configuration replaces the sandbox, removing the agent stops it and keeps its sandbox, and a sandbox that is already gone takes its agent with it.
-The other tests in `tests/contract/main.rs` check failures: an invalid configuration fails validation at its field without repeating the value, a lost start reply is not retried and recovers in a replaced sandbox, an incomplete runtime check changes nothing, a changed agent without a new sandbox is refused, and a failed start keeps Fabric's message in a private file.
+`pi_agent_lifecycle` runs the `hcl/agent` module, a `fabric_agent` that starts a Pi agent in a sandbox: planning does not start it, an unchanged apply does not restart it, a changed configuration replaces the sandbox, removing the agent stops it and keeps its sandbox, and a sandbox that is already gone takes its agent with it.
+The tests in `failures/agent.rs` check failures: an invalid configuration fails validation at its field without repeating the value, a lost start reply is not retried and recovers in a replaced sandbox, an incomplete runtime check changes nothing, a changed agent without a new sandbox is refused, and a failed start keeps Fabric's message in a private file.
 On Unix, the `capabilities` test runs the `capabilities` module, which reads `fabric_harnesses` from a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 

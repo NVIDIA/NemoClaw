@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Image capabilities in `capabilities/tests`, read from a fake Docker engine.
+//! Image capabilities in `hcl/capabilities/tests`, read from a fake Docker engine.
 
 use super::*;
 use nemoclaw_fabric::catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
@@ -40,7 +40,7 @@ async fn engine() -> http::Fixture {
 async fn capabilities_judge_the_image_for_the_configuration() {
     let engine = engine().await;
     let root = TofuWorkspace::with_providers(Bundle::from_env().tofu(), &[("fabric", &fabric())]);
-    root.copy(Path::new(CONTRACT).join("capabilities"));
+    root.copy(Path::new(HCL).join("capabilities"));
     for file in root.test_files() {
         root.test(&file, &[("TF_VAR_engine", &engine.endpoint)]);
     }

@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Retained service storage through pinned OpenTofu. `storage/tests` covers
-//! its identity; these tests cover what fails planning or applying.
+//! Retained service storage that must fail planning or applying, which `tofu
+//! test` cannot expect. `hcl/storage/tests` covers its identity.
 
 use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
     fs,
     sync::{Arc, Mutex},
 };
@@ -14,47 +13,7 @@ use std::{
 const OWNER: &str = "302ff5e1-088d-42ce-959f-4ff4c3570c13";
 const KINDS: [&str; 1] = ["vllm_credential_storage"];
 
-#[derive(Default)]
-struct Volumes {
-    volumes: BTreeMap<String, Value>,
-    creates: usize,
-    /// Create the next volume but close the connection before replying.
-    lose_create: bool,
-}
-
-/// A Docker engine that stores named volumes and counts creations.
-async fn volume_engine() -> (Fixture, Arc<Mutex<Volumes>>) {
-    let volumes = Arc::new(Mutex::new(Volumes::default()));
-    let shared = volumes.clone();
-    let fixture = Fixture::engine(move |request| {
-        let mut volumes = shared.lock().unwrap();
-        let path = request.path.split('?').next().unwrap();
-        let (status, value) = match (request.method.as_str(), path) {
-            ("GET", "/info") => (200, json!({"ID":"engine"})),
-            ("POST", "/volumes/create") => {
-                let request: Value = serde_json::from_slice(&request.body).unwrap();
-                let name = request["Name"].as_str().unwrap().to_owned();
-                let volume = json!({"Name":name, "Driver":"local", "Mountpoint":"/fixture", "CreatedAt":"2026-10-08T00:00:00Z", "Labels":request["Labels"], "Options":{}, "Scope":"local"});
-                volumes.volumes.insert(name, volume.clone());
-                volumes.creates += 1;
-                if std::mem::take(&mut volumes.lose_create) {
-                    return None;
-                }
-                (201, volume)
-            }
-            ("GET", path) if path.starts_with("/volumes/") => {
-                match volumes.volumes.get(path.trim_start_matches("/volumes/")) {
-                    Some(volume) => (200, volume.clone()),
-                    None => (404, json!({"message":"missing"})),
-                }
-            }
-            _ => panic!("unexpected Docker operation {} {path}", request.method),
-        };
-        Some((status, serde_json::to_vec(&value).unwrap()))
-    })
-    .await;
-    (fixture, volumes)
-}
+use crate::fakes::volume_engine;
 
 fn workspace() -> TofuWorkspace {
     crate::workspace()
@@ -107,26 +66,6 @@ fn success(workspace: &TofuWorkspace, args: &[&str]) -> std::process::Output {
         String::from_utf8_lossy(&output.stderr)
     );
     output
-}
-
-/// `storage/tests`: storage keeps the identity it is created with.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn retained_storage_keeps_its_identity() {
-    let (engine, volumes) = volume_engine().await;
-    let control = Fixture::start_tcp(move |_| {
-        let volumes = volumes.lock().unwrap();
-        let observed = json!({"volumes": volumes.volumes, "creates": volumes.creates});
-        Some((200, observed.to_string().into_bytes()))
-    })
-    .await;
-    crate::native(
-        "storage",
-        &[
-            ("TF_VAR_engine", &engine.endpoint),
-            ("NEMOCLAW_FIXTURE_CONTROL", &control.endpoint),
-        ],
-    );
 }
 
 /// An invalid owner fails planning at its attribute, before any volume.

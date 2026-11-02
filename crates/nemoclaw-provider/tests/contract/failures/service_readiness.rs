@@ -23,7 +23,7 @@ async fn standalone_readiness(proxy: bool) {
     // Beside the providers, where Windows finds it before the relay on PATH.
     nemoclaw_test_fixtures::ssh::install_simulator(root, root);
     let document = Document::parse(
-        include_bytes!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
+        include_bytes!("../../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
     .unwrap();
     let mut document = serde_json::to_value(document).unwrap();

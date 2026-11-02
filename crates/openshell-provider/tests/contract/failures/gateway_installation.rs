@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Gateway installation types through pinned OpenTofu: the Podman gateway's
-//! prerequisite checks before a saved plan applies, and the settings in
-//! `gateway/main.tf`.
+//! Gateway installation failures through pinned OpenTofu: the Podman
+//! gateway's prerequisite checks before a saved plan applies, and invalid
+//! settings in `hcl/gateway/main.tf`.
 
 use crate::tofu::TofuWorkspace;
 use serde_json::json;
@@ -67,7 +67,8 @@ async fn podman_gateway_rechecks_network_and_image_prerequisites_before_saved_pl
     }).await;
     let e = Installation::new();
     let document =
-        Document::parse(include_bytes!("../../../../examples/spark/vllm.yaml").as_slice()).unwrap();
+        Document::parse(include_bytes!("../../../../../examples/spark/vllm.yaml").as_slice())
+            .unwrap();
     let generations = [
         ("managed_gateway".into(), "a".repeat(32)),
         ("inference_service".into(), "b".repeat(32)),
@@ -141,42 +142,14 @@ resource "openshell_podman_gateway" "gateway" {{
     }
 }
 
-/// A Docker engine that answers reads only.
-async fn docker_engine() -> crate::http_fixture::Fixture {
-    crate::http_fixture::Fixture::engine(|request| {
-        assert_eq!(request.method, "GET", "a prerequisite read mutated the engine");
-        let path = request.path.split('?').next().unwrap();
-        let body = if path.ends_with("/libpod/info") {
-            json!({"host":{"security":{"rootless":false}}})
-        } else if path.ends_with("/version") {
-            json!({"Version":"28.0", "ApiVersion":"1.47", "Components":[{"Name":"Engine", "Version":"28.0"}]})
-        } else if path.ends_with("/info") {
-            json!({"ID":"engine"})
-        } else {
-            panic!("unexpected engine query {path}")
-        };
-        Some((200, serde_json::to_vec(&body).unwrap()))
-    })
-    .await
-}
-
-/// `gateway/tests`: the Docker gateway launch, engine prerequisites, and the
-/// Kubernetes resources plan from typed settings.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
-async fn gateway_settings_plan_without_contacting_a_host() {
-    let engine = docker_engine().await;
-    crate::native("gateway", &[("TF_VAR_engine", &engine.endpoint)]).await;
-}
-
 /// Invalid settings in `gateway/main.tf` fail planning at each resource.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn invalid_gateway_settings_are_rejected_at_their_resources() {
-    let engine = docker_engine().await;
+    let engine = crate::read_only_engine().await;
     let e = Installation::new();
     fs::copy(
-        std::path::Path::new(crate::CONTRACT).join("gateway/main.tf"),
+        std::path::Path::new(crate::HCL).join("gateway/main.tf"),
         e.dir.path().join("main.tf"),
     )
     .unwrap();

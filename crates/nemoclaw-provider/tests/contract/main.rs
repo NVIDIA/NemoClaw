@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Contract tests: each nemoclaw type through pinned OpenTofu against fake
 //! Docker engines, gateways, model servers, and Kubernetes APIs.
+//!
+//! - `hcl/`: scenarios that pass, as native `tests/*.tftest.hcl` files beside
+//!   the configuration they apply. This file starts their fakes and runs them.
+//! - `failures/`: Rust tests of commands that must fail, which `tofu test`
+//!   cannot expect.
+//! - The other files hold shared fakes and checks of plans and state that
+//!   `tofu test` cannot show.
+//!
 //! `every_type_has_a_contract_test` requires one for every type the provider
 //! serves.
 
@@ -20,40 +28,65 @@ use http_fixture as transport;
 )]
 mod image_runtime;
 
-mod discovery;
-mod host;
+mod failures;
+mod fakes;
 mod provider_protocol;
 mod readiness_refs;
 mod references;
-// Unix only for the same reason as vllm_runtime, whose workspace it uses.
 // The bundled Docker provider reaches its engine with its own ssh arguments,
 // which the relay does not accept.
 #[cfg(unix)]
 mod replacement_cleanup;
-mod service_capacity;
-mod service_readiness;
-mod service_storage;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
-/// Modules whose scenarios are native `tests/*.tftest.hcl` files.
 pub const CONTRACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract");
+/// The authored modules whose scenarios run with `tofu test`.
+pub const HCL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/hcl");
 
-/// Run each native test file of `module` under `CONTRACT`.
+/// Run each native test file of `module` under `HCL`.
 pub fn native<K: AsRef<std::ffi::OsStr>, V: AsRef<std::ffi::OsStr>>(
     module: &str,
     environment: &[(K, V)],
 ) {
     let root = workspace();
-    root.copy(std::path::Path::new(CONTRACT).join(module));
+    root.copy(std::path::Path::new(HCL).join(module));
     root.test_all(environment);
 }
 
-/// The runtime contracts in `runtime/tests`, computed without any service.
+/// The runtime contracts in `hcl/runtime/tests`, computed without any service.
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn runtime_contracts_carry_their_typed_settings() {
     native::<&str, &str>("runtime", &[]);
+}
+
+/// `hcl/host/tests`: passing host checks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated host fixtures"]
+async fn host_checks_pass_for_a_healthy_host() {
+    let host = fakes::Host::start().await;
+    native("host", &host.variables);
+}
+
+/// `hcl/storage/tests`: storage keeps the identity it is created with.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn retained_storage_keeps_its_identity() {
+    let (engine, volumes) = fakes::volume_engine().await;
+    let control = http_fixture::Fixture::start_tcp(move |_| {
+        let volumes = volumes.lock().unwrap();
+        let observed = serde_json::json!({"volumes": volumes.volumes, "creates": volumes.creates});
+        Some((200, observed.to_string().into_bytes()))
+    })
+    .await;
+    native(
+        "storage",
+        &[
+            ("TF_VAR_engine", &engine.endpoint),
+            ("NEMOCLAW_FIXTURE_CONTROL", &control.endpoint),
+        ],
+    );
 }
 
 /// A workspace with this package's providers under test (vllm, ollama, and

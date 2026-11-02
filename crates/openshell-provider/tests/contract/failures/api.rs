@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Failures of the API credentials in `credentials/main.tf`, whose lifecycle
-//! `credentials/tests` covers: a rejected or failed command, and the state
+//! Failures of the API credentials in `hcl/credentials/main.tf`, whose lifecycle
+//! `hcl/credentials/tests` covers: a rejected or failed command, and the state
 //! file it leaves, which `tofu test` cannot check.
-use super::*;
+use crate::*;
 use serde_json::json;
 
 const SECRET: &str = "booking-fixture-secret";
@@ -11,7 +11,7 @@ const SECRET: &str = "booking-fixture-secret";
 fn credentials(endpoint: &str) -> TofuWorkspace {
     let root = workspace();
     fs::copy(
-        Path::new(CONTRACT).join("credentials/main.tf"),
+        Path::new(HCL).join("credentials/main.tf"),
         root.path().join("main.tf"),
     )
     .unwrap();
