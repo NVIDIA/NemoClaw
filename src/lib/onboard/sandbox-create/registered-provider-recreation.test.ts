@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import {
+  registeredInferenceFixture,
+  registeredIdentityFailureAt,
+} from "../../../../test/helpers/registered-inference";
 import { createProviderEffectBoundary } from "./orchestration";
 
 describe("registered provider recreation", () => {
@@ -123,6 +126,25 @@ function rollbackFixture(
   return { ...f, boundary, revalidateSandboxIdentity, create };
 }
 
+function expectGuardedDetach(f: ReturnType<typeof rollbackFixture>, rollbackOperation: string) {
+  const checkOrder = (operation: string) => {
+    const index = f.revalidateSandboxIdentity.mock.calls.findIndex(([name]) => name === operation);
+    expect(index, operation).toBeGreaterThanOrEqual(0);
+    return f.revalidateSandboxIdentity.mock.invocationCallOrder[index]!;
+  };
+  const rollbackOrder = checkOrder(rollbackOperation);
+  const beforeDetach = checkOrder("detach registered inference provider");
+  const afterDetach = checkOrder("verify registered inference provider detach");
+  expect(f.adapter.detachProvider).toHaveBeenCalledOnce();
+  const detachOrder = f.adapter.detachProvider.mock.invocationCallOrder[0]!;
+  const absenceOrder = f.adapter.listProviderAttachments.mock.invocationCallOrder.at(-1)!;
+  expect(rollbackOrder).toBeLessThan(beforeDetach);
+  expect(beforeDetach).toBeLessThan(detachOrder);
+  expect(detachOrder).toBeLessThan(absenceOrder);
+  expect(absenceOrder).toBeLessThan(afterDetach);
+  expect(f.state.attached).toBe(false);
+}
+
 describe.each([
   ["ordinary", false, false],
   ["deferred", true, false],
@@ -137,14 +159,7 @@ describe.each([
         throw failure;
       }),
     ).rejects.toBe(failure);
-    expect(f.state.attached).toBe(false);
-    expect(f.adapter.detachProvider).toHaveBeenCalledOnce();
-    expect(f.revalidateSandboxIdentity).toHaveBeenLastCalledWith(
-      "removing newly attached registered inference provider",
-    );
-    expect(f.revalidateSandboxIdentity.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      f.adapter.detachProvider.mock.invocationCallOrder[0]!,
-    );
+    expectGuardedDetach(f, "removing newly attached registered inference provider");
     expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
   });
 
@@ -224,57 +239,62 @@ it("does not roll back an attachment owned by an earlier selection", async () =>
 
 it("rechecks identity before cleanup when post-attachment verification fails", async () => {
   const f = rollbackFixture(false, false, false);
-  f.revalidateSandboxIdentity
-    .mockImplementationOnce(() => undefined)
-    .mockImplementationOnce(() => undefined)
-    .mockImplementationOnce(() => {
-      throw new Error("identity check unavailable");
-    });
-  await expect(f.boundary.withRegisteredAttachmentRollback(f.create)).rejects.toThrow(
-    "identity check unavailable",
+  const operation = "verifying restored registered inference attachment";
+  const failure = new Error("identity check unavailable");
+  f.revalidateSandboxIdentity.mockImplementation(registeredIdentityFailureAt(operation, failure));
+  await expect(f.boundary.withRegisteredAttachmentRollback(f.create)).rejects.toBe(failure);
+  expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+  const failureIndex = f.revalidateSandboxIdentity.mock.calls.findIndex(
+    ([name]) => name === operation,
   );
-  expect(f.revalidateSandboxIdentity).toHaveBeenNthCalledWith(
-    3,
-    "verifying restored registered inference attachment",
+  expect(failureIndex).toBeGreaterThanOrEqual(0);
+  expect(f.revalidateSandboxIdentity.mock.results[failureIndex]).toEqual({
+    type: "throw",
+    value: failure,
+  });
+  expect(f.adapter.attachProvider.mock.invocationCallOrder[0]!).toBeLessThan(
+    f.revalidateSandboxIdentity.mock.invocationCallOrder[failureIndex]!,
   );
-  expect(f.revalidateSandboxIdentity).toHaveBeenLastCalledWith(
-    "removing newly attached registered inference provider",
+  expect(f.revalidateSandboxIdentity.mock.invocationCallOrder[failureIndex]!).toBeLessThan(
+    f.adapter.detachProvider.mock.invocationCallOrder[0]!,
   );
-  expect(f.adapter.detachProvider).toHaveBeenCalledOnce();
-  expect(f.state.attached).toBe(false);
+  expectGuardedDetach(f, "removing newly attached registered inference provider");
+  expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
 });
 
-it.each([
-  {
-    replaced: false,
-    revalidate: () => undefined,
-    error: "changed during attachment",
-    detachCount: 1,
-  },
-  {
-    replaced: true,
-    revalidate: () => {
+it("revalidates the sandbox before rolling back an unverified attachment", async () => {
+  const f = rollbackFixture(false, false, false);
+  f.adapter.attachProvider.mockImplementation(async () => {
+    f.state.attached = true;
+    f.state.revision++;
+    return { ok: true };
+  });
+  await expect(f.boundary.withRegisteredAttachmentRollback(f.create)).rejects.toThrow(
+    "changed during attachment",
+  );
+  expectGuardedDetach(f, "rolling back unverified registered inference attachment");
+  expect(f.adapter.detachProvider).toHaveBeenCalledOnce();
+  expect(f.state.attached).toBe(false);
+  expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+});
+
+it("retains an unverified attachment when the sandbox was replaced before rollback", async () => {
+  const f = rollbackFixture(false, false, false);
+  f.adapter.attachProvider.mockImplementation(async () => {
+    f.state.attached = true;
+    f.state.revision++;
+    f.revalidateSandboxIdentity.mockImplementation(() => {
       throw new Error("sandbox replaced");
-    },
-    error: "sandbox replaced",
-    detachCount: 0,
-  },
-])(
-  "revalidates the sandbox before internal attachment rollback (replaced=$replaced)",
-  async ({ replaced, revalidate, error, detachCount }) => {
-    const f = rollbackFixture(false, false, false);
-    f.adapter.attachProvider.mockImplementation(async () => {
-      f.state.attached = true;
-      f.state.revision++;
-      f.revalidateSandboxIdentity.mockImplementation(revalidate);
-      return { ok: true };
     });
-    await expect(f.boundary.withRegisteredAttachmentRollback(f.create)).rejects.toThrow(error);
-    expect(f.revalidateSandboxIdentity).toHaveBeenLastCalledWith(
-      "rolling back unverified registered inference attachment",
-    );
-    expect(f.adapter.detachProvider).toHaveBeenCalledTimes(detachCount);
-    expect(f.state.attached).toBe(replaced);
-    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
-  },
-);
+    return { ok: true };
+  });
+  await expect(f.boundary.withRegisteredAttachmentRollback(f.create)).rejects.toThrow(
+    "sandbox replaced",
+  );
+  expect(f.revalidateSandboxIdentity).toHaveBeenLastCalledWith(
+    "rolling back unverified registered inference attachment",
+  );
+  expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+  expect(f.state.attached).toBe(true);
+  expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+});

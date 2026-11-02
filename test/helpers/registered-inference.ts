@@ -84,3 +84,9 @@ export function registeredInferenceFixture(attached = false) {
   const handle = "openshell:resolve:env:s" + "a".repeat(64) + "_VENDOR_API_KEY";
   return { state, profile, adapter, binding, handle };
 }
+
+export function registeredIdentityFailureAt(operation: string, failure: Error) {
+  return (observedOperation: string): void => {
+    if (observedOperation === operation) throw failure;
+  };
+}
