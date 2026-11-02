@@ -136,11 +136,12 @@ Start it with these lines, which the [request helpers](features/README.md#drivin
 - skill-authoring tool: `NAME`
 - skill directory: `PATH`
 - install command: `COMMAND`
+- enable command: `COMMAND`
 - native call record: `PATH OR COMMAND`
 ```
 
 When no supported mechanism exists, write `none`, record the finding, and mark the checks that need it Failed without sending their prompts; for the skill-authoring tool, write `your native file tools` instead.
-Resolve the install command when [plugins](features/plugins.md) reviews it, before `agent-plugin-install`.
+Resolve the install and enable commands when [plugins](features/plugins.md) reviews them, before `agent-plugin-install`.
 Stop researching a binding once the evidence shows the route or the missing layer; a missing layer is a finding, not a reason to try speculative settings.
 
 ### Provision and Seed the Volumes
