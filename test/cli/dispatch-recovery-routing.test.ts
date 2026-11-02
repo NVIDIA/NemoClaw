@@ -14,6 +14,75 @@ afterEach(() => {
 });
 
 describe("CLI recovery routing", () => {
+  it("frames a missing rebuild target after registry recovery fails (#13808)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+        await expect(dispatchCli(["missing", "rebuild", "--yes"])).rejects.toThrow(
+          "process.exit:1",
+        );
+
+        expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "missing" });
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(stderr.join("\n")).toContain("Rebuild preflight failed:");
+        expect(stderr.join("\n")).toContain("missing");
+        expect(stderr.join("\n")).toContain("Verify the sandbox name");
+        expect(stderr.join("\n")).toContain("Aborting rebuild");
+        expect(stderr.join("\n")).toContain("sandbox is untouched, no data was lost.");
+      },
+    );
+  });
+
+  it("dispatches rebuild after registry recovery finds its sandbox (#13808)", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        recoverRegistryEntries,
+        crossPortSandboxes,
+        runOclifCommandById,
+        stderr,
+      }) => {
+        recoverRegistryEntries.mockImplementationOnce(async () => {
+          const entry = { name: "alpha" };
+          crossPortSandboxes.set("alpha", entry);
+          return {
+            sandboxes: [entry],
+            defaultSandbox: null,
+            recoveredFromSession: false,
+            recoveredFromGateway: 1,
+          };
+        });
+        await dispatchCli(["alpha", "rebuild", "--yes"]);
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:rebuild",
+          ["alpha", "--yes"],
+          expect.objectContaining({ publicSandboxName: "alpha" }),
+        );
+        expect(stderr.join("\n")).not.toContain("Aborting rebuild");
+      },
+    );
+  });
+
+  it("preserves errors after rebuild registry recovery starts (#13808)", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        recoverRegistryEntries,
+        crossPortSandboxes,
+        runOclifCommandById,
+        stderr,
+      }) => {
+        const error = new Error("recovery failed after updating registry state");
+        recoverRegistryEntries.mockImplementationOnce(async () => {
+          crossPortSandboxes.set("alpha", { name: "alpha" });
+          throw error;
+        });
+        await expect(dispatchCli(["alpha", "rebuild", "--yes"])).rejects.toBe(error);
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(stderr.join("\n")).not.toContain("sandbox is untouched");
+      },
+    );
+  });
+
   it("routes destroy to retained recovery after its registry row is retired (#12260)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, exitSpy }) => {

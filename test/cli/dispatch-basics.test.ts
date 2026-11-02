@@ -465,7 +465,9 @@ describe("CLI dispatch", () => {
         ).rejects.toThrow("process.exit:1");
 
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
-        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(stderr.join("\n")).toContain(
+          "Rebuild preflight failed: sandbox 'gw1-sb' has no registry entry.",
+        );
         expect(runOclifCommandById).not.toHaveBeenCalled();
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
@@ -478,7 +480,9 @@ describe("CLI dispatch", () => {
         await expect(dispatchCli(["gw1-sb", "rebuild", "--yes"])).rejects.toThrow("process.exit:1");
 
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
-        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(stderr.join("\n")).toContain(
+          "Rebuild preflight failed: sandbox 'gw1-sb' has no registry entry.",
+        );
         expect(runOclifCommandById).not.toHaveBeenCalled();
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
