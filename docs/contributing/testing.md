@@ -111,6 +111,7 @@ A test that needs OpenTofu, a bundle, Docker, or a cluster must be marked `#[ign
 A contract test applies one provider type through the OpenTofu that `NEMOCLAW_TEST_BUNDLE` supplies, against fake engines, gateways, model servers, or Kubernetes APIs, and checks what OpenTofu plans, applies, refreshes, and tears down, including after failures.
 Each production provider has one `contract` binary under `tests/contract`.
 It runs the provider Cargo built from the checkout, so it tests the change without a new bundle; OpenTofu and the other providers it needs come from the bundle.
+Write a scenario that passes as a native `tofu test` file in `tests/contract/hcl/`; put a test of a command that must fail in `tests/contract/failures/`, and keep other Rust tests only for what `tofu test` cannot check, such as a saved plan or the state file.
 A coverage test in each binary requires a contract test for every type the provider serves.
 [Run integration tests](integration-tests.md#contract-tests) describes each binary.
 
