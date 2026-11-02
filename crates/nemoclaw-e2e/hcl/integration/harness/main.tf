@@ -16,10 +16,33 @@ variable "compute_driver" {
   default     = null
 }
 
+variable "sandbox_create_delay_ms" {
+  description = "How long the fixture gateway takes to create each sandbox, so that overlapping creations show."
+  type        = number
+  default     = 0
+}
+
+variable "gateway_change" {
+  description = "A change to what the fixture gateway holds, made once by a run that targets data.fixture_state.setup: stop_agent_runtime names a sandbox whose Fabric runtime stops; forget_registrations forgets every provider registration."
+  type = object({
+    stop_agent_runtime   = optional(string)
+    forget_registrations = optional(bool, false)
+  })
+  default = null
+}
+
+variable "baseline" {
+  description = "What an earlier run observed, for assertions to compare: a test file passes run.NAME.gateway or run.NAME.openshell, because OpenTofu's assertions cannot reference runs."
+  type        = any
+  default     = null
+}
+
 module "fixtures" {
-  source         = "../../modules/fixtures"
-  document       = "${path.module}/nemoclaw.yaml"
-  compute_driver = var.compute_driver
+  source                  = "../../modules/fixtures"
+  document                = "${path.module}/nemoclaw.yaml"
+  compute_driver          = var.compute_driver
+  sandbox_create_delay_ms = var.sandbox_create_delay_ms
+  gateway_change          = var.gateway_change
 }
 
 # A first run targets this data source, so the fixtures are declared before
@@ -31,4 +54,17 @@ data "fixture_state" "setup" {
 # Read at plan time: in a plan run after deploy, it reports what deploy did.
 module "observed" {
   source = "../../modules/observed"
+}
+
+# What the gateway held when this run planned, which is what the previous run
+# left. OpenTofu keeps only the latest applying run's outputs of a module, so a
+# later run passes baseline on as var.baseline to keep comparing with it.
+output "gateway" {
+  description = "The observed OpenShell records at this run's plan."
+  value       = module.observed.openshell
+}
+
+output "baseline" {
+  description = "var.baseline, or without one this run's observed OpenShell records."
+  value       = var.baseline != null ? var.baseline : module.observed.openshell
 }

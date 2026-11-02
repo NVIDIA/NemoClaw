@@ -117,7 +117,8 @@ A coverage test in each binary requires a contract test for every type the provi
 ### System
 
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
-System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `hcl_integration`, `travel_example`, and `travel_team_example` modules.
+System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, `helm_recovery`, and `hcl_integration` modules.
+`hcl_integration` runs shared NemoClaw documents, unchanged examples, and authored HCL examples under `tofu test` against the same fixtures; the other modules keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#system-tests) says which layer a check belongs in.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.

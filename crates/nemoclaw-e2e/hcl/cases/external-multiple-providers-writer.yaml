@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# A second deployment on the gateway of external-multiple-providers.yaml, with
+# its own UID and one sandbox, the editor, which uses the local provider
+# without a key.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: multiple-providers-writer
+  uid: 7db61f79-1965-45ac-824a-1c3f3b26aa5d
+spec:
+  gateway:
+    management: external
+    runtime:
+      provider: kubernetes
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    local:
+      provider: openai
+      endpoint: http://172.20.0.1:11434/v1
+  sandboxes:
+    editor:
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: fixture/agent@sha256:c3448f4fe32d5351b2a5142b7df2370e142b9070480f858666fdded1e3e46b6e
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: editor
+        inference:
+          routes:
+            - name: fast
+              providerRef: local
+              overrides:
+                model: qwen3:4b

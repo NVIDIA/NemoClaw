@@ -22,6 +22,18 @@ variable "compute_driver" {
   default     = null
 }
 
+variable "sandbox_create_delay_ms" {
+  description = "How long the gateway takes to create each sandbox."
+  type        = number
+  default     = 0
+}
+
+variable "gateway_change" {
+  description = "A change to what the gateway holds, made once when declared; see the harness."
+  type        = any
+  default     = null
+}
+
 locals {
   spec   = yamldecode(file(var.document)).spec
   owner  = yamldecode(file(var.document)).metadata.uid
@@ -72,50 +84,54 @@ output "services" {
 
 output "declare" {
   description = "The declaration for the fixture_state data source."
-  value = !local.docker ? jsonencode({ compute_driver = local.driver }) : jsonencode({
-    compute_driver = local.driver
-    images = concat(
-      [for reference in local.sandbox_images : { reference = reference, id = local.image_id, fabric_catalog = true }],
-      [for name, service in local.services : {
-        reference = service.service.image
-        id        = local.image_id
-        # A service built for another architecture, such as amd64 vLLM, says so.
-        architecture = try(service.service.hardware.architecture, null)
-        labels = merge(
-          { "org.nemoclaw.backend" = service.service.kind },
-          service.authenticated ? {
-            "org.nemoclaw.inference.authentication" = "bearer-v1"
-            "org.nemoclaw.inference.routes"         = "openai-v2"
-          } : {}
-        )
-      }],
-    )
-    containers = concat(
-      [{
-        id      = "fixture-gateway-container"
-        name    = "${local.prefix}-gateway"
-        image   = local.image_id
-        labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
-        running = true
-      }],
-      [for name, service in local.services : {
-        id      = service.container_id
-        name    = service.container
-        image   = local.image_id
-        labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
-        running = true
-        # OpenShell finds an authenticated service by name for its key.
-        by_name    = service.authenticated
-        started_at = "2026-01-01T00:00:00Z"
-        mounts = merge(
-          { "/data" = "${service.container}-data" },
-          service.authenticated ? { "/credentials" = "${service.container}-auth" } : {}
-        )
-        files = merge(
-          { "/data/status.json" = jsonencode({ phase = "ready", updated = "2026-01-01T00:00:05Z", detail = "serving", pid = 7 }) },
-          service.authenticated ? { "/credentials/inference-key" = local.key } : {}
-        )
-      }],
-    )
-  })
+  value = jsonencode(merge({
+    compute_driver          = local.driver
+    sandbox_create_delay_ms = var.sandbox_create_delay_ms
+    change                  = var.gateway_change
+    # Only a managed Docker gateway's engine holds images and containers.
+    }, [for docker in [local.docker] : {
+      images = concat(
+        [for reference in local.sandbox_images : { reference = reference, id = local.image_id, fabric_catalog = true }],
+        [for name, service in local.services : {
+          reference = service.service.image
+          id        = local.image_id
+          # A service built for another architecture, such as amd64 vLLM, says so.
+          architecture = try(service.service.hardware.architecture, null)
+          labels = merge(
+            { "org.nemoclaw.backend" = service.service.kind },
+            service.authenticated ? {
+              "org.nemoclaw.inference.authentication" = "bearer-v1"
+              "org.nemoclaw.inference.routes"         = "openai-v2"
+            } : {}
+          )
+        }],
+      )
+      containers = concat(
+        [{
+          id      = "fixture-gateway-container"
+          name    = "${local.prefix}-gateway"
+          image   = local.image_id
+          labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
+          running = true
+        }],
+        [for name, service in local.services : {
+          id      = service.container_id
+          name    = service.container
+          image   = local.image_id
+          labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
+          running = true
+          # OpenShell finds an authenticated service by name for its key.
+          by_name    = service.authenticated
+          started_at = "2026-01-01T00:00:00Z"
+          mounts = merge(
+            { "/data" = "${service.container}-data" },
+            service.authenticated ? { "/credentials" = "${service.container}-auth" } : {}
+          )
+          files = merge(
+            { "/data/status.json" = jsonencode({ phase = "ready", updated = "2026-01-01T00:00:05Z", detail = "serving", pid = 7 }) },
+            service.authenticated ? { "/credentials/inference-key" = local.key } : {}
+          )
+        }],
+      )
+  } if docker]...))
 }

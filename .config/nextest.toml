@@ -41,11 +41,9 @@ default-filter = '''
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^deployment::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
-    | test(/^kubernetes_agents::/)
-    | test(/^multi_agent::/) | test(/^multiple_providers::/)
+    | test(/^multi_agent::/)
     | test(/^remote_service::/) | test(/^helm_recovery::/)
-    | test(/^hcl_integration::/) | test(/^travel_example::/)
-    | test(/^travel_team_example::/)
+    | test(/^hcl_integration::/)
 ))
 '''
 

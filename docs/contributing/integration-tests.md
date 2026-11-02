@@ -107,12 +107,19 @@ On Unix, the `capabilities` test reads `fabric_harnesses` from a fake Docker eng
 ## System Tests
 
 The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module.
-They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts:
+They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts.
+
+Choose the layer by what the behavior needs:
+
+- A graph outcome goes in a [`tofu test` scenario](#tofu-test-cases): registrations, bindings, policy, agent configuration, isolation between agents or deployments, unchanged reconciliation, recovery of what the gateway lost, replacement, and cleanup.
+- A Rust test is for what OpenTofu's test framework cannot observe: the SDK's stage order, saved state and intent, the CLI's output and exit status, export, interrupted and cancelled operations, saved plans, and provider errors, which `expect_failures` cannot expect.
+
+To run the Rust system tests:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multiple_providers:: --ignored
+  cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
 ```
 
 Append a test name to run one scenario, or `--test-threads=4` to match CI's concurrency.
@@ -120,75 +127,95 @@ The fixtures return protocol responses; they do not establish agent inference, n
 
 | Module | Checks |
 |---|---|
-| `deployment` | Configuration lifecycles through the SDK and CLI: shared state, interrupted creation, unchanged apply, startup failure recovered in a new sandbox, failed observation without state loss, export and reapply, policy and tool drift, web search, credential redaction, startup failure messages, and destroy |
-| `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a Pi model changed inside the sandbox, which export ignores |
-| `fabric_deployment` | One harness test each for OpenClaw and Pi, where a changed configuration replaces the agent with its sandbox, and missing or failed runtime declarations |
-| `kubernetes_agents` | The three-agent `external-gateway.yaml` examples for Kubernetes and OpenShift, one test each, against the fixture gateway reporting OpenShell's Kubernetes driver, with a metadata bundle describing the images and inference at a cluster Service URL without a key: a plan without effects; three sandboxes, each with a policy rule for the Service's name and no address grant; each agent's Fabric configuration with its own name and the Service URL; an unchanged apply without changes or gateway effects; export and reapply; and destroy. It does not check that a cluster resolves or reaches the Service |
-| `multi_agent` | Three OpenClaw agents in separate sandboxes, each with its own model, sharing one provider registration: one agent's rejected start, its removal, or another owner's label on its sandbox changes no agent that the document leaves unchanged |
-| `multiple_providers` | Two deployments' provider attachments, export and reapply, drift, and destroy, each scoped to its sandbox |
+| `deployment` | SDK and CLI lifecycles: the CLI's text and JSON results, a gateway change between plan and apply, interrupted creation, startup, admission, and observation failures with their recovery, credential redaction, and destroy after a failed first apply. One test applies a document with integrations, an authored inference API, native harness settings, grants, service exposures, and a tool limit; the CLI exports it, an unchanged reapply changes nothing, and each kind of observed drift stops plan and export without changes |
+| `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a model changed inside the sandbox, which export ignores |
+| `fabric_deployment` | A runtime declaration missing from saved state, and a rejected start whose message stays in the deployment's diagnostics |
+| `multi_agent` | Three OpenClaw agents: one agent's rejected start is reported alone and its retry replaces only it, and another owner's label on one sandbox stops every operation before it changes anything |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
-| `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
-| `travel_team_example` | `examples/hcl/travel-team` applied the same way: six Hermes agents in `for_each` sandboxes with per-role providers, grants, toolsets, and models; an unchanged second plan; a hosted-model change replacing only the scheduler's and buyer's sandboxes; and teardown that fails without `destroy = true` and removes everything with it. It reports each OpenTofu command's duration |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
-| `hcl_integration` | On Unix, each scenario in `crates/nemoclaw-e2e/hcl/integration/tests`, compiled by the SDK from `hcl/cases` and run under `tofu test` with the Docker provider mocked; see [`tofu test` cases](#tofu-test-cases) |
+| `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/hcl/integration/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
-`separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_configuration_on_stdin` check OpenClaw tool policies, whose changes replace the sandbox, with observation failures that change nothing.
 
 In `multi_agent`:
 
 - `one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it` replaces two sandboxes in an update, and Fabric rejects one agent's start.
-  The CLI names only the failed sandbox and leaves out Fabric's message, which `diagnostics/fabric-SANDBOX.json` keeps.
+  The CLI's JSON report names only the failed sandbox, says that changes may already have been made, and leaves out Fabric's message, which `diagnostics/fabric-SANDBOX.json` keeps.
   The other replacement finishes, the unchanged agent is neither replaced, stopped, nor restarted, and the retry replaces only the failed agent's sandbox.
-- `removing_one_agent_stops_only_its_runtime_and_keeps_shared_registrations` removes one sandbox from the document.
-  The plan deletes only that sandbox, its agent, and its agent configuration, and apply stops only that agent.
-  The other agents, the provider registration and profile, and the workspace stay as they were.
 - `a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others` gives one sandbox a different owner label on the gateway.
   Plan, `plan_destroy`, export, apply, and destroy each fail on the ownership change without changing `terraform.tfstate`, `intent.json`, the gateway, or any sandbox.
   After the label is restored, destroy finishes.
-
-The first two tests end with export, unchanged reapply, and destroy.
 
 ### `tofu test` Cases
 
 `hcl_integration` runs each scenario in `crates/nemoclaw-e2e/hcl/integration/tests` against the fixtures, with one shared runner:
 
 ```sh
-cargo build -p nemoclaw-test-fixtures
+cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=1 hcl_integration::
 ```
 
-A scenario is a document in `hcl/cases`, shared with the live E2E scenarios that `hcl_live::case` runs from `hcl/tests`, and an integration test file with the same name:
+A scenario is an integration test file, `hcl/integration/tests/<scenario>.tftest.hcl`, whose runs name the modules they apply.
+The runner prepares each module a test file names, in the same path of a work copy of the integration root:
 
-| File | Contents |
-|---|---|
-| `hcl/cases/<scenario>.yaml` | The NemoClaw document. The runner compiles it with the SDK into `cases/<scenario>/nemoclaw.tf.json` in a work copy of the integration root, beside a copy of `integration/harness/main.tf`. It points the gateway, any engine the document names, and inference endpoints at the fixtures. An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC. A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes. |
-| `hcl/integration/tests/<scenario>.tftest.hcl` | Provider mocks and run blocks whose `module` is `./cases/<scenario>`, with assertions. |
+| Module source | Input | What the runner writes |
+|---|---|---|
+| `./cases/<name>` | `hcl/cases/<name>.yaml`, shared with the live E2E scenarios that `hcl_live::case` runs from `hcl/tests` | The document compiled by the SDK as `nemoclaw.tf.json`, beside a copy of `integration/harness/main.tf` |
+| `./examples/<path>` | A NemoClaw document, `examples/<path>.yaml` | The same, so an example is tested unchanged |
+| `./examples/<path>` | An authored HCL directory, `examples/<path>` | A copy, with the bundle's version pinned on each NVIDIA provider, which a development bundle's pre-release providers need |
+
+Before compiling a document, the runner points its gateway, any engine it names, and its inference endpoints at the fixtures.
+An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC.
+A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes.
+The runner supplies a fixture value for each credential a document names and for each `credential_env = "NAME"` line in the test file.
 
 The harness declares the fixtures through the `fixture` provider's one data source, `fixture_state`, named `setup`, and reads what they recorded through the `observed` module:
 
 | Module | Purpose |
 |---|---|
-| `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. The harness variable `compute_driver` overrides the driver. Outputs the owner, the engine object prefix, and each service's container. |
-| `integration/modules/observed` | Outputs registrations by name and `agents` by sandbox, each with its Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. |
+| `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. Outputs the owner, the engine object prefix, and each service's container. |
+| `integration/modules/observed` | Outputs the registrations and `agents` the gateway holds, by name, each agent with its latest Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records: current sandbox IDs, gateway effects, Fabric starts, and the most sandboxes created at once. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. A test file for an authored example applies it with `declare` to declare the fixtures and read their endpoints. |
 
-A test file runs four steps:
+Harness variables change what the fixtures do:
+
+| Variable | Effect |
+|---|---|
+| `compute_driver` | The driver the gateway reports instead of the one the document requires |
+| `sandbox_create_delay_ms` | How long the gateway takes to create each sandbox, so that overlapping creations show |
+| `gateway_change` | A change the gateway makes once, as an outage would, in a run that targets `data.fixture_state.setup`: `stop_agent_runtime` stops one sandbox's Fabric runtime, and `forget_registrations` forgets every provider registration |
+| `permit_destroy` | The `openshell` and `fabric` providers' `destroy`, which the runner sets from it as the SDK's teardown graph does |
+| `baseline` | What an earlier run observed, for assertions to compare |
+
+A test file usually runs four steps:
 
 1. `fixtures` targets `data.fixture_state.setup`, so the fixtures exist before the deployment's first plan.
 2. `deploy` applies.
-3. `verify` applies again, without changes, and asserts against what deploy produced.
-4. `teardown` sets `permit_destroy = true`. The runner sets the `openshell` and `fabric` providers' `destroy` from that variable, as the SDK's teardown graph does, and OpenTofu's cleanup uses the last applying run's variables.
+3. `verify` applies again and asserts against what deploy produced.
+4. `teardown` sets `permit_destroy = true`. OpenTofu's cleanup uses the last applying run's variables.
 
-Docker scenarios mock the Docker provider by its generated alias and give mocked resources the IDs the `fixtures` module declares. One fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
-A run that is expected to fail lists the checkable object in `expect_failures`. A targeted plan does not evaluate locals or module outputs.
+A plan-only scenario needs no apply runs.
+A run's `module.observed` is read when the run plans, so it shows what the previous run left.
+A scenario that checks change, recovery, or isolation asserts each outcome in the run after the one that caused it.
+
+OpenTofu 1.12's test framework sets these limits:
+
+- Assertions cannot reference other runs. A test file passes an earlier run's `gateway` or `baseline` output, or the `observed` module's `openshell` output, in as the `baseline` variable. A plain second apply does not prove that nothing changed, so the scenario that owns unchanged reconciliation compares gateway effects and Fabric starts with that baseline.
+- OpenTofu keeps only the latest applying run's outputs of each module.
+- OpenTofu's cleanup evaluates the last applying run's variables again, and silently skips the destroy when one references a run whose outputs it no longer keeps. Keep run references out of a module's last applying run; the runner's teardown check reports what such a skip leaves.
+- Test files compare collections as lists or sets: a JSON array is a tuple, which never equals a list.
+- A run that is expected to fail lists the checkable object in `expect_failures`; a provider error fails the run. A targeted plan does not evaluate locals or module outputs.
+
+Docker scenarios mock the Docker provider by its generated alias and give mocked resources the IDs the `fixtures` module declares.
+On Unix, one fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
+On Windows, the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh` relay that the lifecycle step puts on `PATH` forwards. Managed Docker gateway storage takes only a local engine socket, so Windows skips scenarios with a managed Docker gateway and runs the others.
 
 The runner deals the scenarios round-robin across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the lifecycle per-test budget. They share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
 Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
-After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
+After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, naming any it finds, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
 In CI / Bundle, each `Lifecycle` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
 An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/hcl_integration/fixtures.rs`.
@@ -205,12 +232,15 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | `docker-vllm-shared-two-agents` | One authenticated vLLM service shared by OpenClaw and Hermes agents. Each harness has its own registration holding the generated key under its own sandbox name. Each sandbox names only its own registration, and each agent starts with that key name. |
 | `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. |
 | `kubernetes-gateway-driver-mismatch` | A Kubernetes document against a gateway that reports Docker. The workspace precondition rejects the plan, and the gateway's incompatibility names the Kubernetes driver. Nothing reaches OpenShell, Fabric, or the upstream. |
+| `kubernetes-external-three-agents` | `examples/kubernetes/external-gateway.yaml`, unchanged: three agents share one registration holding the credential from `INFERENCE_API_KEY`, and each starts with its own name; independent sandboxes are created at the same time. An unchanged apply changes nothing on the gateway and starts no agent. A stopped runtime starts again in the same sandbox, a forgotten registration is registered again without a sandbox change, and replacing one sandbox stops and starts only its agent |
+| `external-multiple-providers` | Two deployments on one gateway. The researcher attaches its hosted and local registrations, and the writer only the local one. The second deployment has its own workspace, each registration carries its deployment's owner, and each sandbox attaches only its own workspace's registrations. Applying the first deployment again after the second changes nothing |
+| `travel` | `examples/hcl/travel` applied unchanged with the Docker provider mocked: Ollama readiness against the fixture upstream listing the model, the registration at the address sandboxes use, the sandbox's policy, and the Pi agent's name, model, and instructions. An unchanged apply changes nothing on the gateway and starts no agent |
+| `travel-team` | `examples/hcl/travel-team` applied the same way: four registrations, each role's attachments, grants, and toolsets, and a hosted-model change that replaces only the scheduler's and buyer's sandboxes |
 
-In every scenario, the inference upstream receives no request.
+In every scenario except the authored examples, whose readiness lists the model, the inference upstream receives no request.
 The scenarios do not invoke agents or perform inference; the live E2E suites do.
 The vLLM and Ollama runtimes are represented by declared containers and files, not run.
 The OpenShift scenario does not exercise gateway TLS or bearer credentials.
-External Kubernetes deployments through the SDK are covered by `kubernetes_agents`.
 
 ### Helm Release Recovery
 
@@ -242,7 +272,7 @@ Run `cargo test -p nemoclaw-e2e --test integration remote_service:: -- --ignored
 The tests exercise the bundled CLI and providers with an isolated Docker-over-SSH simulator and the OpenShell fixture, for remote models and Ollama, managed Pi, and bearer credentials.
 They check recovery after failed startup, export and unchanged reapply, failed observation without lost bindings, and replacement of credentials outside state.
 Destroy removes disposable containers and service networks while retaining storage; the partial-runtime tests tear down after failed creation without first creating the missing compute.
-The two `unverified_*_images_are_checked_after_pull_before_storage` tests check that images are rejected after pull without creating storage or compute, and that the recorded image binding is cleaned up.
+`unverified_vllm_images_are_checked_after_pull_before_storage` checks that an image is rejected after pull without creating storage or compute, and that the recorded image binding is cleaned up; the image check after pull and the storage it protects are the same for Ollama.
 The `managed_bearer` tests check that apply sends no generation probes; Fabric owns native service startup, authentication, configuration, and protocol checks.
 Runtime status and Docker responses are simulated; the tests do not download or serve a model.
 

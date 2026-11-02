@@ -63,6 +63,24 @@ async fn export_refreshes_through_opentofu_without_applying_or_losing_bindings()
             "export must not run runtime health or generation probes"
         );
     }
+    // Fabric reports no applied configuration, so a model changed inside the
+    // sandbox outside OpenTofu is not drift: export still returns the
+    // declared document, and nothing is reconfigured or rewritten.
+    for configuration in fixture
+        .state
+        .lock()
+        .unwrap()
+        .fabric_configurations
+        .values_mut()
+    {
+        configuration["models"]["default"]["model"] = serde_json::json!("foreign-model");
+    }
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert_eq!(
+        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+        state
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     deployment.destroy(&cancel).await.unwrap();
 }
 
@@ -213,63 +231,6 @@ async fn credentialed_inference_applies_without_probes_then_exports_and_destroys
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
     assert!(fixture.state.lock().unwrap().workspaces.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-/// Fabric reports no applied configuration, so a model changed inside the
-/// sandbox outside OpenTofu is not drift: export still returns the declared
-/// document, and nothing is reconfigured or rewritten.
-async fn export_ignores_a_pi_model_changed_inside_the_sandbox() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .harness
-        .as_mut()
-        .unwrap()
-        .kind = "nvidia.fabric.pi".parse().unwrap();
-    let deployment = Deployment::new(directory.path(), &bundle);
-    let cancel = CancellationToken::new();
-    deployment.apply(&document, &cancel).await.unwrap();
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-    let effects = fixture.state.lock().unwrap().effects;
-    for model in fixture
-        .state
-        .lock()
-        .unwrap()
-        .fabric_configurations
-        .values_mut()
-    {
-        model["models"]["default"]["model"] = serde_json::json!("foreign-model");
-    }
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    assert_eq!(
-        fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-        state
-    );
-    assert!(
-        fixture
-            .state
-            .lock()
-            .unwrap()
-            .fabric_configurations
-            .values()
-            .all(|model| model["models"]["default"]["model"] == "foreign-model")
-    );
-    deployment.destroy(&cancel).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

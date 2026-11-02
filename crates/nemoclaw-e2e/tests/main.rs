@@ -9,7 +9,6 @@ mod agent_compatibility;
 mod cache_provider;
 #[path = "deployment.rs"]
 mod deployment;
-#[cfg(unix)]
 #[path = "../../test-support/docker_engine.rs"]
 mod docker_engine;
 #[path = "docker_fixture.rs"]
@@ -35,9 +34,8 @@ mod hcl_live;
 #[cfg(unix)]
 #[path = "helm_recovery.rs"]
 mod helm_recovery;
-// Managed gateway storage takes only a local engine socket, which only Unix
-// clients reach.
-#[cfg(unix)]
+// Scenarios with managed Docker gateway storage, which takes only a local
+// engine socket, run only on Unix; the runner skips them elsewhere.
 #[path = "hcl_integration/mod.rs"]
 mod hcl_integration;
 #[path = "hosted_parity.rs"]
@@ -47,8 +45,6 @@ mod interfaces_live;
 #[cfg(unix)]
 #[path = "../../test-support/kube_api.rs"]
 mod kube_api;
-#[path = "kubernetes_agents.rs"]
-mod kubernetes_agents;
 #[path = "kubernetes_chart.rs"]
 mod kubernetes_chart;
 #[path = "kubernetes_live.rs"]
@@ -62,8 +58,6 @@ mod managed_gateway;
 mod model_live;
 #[path = "multi_agent.rs"]
 mod multi_agent;
-#[path = "multiple_providers.rs"]
-mod multiple_providers;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
 #[path = "pseudo_terminal.rs"]
@@ -77,9 +71,6 @@ mod spark;
 mod tls;
 #[path = "../../test-support/http.rs"]
 mod transport;
-#[path = "travel_example.rs"]
-mod travel_example;
-mod travel_team_example;
 #[path = "web_search.rs"]
 mod web_search;
 
