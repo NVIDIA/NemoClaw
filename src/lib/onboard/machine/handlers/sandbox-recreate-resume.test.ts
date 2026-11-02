@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { planRegisteredExtraProviders } from "../../extra-provider-reconciliation";
 import { createSession } from "../../../state/onboard-session";
 import { recordCheckpointEffectGroup } from "../../checkpoint-record";
 import { handleSandboxState } from "./sandbox";
@@ -15,6 +16,12 @@ import {
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
+}));
+
+vi.mock("../../sandbox-registration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-registration")>()),
+  withSandboxImageRegistrationFence: async (operation: () => Promise<unknown>) => operation(),
 }));
 
 const GPU_PROOF = {
@@ -115,76 +122,64 @@ describe("handleSandboxState resume recreation", () => {
     },
   );
 
-  it("recreates a ready sandbox when its baked reasoning capability drifted (#7570)", async () => {
-    const session = createSession({ sandboxName: "saved" });
-    session.steps.sandbox.status = "complete";
-    const journal = bindJournaledRecreate(session);
-    const { deps, calls } = createDeps(
-      {
-        getSandboxReuseState: () => "ready",
-        getSandboxRecreateObservation: journal.observe,
-        getSandboxRegistryEntry: () => ({
-          name: "saved",
-          provider: "compatible-endpoint",
-          model: "model",
-          endpointUrl: "https://chat.example",
-          credentialEnv: "COMPATIBLE_API_KEY",
-          preferredInferenceApi: "openai-completions",
-          compatibleEndpointReasoning: "false",
-          toolDisclosure: "progressive",
-        }),
-        createSandbox: journal.completeCreate,
-      },
-      session,
-    );
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "saved",
-      provider: "compatible-endpoint",
-      endpointUrl: "https://chat.example",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      compatibleEndpointReasoning: "true",
-    });
-
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
-    );
-    expect(calls.recordSkip).not.toHaveBeenCalled();
-    expect(journal.completeCreate).toHaveBeenCalledWith(
-      expect.anything(),
-      "model",
-      "compatible-endpoint",
-      "openai-completions",
-      "saved",
-      null,
-      [],
-      null,
-      null,
-      null,
-      expect.anything(),
-      null,
-      [],
-      null,
-      {
-        sessionId: session.sessionId,
-        selection: {
-          provider: "compatible-endpoint",
-          model: "model",
-          endpointUrl: "https://chat.example",
-          endpointSource: null,
-          credentialEnv: "COMPATIBLE_API_KEY",
-          preferredInferenceApi: "openai-completions",
-          compatibleEndpointReasoning: "true",
-          compatibleEndpointReasoningEffort: null,
-          nimContainer: null,
+  it.each([
+    ["recorded", "false"],
+    ["missing", undefined],
+  ] as const)(
+    "reuses a ready sandbox with %s reasoning capability when it drifts without an explicit recreate (#13732)",
+    async (_case, recordedReasoning) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const journal = bindJournaledRecreate(session);
+      const { deps, calls } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRecreateObservation: journal.observe,
+          getSandboxRegistryEntry: () => ({
+            name: "saved",
+            provider: "compatible-endpoint",
+            model: "model",
+            endpointUrl: "https://chat.example",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            preferredInferenceApi: "openai-completions",
+            ...(recordedReasoning === undefined
+              ? {}
+              : { compatibleEndpointReasoning: recordedReasoning }),
+            toolDisclosure: "progressive",
+          }),
+          createSandbox: journal.completeCreate,
         },
-      },
-      expect.objectContaining({ compatibleEndpointReasoning: "true", recreate: true }),
-      undefined,
-    );
-  });
+        session,
+      );
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        provider: "compatible-endpoint",
+        endpointUrl: "https://chat.example",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        compatibleEndpointReasoning: "true",
+      });
+
+      // A plain resume must not delete a Ready sandbox to bake the reasoning
+      // capability; the recorded value wins and only an explicit
+      // --recreate-sandbox changes it (#13732).
+      expect(calls.note).not.toHaveBeenCalledWith(
+        "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
+      );
+      expect(calls.note).toHaveBeenCalledWith(
+        "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+      );
+      expect(calls.recordSkip).toHaveBeenCalled();
+      expect(journal.completeCreate).not.toHaveBeenCalled();
+      const fingerprint = session.checkpoint?.effectGroups.sandbox_create?.fingerprint;
+      expect(fingerprint).toContain(
+        `compatible-endpoint|model|openai-completions|${recordedReasoning ?? ""}|`,
+      );
+      expect(fingerprint).not.toContain("compatible-endpoint|model|openai-completions|true|");
+    },
+  );
 
   it("honors explicit recreate requests for completed ready sandboxes", async () => {
     const session = createSession({
@@ -227,7 +222,9 @@ describe("handleSandboxState resume recreation", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Recreate sandbox requested; recreating sandbox.",
     );
-    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
+      webSearchProvider: null,
+    });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
@@ -252,6 +249,103 @@ describe("handleSandboxState resume recreation", () => {
     });
     expect(result.sandboxName).toBe("saved");
   });
+
+  it.each(["tavily", "tavily-hermes-v1"])(
+    "omits shared %s credentials when fresh creation has no web-search selection (#13082)",
+    async (profileType) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: () => ({
+            name: "my-assistant",
+            provider: "provider",
+            model: "model",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-completions",
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+          }),
+          planRegisteredExtraProviders: (gatewayName, options = {}) =>
+            planRegisteredExtraProviders(gatewayName, {
+              ...options,
+              listExtraProviders: () => ["shared-search", "other"],
+              providerAdapter: {
+                getProvider: async ({ providerName }: { providerName: string }) => ({
+                  ok: true,
+                  value: {
+                    name: providerName,
+                    type: providerName === "shared-search" ? profileType : "nvidia",
+                  },
+                }),
+              } as never,
+            }),
+        },
+        session,
+      );
+      await handleSandboxState(baseOptions(deps, session));
+      expect((calls.createSandbox.mock.calls[0] as unknown[])[15]).toMatchObject({
+        extraProviders: ["other"],
+      });
+    },
+  );
+
+  it.each(["tavily", "tavily-hermes-v1"])(
+    "keeps saved opt-out on rebuild despite a retained %s registration used for live reattachment (#13082)",
+    async (profileType) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const journal = bindJournaledRecreate(session);
+      const planner = vi.fn((gatewayName: string, options = {}) =>
+        planRegisteredExtraProviders(gatewayName, {
+          ...options,
+          listExtraProviders: () => ["shared-search", "other"],
+          providerAdapter: {
+            getProvider: async ({ providerName }: { providerName: string }) => ({
+              ok: true,
+              value: {
+                name: providerName,
+                type: providerName === "shared-search" ? profileType : "nvidia",
+              },
+            }),
+          } as never,
+        }),
+      );
+      const { deps } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRecreateObservation: journal.observe,
+          getSandboxRegistryEntry: () => ({
+            name: "saved",
+            provider: "provider",
+            model: "model",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-completions",
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+            webSearchEnabled: false,
+            webSearchProvider: null,
+          }),
+          planRegisteredExtraProviders: planner,
+          createSandbox: journal.completeCreate,
+        },
+        session,
+      );
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        recreateSandbox: () => true,
+      });
+      expect(planner).toHaveBeenCalledExactlyOnceWith("nemoclaw", { webSearchProvider: null });
+      expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
+        extraProviders: ["other"],
+        resolved: expect.objectContaining({ extraProviders: ["other"] }),
+        recreate: true,
+      });
+    },
+  );
 
   it("passes an authoritative empty extra-provider list after reconciliation prunes stale names", async () => {
     const session = createSession({
@@ -279,7 +373,9 @@ describe("handleSandboxState resume recreation", () => {
       sandboxName: "saved",
     });
 
-    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
+      webSearchProvider: null,
+    });
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
     expect(createSandboxCall[14]).toEqual({

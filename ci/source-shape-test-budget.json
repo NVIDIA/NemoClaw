@@ -137,6 +137,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/portable-sandbox-build-diagnostics.test.ts",
+      "test": "reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "binds the exact PR publication to the generic NVIDIA GPU job",
       "category": "security"
@@ -499,6 +504,11 @@
     {
       "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
       "test": "runs npm and messaging consumers after retrying an interrupted %s manifest write",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
       "category": "compatibility"
     }
   ]

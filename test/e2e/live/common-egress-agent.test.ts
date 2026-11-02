@@ -790,6 +790,9 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
       await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
         expected: "REFERENCE_AGENT_OK",
+        publicFetchExpectation: PERSONAL_PUBLIC_FETCH_EXPECTATION,
+        persistCommandArtifacts: false,
+        redactOutputInFailure: true,
         label: "c2-agent-reference",
         sandboxName: OPENCLAW_OPEN_SANDBOX,
         prompt: `Use the web_fetch tool to fetch exactly this URL:

@@ -125,9 +125,10 @@ An inability to grant or remove trust is a hard failure.
 If the service fails inspection, startup, shutdown, or its health check, NemoClaw prints the formula log command and stops so Homebrew remains lifecycle authority.
 A host without Homebrew, or with no staged formula and no installed OpenShell keg, uses the standalone macOS gateway.
 A legacy installation, missing pin, changed formula, failed Homebrew operation, or invalid official-tap identity stops with repair guidance instead of changing lifecycle authority.
-The installer and supported CLI operations attempt anonymous completion telemetry to NVIDIA's fixed TEST receiver by default.
-Run `export NEMOCLAW_DISABLE_TELEMETRY=1` in this shell before installation to suppress collection and delivery.
-Repeat it in any new shell used for NemoClaw CLI commands.
+NemoClaw collects operation telemetry to help improve the project.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
+Production delivery is not enabled.
+To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 Rerunning the standard NemoClaw installer downloads and stages the pinned formula before onboarding is retried:
 
@@ -334,7 +335,8 @@ If registry or catalog availability prevents resolution, stock onboarding stops 
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
 Native Podman is selected with `NEMOCLAW_GATEWAY_RUNTIME=podman`, consumes the registered Podman provider bundle, and accepts exact managed-image receipts plus digest-pinned OpenClaw and Hermes external-image receipts.
-Native Podman does not select generated or user-supplied Dockerfile sources. Its managed-image onboarding does not build an image locally.
+Native Podman does not select generated or user-supplied Dockerfile sources.
+Its managed-image onboarding does not build an image locally.
 <AgentOnly variant="openclaw">
 The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
 </AgentOnly>
