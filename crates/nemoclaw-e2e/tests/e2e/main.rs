@@ -18,11 +18,6 @@ mod hosted_parity;
 mod cache_provider;
 #[path = "rust/docker_provider_proxy.rs"]
 mod docker_provider_proxy;
-#[cfg(unix)]
-// Unix only, as before it moved here from nemoclaw-sdk.
-#[cfg(target_os = "linux")]
-#[path = "rust/docker_registry.rs"]
-mod docker_registry;
 #[path = "rust/interfaces_live.rs"]
 mod interfaces_live;
 #[path = "rust/kubernetes_chart.rs"]
