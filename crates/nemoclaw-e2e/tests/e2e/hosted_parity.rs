@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Historical intent parity: each live hosted case in `hcl/cases` preserves the
+//! Historical intent parity: each live hosted case in `cases` preserves the
 //! portable intent of a reviewed raw v0 export. The live lifecycle of those
-//! cases is `hcl/tests/docker-{openclaw,hermes}-v0-parity.tftest.hcl`.
+//! cases is `tests/e2e/hcl/tests/docker-{openclaw,hermes}-v0-parity.tftest.hcl`.
 
 use nemoclaw_sdk::config::{ComputeDriver, Document, Gateway, HarnessKind, InferenceProviderKind};
 use serde_json::json;
@@ -103,12 +103,12 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
 fn live_inputs_preserve_raw_export_and_require_matching_authored_intent() {
     for (raw, current) in [
         (
-            include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
-            include_bytes!("../hcl/cases/docker-openclaw-v0-parity.yaml").as_slice(),
+            include_bytes!("../../fixtures/openclaw-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../../cases/docker-openclaw-v0-parity.yaml").as_slice(),
         ),
         (
-            include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml").as_slice(),
-            include_bytes!("../hcl/cases/docker-hermes-v0-parity.yaml").as_slice(),
+            include_bytes!("../../fixtures/hermes-nvidia-hosted/v0-export.yaml").as_slice(),
+            include_bytes!("../../cases/docker-hermes-v0-parity.yaml").as_slice(),
         ),
     ] {
         let document = authored_document(raw, current);
@@ -183,20 +183,20 @@ fn assert_hosted_document(document: &Document, harness: HarnessKind, runtime_roo
 
 #[test]
 fn hosted_openclaw_scenario_preserves_authored_intent() {
-    let raw = include_bytes!("../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
+    let raw = include_bytes!("../../fixtures/openclaw-nvidia-hosted/v0-export.yaml");
     let v1 = authored_document(
         raw,
-        include_bytes!("../hcl/cases/docker-openclaw-v0-parity.yaml"),
+        include_bytes!("../../cases/docker-openclaw-v0-parity.yaml"),
     );
     assert_hosted_document(&v1, "nvidia.fabric.openclaw".parse().unwrap(), "/app");
 }
 
 #[test]
 fn hosted_hermes_scenario_preserves_authored_intent() {
-    let export = include_bytes!("../fixtures/hermes-nvidia-hosted/v0-export.yaml");
+    let export = include_bytes!("../../fixtures/hermes-nvidia-hosted/v0-export.yaml");
     let v1 = authored_document(
         export,
-        include_bytes!("../hcl/cases/docker-hermes-v0-parity.yaml"),
+        include_bytes!("../../cases/docker-hermes-v0-parity.yaml"),
     );
     assert_hosted_document(&v1, "nvidia.fabric.hermes".parse().unwrap(), "/opt/hermes");
     let harness = v1

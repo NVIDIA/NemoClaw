@@ -103,7 +103,7 @@ available_kib="$(cat "${root}/available-kib")"
 # candidate image and a fresh deployment identity.
 case_name=docker-openclaw-v0-parity
 e2e="${repo}/crates/nemoclaw-e2e"
-python3 - "${e2e}/hcl/cases/${case_name}.yaml" "${image_ref}" <<'PY'
+python3 - "${e2e}/cases/${case_name}.yaml" "${image_ref}" <<'PY'
 import pathlib
 import re
 import sys
@@ -124,7 +124,7 @@ status=0
   NEMOCLAW_HCL_CASE="${case_name}" \
   NEMOCLAW_HCL_RUN="${run}" \
   NEMOCLAW_TEST_BUNDLE="${root}/bundle" \
-    "${root}/integration" hcl_live::case --exact --ignored --nocapture
+    "${root}/e2e" hcl_live::case --exact --ignored --nocapture
 ) || status=$?
 if test "${status}" -ne 0; then
   (exit "${status}") || diagnose_failure || true

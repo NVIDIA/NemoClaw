@@ -74,7 +74,7 @@ async fn three_agents_apply_export_reapply_and_destroy(example: &str) {
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn three_agents_on_a_kubernetes_gateway_apply_export_reapply_and_destroy() {
     three_agents_apply_export_reapply_and_destroy(include_str!(
-        "../../../examples/kubernetes/external-gateway.yaml"
+        "../../../../examples/kubernetes/external-gateway.yaml"
     ))
     .await;
 }
@@ -83,7 +83,7 @@ async fn three_agents_on_a_kubernetes_gateway_apply_export_reapply_and_destroy()
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn three_agents_on_an_openshift_gateway_apply_export_reapply_and_destroy() {
     three_agents_apply_export_reapply_and_destroy(include_str!(
-        "../../../examples/openshift/external-gateway.yaml"
+        "../../../../examples/openshift/external-gateway.yaml"
     ))
     .await;
 }

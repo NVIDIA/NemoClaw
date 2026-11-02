@@ -329,7 +329,7 @@ fn prepare(
         subnets.push(subnet.clone());
         let path = inputs.join(format!("{DUMMY_CASE}.yaml"));
         let template = fs::read_to_string(
-            Path::new("crates/nemoclaw-e2e/hcl/cases").join(format!("{DUMMY_CASE}.yaml")),
+            Path::new("crates/nemoclaw-e2e/cases").join(format!("{DUMMY_CASE}.yaml")),
         )?;
         fs::write(
             &path,
@@ -516,7 +516,7 @@ pub(super) fn run_live_docker(
 mod tests {
     #[test]
     fn the_dummy_case_binds_its_identity_gateway_and_image() {
-        let template = include_str!("../../../nemoclaw-e2e/hcl/cases/docker-dummy.yaml");
+        let template = include_str!("../../../nemoclaw-e2e/cases/docker-dummy.yaml");
         let bound = super::bind_case(
             template,
             "fresh-uid",

@@ -106,7 +106,7 @@ On Unix, the `capabilities` test reads `fabric_harnesses` from a fake Docker eng
 
 ## System Tests
 
-The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module.
+The system tests are the ignored tests in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which the `lifecycle` profile selects whole.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts:
 
 ```sh
@@ -131,7 +131,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
 | `travel_team_example` | `examples/hcl/travel-team` applied the same way: six Hermes agents in `for_each` sandboxes with per-role providers, grants, toolsets, and models; an unchanged second plan; a hosted-model change replacing only the scheduler's and buyer's sandboxes; and teardown that fails without `destroy = true` and removes everything with it. It reports each OpenTofu command's duration |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
-| `hcl_integration` | On Unix, each scenario in `crates/nemoclaw-e2e/hcl/integration/tests`, compiled by the SDK from `hcl/cases` and run under `tofu test` with the Docker provider mocked; see [`tofu test` cases](#tofu-test-cases) |
+| `hcl_integration` | On Unix, each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests`, compiled by the SDK from `crates/nemoclaw-e2e/cases` and run under `tofu test` with the Docker provider mocked; see [`tofu test` cases](#tofu-test-cases) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
@@ -154,7 +154,7 @@ The first two tests end with export, unchanged reapply, and destroy.
 
 ### `tofu test` Cases
 
-`hcl_integration` runs each scenario in `crates/nemoclaw-e2e/hcl/integration/tests` against the fixtures, with one shared runner:
+`hcl_integration` runs each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` against the fixtures, with one shared runner:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures
@@ -162,19 +162,19 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=1 hcl_integration::
 ```
 
-A scenario is a document in `hcl/cases`, shared with the live E2E scenarios that `hcl_live::case` runs from `hcl/tests`, and an integration test file with the same name:
+A scenario is a document in `cases`, shared with the live E2E scenarios that `hcl_live::case` runs from `tests/e2e/hcl/tests`, and an integration test file with the same name; paths are relative to `crates/nemoclaw-e2e`:
 
 | File | Contents |
 |---|---|
-| `hcl/cases/<scenario>.yaml` | The NemoClaw document. The runner compiles it with the SDK into `cases/<scenario>/nemoclaw.tf.json` in a work copy of the integration root, beside a copy of `integration/harness/main.tf`. It points the gateway, any engine the document names, and inference endpoints at the fixtures. An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC. A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes. |
-| `hcl/integration/tests/<scenario>.tftest.hcl` | Provider mocks and run blocks whose `module` is `./cases/<scenario>`, with assertions. |
+| `cases/<scenario>.yaml` | The NemoClaw document. The runner compiles it with the SDK into `cases/<scenario>/nemoclaw.tf.json` in a work copy of the integration root, beside a copy of `tests/integration/hcl/harness/main.tf`. It points the gateway, any engine the document names, and inference endpoints at the fixtures. An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC. A sandbox described by image metadata runs the fixture image, which the runner's metadata bundle describes. |
+| `tests/integration/hcl/tests/<scenario>.tftest.hcl` | Provider mocks and run blocks whose `module` is `./cases/<scenario>`, with assertions. |
 
 The harness declares the fixtures through the `fixture` provider's one data source, `fixture_state`, named `setup`, and reads what they recorded through the `observed` module:
 
 | Module | Purpose |
 |---|---|
-| `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. The harness variable `compute_driver` overrides the driver. Outputs the owner, the engine object prefix, and each service's container. |
-| `integration/modules/observed` | Outputs registrations by name and `agents` by sandbox, each with its Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. |
+| `tests/integration/hcl/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. The harness variable `compute_driver` overrides the driver. Outputs the owner, the engine object prefix, and each service's container. |
+| `tests/integration/hcl/modules/observed` | Outputs registrations by name and `agents` by sandbox, each with its Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. |
 
 A test file runs four steps:
 
@@ -191,7 +191,7 @@ Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tf
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
 In CI / Bundle, each `Lifecycle` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
-An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/hcl_integration/fixtures.rs`.
+An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/integration/tofu_test/fixtures.rs`.
 
 Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:
 

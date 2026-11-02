@@ -7,7 +7,7 @@
 On 2026-09-17, it replaced the synthetic legacy export used by #11813.
 The YAML retains the credential environment-variable reference and contains no credential value.
 
-`../../hcl/cases/docker-openclaw-v0-parity.yaml` records the same portable intent explicitly reauthored on 2026-09-17 for the required singular `agent` field, and on 2026-10-22 for inference providers and sandboxes keyed by name.
+`../../cases/docker-openclaw-v0-parity.yaml` records the same portable intent explicitly reauthored on 2026-09-17 for the required singular `agent` field, and on 2026-10-22 for inference providers and sandboxes keyed by name.
 The historical raw export retains its `agents` list and its lists of named inference providers and sandboxes.
 The deterministic test compares the authored case with a test-only projection of the historical data; the SDK supplies no compatibility translator.
 

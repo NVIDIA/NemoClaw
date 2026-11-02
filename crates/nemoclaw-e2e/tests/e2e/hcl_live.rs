@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Live HCL scenarios. `case` runs `hcl/tests/<case>.tftest.hcl` against
-//! `hcl/cases/<case>.yaml`, or the bound copy that `NEMOCLAW_HCL_DOCUMENT`
-//! names. Its run blocks drive the bundled CLI through `hcl/cli` and run
-//! `probe` from this binary once per target through `hcl/verifier`. The caller
+//! Live HCL scenarios. `case` runs `tests/e2e/hcl/tests/<case>.tftest.hcl`
+//! against `cases/<case>.yaml`, or the bound copy that `NEMOCLAW_HCL_DOCUMENT`
+//! names. Its run blocks drive the bundled CLI through `tests/e2e/hcl/cli` and
+//! run `probe` from this binary once per target through `tests/e2e/hcl/verifier`. The caller
 //! destroys the deployment, so cleanup also runs after a failed, cancelled, or
 //! timed-out job: `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 
@@ -26,7 +26,7 @@ fn case() {
     for directory in [&reports, &work] {
         fs::create_dir_all(directory).unwrap();
     }
-    let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("hcl/cases/{case}.yaml"));
+    let config = var("NEMOCLAW_HCL_DOCUMENT").unwrap_or_else(|_| format!("cases/{case}.yaml"));
     let context = json!({
         "config": fs::canonicalize(config).unwrap(),
         "state_dir": run.join("deployment"),
@@ -39,7 +39,7 @@ fn case() {
     for args in [&["get", "-no-color"][..], &["test", "-no-color", &filter]] {
         let status = Command::new(bundle.tofu())
             .args(args)
-            .current_dir("hcl")
+            .current_dir("tests/e2e/hcl")
             .env("TF_DATA_DIR", run.join("tofu"))
             .env("TF_VAR_context", context.to_string())
             .status()
@@ -51,7 +51,7 @@ fn case() {
 /// Invoke one target's agent. The published report records the outcome; the
 /// reply text stays in the private work directory for `hcl/verifier`.
 #[tokio::test]
-#[ignore = "run by hcl/verifier for one target"]
+#[ignore = "run by tests/e2e/hcl/verifier for one target"]
 async fn probe() {
     let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
     let (state, agent) = (PathBuf::from(input("STATE")), input("AGENT"));

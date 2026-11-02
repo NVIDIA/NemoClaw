@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # The integration test root. Each tests/<scenario>.tftest.hcl applies
-# ./cases/<scenario>, which the runner compiles from ../cases/<scenario>.yaml
+# ./cases/<scenario>, which the runner compiles from ../../../cases/<scenario>.yaml
 # beside a copy of harness/main.tf.
 
 terraform {

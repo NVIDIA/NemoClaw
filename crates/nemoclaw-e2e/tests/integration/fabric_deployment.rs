@@ -29,7 +29,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -67,7 +67,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         .kind = harness.parse().unwrap();
     if harness == "nvidia.fabric.pi" {
         let pi = Document::parse(
-            include_str!("../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
+            include_str!("../../../nemoclaw-sdk/tests/fixtures/config/fabric-pi.yaml").as_bytes(),
         )
         .unwrap();
         document
@@ -445,7 +445,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -495,7 +495,7 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
@@ -601,7 +601,7 @@ async fn a_stopped_agent_runtime_is_planned_and_started_again_in_its_sandbox() {
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
-        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+        include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();

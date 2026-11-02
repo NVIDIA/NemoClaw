@@ -238,8 +238,8 @@ fi
             ("image/ollama/Dockerfile", "FROM ollama/ollama@sha256:0\n"),
             // The HCL E2E case the suite binds to its run.
             (
-                "crates/nemoclaw-e2e/hcl/cases/docker-dummy.yaml",
-                include_str!("../../nemoclaw-e2e/hcl/cases/docker-dummy.yaml"),
+                "crates/nemoclaw-e2e/cases/docker-dummy.yaml",
+                include_str!("../../nemoclaw-e2e/cases/docker-dummy.yaml"),
             ),
         ] {
             let file = self.0.path().join(path);

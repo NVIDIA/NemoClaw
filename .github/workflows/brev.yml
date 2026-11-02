@@ -45,12 +45,12 @@ jobs:
       - name: Build live test executable
         run: |
           set -euo pipefail
-          cargo test --locked -p nemoclaw-e2e --test integration --no-run --message-format=json \
+          cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json \
             | tee "${RUNNER_TEMP}/brev-build.json" >/dev/null
-          binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "integration" and .profile.test == true) | .executable' "${RUNNER_TEMP}/brev-build.json" | tail -1)"
+          binary="$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test == true) | .executable' "${RUNNER_TEMP}/brev-build.json" | tail -1)"
           test -x "${binary}"
           mkdir candidate
-          cp "${binary}" candidate/integration
+          cp "${binary}" candidate/e2e
           cp -a dist/linux_amd64 candidate/bundle
           # Tar retains executable bits; no credential is present in this job.
           tar -cf "${RUNNER_TEMP}/brev-candidate.tar" candidate
