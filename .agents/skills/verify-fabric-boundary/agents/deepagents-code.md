@@ -68,7 +68,7 @@ If `agent.tools` is absent, or the shell-launch tool can't be removed alone thro
 
 ## Native Binding Hints
 
-These hints were observed at NemoClaw `7cc29a4a3e`, the revision [verify-yaml-deployment's Proven Pairs](../../verify-yaml-deployment/agents/deepagents-code.md#proven-pairs) records, and the Fabric revision that [docs/state.md](../../../../docs/state.md) pins, `a3b57155593877135f2557ef37d5e18161a1ad82`.
+These hints were observed at NemoClaw `7cc29a4a3e`, the revision [verify-yaml-deployment's Proven Pairs](../../verify-yaml-deployment/agents/deepagents-code.md#proven-pairs) records, and Fabric `a3b57155593877135f2557ef37d5e18161a1ad82`.
 No hint is recorded for the shell-launch, file-write, or skill-authoring tool, the skill directory, the install and enable commands, or the plugin format; resolve them as [Record the Native Bindings](../SKILL.md#record-the-native-bindings) describes.
 Also record whether `dcode`'s file tools write the sandbox filesystem or a virtual backend: a file that exists only in tool state doesn't pass a filesystem check.
 

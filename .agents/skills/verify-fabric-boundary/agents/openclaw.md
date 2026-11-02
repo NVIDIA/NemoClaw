@@ -35,8 +35,8 @@ Write `agent.tools.allow` with the identifiers the descriptor's tool contract de
 The [full-featured OpenClaw example](../../../../examples/full-featured-openclaw.yaml) restricts an agent with `allow: [read]`, a native tool name.
 If the contract declares none of these, leave `agent.tools` out: the shell checks run on the default tool set, and `change` fails as [Shell Restriction](#shell-restriction) says.
 
-If the base YAML already declares `interfaces.dashboard`, such as the one with `public_origins` for a service exposure, keep it and its port.
-The Web UI checks use the loopback `Forward` command that apply prints, so they need no `public_origins` entry or service exposure ([openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md#gotchas)).
+If the base YAML already declares `interfaces.dashboard`, keep it and its port.
+The Web UI checks use the loopback `Forward` command that apply prints, so they need no service exposure ([openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md#gotchas)).
 OpenClaw reserves the ports from `port` through `port + 110` ([docs/interfaces.md](../../../../docs/interfaces.md#enable-an-interface)).
 
 The rest has no field in v1's docs, so the runner resolves it from `$EVIDENCE/descriptor.json`:
@@ -55,7 +55,7 @@ If the shell-launch tool can't be removed alone through a declared field, `chang
 
 ## Native Binding Hints
 
-These hints were observed at OpenClaw `2026.9.4` and the Fabric revision that [docs/agents.md](../../../../docs/agents.md#run-one-headless-openclaw-request) pins, `a3b57155593877135f2557ef37d5e18161a1ad82`.
+These hints were observed at OpenClaw `2026.9.4` and Fabric `a3b57155593877135f2557ef37d5e18161a1ad82`.
 No hint is recorded for the file-write tool, the native call record, or the install and enable commands.
 
 - **shell-launch tool:** `exec`. The `process` tool controlled existing `exec` processes, and the `terminal` tool managed Control UI terminals that an operator opened and couldn't create one. An empty terminal list doesn't mean `exec` is unavailable. Never ask for the native terminal tool while forbidding other tools: that selects a different capability.
