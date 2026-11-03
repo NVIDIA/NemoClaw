@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { readHermesBuildSettings } from "../../../agents/hermes/config/build-env";
 import { buildConfig as buildOpenClawConfig } from "../../../scripts/generate-openclaw-config.mts";
+import { createHermesSwitchyardRoutingIntent } from "../hermes-switchyard-routing";
 import {
   type ManagedStartupAgentEnvironment,
   mapManagedStartupProfileToAgentEnvironment,
@@ -493,6 +494,7 @@ describe("managed startup agent environment", () => {
     expect(result.configurationEnvironment).toEqual({
       CHAT_UI_URL: "https://hermes.example.test:19189",
       NEMOCLAW_CONTEXT_WINDOW: "65536",
+      NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: "",
       NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
       NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: expect.any(String),
       NEMOCLAW_INFERENCE_API: "anthropic-messages",
@@ -562,6 +564,28 @@ describe("managed startup agent environment", () => {
       kind: "configure-dashboard",
       dashboard: hermesProfile().dashboard,
     });
+  });
+
+  it("replays Switchyard routing through configuration input without ambient runtime activation (#13862)", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nemotron-nano" },
+      capable: { provider: "openai-api", model: "gpt-5.2" },
+    });
+    const baseProfile = hermesProfile();
+    const profile: ManagedStartupProfile = {
+      ...baseProfile,
+      agentConfig: {
+        agent: "hermes",
+        webSearch: { enabled: true, provider: "tavily" },
+        switchyardRouting: routing,
+      },
+    };
+    const mapped = mapManagedStartupProfileToAgentEnvironment(profile);
+    const settings = readHermesBuildSettings(mapped.configurationEnvironment);
+
+    expect(settings.model).toBe("switchyard");
+    expect(settings.switchyardRouting).toEqual(routing);
+    expect(mapped.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64");
   });
 
   it("refuses to start a legacy Hermes dashboard without its browser URL (#10651)", () => {

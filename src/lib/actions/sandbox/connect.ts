@@ -224,6 +224,7 @@ export type SandboxInferenceRouteProbe = {
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+  gatewayName?: string;
 };
 
 type SandboxInferenceRouteEnsureResult = {
@@ -458,6 +459,7 @@ async function runSandboxConnectProbe(
         agentName,
         commandExecutor: sandboxCommandExecutor,
         ensureInferenceRoute: () => routeResult,
+        gatewayName: getSandboxTargetGatewayName(sandboxName),
         sandboxName,
       }),
     );
@@ -1366,12 +1368,13 @@ async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise
 async function runSandboxInferenceRouteProbe(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
+  gatewayName?: string,
 ): Promise<SandboxInferenceRouteProbe> {
   const completion = await sandboxCommandExecutor.runBuffered(
     buildSandboxInferenceRouteProbeRequest(
       sandboxName,
       agent,
-      undefined,
+      gatewayName,
       OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
     ),
   );
@@ -1391,10 +1394,10 @@ async function runSandboxInferenceRouteProbe(
 export async function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
+  { attempts = 1, delayMs = 0, gatewayName }: InferenceRouteProbeOptions = {},
 ): Promise<SandboxInferenceRouteProbe> {
   const attemptCount = Math.max(1, Math.floor(attempts));
-  return retryUntilAsync(() => runSandboxInferenceRouteProbe(sandboxName, agent), {
+  return retryUntilAsync(() => runSandboxInferenceRouteProbe(sandboxName, agent, gatewayName), {
     accept: (result) => result.healthy,
     retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
     sleep: (milliseconds) =>
@@ -1426,7 +1429,7 @@ async function reapplyVmInferenceRoute(
     connectInferenceRouteMutationRequest(gatewayName, inference.provider, inference.model),
   );
   if (!applyResult.ok && applyResult.ambiguous) throw new Error(applyResult.error.message);
-  return probeSandboxInferenceRoute(sandboxName, agent);
+  return probeSandboxInferenceRoute(sandboxName, agent, { gatewayName });
 }
 
 export async function repairSandboxInferenceRouteWithDeps(
@@ -1574,7 +1577,8 @@ async function repairSandboxInferenceRouteIfNeeded(
     { quiet },
     {
       isRepairDisabled: () => process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1",
-      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      probe: (name, options) =>
+        probeSandboxInferenceRoute(name, agent, { ...(options ?? {}), gatewayName }),
       shouldApplyVmDnsMonkeypatch,
       applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
       reapplyVmInferenceRoute: (name, sandbox) =>
@@ -1724,7 +1728,8 @@ async function resetManagedInferenceRoute(
         inferenceRouteMutator.setInferenceRoute(
           connectInferenceRouteMutationRequest(gatewayName, provider, model),
         ),
-      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      probe: (name, options) =>
+        probeSandboxInferenceRoute(name, agent, { ...(options ?? {}), gatewayName }),
       printUnrecoverableInferenceRoute,
     },
   );
@@ -1846,7 +1851,7 @@ async function ensureSandboxInferenceRouteUnlocked(
       if (!verifyLocalInferenceRouteDependencies(provider, { quiet })) {
         return { sandbox: sb, routeHealthy: false };
       }
-      const finalProbe = await probeSandboxInferenceRoute(sandboxName, agent);
+      const finalProbe = await probeSandboxInferenceRoute(sandboxName, agent, { gatewayName });
       const strictRouteHealthy =
         finalProbe.healthy &&
         finalProbe.httpStatus !== undefined &&
@@ -2437,11 +2442,15 @@ export async function printInteractiveSessionHints(sandboxName: string): Promise
 
   // Active session hint — inform if already connected in another terminal
   try {
-    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps());
+    const sessionResult = getActiveSandboxSessions(
+      sandboxName,
+      createSessionDeps(),
+      getSandboxTargetGatewayName(sandboxName),
+    );
     if (sessionResult.detected && sessionResult.sessions.length > 0) {
       const count = sessionResult.sessions.length;
       console.log(
-        `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+        `  ${D}Note: ${count} existing active session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
       );
     }
   } catch {
@@ -3273,7 +3282,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
     return { ...buildHermesPortableCommandAuthority(sandboxName), gatewayName };
   };
   requalifyPortableDisposition();
-  if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  if (!hermesPortable) {
+    prepareHermesLightTerminalSkin(
+      sandboxName,
+      agent,
+      process.env,
+      sb ? getPersistedSandboxTargetGatewayName(sb) : undefined,
+    );
+  }
   requalifyPortableDisposition();
   const portableAuthority = hermesPortable ? await requalifyHermesPortableForConnect() : null;
   return {
@@ -3289,9 +3305,13 @@ async function prepareConnectSandboxWithinLifecycleFence(
     request: {
       kind: "connect",
       sandboxName,
-      target: portableAuthority
-        ? { kind: "named", gatewayName: portableAuthority.gatewayName }
-        : { kind: "selected" },
+      target: namedOpenShellGateway(
+        portableAuthority
+          ? portableAuthority.gatewayName
+          : sb
+            ? getPersistedSandboxTargetGatewayName(sb)
+            : getSandboxTargetGatewayName(sandboxName),
+      ),
     },
   };
 }

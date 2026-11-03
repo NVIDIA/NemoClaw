@@ -3,14 +3,13 @@
 
 import { readTelemetryTestLabel } from "../../domain/telemetry/event";
 
-export const TEST_TELEMETRY_ENDPOINT =
-  "https://events.telemetry.data-uat.nvidia.com/v1.1/events/json";
+export const TELEMETRY_ENDPOINT = "https://events.telemetry.data.nvidia.com/v1.1/events/json";
 export interface TelemetryDeliveryConfig {
   endpoint: URL;
   localReceiver?: boolean;
 }
 
-// Ordinary and QA operations use TEST until a separate Production cutover.
+// Eligible telemetry uses Production; test labels remain reporting filters.
 export const telemetryRuntime: { config: TelemetryDeliveryConfig | null } = { config: null };
 
 export function shouldSuppressTelemetry(env: NodeJS.ProcessEnv): boolean {
@@ -27,7 +26,7 @@ export function allowedTelemetryEndpoint(config: TelemetryDeliveryConfig): boole
   if (url.username || url.password || url.search || url.hash) return false;
   if (config.localReceiver)
     return url.protocol === "http:" && ["127.0.0.1", "[::1]"].includes(url.hostname);
-  return url.href === TEST_TELEMETRY_ENDPOINT;
+  return url.href === TELEMETRY_ENDPOINT;
 }
 
 export function allowedTelemetryCollection(
@@ -37,7 +36,7 @@ export function allowedTelemetryCollection(
   return config !== null && allowedTelemetryEndpoint(config) && testLabel !== null;
 }
 
-/** Select the fixed TEST receiver before a CLI or installer operation starts. */
+/** Select the fixed Production receiver before a CLI or installer operation starts. */
 export function resolveTelemetryDeliveryConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): TelemetryDeliveryConfig | null {
@@ -45,7 +44,7 @@ export function resolveTelemetryDeliveryConfig(
   const label = readTelemetryTestLabel(env);
   if (label === null) return null;
   if (!telemetryRuntime.config) {
-    telemetryRuntime.config = { endpoint: new URL(TEST_TELEMETRY_ENDPOINT) };
+    telemetryRuntime.config = { endpoint: new URL(TELEMETRY_ENDPOINT) };
   }
   return allowedTelemetryCollection(telemetryRuntime.config, label)
     ? telemetryRuntime.config

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   openClawAgentResponseRecord,
+  projectOpenClawAgentCompletion,
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
   parseOpenClawJsonDocuments,
@@ -562,5 +563,60 @@ describe("openClawAgentIncompleteTurnSignal", () => {
       "replayInvalid=true",
       "timeoutPhase=post_turn",
     ]);
+  });
+});
+
+describe("completion evidence ownership", () => {
+  it("shares final-envelope completion predicates with replay-risk acceptance", () => {
+    const reply = "private-final-reply";
+    const response = {
+      status: "ok",
+      summary: "completed",
+      result: {
+        payloads: [{ text: reply }],
+        meta: {
+          replayInvalid: true,
+          aborted: false,
+          stopReason: " STOP ",
+          finalAssistantVisibleText: reply,
+          toolSummary: { calls: 2, failures: 0 },
+        },
+      },
+    };
+    const documents = [
+      { payloads: [], meta: { aborted: true } },
+      response,
+      { event: "log", meta: { aborted: true } },
+    ];
+    expect(projectOpenClawAgentCompletion(documents)).toEqual({
+      runCompleted: true,
+      aborted: false,
+      errorPresent: false,
+      stopReasonIsStop: true,
+      stopReasonAccepted: true,
+      toolCalls: 2,
+      toolFailures: 0,
+      finalTextPresent: true,
+      finalTextMatchesPayload: true,
+    });
+    expect(openClawAgentIncompleteTurnSignal(JSON.stringify(documents))).toBeNull();
+    response.result.meta.toolSummary.failures = 1;
+    expect(projectOpenClawAgentCompletion(documents).toolFailures).toBe(1);
+    expect(openClawAgentIncompleteTurnSignal(JSON.stringify(documents))?.markers).toContain(
+      "replayInvalid=true",
+    );
+    expect(JSON.stringify(projectOpenClawAgentCompletion(documents))).not.toContain(reply);
+  });
+});
+
+describe("malformed completion diagnostics", () => {
+  it("rejects an unconvertible stop marker without losing the redacted artifact", () => {
+    const documents = [{ payloads: [], meta: { aborted: true, stopReason: { toString: null } } }];
+    expect(projectOpenClawAgentCompletion(documents)).toMatchObject({
+      runCompleted: false,
+      aborted: true,
+      stopReasonIsStop: false,
+      stopReasonAccepted: false,
+    });
   });
 });

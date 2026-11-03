@@ -120,11 +120,13 @@ import {
   sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
+  assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  hermesSwitchyardRoutingCreateIntentFields,
   initialOpenClawToolDisclosure,
   isValidSavedResourceProfile,
   replacesSameNameSandbox,
@@ -227,7 +229,7 @@ export interface SandboxStateOptions<
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   compatibleEndpointReasoningEffort: string | null;
@@ -829,6 +831,13 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    assertHermesSwitchyardRoutingReusable({
+      agentName: (this.options.agent as { name?: string } | null)?.name,
+      entry: registryEntry,
+      env: this.options.env,
+      recreate: this.options.recreateSandbox(false),
+      sandboxState: sandboxReuseState,
+    });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
@@ -999,6 +1008,12 @@ class SandboxStateFlow<
       this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
+      ...Object.values(
+        hermesSwitchyardRoutingCreateIntentFields(
+          (this.options.agent as { name?: string } | null)?.name,
+          this.options.env,
+        ),
+      ).map((routing) => JSON.stringify(routing)),
     ].join("|");
     if (!createIntent) return lightFingerprint;
     // Extra providers are live gateway attachments, not durable build intent.
@@ -1352,7 +1367,10 @@ class SandboxStateFlow<
     return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };
   }
 
-  private reserveCreateRouteForSession(sandboxName: string): void {
+  private reserveCreateRouteForSession(
+    sandboxName: string,
+    preparedRoute?: import("../../inference-providers/types").DeferredInferenceRouteReservation,
+  ): void {
     reserveSandboxResumeRoute(
       sandboxName,
       this.deps.getSandboxRegistryEntry(sandboxName),
@@ -1364,10 +1382,11 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
         preferredInferenceApi: this.options.preferredInferenceApi,
         gatewayName: this.options.gatewayName,
-        reservationSessionId: this.options.session?.sessionId,
         ...(this.options.stagedNativeLocalRecreation
           ? { nativeLocalProviderAttachment: this.options.stagedNativeLocalRecreation.attachment }
           : {}),
+        ...preparedRoute,
+        reservationSessionId: this.options.session?.sessionId,
       },
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
@@ -1400,8 +1419,8 @@ class SandboxStateFlow<
           this.deps.getSandboxRegistryEntry(sandboxName),
         );
         if (this.options.deferredInferenceRoute) {
-          await this.options.deferredInferenceRoute(() =>
-            this.reserveCreateRouteForSession(sandboxName),
+          await this.options.deferredInferenceRoute((preparedRoute) =>
+            this.reserveCreateRouteForSession(sandboxName, preparedRoute),
           );
         } else {
           this.reserveCreateRouteForSession(sandboxName);

@@ -31,6 +31,7 @@ import {
   destroyPresence,
   dockerRuntime,
   onboardSession as sessionDependency,
+  rebuildFlowHelpers,
   rebuildPreflightPhase,
   registerHarnessRebuildBackup,
 } from "../../../../test/helpers/rebuild-flow-harness";
@@ -143,100 +144,114 @@ describe("rebuild with independent recovery sessions", () => {
     const savedSource = harness.getSandboxEntry();
     expect(fingerprintSandboxRegistryEntry(savedSource)).toBe(journal?.sourceRegistryFingerprint);
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    const { resolveGatewayStateDirForPort } = await import("../../onboard/gateway-binding");
-    const { writeDockerDriverGatewayRuntimeMarkerForStateDir } =
-      await import("../../onboard/docker-driver-gateway-runtime-marker");
-    writeDockerDriverGatewayRuntimeMarkerForStateDir(
-      resolveGatewayStateDirForPort({ home: testHome, port: journal!.gatewayPort }),
-      {
-        pid: 4242,
-        desiredEnv: {},
-        endpoint: `https://127.0.0.1:${journal!.gatewayPort}`,
-        dockerHost: null,
-        createdAt: new Date(Date.now() - 1_000).toISOString(),
-        runtimeProviderId: "docker",
-      },
-    );
-    onboardSession.markRetainedSandboxRecovery(
-      "alpha",
-      "replacement identity unavailable",
-      undefined,
-      {
-        gatewayName: journal!.gatewayName,
-        gatewayPort: journal!.gatewayPort,
-        lifecycleGeneration: journal!.targetGeneration,
-        createAttemptNonce: "a".repeat(62),
-      },
-    );
-    expect(onboardSession.listRetainedSandboxRecoveryRecords()).toHaveLength(1);
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
-    );
-    expect(onboardSession.acquireOnboardLock("select beta").acquired).toBe(true);
-    try {
-      onboardSession.selectRebuildSession("beta");
-    } finally {
-      onboardSession.releaseOnboardLock();
-    }
-    expect(onboardSession.loadSession()?.sandboxName).toBe("beta");
-    expect(onboardSession.loadRebuildSession("alpha")?.checkpoint?.sandboxRecreate?.id).toBe(
-      journal?.id,
-    );
-    const resumed = createRebuildFlowHarness({
-      staleRecovery: true,
-      sandboxEntry: { ...savedSource },
-      captureOpenshell: (args) =>
-        args.includes("list")
-          ? { status: 0, output: "[]", stdout: "[]", stderr: "" }
-          : {
-              status: 1,
-              output: "",
-              stdout: "",
-              stderr: "Error: sandbox alpha not found",
-            },
-      onboard,
-    });
-    useRealSessions();
-    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
-    vi.stubEnv("DOCKER_CONTEXT", "default");
-    vi.spyOn(dockerRuntime, "dockerRun").mockImplementation((args) => {
-      expect(args).toContain("volume");
-      return { status: 0, stdout: "", stderr: "", pid: 0, output: [null, "", ""], signal: null };
-    });
-    vi.spyOn(destroyPresence, "observeDestroyContainerIdentity").mockReturnValue({
-      status: "observed",
-      rows: [],
-      malformedRows: 0,
-    });
-    // Production discovery rereads the persisted manifest, including later handoff writes.
-    registerHarnessRebuildBackup(manifest);
-    resumed.backupSandboxStateSpy.mockClear();
-    resumed.runOpenshellSpy.mockClear();
-    const runPreflight = rebuildPreflightPhase.runRebuildPreflightPhase;
-    const preflight = vi
-      .spyOn(rebuildPreflightPhase, "runRebuildPreflightPhase")
-      .mockImplementation((...args) => {
-        // Successful rebuilds retire the MCP handoff in place after preflight.
-        expect(args).toEqual([
+    // Acquire the real host fence before simulating the Linux-only recovery path.
+    await rebuildFlowHelpers.withRebuildHostFence(testHome, async () => {
+      const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      try {
+        const { resolveGatewayStateDirForPort } = await import("../../onboard/gateway-binding");
+        const { writeDockerDriverGatewayRuntimeMarkerForStateDir } =
+          await import("../../onboard/docker-driver-gateway-runtime-marker");
+        writeDockerDriverGatewayRuntimeMarkerForStateDir(
+          resolveGatewayStateDirForPort({ home: testHome, port: journal!.gatewayPort }),
+          {
+            pid: 4242,
+            desiredEnv: {},
+            endpoint: `https://127.0.0.1:${journal!.gatewayPort}`,
+            dockerHost: null,
+            createdAt: new Date(Date.now() - 1_000).toISOString(),
+            runtimeProviderId: "docker",
+          },
+        );
+        onboardSession.markRetainedSandboxRecovery(
           "alpha",
-          { yes: true, force: false, verbose: false },
-          expect.objectContaining({ recoveryManifest: manifest }),
-        ]);
-        return runPreflight(...args);
-      });
+          "replacement identity unavailable",
+          undefined,
+          {
+            gatewayName: journal!.gatewayName,
+            gatewayPort: journal!.gatewayPort,
+            lifecycleGeneration: journal!.targetGeneration,
+            createAttemptNonce: "a".repeat(62),
+          },
+        );
+        expect(onboardSession.listRetainedSandboxRecoveryRecords()).toHaveLength(1);
+        const manifest = JSON.parse(
+          fs.readFileSync(path.join(harness.backupPath, "rebuild-manifest.json"), "utf8"),
+        );
+        expect(onboardSession.acquireOnboardLock("select beta").acquired).toBe(true);
+        try {
+          onboardSession.selectRebuildSession("beta");
+        } finally {
+          onboardSession.releaseOnboardLock();
+        }
+        expect(onboardSession.loadSession()?.sandboxName).toBe("beta");
+        expect(onboardSession.loadRebuildSession("alpha")?.checkpoint?.sandboxRecreate?.id).toBe(
+          journal?.id,
+        );
+        const resumed = createRebuildFlowHarness({
+          staleRecovery: true,
+          sandboxEntry: { ...savedSource },
+          captureOpenshell: (args) =>
+            args.includes("list")
+              ? { status: 0, output: "[]", stdout: "[]", stderr: "" }
+              : {
+                  status: 1,
+                  output: "",
+                  stdout: "",
+                  stderr: "Error: sandbox alpha not found",
+                },
+          onboard,
+        });
+        useRealSessions();
+        vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+        vi.stubEnv("DOCKER_CONTEXT", "default");
+        vi.spyOn(dockerRuntime, "dockerRun").mockImplementation((args) => {
+          expect(args).toContain("volume");
+          return {
+            status: 0,
+            stdout: "",
+            stderr: "",
+            pid: 0,
+            output: [null, "", ""],
+            signal: null,
+          };
+        });
+        vi.spyOn(destroyPresence, "observeDestroyContainerIdentity").mockReturnValue({
+          status: "observed",
+          rows: [],
+          malformedRows: 0,
+        });
+        // Production discovery rereads the persisted manifest, including later handoff writes.
+        registerHarnessRebuildBackup(manifest);
+        resumed.backupSandboxStateSpy.mockClear();
+        resumed.runOpenshellSpy.mockClear();
+        const runPreflight = rebuildPreflightPhase.runRebuildPreflightPhase;
+        const preflight = vi
+          .spyOn(rebuildPreflightPhase, "runRebuildPreflightPhase")
+          .mockImplementation((...args) => {
+            // Successful rebuilds retire the MCP handoff in place after preflight.
+            expect(args).toEqual([
+              "alpha",
+              { yes: true, force: false, verbose: false },
+              expect.objectContaining({ recoveryManifest: manifest }),
+            ]);
+            return runPreflight(...args);
+          });
 
-    await expect(
-      resumed.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+        await expect(
+          resumed.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).resolves.toBeUndefined();
 
-    expect(preflight).toHaveBeenCalledOnce();
-    expect(onboard).toHaveBeenCalledTimes(2);
-    expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(onboardSession.listRetainedSandboxRecoveryRecords()).toEqual([]);
-    expectNoSandboxDelete(resumed.runOpenshellSpy);
-    expect(onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.id).toBe(
-      interrupted?.checkpoint?.sandboxRecreate?.id,
-    );
+        expect(preflight).toHaveBeenCalledOnce();
+        expect(onboard).toHaveBeenCalledTimes(2);
+        expect(resumed.backupSandboxStateSpy).not.toHaveBeenCalled();
+        expect(onboardSession.listRetainedSandboxRecoveryRecords()).toEqual([]);
+        expectNoSandboxDelete(resumed.runOpenshellSpy);
+        expect(onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.id).toBe(
+          interrupted?.checkpoint?.sandboxRecreate?.id,
+        );
+      } finally {
+        platform.mockRestore();
+      }
+    });
   });
 });
