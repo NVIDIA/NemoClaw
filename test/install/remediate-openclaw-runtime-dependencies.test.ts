@@ -26,6 +26,9 @@ import {
   patchOpenClawManagedPluginOverrides,
 } from "../../scripts/lib/remediate-openclaw-runtime-dependencies.mts";
 
+import { OPENCLAW_LEGACY_SECURITY_WORKSPACES } from "../fixtures/openclaw-legacy-security-workspaces";
+import { OPENCLAW_97_WORKSPACE } from "../fixtures/openclaw-2026.9.7-workspace";
+
 const directories: string[] = [];
 function fixture(installedVersion = "8.12.3") {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-security-"));
@@ -38,6 +41,9 @@ function fixture(installedVersion = "8.12.3") {
     join(root, "node_modules/openclaw/package.json"),
     JSON.stringify({ name: "openclaw", version: "2026.9.7" }),
   );
+  writeFileSync(join(root, "node_modules/openclaw/pnpm-workspace.yaml"), OPENCLAW_97_WORKSPACE, {
+    mode: 0o600,
+  });
   writeFileSync(
     join(legacy, "package.json"),
     JSON.stringify({ name: "undici", version: "8.10.2" }),
@@ -313,7 +319,7 @@ describe("OpenClaw managed plugin security overrides", () => {
       failure.mockRestore();
       patchOpenClawManagedPluginOverrides(owner);
       expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+        "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
       );
       expect(readWorkspaceSnapshot(workspace).mode).toBe(original.mode);
     },
@@ -378,7 +384,7 @@ describe("OpenClaw managed plugin security overrides", () => {
       failure.mockRestore();
       remediateOpenClawRuntimeDependencies(root, { updateLock: true });
       expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+        "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
       );
       expect(JSON.parse(readFileSync(manifest, "utf8")).dependencies).toEqual({
         undici: "8.12.3",
@@ -399,7 +405,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     const failure = failMetadataDirectorySync();
     expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("directory sync failed");
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
     expect(fs.readdirSync(owner).sort()).toEqual(entries);
     // Already patched bytes must not hide an incomplete directory publication on retry.
@@ -407,7 +413,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     failure.mockRestore();
     patchOpenClawManagedPluginOverrides(owner);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
     expect(fs.readdirSync(owner).sort()).toEqual(entries);
   });
@@ -417,7 +423,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     patchOpenClawManagedPluginOverrides(owner);
     const patched = readWorkspaceSnapshot(workspace);
     expect(createHash("sha256").update(patched.contents).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
     expect(patched.mode).toBe(0o600);
     patchOpenClawManagedPluginOverrides(owner);
@@ -456,7 +462,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     );
     patchOpenClawManagedPluginOverrides(owner);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
   });
 
@@ -518,7 +524,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     });
     expect(readFileSync(lockfile)).toEqual(originalLock);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      "888953ffb621f73f897e34ca0a8fc06b89de8a3bbde3df38ec596238f1445f39",
     );
   });
 
@@ -533,5 +539,33 @@ describe("OpenClaw managed plugin security overrides", () => {
     writeFileSync(workspace, "overrides: {}\n");
     expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("source integrity mismatch");
     expect(readFileSync(workspace, "utf8")).toBe("overrides: {}\n");
+  });
+});
+
+describe("legacy OpenClaw managed override remediation", () => {
+  it.each([
+    ["2026.9.2", "596388ea92bd7bb6f12f5098d7b567eb227956ec3e7a1ba3219e8e80f892f76f"],
+    ["2026.9.5", "6202dda1b8d6df4f1ee3b915266c174e77bf1685bcb61fc9489f66ff3d15af5d"],
+  ])("remediates and safely retries the reviewed %s workspace", (version, digest) => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-legacy-overrides-"));
+    directories.push(root);
+    const owner = join(root, "node_modules/openclaw");
+    mkdirSync(owner, { recursive: true });
+    writeFileSync(join(owner, "package.json"), JSON.stringify({ name: "openclaw", version }));
+    const workspace = join(owner, "pnpm-workspace.yaml");
+    writeFileSync(workspace, OPENCLAW_LEGACY_SECURITY_WORKSPACES[version]);
+    writeFileSync(
+      join(root, "package-lock.json"),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: { "node_modules/openclaw": { version } },
+      }),
+    );
+    remediateOpenClawRuntimeDependencies(root, { updateLock: true });
+    const patched = readFileSync(workspace);
+    expect(createHash("sha256").update(patched).digest("hex")).toBe(digest);
+    expect(patched.toString()).toContain("  undici: 8.12.2\n");
+    remediateOpenClawRuntimeDependencies(root, { updateLock: true });
+    expect(readFileSync(workspace)).toEqual(patched);
   });
 });
