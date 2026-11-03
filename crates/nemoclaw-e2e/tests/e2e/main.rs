@@ -27,8 +27,6 @@ mod kubernetes_live;
 mod managed_gateway;
 #[path = "rust/pseudo_terminal.rs"]
 mod pseudo_terminal;
-#[path = "rust/registry_fixture.rs"]
-mod registry_fixture;
 
 #[cfg(target_os = "linux")]
 #[path = "rust/remote_models.rs"]
