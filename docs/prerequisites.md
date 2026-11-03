@@ -27,17 +27,18 @@ Prepare these inputs before running apply:
 - An OpenShell gateway with the selected Docker or Podman compute driver and permission to create a deployment workspace and sandbox.
 - Its client-reachable endpoint and any bearer credential or mTLS files required by the gateway operator.
 - An inference endpoint reachable from OpenShell, its request API, an exact model ID, and any provider credential.
-- An OpenClaw image built from this checkout and available by immutable digest on the sandbox compute daemon.
+- An OpenClaw image built from the same implementation revision as the deployment bundle and available by immutable digest on the sandbox compute daemon.
 - An authenticated OpenShell CLI for native access, configured for the same gateway and the deployment's workspace.
 - A fresh deployment UUID, a separate state directory, and resources you control.
 
-Use OpenShell **0.1.4** for the gateway and native CLI.
-The client, gateway, and supervisor are pinned to commit `5a7728c304b5528e954e9ae900cf21f84e1a12b1`, the v0.1.4 release.
-The gateway check verifies version and compute driver.
+For the [first-deployment tutorial](get-started.md), use OpenShell **0.1.6** for the gateway and native CLI.
+The tutorial's pinned NemoClaw implementation (`86b8d94273a76a696e06b300dc29f7035b163667`) records this version and OpenShell source revision `ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47` in its `versions.json`.
+Its gateway check rejects a different reported OpenShell version or an incompatible compute driver.
+For another NemoClaw revision, use its own `versions.json` rather than assuming this version applies.
 Select a compatible [inference API](inference.md) and verify an actual agent reply; endpoint reachability alone is insufficient.
 
-Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.4`.
-The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
+Install the OpenShell CLI release with [OpenShell's installer](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/about/installation.mdx), setting `OPENSHELL_VERSION=v0.1.6`.
+The guides assume an operator provides the external gateway and its credentials; register an authenticated gateway in the CLI as [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx) describes, with `openshell gateway add` for mTLS or OIDC.
 For an existing profile or plaintext loopback gateway, use [gateway/workspace selection](interfaces.md#select-the-gateway-and-workspace).
 See the [first-deployment guide](get-started.md) for its rehearsal status.
 
