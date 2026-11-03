@@ -386,6 +386,9 @@ describe("restored Hermes NVIDIA credential handoff", () => {
     const io = {
       withSandboxMutationLock: async <T>(_name: string, action: () => Promise<T>) => action(),
       readNvidiaCredentialHandle: vi.fn(async () => handle),
+      readRegisteredCredentialHandle: vi.fn(async () => {
+        throw new Error("NVIDIA restore must not read registered-provider credentials");
+      }),
       readCredentialHandle: vi.fn(async () => {
         throw new Error("NVIDIA restore must not read local-provider credentials");
       }),
@@ -436,6 +439,8 @@ describe("restored Hermes NVIDIA credential handoff", () => {
       expect(f.io.readCredentialHandle).not.toHaveBeenCalled();
       expect(f.io.writeSandboxConfig).toHaveBeenCalledExactlyOnceWith("alpha", f.target, expected, {
         restoreNativeLocalCredential: true,
+        gatewayName: f.runtime.gatewayName,
+        deferReload: true,
       });
       expect(f.io.writeSandboxConfig.mock.calls[0]![2]).toBe(f.config);
       expect(f.io.restartGateway).not.toHaveBeenCalled();
