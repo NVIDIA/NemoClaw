@@ -70,6 +70,7 @@ fn case() {
         .env("TF_LOG_PATH", &log.0)
         .status();
     report_timings(&case, &log.run_durations());
+    publish(&progress_report(&case, &work));
     assert!(tested.unwrap().success(), "tofu test failed");
 }
 
@@ -233,6 +234,54 @@ impl Drop for CoreLog {
     }
 }
 
+/// The CLI's plain progress of each apply and destroy, which times its steps
+/// and resources. Diagnostic for #14087; the progress names resources and
+/// steps only, as an operator's terminal shows them.
+fn progress_report(case: &str, work: &std::path::Path) -> String {
+    let mut operations: Vec<_> = fs::read_dir(work)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let operation = ["apply", "destroy"]
+                .into_iter()
+                .find(|operation| name.starts_with(&format!("{operation}-")))?;
+            let progress = fs::read_to_string(entry.path().join("stderr")).ok()?;
+            Some((operation, progress))
+        })
+        .collect();
+    operations.sort_by_key(|(operation, _)| *operation);
+    operations
+        .into_iter()
+        .map(|(operation, progress)| {
+            format!(
+                "#### Progress of the {case} case's {operation}\n\n```text\n{}\n```\n",
+                progress.trim_end()
+            )
+        })
+        .collect()
+}
+
+/// Print a report, and add it to the GitHub job summary in one write, so
+/// concurrent tests' reports don't interleave.
+fn publish(report: &str) {
+    if report.is_empty() {
+        return;
+    }
+    eprintln!("{report}");
+    if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        let appended = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(summary)
+            .and_then(|mut file| file.write_all(format!("{report}\n").as_bytes()));
+        if let Err(error) = appended {
+            eprintln!("cannot write the job summary: {error}");
+        }
+    }
+}
+
 /// Print how long each run took, and add it to the GitHub job summary, where
 /// nextest shows nothing of a passing test.
 fn report_timings(case: &str, runs: &[(String, Duration)]) {
@@ -240,19 +289,7 @@ fn report_timings(case: &str, runs: &[(String, Duration)]) {
         eprintln!("OpenTofu's log times no run of the {case} case");
         return;
     }
-    let table = timing_table(case, runs);
-    eprintln!("{table}");
-    if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
-        // One write, so concurrent tests' tables don't interleave.
-        let appended = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(summary)
-            .and_then(|mut file| file.write_all(format!("{table}\n").as_bytes()));
-        if let Err(error) = appended {
-            eprintln!("cannot write the job summary: {error}");
-        }
-    }
+    publish(&timing_table(case, runs));
 }
 
 #[test]
@@ -328,6 +365,33 @@ fn run_durations_follow_the_logged_offset_across_midnight() {
     assert_eq!(
         run_durations(log),
         [("apply".to_owned(), Duration::from_millis(1500))]
+    );
+}
+
+#[test]
+fn progress_reports_quote_apply_then_destroy_and_skip_other_operations() {
+    let work = tempfile::tempdir().unwrap();
+    for (directory, stderr) in [
+        (
+            "destroy-2",
+            "Destroying\nopenshell_sandbox.a: delete complete (31s)\n",
+        ),
+        ("plan-3", "Planning\n"),
+        (
+            "apply-1",
+            "Applying\nopenshell_gateway.g: create complete (20s)\n",
+        ),
+    ] {
+        fs::create_dir(work.path().join(directory)).unwrap();
+        fs::write(work.path().join(directory).join("stderr"), stderr).unwrap();
+    }
+    fs::write(work.path().join("apply-0.reply"), "not an operation").unwrap();
+    assert_eq!(
+        progress_report("case", work.path()),
+        "#### Progress of the case case's apply\n\n```text\n\
+         Applying\nopenshell_gateway.g: create complete (20s)\n```\n\
+         #### Progress of the case case's destroy\n\n```text\n\
+         Destroying\nopenshell_sandbox.a: delete complete (31s)\n```\n"
     );
 }
 

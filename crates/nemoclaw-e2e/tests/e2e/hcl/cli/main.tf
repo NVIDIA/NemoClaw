@@ -42,13 +42,14 @@ resource "terraform_data" "operation" {
     # reports a failed command's message.
     command = <<-EOT
       mkdir -p "$OPERATION" && cd "$OPERATION" || exit 1
-      "$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
+      "$NEMOCLAW" --progress plain --verbose --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
       echo $? >exit
     EOT
     environment = {
       NEMOCLAW  = var.context.cli
       STATE     = var.context.state_dir
-      OPERATION = "${var.context.work_dir}/${self.id}"
+      # Named by operation so hcl_live::case can report apply and destroy progress.
+      OPERATION = "${var.context.work_dir}/${var.operation}-${self.id}"
     }
   }
 }
@@ -56,7 +57,7 @@ resource "terraform_data" "operation" {
 # The operation's ID is unknown until apply, so its output is read after the
 # command ran. It stays in the private work directory.
 locals {
-  directory = "${var.context.work_dir}/${terraform_data.operation.id}"
+  directory = "${var.context.work_dir}/${var.operation}-${terraform_data.operation.id}"
   exit_code = tonumber(trimspace(file("${local.directory}/exit")))
   result    = local.exit_code == 0 ? jsondecode(file("${local.directory}/stdout")) : null
 }
