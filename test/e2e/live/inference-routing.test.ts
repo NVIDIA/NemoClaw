@@ -41,6 +41,7 @@ import {
   onboardSandbox,
   redactedResultText,
   requireLivePrerequisites,
+  runDockerVllmValidation,
   runNemoclawCli,
   runRawCommand,
   TRANSPORT_CLASSIFICATION_PATTERN,
@@ -721,7 +722,7 @@ test
 );
 
 test(
-  "TC-INF-09 local compatible routing and private bearerless vLLM validation (#5744, #14083)",
+  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
     meta: {
@@ -730,7 +731,6 @@ test(
         "start the local compatible endpoint",
         "onboard to the compatible endpoint",
         "request sandbox chat through inference.local",
-        "validate a privately published bearerless provider from Docker",
       ],
     },
   },
@@ -771,7 +771,6 @@ test(
       contract: [
         "a custom OpenAI-compatible endpoint onboards",
         "sandbox inference.local routes chat to compatible endpoint",
-        "production bearerless provider validation reaches private bindings across distinct Docker gateways",
       ],
       endpointUrl: fake.baseUrl,
       model,
@@ -813,30 +812,54 @@ test(
             request.path === "/v1/chat/completions",
         ),
     ).toBe(true);
+  },
+);
 
-    progress.phase("validate a privately published bearerless provider from Docker");
-    const validationState = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bearerless-"));
-    const cidfile = path.join(validationState, "container-id");
-    cleanup.add("remove the bearerless validation container by its recorded ID", async () => {
-      const id = fs.existsSync(cidfile) ? fs.readFileSync(cidfile, "utf8").trim() : null;
-      expect(id === null || /^[a-f0-9]{64}$/u.test(id), "invalid cleanup container ID").toBe(true);
-      const removed = id
-        ? await host.command("docker", ["--context", "default", "rm", "--force", id], {
-            artifactName: "tc-inf-09-bearerless-vllm-cleanup",
-            env: buildAvailabilityProbeEnv(),
-            timeoutMs: 30_000,
-          })
-        : null;
-      expect(removed?.exitCode ?? 0, removed ? resultText(removed) : "no container created").toBe(
-        0,
-      );
-      fs.rmSync(validationState, { recursive: true, force: true });
-    });
-    const validation = await host.command(
-      process.execPath,
-      [
-        "-e",
-        String.raw`
+test(
+  "TC-INF-09 Docker bearerless vLLM validation (#14083)",
+  {
+    timeout: 5 * 60_000,
+    meta: {
+      e2ePhases: [
+        "prepare owned bearerless vLLM cleanup",
+        "validate a privately published bearerless provider from Docker",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, skip }) => {
+    await runDockerVllmValidation(runtimeProvider, skip, async () => {
+      await artifacts.target.declare({
+        id: "inference-routing-bearerless-vllm-validation",
+        contract: [
+          "production bearerless provider validation reaches private bindings across distinct Docker gateways",
+        ],
+      });
+      progress.phase("prepare owned bearerless vLLM cleanup");
+      const validationState = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bearerless-"));
+      const cidfile = path.join(validationState, "container-id");
+      cleanup.add("remove the bearerless validation container by its recorded ID", async () => {
+        const id = fs.existsSync(cidfile) ? fs.readFileSync(cidfile, "utf8").trim() : null;
+        expect(id === null || /^[a-f0-9]{64}$/u.test(id), "invalid cleanup container ID").toBe(
+          true,
+        );
+        const removed = id
+          ? await host.command("docker", ["--context", "default", "rm", "--force", id], {
+              artifactName: "tc-inf-09-bearerless-vllm-cleanup",
+              env: buildAvailabilityProbeEnv(),
+              timeoutMs: 30_000,
+            })
+          : null;
+        expect(removed?.exitCode ?? 0, removed ? resultText(removed) : "no container created").toBe(
+          0,
+        );
+        fs.rmSync(validationState, { recursive: true, force: true });
+      });
+      progress.phase("validate a privately published bearerless provider from Docker");
+      const validation = await host.command(
+        process.execPath,
+        [
+          "-e",
+          String.raw`
 const assert = require('node:assert/strict');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -878,21 +901,22 @@ console.log(JSON.stringify({defaultNetwork, openshellNetwork, inspection, comman
 assert.deepEqual(result, {ok: true});
 assert.match(requests, /^GET \/v1\/models host\.openshell\.internal:18080 \S+$/m);
 `,
-        cidfile,
-      ],
-      {
-        artifactName: "tc-inf-09-bearerless-vllm-container-validation",
-        cwd: REPO_ROOT,
-        env: {
-          ...buildAvailabilityProbeEnv(),
-          DOCKER_CONTEXT: "default",
-          NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL: "",
-          NEMOCLAW_VLLM_PORT: "18080",
+          cidfile,
+        ],
+        {
+          artifactName: "tc-inf-09-bearerless-vllm-container-validation",
+          cwd: REPO_ROOT,
+          env: {
+            ...buildAvailabilityProbeEnv(),
+            DOCKER_CONTEXT: "default",
+            NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL: "",
+            NEMOCLAW_VLLM_PORT: "18080",
+          },
+          timeoutMs: 3 * 60_000,
         },
-        timeoutMs: 3 * 60_000,
-      },
-    );
-    expect(validation.exitCode, resultText(validation)).toBe(0);
+      );
+      expect(validation.exitCode, resultText(validation)).toBe(0);
+    });
   },
 );
 

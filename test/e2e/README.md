@@ -2702,14 +2702,12 @@ Source tests own port and authentication permutations; these runtime requests pr
 
 ## Bearerless vLLM Provider Validation
 
-TC-INF-09 in the existing `inference-routing` target also invokes production
-provider validation against an owned bearerless Docker fixture. It requires
-distinct Docker-default and OpenShell gateways and publishes only loopback and
-the OpenShell gateway on port 18080. The retained evidence includes Docker
-inspection, the selected probe command, validation result, container request log,
-and removal by its recorded container ID. Bounded connection-refusal retries
-cover only the fixture's idempotent readiness GET while Node starts.
-Source tests own authentication, ownership, and port permutations.
+The `inference-routing` target runs TC-INF-09 compatible-endpoint routing on Docker and Podman.
+Its Docker-only bearerless companion validates the production provider against private bindings on port 18080 with distinct default/OpenShell gateways.
+Podman skips only that companion.
+Artifacts retain inspected bindings, the probe command, validation result, container requests and ID-based cleanup.
+Readiness retries cover only the fixture's idempotent startup GET.
+Source tests own authentication, ownership and port permutations.
 
 ## DCode Native Local Inference
 
