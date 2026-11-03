@@ -106,7 +106,7 @@ impl Stub {
 
 /// The image the development issuer runs, from the repository's pins.
 fn image() -> String {
-    let pins: Value = serde_json::from_str(include_str!("../../../../versions.json")).unwrap();
+    let pins: Value = serde_json::from_str(include_str!("../../../../../versions.json")).unwrap();
     pins["images"]["developmentIssuer"]
         .as_str()
         .expect("versions.json pins the development issuer's image")

@@ -7,8 +7,7 @@ license.workspace = true
 publish = false
 # Each test binary links the SDK and providers once. `integration` holds the
 # tests against local fixtures only; `e2e` holds the live tests, which use real
-# Docker, Kubernetes, images, or inference. The Brev test stays separate
-# because its workflow copies that one executable to a VM.
+# Docker, Kubernetes, images, or inference.
 autotests = false
 
 [[test]]
@@ -18,10 +17,6 @@ path = "tests/integration/main.rs"
 [[test]]
 name = "e2e"
 path = "tests/e2e/main.rs"
-
-[[test]]
-name = "brev"
-path = "tests/brev.rs"
 
 [dependencies]
 rcgen = "0.14.10"

@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_e2e::{http_fixture as docker, openshell::Fixture};
-use nemoclaw_sdk::{
-    CancellationToken, Deployment, config::Document, fabric_catalog::FabricCatalog,
-};
+use nemoclaw_sdk::{config::Document, fabric_catalog::FabricCatalog};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -17,7 +15,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub fn docker_output(args: &[&str], input: &[u8]) -> Value {
     let mut child = Command::new("docker")
@@ -82,26 +79,6 @@ fn assert_absent(kind: &str, name: &str) {
         error.contains("No such container") || error.contains("No such object"),
         "absence was not confirmed: {error}"
     );
-}
-
-/// Reapply through the selected SDK instance, including an explicitly reopened one.
-pub async fn assert_apply_unchanged(
-    deployment: &Deployment,
-    document: &Document,
-    cancel: &CancellationToken,
-) {
-    let result = deployment.apply(document, cancel).await.unwrap();
-    assert!(
-        result.changes.is_empty(),
-        "reapply changed resources: {:?}",
-        result.changes
-    );
-}
-
-pub fn with_upstream_model_digest(document: &Document, digest: &str) -> Document {
-    let mut value = serde_json::to_value(document).unwrap();
-    value["spec"]["services"]["shared"]["upstream"]["model"]["digest"] = json!(digest);
-    Document::parse(value.to_string().as_bytes()).unwrap()
 }
 
 pub struct Scenario {
@@ -230,7 +207,7 @@ impl Scenario {
     }
     pub async fn proxy_document(&self, count: usize) -> Document {
         let mut value: Value = serde_saphyr::from_str(include_str!(
-            "../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
+            "../../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
         ))
         .unwrap();
         value["metadata"]["uid"] = json!(self.uid);
@@ -248,15 +225,6 @@ impl Scenario {
                 .collect(),
         );
         Document::parse(value.to_string().as_bytes()).unwrap()
-    }
-    pub fn service_name(&self, document: &Document) -> String {
-        format!("{}-ollama-proxy-shared", document.workspace())
-    }
-    pub fn service_identity(&self, document: &Document) -> Value {
-        let name = self.service_name(document);
-        let container = inspect("container", &name);
-        let volume = inspect("volume", &format!("{name}-auth"));
-        json!({"container":container["Id"],"volume_created":volume["CreatedAt"],"volume_labels":volume["Labels"]})
     }
     pub fn agent_identity(&self, name: &str) -> Value {
         inspect("container", &self.agents.name(name))["Id"].clone()
@@ -347,82 +315,6 @@ assert any(item['id']==model['model'] for item in data['data']), 'configured mod
             "service access failed: {}",
             String::from_utf8_lossy(&bytes(&result, "stderr"))
         );
-    }
-    pub fn assert_shared_service(&self, document: &Document, count: usize) {
-        let state = self.gateway.state.lock().unwrap();
-        assert_eq!(state.sandboxes.len(), count);
-        let selected: Vec<_> = state
-            .sandboxes
-            .values()
-            .map(|sandbox| sandbox.spec.as_ref().unwrap().providers.clone())
-            .collect();
-        assert!(!selected[0].is_empty());
-        assert!(selected.iter().all(|providers| providers == &selected[0]));
-        assert_eq!(
-            state.providers.len(),
-            1,
-            "one service registration shared by consumers"
-        );
-        let service = inspect("container", &self.service_name(document));
-        assert_eq!(service["State"]["Running"], true);
-    }
-    pub fn export(&self) -> Document {
-        let output = Command::new(self.bundle.join("bin/nemoclaw"))
-            .args(["export", "--state-dir"])
-            .arg(self.state.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Document::parse(output.stdout.as_slice()).unwrap()
-    }
-    pub fn destroy(&self) {
-        let output = Command::new(self.bundle.join("bin/nemoclaw"))
-            .args(["destroy", "--state-dir"])
-            .arg(self.state.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    pub fn assert_service_destroyed_with_credentials_retained(&self, document: &Document) {
-        let name = self.service_name(document);
-        assert_absent("container", &name);
-        assert_eq!(
-            inspect("volume", &format!("{name}-auth"))["Labels"]["nemoclaw.nvidia.com/uid"],
-            self.uid
-        );
-    }
-    pub async fn assert_external_server_alive(&self) {
-        assert!(!self.servers.is_empty());
-        let address = self
-            .upstream
-            .strip_prefix("http://")
-            .unwrap()
-            .strip_suffix("/v1")
-            .unwrap();
-        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
-        socket
-            .write_all(b"GET /api/tags HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
-        let mut response = vec![];
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            socket.read_to_end(&mut response),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
-        assert!(String::from_utf8_lossy(&response).contains("llama3:fixture"));
-        assert!(!self.requests.lock().unwrap().is_empty());
     }
 }
 impl Drop for Scenario {

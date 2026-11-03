@@ -420,7 +420,7 @@ fn proxy_configuration(
 ) -> Value {
     let mut value: Value = serde_json::to_value(
         Document::parse(
-            include_str!("../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml")
+            include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml")
                 .as_bytes(),
         )
         .unwrap(),

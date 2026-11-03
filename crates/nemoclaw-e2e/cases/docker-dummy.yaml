@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The reference dummy agent behind a managed Docker gateway. The dummy
+# implements the image's bridge contract, including native health, without
+# Fabric, a model, or credentials, and replies with its reply setting.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-dummy
+  # cargo ci live-docker gives each run a fresh identity, port, and subnet.
+  uid: 0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17697
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.122.0/24
+  inferenceProviders:
+    hosted:
+      provider: openai
+      endpoint: https://inference.example.test/v1
+  sandboxes:
+    assistant:
+      image:
+        # cargo ci live-docker binds this template to the image it derives
+        # from the reference dummy image, adding one executable.
+        ref: nc-live-dummy@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: org.nemoclaw.dummy
+        settings:
+          reply: dummy-reply
+      network:
+        tier: isolated
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted
+              overrides:
+                model: fixture-model

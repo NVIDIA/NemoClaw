@@ -130,6 +130,7 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
 `nemoclaw-e2e`'s live tests live in its `e2e` binary, `crates/nemoclaw-e2e/tests/e2e`.
+Its [HCL E2E scenarios](live-tests.md#hcl-e2e-scenarios) are in `tests/e2e/hcl`, and the live tests not yet migrated to them are Rust modules in `tests/e2e/rust`.
 The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` and `kubernetes_chart` tests.
 The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
@@ -160,7 +161,7 @@ A contract test runs the provider built from the checkout, but a system test run
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
-It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents, and binds the dummy HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.

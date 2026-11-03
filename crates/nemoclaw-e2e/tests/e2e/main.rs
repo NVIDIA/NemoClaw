@@ -2,51 +2,46 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Live end-to-end tests, linked into one binary: they use real Docker
 //! engines, Kubernetes clusters, images, or inference, and stay ignored unless
-//! selected. The offline checks of their helpers run with the unit tests. Each
-//! file is a module; shared helpers are declared once here.
+//! selected. The offline checks of their helpers run with the unit tests.
+//!
+//! `hcl_live` runs the HCL E2E scenarios in `hcl/`, each a successful path
+//! through one document in the crate's `cases/`. The modules under `rust/`
+//! are live tests not yet migrated to those scenarios. Module names do not
+//! include the directory, so test names and profile filters stay stable.
 
-#[path = "cache_provider.rs"]
-mod cache_provider;
-#[path = "docker_provider_proxy.rs"]
-mod docker_provider_proxy;
-#[cfg(unix)]
-#[path = "dummy_agent.rs"]
-mod dummy_agent;
-#[path = "fabric_live.rs"]
-mod fabric_live;
-// Unix only, as before it moved here from nemoclaw-sdk.
-#[cfg(target_os = "linux")]
-mod docker_registry;
 #[path = "hcl_live.rs"]
 mod hcl_live;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
-#[path = "interfaces_live.rs"]
-mod interfaces_live;
-#[path = "kubernetes_chart.rs"]
-mod kubernetes_chart;
-#[path = "kubernetes_live.rs"]
-mod kubernetes_live;
-#[path = "managed.rs"]
-mod managed;
+
+#[path = "rust/cache_provider.rs"]
+mod cache_provider;
+#[path = "rust/docker_provider_proxy.rs"]
+mod docker_provider_proxy;
 #[cfg(unix)]
-#[path = "managed_gateway.rs"]
+// Unix only, as before it moved here from nemoclaw-sdk.
+#[cfg(target_os = "linux")]
+#[path = "rust/docker_registry.rs"]
+mod docker_registry;
+#[path = "rust/interfaces_live.rs"]
+mod interfaces_live;
+#[path = "rust/kubernetes_chart.rs"]
+mod kubernetes_chart;
+#[path = "rust/kubernetes_live.rs"]
+mod kubernetes_live;
+#[cfg(unix)]
+#[path = "rust/managed_gateway.rs"]
 mod managed_gateway;
-#[path = "model_live.rs"]
-mod model_live;
-#[path = "pseudo_terminal.rs"]
+#[path = "rust/pseudo_terminal.rs"]
 mod pseudo_terminal;
+#[path = "rust/registry_fixture.rs"]
 mod registry_fixture;
-#[path = "spark.rs"]
+#[path = "rust/spark.rs"]
 mod spark;
 
 #[cfg(target_os = "linux")]
-mod existing_ollama;
-#[cfg(target_os = "linux")]
-mod managed_ollama;
-#[cfg(target_os = "linux")]
+#[path = "rust/remote_models.rs"]
 mod remote_models;
 #[cfg(target_os = "linux")]
+#[path = "rust/service_images/mod.rs"]
 mod service_images;
-#[cfg(target_os = "linux")]
-mod shared_service;

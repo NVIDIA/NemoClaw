@@ -291,13 +291,6 @@ fn prepare(
         owned.uids.push(uid);
         Ok(path)
     };
-    // The dummy reports native health, so its whole lifecycle completes.
-    let lifecycle = document_for(
-        "live-dummy",
-        &dummy,
-        "org.nemoclaw.dummy",
-        serde_json::json!({"reply": "dummy-reply"}).as_object(),
-    )?;
     let mut document = |name: &str| document_for(name, &agent, harness, None);
     // Each gateway test refuses resources from an earlier run, so each gets
     // fresh documents: recovery, an isolation pair, and profile revisions.
@@ -328,6 +321,23 @@ fn prepare(
         owned.uids.push(uid);
         path
     };
+    // The dummy reports native health, so its whole HCL E2E lifecycle
+    // completes. Its case is bound to this run like the documents above.
+    let dummy_case = {
+        let uid = live::uuid()?;
+        let subnet = live::free_subnet(&used, &subnets)?;
+        subnets.push(subnet.clone());
+        let path = inputs.join(format!("{DUMMY_CASE}.yaml"));
+        let template = fs::read_to_string(
+            Path::new("crates/nemoclaw-e2e/cases").join(format!("{DUMMY_CASE}.yaml")),
+        )?;
+        fs::write(
+            &path,
+            bind_case(&template, &uid, live::free_port()?, &subnet, &dummy)?,
+        )?;
+        owned.uids.push(uid);
+        path
+    };
     let path = |path: &Path| path.display().to_string();
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
@@ -351,7 +361,9 @@ fn prepare(
             "NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT".into(),
             path(&second),
         ),
-        ("NEMOCLAW_TEST_DUMMY_DOCUMENT".into(), path(&lifecycle)),
+        ("NEMOCLAW_HCL_CASE".into(), DUMMY_CASE.into()),
+        ("NEMOCLAW_HCL_DOCUMENT".into(), path(&dummy_case)),
+        ("NEMOCLAW_HCL_RUN".into(), path(&inputs.join("hcl"))),
         (
             "NEMOCLAW_TEST_INTERFACES_DOCUMENT".into(),
             path(&interfaces),
@@ -367,6 +379,40 @@ fn prepare(
         [path(&recovery), path(&first), path(&profiles)].join("\n"),
     )])
     .collect())
+}
+
+/// The HCL E2E case that `hcl_live::case` runs in this suite.
+const DUMMY_CASE: &str = "docker-dummy";
+
+/// Binds an HCL E2E case's template to one run: its UID, managed gateway port
+/// and subnet, and the image that replaces its all-zero digest placeholder.
+fn bind_case(template: &str, uid: &str, port: u16, subnet: &str, image: &str) -> Result<String> {
+    let placeholder = format!("@sha256:{}", "0".repeat(64));
+    let mut bound = 0;
+    let lines: Vec<String> = template
+        .lines()
+        .map(|line| {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            let field = line.trim_start();
+            let value = if indent == "  " && field.starts_with("uid: ") {
+                format!("uid: {uid}")
+            } else if indent == "    " && field.starts_with("endpoint: http://127.0.0.1:") {
+                format!("endpoint: http://127.0.0.1:{port}")
+            } else if indent == "    " && field.starts_with("networkCIDR: ") {
+                format!("networkCIDR: {subnet}")
+            } else if field.starts_with("ref: ") && field.ends_with(&placeholder) {
+                format!("ref: {image}")
+            } else {
+                return line.to_owned();
+            };
+            bound += 1;
+            format!("{indent}{value}")
+        })
+        .collect();
+    if bound != 4 {
+        return Err(format!("the case template binds {bound} of its 4 fields").into());
+    }
+    Ok(lines.join("\n") + "\n")
 }
 
 /// Internal: the three gateway documents, in [`GATEWAY_TESTS`] order.
@@ -468,6 +514,29 @@ pub(super) fn run_live_docker(
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    fn the_dummy_case_binds_its_identity_gateway_and_image() {
+        let template = include_str!("../../../nemoclaw-e2e/cases/docker-dummy.yaml");
+        let bound = super::bind_case(
+            template,
+            "fresh-uid",
+            40123,
+            "172.30.9.0/24",
+            "nc-live-x@sha256:abc",
+        )
+        .unwrap();
+        for line in [
+            "  uid: fresh-uid",
+            "    endpoint: http://127.0.0.1:40123",
+            "    networkCIDR: 172.30.9.0/24",
+            "        ref: nc-live-x@sha256:abc",
+        ] {
+            assert!(bound.lines().any(|bound| bound == line), "{line}");
+        }
+        assert_eq!(bound.lines().count(), template.lines().count());
+        assert!(super::bind_case("uid: x\n", "u", 1, "s", "i").is_err());
+    }
+
     use super::*;
 
     /// A Docker CLI over `kind id key=value [running]` lines. Like Docker, it
