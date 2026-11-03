@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncOptions } from "node:child_process";
+import type { SpawnSyncOptions, SpawnSyncReturns } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { requireValue } from "../../core/require-value";
+import { createSetupNimVllmHandler } from "../../onboard/setup-nim-vllm";
 import {
   getLocalProviderBaseUrl,
   getLocalProviderValidationBaseUrl,
@@ -24,11 +26,17 @@ import {
 } from "./vllm-host-local-lifecycle";
 
 const subprocess = vi.hoisted(() => ({
-  spawnSync: vi.fn((_file: string, _args: readonly string[], _options: SpawnSyncOptions) => ({
-    status: 1,
-    stdout: "",
-    stderr: "",
-  })),
+  spawnSync: vi.fn(
+    (
+      _file: string,
+      _args: readonly string[],
+      _options: SpawnSyncOptions,
+    ): Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr" | "error"> => ({
+      status: 1,
+      stdout: "",
+      stderr: "",
+    }),
+  ),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => ({
@@ -121,6 +129,7 @@ function expectLocalSpawns(count: number) {
 describe("host-local managed vLLM container probe", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     subprocess.spawnSync.mockReset();
   });
 
@@ -154,26 +163,163 @@ describe("host-local managed vLLM container probe", () => {
     expectLocalSpawns(1);
   });
 
-  it("stops default provider routes before probing when Docker inspection fails", () => {
-    interceptDocker(null);
-    const inspect = subprocess.spawnSync.getMockImplementation()!;
-    subprocess.spawnSync.mockImplementation((file, args, options) =>
-      args.join(" ") === "container inspect nemoclaw-vllm"
-        ? { status: 1, stdout: "", stderr: "Cannot connect to Docker" }
-        : inspect(file, args, options),
+  it.each([
+    ["unavailable daemon", "docker", "", { status: 1, stderr: "Cannot connect to Docker" }],
+    [
+      "unavailable daemon under Podman",
+      "podman",
+      "",
+      { status: 1, stderr: "Cannot connect to Docker" },
+    ],
+    [
+      "missing Docker",
+      "docker",
+      "",
+      { status: null, error: Object.assign(new Error("missing Docker"), { code: "ENOENT" }) },
+    ],
+    [
+      "denied Docker executable under Podman",
+      "podman",
+      "",
+      { status: null, error: Object.assign(new Error("denied Docker"), { code: "EACCES" }) },
+    ],
+    [
+      "portable Docker runtime",
+      "podman",
+      "portable",
+      { status: null, error: Object.assign(new Error("missing Docker"), { code: "ENOENT" }) },
+    ],
+  ] as const)(
+    "stops Docker-managed routes before probing with %s",
+    (_label, runtime, profile, failure) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", runtime);
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", profile);
+      interceptDocker(null);
+      const inspect = subprocess.spawnSync.getMockImplementation()!;
+      subprocess.spawnSync.mockImplementation((file, args, options) =>
+        args.join(" ") === "container inspect nemoclaw-vllm"
+          ? { stdout: "", stderr: "", ...failure }
+          : inspect(file, args, options),
+      );
+      const probe = vi.fn();
+      expect(() => getManagedVllmProviderBinding()).toThrow(ManagedVllmInspectionError);
+      expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
+      expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
+      expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
+      expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
+      expect(probeLocalProviderHealth("vllm-local", { runCurlProbeImpl: probe })).toMatchObject({
+        ok: false,
+        detail:
+          "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+      });
+      expect(validateLocalProvider("vllm-local", probe).ok).toBe(false);
+      expect(probe).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, "served/model"])(
+    "selects and health-checks existing native Podman vLLM without Docker (model=%s) (#14083)",
+    async (model) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "");
+      interceptDocker(null);
+      subprocess.spawnSync.mockReturnValue({
+        status: null,
+        stdout: "",
+        stderr: "",
+        error: Object.assign(new Error("spawnSync docker ENOENT"), { code: "ENOENT" }),
+      });
+      const inventory = JSON.stringify({ data: [{ id: "served/model" }] });
+      const query = vi.fn(() => inventory);
+      const validate = vi.fn(async () => ({ ok: true, api: "openai-completions" }));
+      const handler = createSetupNimVllmHandler({
+        VLLM_PORT: 8000,
+        getManagedVllmProviderBinding,
+        getLocalProviderBaseUrl,
+        getLocalProviderValidationBaseUrl,
+        runCapture: query,
+        queryVllmModels: vi.fn(() => inventory),
+        isSafeModelId: () => true,
+        requireValue,
+        validateOpenAiLikeSelection: validate,
+        applyVllmRuntimeContextWindow: vi.fn(),
+        isDgxSparkHost: () => false,
+        isNemoClawManagedVllmRunning: () => false,
+        persistConfiguredManagedVllmRuntimeReceipt: vi.fn(async () => ({
+          ok: true as const,
+          persisted: true,
+        })),
+        exitProcess: (code) => {
+          throw new Error(`exit ${code}`);
+        },
+      });
+      const selection = {
+        model,
+        provider: "vllm-local",
+        endpointUrl: null,
+        credentialEnv: null,
+        hermesAuthMethod: null,
+        hermesToolGateways: [],
+        preferredInferenceApi: null,
+        nimContainer: null,
+        allowToolsIncompatible: false,
+      };
+      await expect(handler(selection)).resolves.toBe("selected");
+      expect(selection).toMatchObject({
+        model: "served/model",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+      });
+      expect(query).toHaveBeenCalledExactlyOnceWith(
+        ["curl", "-sf", "http://127.0.0.1:8000/v1/models"],
+        { ignoreError: true },
+      );
+      expect(validate).toHaveBeenCalledWith(
+        "Local vLLM",
+        "http://127.0.0.1:8000/v1",
+        "served/model",
+        null,
+      );
+      expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBe(
+        "http://127.0.0.1:8000/v1/models",
+      );
+      expect(getLocalProviderContainerReachabilityCheck("vllm-local")?.at(-1)).toBe(
+        "http://host.openshell.internal:8000/v1/models",
+      );
+      const probe = vi.fn(() => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: inventory,
+        stderr: "",
+        message: "HTTP 200",
+      }));
+      expect(
+        probeLocalProviderHealth("vllm-local", {
+          model: "served/model",
+          runCurlProbeImpl: probe,
+        }),
+      ).toMatchObject({ ok: true, endpoint: "http://127.0.0.1:8000/v1/models" });
+      expect(probe).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects unsafe Docker-managed publication even when native Podman is selected (#14083)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "");
+    const row = ownedContainer();
+    row.NetworkSettings.Ports["8000/tcp"] = [{ HostIp: "0.0.0.0", HostPort: "18080" }];
+    interceptDocker(row);
+    expect(() => getManagedVllmProviderBinding({ legacyServingPort: 18080 })).toThrow(
+      "unsafe host bindings",
     );
     const probe = vi.fn();
-    expect(() => getManagedVllmProviderBinding()).toThrow(ManagedVllmInspectionError);
-    expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
-    expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
-    expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
-    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
     expect(probeLocalProviderHealth("vllm-local", { runCurlProbeImpl: probe })).toMatchObject({
       ok: false,
-      detail:
-        "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+      detail: expect.stringContaining("Handle a Running vLLM Server"),
     });
-    expect(validateLocalProvider("vllm-local", probe).ok).toBe(false);
     expect(probe).not.toHaveBeenCalled();
   });
 

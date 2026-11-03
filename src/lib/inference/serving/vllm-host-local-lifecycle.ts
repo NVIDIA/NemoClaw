@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerCapture, dockerRun } from "../../adapters/docker/local-model-runtime";
+import { isPodmanGatewayRuntimeEnabled } from "../../onboard/runtime-provider/configured-runtime";
+import { resolveCurrentRuntimeProviderBundle } from "../../onboard/runtime-provider/current";
 import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
@@ -317,6 +319,22 @@ export function getLegacyHostLocalManagedVllmBridgeHost(
       )
     )
       return null;
+    // Qualified native Podman can attach an operator-run server without Docker.
+    if (
+      inspection.error !== undefined &&
+      "code" in inspection.error &&
+      inspection.error.code === "ENOENT" &&
+      isPodmanGatewayRuntimeEnabled()
+    ) {
+      const runtime = resolveCurrentRuntimeProviderBundle();
+      if (
+        runtime.identity.id === "podman" &&
+        runtime.hostLocalInference.supported &&
+        runtime.hostLocalInference.services.includes("vllm")
+      ) {
+        return null;
+      }
+    }
     throw new ManagedVllmInspectionError();
   }
   let parsed: unknown;
