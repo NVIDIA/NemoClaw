@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -13,6 +14,8 @@ import {
 } from "../../../scripts/lib/patch-bundled-npm-ip-address.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../../../scripts/upgrade-bundled-npm.mts";
 import {
+  dockerfileInstructions,
+  dockerfileRunCommandPositions,
   requireDockerfileCopySources,
   requireReviewedDockerfileRunCommands,
   requireSingleDockerfileCopySource,
@@ -147,3 +150,42 @@ describe("bundled npm Undici image remediation contract", () => {
     });
   });
 });
+
+describe.each(["Dockerfile.base", "Dockerfile"])(
+  "%s OpenClaw workspace override remediation",
+  (file) => {
+    it.each(["2026.9.2", "2026.9.5", "2026.9.7", ""])(
+      "applies overrides only for the reviewed version: %s",
+      (version) => {
+        const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        const helper = "/scripts/lib/patch-openclaw-dependency-overrides.mts";
+        const copy = requireSingleDockerfileCopySource(source, helper.slice(1), helper);
+        const calls = dockerfileRunCommandPositions(source, `node ${helper}`);
+        const installs = dockerfileRunCommandPositions(
+          source,
+          "node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
+        );
+        expect(calls).toHaveLength(1);
+        expect(installs).toHaveLength(1);
+        expect(calls[0]).toBeGreaterThan(copy.start);
+        expect(calls[0]).toBeGreaterThan(installs[0]);
+        const instruction = dockerfileInstructions(source).find(
+          (entry) => entry.start <= calls[0] && entry.end > calls[0],
+        )!;
+        // Execute the owning RUN with only its node boundary replaced. This checks
+        // the version guard and actual argument handoff without installing packages.
+        const result = spawnSync(
+          "/bin/sh",
+          ["-c", `node() { printf '%s\\n' "$@"; }; ${instruction.body}`],
+          { encoding: "utf8", env: { PATH: "/usr/bin:/bin", OPENCLAW_VERSION: version } },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toBe(
+          version === "2026.9.2"
+            ? `${helper}\n/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw\n`
+            : "",
+        );
+      },
+    );
+  },
+);
