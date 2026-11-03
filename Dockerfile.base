@@ -414,8 +414,8 @@ COPY agents/openclaw/mcporter-runtime/package.json \
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
-    scripts/lib/openclaw-npm-remediation.mts \
     scripts/lib/reviewed-npm-audit.mts \
+    scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY --chmod=0444 scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh

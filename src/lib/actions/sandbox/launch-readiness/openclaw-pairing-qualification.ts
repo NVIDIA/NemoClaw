@@ -730,6 +730,21 @@ try:
         reject()
     failure_stage = 'client-auth'
     auth_tokens = auth.get('tokens')
+    # Native client token persistence follows the paired-device commit. Ordinary
+    # startup can observe that pairing-only intermediate state; wait within the
+    # existing observation budget without authorizing or producing a request.
+    if (
+        ORDINARY_SETTLEMENT
+        and first.get('layout') == 'sqlite'
+        and type(auth.get('version')) is int and auth.get('version') == 1
+        and auth.get('deviceId') == device_id
+        and auth_tokens == {}
+        and all(exact_string_set(view, PAIRING_ONLY_SCOPES) for view in (
+            paired_device.get('scopes'), paired_device.get('approvedScopes'),
+            paired_operator.get('scopes'),
+        ))
+    ):
+        retry_observation()
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
     if (
         type(auth.get('version')) is not int

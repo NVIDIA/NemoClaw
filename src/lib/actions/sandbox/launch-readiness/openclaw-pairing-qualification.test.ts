@@ -500,6 +500,26 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       },
     );
 
+    sqliteIt("waits for a pairing-only SQLite device's client token publication", () => {
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+        scopes: ["operator.pairing"],
+      });
+      updateSqlitePairingState(stateDirectory, "DELETE FROM device_auth_tokens");
+
+      expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingObservationRetryableError);
+      expect(() => observe()).toThrow(OpenClawPairingIncompatibleError);
+      expect(() => observeSettlement()).toThrow(OpenClawPairingIncompatibleError);
+
+      updateSqlitePairingState(
+        stateDirectory,
+        `INSERT INTO device_auth_tokens SELECT device_id, 'operator', '${TOKEN}', '["operator.pairing"]', 1 FROM device_identities`,
+      );
+      expect(observeOrdinarySettlement().state).toBe("pairing-only");
+    });
+
     sqliteIt("qualifies the exact persisted admin-upgraded CLI state", () => {
       writeSqlitePairingState(stateDirectory, {
         deviceId,
