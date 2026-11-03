@@ -93,7 +93,6 @@ it.each([
     const receipts = path.join(root, "received.ndjson");
     const sourceRoot = path.join(import.meta.dirname, "../..");
     const entry = path.join(sourceRoot, "dist/lib/cli/installer-telemetry-entry.js");
-    const adapter = path.join(sourceRoot, "dist/lib/adapters/telemetry/http.js");
     const identity = JSON.parse(
       fs.readFileSync(path.join(sourceRoot, "dist/build-identity.json"), "utf8"),
     ) as { nemoclawVersion: string };
@@ -108,12 +107,11 @@ it.each([
     fs.writeFileSync(
       preload,
       `const fs = require('node:fs');
-const { TEST_TELEMETRY_ENDPOINT } = require(${JSON.stringify(adapter)});
 fs.appendFileSync(process.env.NEMOCLAW_TEST_TRACE, 'loaded ' + process.argv[1] + '\\n');
 const fetchOriginal = globalThis.fetch;
 globalThis.fetch = (input, init) => {
   fs.appendFileSync(process.env.NEMOCLAW_TEST_TRACE, 'fetch ' + String(input) + '\\n');
-  if (String(input) !== TEST_TELEMETRY_ENDPOINT) throw new Error('Unexpected network request');
+  if (String(input) !== "https://events.telemetry.data.nvidia.com/v1.1/events/json") throw new Error('Unexpected network request');
   return fetchOriginal(process.env.NEMOCLAW_TEST_RECEIVER_URL, init);
 };
 `,

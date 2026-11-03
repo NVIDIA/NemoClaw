@@ -240,7 +240,7 @@ export function nativePluginResultMatches(
 }
 
 export function nativePluginInvocationPrompt(expected: NativePluginExpectation): string {
-  return `Use the ${expected.tool} tool with arguments ${JSON.stringify(expected.args)} to read its local fixture record. Return its result unchanged.`;
+  return `Run the local fixture tool ${expected.tool} exactly once with arguments ${JSON.stringify(expected.args)}. After the tool succeeds, reply DONE. Do not call other tools or read files or session history.`;
 }
 
 export const NATIVE_PLUGIN_RESULT_MARKER = "__NEMOCLAW_NATIVE_PLUGIN_RESULT__=";
