@@ -213,7 +213,6 @@
       "fast": [
         "src/lib/inference/native-local.test.ts",
         "src/lib/inference/local-vllm-auth.test.ts",
-        "test/e2e/support/inference-routing-runtime.test.ts",
         "src/lib/inference/serving/vllm-host-local-probe.test.ts",
         "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/agents/deepagents/langchain-deepagents-code-config.test.ts",

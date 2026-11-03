@@ -58,17 +58,6 @@ function skipLive(skip: SkipFn, note: string): never {
   throw new Error(note);
 }
 
-export function runDockerVllmValidation(
-  runtimeProvider: Pick<RuntimeProviderPrerequisite, "id">,
-  skip: SkipFn,
-  validate: () => Promise<void>,
-): Promise<void> {
-  if (runtimeProvider.id !== "docker") {
-    skipLive(skip, "Managed bearerless vLLM validation requires Docker.");
-  }
-  return validate();
-}
-
 function redactedResultText(
   result: Pick<RawRunResult, "redactedStdout" | "redactedStderr">,
 ): string {
