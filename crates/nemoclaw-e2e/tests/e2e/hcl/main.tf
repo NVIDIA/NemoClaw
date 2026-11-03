@@ -22,3 +22,14 @@ variable "kubeconfig" {
   type    = string
   default = ""
 }
+
+# The login of a kind case's private registry, which cargo ci live-kind sets
+# as TF_VAR_pull_credentials.
+variable "pull_credentials" {
+  type = object({
+    username = string
+    password = string
+  })
+  default   = null
+  sensitive = true
+}

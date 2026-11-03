@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Readers for what a live deployment records: each sandbox's binding, and its
-//! agent's sandbox and runtime ID, in OpenTofu state, and Fabric's run results.
+//! Readers for what a live deployment records: each sandbox's binding and its
+//! agent's runtime ID in OpenTofu state, and Fabric's run results.
 use nemoclaw_sdk::backend::Row;
 use serde_json::Value;
 use std::{fs, path::Path};
@@ -46,15 +46,6 @@ pub fn runtime_id(directory: &Path, name: &str) -> String {
         .to_owned();
     assert!(!id.trim().is_empty());
     id
-}
-
-/// The ID of the sandbox that the agent in sandbox `name` is bound to, from
-/// the deployment's OpenTofu state.
-pub fn agent_sandbox_id(directory: &Path, name: &str) -> String {
-    resource(directory, "fabric_agent", name)["instances"][0]["attributes"]["sandbox"]["id"]
-        .as_str()
-        .expect("the agent records its sandbox")
-        .to_owned()
 }
 
 /// Whether a Fabric run result succeeded. Adapters own the output's meaning
@@ -121,8 +112,7 @@ fn readers_select_the_named_managed_sandbox_and_its_agent() {
             serde_json::json!({"mode":mode,"type":"openshell_sandbox","name":name,
                 "instances":[{"attributes":{"id":format!("{value}-sandbox")}}]}),
             serde_json::json!({"mode":mode,"type":"fabric_agent","name":name,
-                "instances":[{"attributes":{"runtime_id":format!("{value}-runtime"),
-                    "sandbox":{"type":"openshell_sandbox","id":format!("{value}-bound")}}}]}),
+                "instances":[{"attributes":{"runtime_id":format!("{value}-runtime")}}]}),
         ]
     })
     .collect();
@@ -139,10 +129,6 @@ fn readers_select_the_named_managed_sandbox_and_its_agent() {
         assert_eq!(
             runtime_id(directory.path(), name),
             format!("{name}-runtime")
-        );
-        assert_eq!(
-            agent_sandbox_id(directory.path(), name),
-            format!("{name}-bound")
         );
     }
 }
