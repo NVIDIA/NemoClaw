@@ -1816,7 +1816,9 @@ Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
 ### `dcode status` reports a stale inference route
 
-The managed `dcode` runtime reads provider and model settings from `/sandbox/.deepagents/config.toml`. NemoClaw generates that file during onboarding and rebuilds, and Deep Agents provider or model changes require fresh named recreation rather than `inference set`.
+`dcode status` uses managed route and upstream provider metadata from the root-owned files `/usr/local/share/nemoclaw/dcode-provider-route` and `/usr/local/share/nemoclaw/dcode-upstream-provider`.
+Older images without those files use generated comments in `/sandbox/.deepagents/config.toml` as a fallback.
+Model and endpoint settings remain in that native config.
 
 Check the host-recorded route first:
 
@@ -1831,17 +1833,23 @@ nemo-deepagents <name> connect
 dcode status
 ```
 
-If the provider or model does not match the host route, rebuild the sandbox to regenerate `config.toml` from recorded metadata:
+If the route or provider identity is missing or stale, rebuild the sandbox to refresh the managed image metadata.
+Rebuild replaces the sandbox while preserving the saved native home, including `config.toml` and its model and endpoint settings:
 
 ```bash
 nemo-deepagents <name> rebuild
 ```
 
-To intentionally switch provider or model, recreate the named sandbox with fresh onboarding:
+Reconnect and run `dcode status` again to verify the route and provider identity.
+Check model and endpoint values against the saved native config.
+
+Fresh named recreation also restores the saved `config.toml` and can stop if its selection conflicts with the requested provider or model:
 
 ```bash
 nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 ```
+
+To validate a different selection without restoring existing preferences, onboard under a new name.
 
 ### Trusted route-probe helper is missing
 
