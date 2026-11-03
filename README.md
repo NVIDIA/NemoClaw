@@ -15,18 +15,18 @@ Images are cached; no inference requests are sent, and only the plan-review paus
 
 ## Start Here
 
-- [Understand NemoClaw](docs/overview.md).
-- [Get started with v1](docs/get-started.md).
-- [Build a native bundle](docs/build.md).
-- [Configure and operate a deployment](docs/usage.md).
-- [Move from an earlier version](docs/migration.md).
-- [Use the SDK](docs/sdk.md).
+- [Understand NemoClaw](docs/about/overview.md).
+- [Get started with v1](docs/get-started/first-deployment.md).
+- [Build a native bundle](docs/build-deploy/build.md).
+- [Configure and operate a deployment](docs/build-deploy/usage.md).
+- [Move from an earlier version](docs/get-started/migration.md).
+- [Use the SDK](docs/references/sdk.md).
 - [Browse all documentation](docs/README.md).
 
 ## Contribute
 
-Read the [accepted scope](docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
-Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](docs/contributing/documentation.md) for documentation changes.
+Read the [accepted scope](internal-docs/design/scope.md) and follow [AGENTS.md](AGENTS.md) for repository workflow and required checks.
+Follow [WRITING.md](WRITING.md) for explanatory text and the [documentation contributor guide](internal-docs/contributing/documentation.md) for documentation changes.
 Report potential vulnerabilities through the private channels in [SECURITY.md](SECURITY.md).
 
 ## Licenses

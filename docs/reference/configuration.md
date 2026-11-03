@@ -6,7 +6,7 @@
 <!-- Generated from the SDK schema. Edit Rust field descriptions and constraints, then run cargo run --locked -p nemoclaw-build -- schema. -->
 
 This reference and the [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) describe authored YAML for this source revision.
-See [schema maintenance](../contributing/configuration-schema.md) for generation and validation commands.
+See [schema maintenance](../../internal-docs/contributing/configuration-schema.md) for generation and validation commands.
 
 Paths use `[]` for an array element and `{key}` for a map entry.
 Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.
@@ -35,7 +35,7 @@ Empty or zero selects a default only where stated.
 
 Desired configuration for one deployment. Fields describe authored input before SDK normalization.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -52,7 +52,7 @@ Paths:
 
 One agent instance with its own inference choices, tools, and integrations.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
@@ -72,7 +72,7 @@ Paths:
 
 Authenticate inference using the primary route's credential-bearing provider.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -86,7 +86,7 @@ Paths:
 
 Execution timeout shared by the sandbox; Fabric owns native execution settings.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
@@ -102,7 +102,7 @@ Paths:
 
 Explicit native tool identifiers forwarded to Fabric.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
@@ -116,7 +116,7 @@ Paths:
 
 How an API key is sent.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -132,7 +132,7 @@ Constraints: `"bearer"` or `"header"`.
 
 Authentication method supported through the OpenShell provider.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -146,7 +146,7 @@ Constraints: `"api-key"`.
 
 Execution host requirements and labels that must be present on the pinned image.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -164,7 +164,7 @@ Paths:
 
 Typed vLLM compilation settings.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -180,7 +180,7 @@ Paths:
 
 An owned disposable data volume. The image must supply a mount directory writable by its configured user.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -194,7 +194,7 @@ Paths:
 
 Container execution limits, independent of application/model memory policy.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -213,7 +213,7 @@ Paths:
 
 One application TCP listener on the host.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -228,7 +228,7 @@ Paths:
 
 Readiness observation. Omission uses the image's Docker HEALTHCHECK.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -244,7 +244,7 @@ Paths:
 
 Requirements for one NVIDIA GPU with dedicated memory on Linux AMD64. Declaring requirements does not qualify a model or host.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -261,7 +261,7 @@ Paths:
 
 Credential-free OpenShell policy. Validation and protocol conversion use the pinned OpenShell policy library.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -279,7 +279,7 @@ Paths:
 
 Select an explicit policy; no isolated defaults are merged into it.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -293,7 +293,7 @@ Paths:
 
 External Ollama daemon observed by the managed proxy installer.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -308,7 +308,7 @@ Paths:
 
 Existing Ollama model installation, independently owned outside the deployment.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -323,7 +323,7 @@ Paths:
 
 One immutable file in a model snapshot.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -339,7 +339,7 @@ Paths:
 
 Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -357,7 +357,7 @@ Paths:
 
 Install a local or explicitly configured Kubernetes gateway, or connect to an existing gateway.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -400,7 +400,7 @@ An existing gateway managed outside this deployment.
 
 Endpoint grants added to the isolated preset, restricted to executables.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -415,7 +415,7 @@ Paths:
 
 GPU-family contracts, not model or whole-system qualifications. System profiles fix ARM64; GPU profiles require architecture. Each currently requires one visible GPU.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -429,7 +429,7 @@ Constraints: `"dgx-spark"` or `"rtx-spark"` or `"dgx-station"` or `"gb200"` or `
 
 One harness runtime configuration. Every sandbox runs its own instance for its configured agent.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -448,7 +448,7 @@ Paths:
 
 Sandbox image identity.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -463,7 +463,7 @@ Paths:
 
 Controls image acquisition on the selected container engine. Does not control model downloads or OpenShell sandbox images.
 
-Guide: [Container image downloads](../usage.md#control-container-image-downloads).
+Guide: [Container image downloads](../build-deploy/usage.md#control-container-image-downloads).
 
 Paths:
 
@@ -478,7 +478,7 @@ Constraints: `"Always"` or `"IfNotPresent"` or `"Never"`.
 
 Agent inference routing.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -495,7 +495,7 @@ Paths:
 
 Wire API used by the agent through OpenShell; no protocol conversion is implied.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -513,7 +513,7 @@ Constraints: `"openai-completions"` or `"openai-responses"` or `"anthropic-messa
 
 Choose an endpoint for external inference or serviceRef for a managed service.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -536,7 +536,7 @@ Paths:
 
 Data-only contract for executables and capabilities packaged in a pinned runtime image.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -559,7 +559,7 @@ Paths:
 
 Integration configuration attached inline to an agent or selected through integrationRefs. Unsupported kinds are rejected.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
@@ -598,7 +598,7 @@ A key-authenticated HTTP API, such as an MCP service, with a gateway-held key.
 
 Authentication provisioned for a managed Kubernetes gateway.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -614,7 +614,7 @@ Paths:
 
 Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -633,7 +633,7 @@ Paths:
 
 Pinned model snapshot inventory. The parser rejects duplicate files and file/directory conflicts.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -649,7 +649,7 @@ Paths:
 
 Resident watchdog thresholds are validated before runtime creation. The parser also checks relationships between thresholds.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -672,7 +672,7 @@ When `gpuMemoryUtilization` is present: `gpuMemoryGiB`: `0`; `kvCacheGiB`: `0`. 
 
 Deployment identity persists across apply, export, recovery, and destroy.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -687,7 +687,7 @@ Paths:
 
 Immutable model identity used for snapshot resolution and storage.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -702,7 +702,7 @@ Paths:
 
 Sandbox policy selection.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -718,7 +718,7 @@ Paths:
 
 Ollama GPU budget and host memory protection.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -738,7 +738,7 @@ Paths:
 
 One immutable Ollama registry model installation.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -753,7 +753,7 @@ Paths:
 
 Native Ollama serving controls supported by the managed installer.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -770,7 +770,7 @@ Paths:
 
 Model settings for one named inference choice.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -792,7 +792,7 @@ Paths:
 
 One allowed application-protocol action.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -807,7 +807,7 @@ Paths:
 
 Alternative values for a policy matcher.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -828,7 +828,7 @@ Paths:
 
 Executable identity for an egress grant.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -843,7 +843,7 @@ Paths:
 
 TCP destination and optional application-protocol policy. Invalid or conflicting combinations are rejected by OpenShell.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -873,7 +873,7 @@ Paths:
 
 Filesystem access grants inside the sandbox.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -889,7 +889,7 @@ Paths:
 
 JSON-RPC request inspection bounds.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -904,7 +904,7 @@ Paths:
 
 Landlock compatibility; hard_requirement refuses unavailable enforcement.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -918,7 +918,7 @@ Paths:
 
 Request method/path or MCP tool selector; protocol-specific combinations are validated by OpenShell.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -938,7 +938,7 @@ Paths:
 
 MCP request inspection and tool-name restrictions.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -956,7 +956,7 @@ Paths:
 
 Process identity resolved inside the sandbox image.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -971,7 +971,7 @@ Paths:
 
 Named endpoint grants restricted to declared executable paths.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -987,7 +987,7 @@ Paths:
 
 A literal glob or a nonempty list of alternative globs.
 
-Guide: [Sandbox policy](../sandbox-network.md).
+Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
@@ -1006,7 +1006,7 @@ Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
 A registry NemoClaw authenticates to when pulling images through Docker.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1021,7 +1021,7 @@ Paths:
 
 Resource declarations checked against host observations and produced data.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -1038,7 +1038,7 @@ Paths:
 
 Explicit cache import, verified by the new recipe before acceptance.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -1053,7 +1053,7 @@ Paths:
 
 Native model connection authorized through an attached OpenShell provider.
 
-Guide: [Inference configuration](../inference.md).
+Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
@@ -1072,7 +1072,7 @@ Paths:
 
 The compute driver an OpenShell gateway runs sandboxes with. One gateway runs one driver.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1086,7 +1086,7 @@ Paths:
 
 The gateway owns sandbox creation and dependency placement.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1110,7 +1110,7 @@ Paths:
 
 Search provider supported by the managed profile.
 
-Guide: [Agent runtimes](../agents.md).
+Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
@@ -1126,7 +1126,7 @@ Constraints: `"brave"` or `"tavily"`.
 
 Environment variable whose value is a bearer or API credential; the configuration holds no credential value.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1149,7 +1149,7 @@ Paths:
 
 Bearer authentication for a managed inference service.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1163,7 +1163,7 @@ Constraints: `"bearer"`.
 
 Managed inference CPU and memory limits, IPC, and shared-memory settings.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -1180,7 +1180,7 @@ Paths:
 
 One explicitly supported managed container package.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1265,7 +1265,7 @@ Image-owned container with explicit launch settings and bounded readiness.
 
 Explicit execution hardware: a named profile or dedicated GPU requirements. Excludes an inline recipe.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -1288,7 +1288,7 @@ A named hardware contract with fixed compatibility requirements.
 
 IPC namespace used by the managed inference container.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -1302,7 +1302,7 @@ Constraints: `"private"` or `"host"`.
 
 Execution host and Docker network for a remote model service.
 
-Guide: [SSH model service](../remote-service.md).
+Guide: [SSH model service](../agents-inference/remote-service.md).
 
 Paths:
 
@@ -1317,7 +1317,7 @@ Paths:
 
 HTTP model publication must match the bind address, service port, and /v1 path.
 
-Guide: [SSH model service](../remote-service.md).
+Guide: [SSH model service](../agents-inference/remote-service.md).
 
 Paths:
 
@@ -1332,7 +1332,7 @@ Paths:
 
 Whether updates may stop an existing model service before its replacement is ready.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1346,7 +1346,7 @@ Constraints: `"Preserve"` or `"Recreate"`.
 
 Limits apply with or without a recipe. Recipe serving settings replace the ordinary service parser settings.
 
-Guide: [Managed models](../models.md).
+Guide: [Managed models](../agents-inference/models.md).
 
 Paths:
 
@@ -1370,7 +1370,7 @@ Paths:
 
 Recipe settings select serving behavior without shell hooks or arbitrary argument lists.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 
@@ -1393,7 +1393,7 @@ Paths:
 
 The configuration requires one to 32 named sandboxes and at least one selected inference provider. Managed packages declared under services are installed independently of their consumers.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1414,7 +1414,7 @@ Paths:
 
 Gateway mutual TLS file references. All three references are required when TLS is declared.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
 Paths:
 
@@ -1430,7 +1430,7 @@ Paths:
 
 Executable identity inside the runtime image; this is not a shell command.
 
-Guide: [Inline model recipes](../recipes.md).
+Guide: [Inline model recipes](../agents-inference/recipes.md).
 
 Paths:
 

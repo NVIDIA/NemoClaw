@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Interrupted and refused operations on a managed Kubernetes deployment leave
-//! the state that the next run recovers from (`docs/design/scope.md`, Ownership
+//! the state that the next run recovers from (`internal-docs/design/scope.md`, Ownership
 //! and Recovery).
 //!
 //! Each test drives `Deployment` over a bundle whose OpenTofu is a script (see

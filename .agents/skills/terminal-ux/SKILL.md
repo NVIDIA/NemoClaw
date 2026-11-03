@@ -18,7 +18,7 @@ Distinguish existing behavior, proposed behavior, and observations that the appl
 Preserve compatibility requirements and existing operation ownership.
 A request for a design or library comparison does not authorize implementation or live operations.
 
-For NemoClaw, start with the current [CLI contract](../../../docs/reference/cli.md) and [responsibility boundaries](../../../docs/design/scope.md).
+For NemoClaw, start with the current [CLI contract](../../../docs/references/cli.md) and [responsibility boundaries](../../../internal-docs/design/scope.md).
 For Rust library selection, read [the research](references/rust-terminal-options.md) and recheck primary documentation before depending on current APIs.
 That reference contains project choices and dated research, not universal requirements.
 
