@@ -98,17 +98,12 @@ pub fn cluster_definition(
     profile(name, endpoint, kind, authenticated, addresses)
 }
 
-/// Accept a unicast Service address, excluding local and mapped destinations.
+/// Accept a unicast Service address: one an endpoint may name, excluding
+/// loopback and broadcast.
 pub fn service_address_allowed(address: &std::net::IpAddr) -> bool {
-    !address.is_unspecified()
+    !nemoclaw_backend::forbidden_address(*address)
         && !address.is_loopback()
-        && !address.is_multicast()
-        && match address {
-            std::net::IpAddr::V4(ip) => !ip.is_link_local() && !ip.is_broadcast(),
-            std::net::IpAddr::V6(ip) => {
-                !ip.is_unicast_link_local() && ip.to_ipv4_mapped().is_none()
-            }
-        }
+        && !matches!(address, std::net::IpAddr::V4(ip) if ip.is_broadcast())
 }
 
 fn profile(
@@ -253,6 +248,9 @@ mod tests {
             "ff02::1",
             "fe80::1",
             "::ffff:10.0.0.1",
+            "::127.0.0.1",
+            "64:ff9b::127.0.0.1",
+            "fd00:ec2::254",
         ] {
             let address: std::net::IpAddr = address.parse().unwrap();
             assert!(!service_address_allowed(&address), "{address}");
