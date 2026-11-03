@@ -496,7 +496,7 @@ Keep the recovery files and rerun the affected sandbox's rebuild with the same s
 
 If `rebuild` stops after recording the journal, rerun the command with the same replacement settings. The rerun takes one of these actions:
 
-- It continues deletion when the live sandbox still has the journaled source identity.
+- It refuses to reuse a retained backup when the original sandbox still exists, including with `--yes` or `--force`.
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff.
 - It starts a new replacement when recovery proves that the recorded replacement is absent.
@@ -510,11 +510,16 @@ A successful reconciliation reports `Cleared absent replacement recovery for '<n
 If the gateway or Docker daemon cannot confirm absence, the runtime binding changed, or the recovery records disagree, the command exits nonzero and keeps the recovery state.
 Correct the reported condition and rerun the same rebuild command; keep the recovery files and backup in place.
 
-An older recovery marker can lack an MCP handoff, as can an interruption before NemoClaw records the handoff.
-NemoClaw reads MCP state again only when the source still exists and the matching journal remains in the `planned` or `deleting` phase.
-If either check fails, the rerun stops without another delete attempt.
+If the original sandbox still exists, its retained backup can exclude conversations, files, or MCP changes made after the interrupted attempt.
+The rerun stops before MCP preparation or sandbox deletion and preserves the backup and recovery files.
+This refusal also applies when the retained backup has no MCP handoff.
+Do not delete the sandbox, edit the journal, or use `--retire-recovery` to bypass the refusal.
+Ask a NemoClaw maintainer to reconcile the interrupted rebuild; there is no supported command to cancel it while preserving the original sandbox.
+Taking another backup does not replace the backup bound to the interrupted transaction.
 
-NemoClaw treats a journaled replacement as void when the sandbox registry row and the live same-name sandbox report the same OpenShell identity on the journaled gateway, and that identity is not the journaled replacement.
+If replacement creation still requires the absent source’s MCP state and its retained handoff is unavailable, the rerun stops because it cannot reconstruct that recovery state safely.
+
+When no retained backup is being reused, NemoClaw treats a journaled replacement as void when the sandbox registry row and the live same-name sandbox report the same OpenShell identity on the journaled gateway, and that identity is not the journaled replacement.
 A registry row or a live sandbox on any other gateway leaves the journal in place, because that journal may still own an unregistered replacement on its own gateway.
 The rerun atomically replaces the void journal with a fresh journal against that live source, without leaving an unjournaled interval. It then reports `Replaced the void replacement journal for '<name>'; its source sandbox is registered and live.`
 A journal whose replacement never took therefore stops blocking `rebuild` for the rest of the session.
