@@ -21,6 +21,7 @@ import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
 } from "../../../onboard/sandbox-recreate-probe";
+import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import type { SandboxEntry } from "../../../state/registry";
 import {
   normalizeNativeNvidiaProviderAttachment,
@@ -139,6 +140,16 @@ export function createBoundLaunchReadinessDeps(
       probeInferenceRoute(sandboxName, agent, gatewayName, commandExecutor),
     commandExecutor,
   };
+}
+
+const UNKNOWN_LAUNCH_AGENT_NAME_MAX_LENGTH = 256;
+
+/** The recorded agent is registry data, so escape and quote it before printing. */
+export function formatUnknownLaunchAgent(agentName: string): string {
+  const name = JSON.stringify(
+    sanitizeReadinessText(agentName, UNKNOWN_LAUNCH_AGENT_NAME_MAX_LENGTH),
+  );
+  return `the recorded agent ${name} is unknown, so recreate the sandbox with a supported agent`;
 }
 
 export class LaunchReadinessObservationError extends Error {
