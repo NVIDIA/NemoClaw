@@ -87,6 +87,7 @@ describe("local inference helpers", () => {
         "  printf '%s\\n' 'Server: Docker Engine'",
         "  exit 0",
         "fi",
+        'printf "%s\\n" "Error: No such object: nemoclaw-vllm" >&2',
         "exit 1",
         "",
       ].join("\n"),

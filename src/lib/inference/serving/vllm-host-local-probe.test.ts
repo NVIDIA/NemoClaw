@@ -4,11 +4,21 @@
 import type { SpawnSyncOptions } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getLocalProviderBaseUrl,
+  getLocalProviderValidationBaseUrl,
+  getLocalProviderAvailabilityEndpoint,
+  getLocalProviderContainerReachabilityCheck,
+  getManagedVllmProviderBinding,
+  probeLocalProviderHealth,
+  validateLocalProvider,
+} from "../local";
 
 import type { dockerCapture as captureDocker } from "../../adapters/docker/local-model-runtime";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
   getLegacyHostLocalManagedVllmBridgeHost,
+  ManagedVllmInspectionError,
   recoverHostLocalManagedVllmEndpoint,
   resolveManagedVllmBridgeHost,
 } from "./vllm-host-local-lifecycle";
@@ -47,6 +57,7 @@ function ownedContainer(bridge = "172.18.0.1") {
 }
 
 function dockerCapture(row: ReturnType<typeof ownedContainer>, gateway = "172.18.0.1") {
+  interceptDocker(row);
   return vi.fn<typeof captureDocker>((argv, _options) =>
     argv[0] === "container" ? JSON.stringify([row]) : JSON.stringify([{ Gateway: gateway }]),
   );
@@ -143,6 +154,25 @@ describe("host-local managed vLLM container probe", () => {
     expectLocalSpawns(1);
   });
 
+  it("stops default provider routes before probing when Docker inspection fails", () => {
+    interceptDocker(null);
+    const inspect = subprocess.spawnSync.getMockImplementation()!;
+    subprocess.spawnSync.mockImplementation((file, args, options) =>
+      args.join(" ") === "container inspect nemoclaw-vllm"
+        ? { status: 1, stdout: "", stderr: "Cannot connect to Docker" }
+        : inspect(file, args, options),
+    );
+    const probe = vi.fn();
+    expect(() => getManagedVllmProviderBinding()).toThrow(ManagedVllmInspectionError);
+    expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
+    expect(probeLocalProviderHealth("vllm-local", { runCurlProbeImpl: probe })?.ok).toBe(false);
+    expect(validateLocalProvider("vllm-local", probe).ok).toBe(false);
+    expect(probe).not.toHaveBeenCalled();
+  });
+
   it("preserves an explicitly selected bridge environment for generic installation", () => {
     interceptDocker(null);
     const env = { DOCKER_CONTEXT: "requested-builder", PATH: "/usr/bin" };
@@ -173,12 +203,6 @@ describe("host-local managed vLLM container probe", () => {
       "foreign container",
       (row) => {
         row.Config.Labels = {};
-      },
-    ],
-    [
-      "different name",
-      (row) => {
-        row.Name = "/other-vllm";
       },
     ],
     [
@@ -228,9 +252,35 @@ describe("host-local managed vLLM container probe", () => {
     ).toThrow("requires one private OpenShell bridge address");
   });
 
-  it("preserves the legacy probe when Docker inspection is unavailable", () => {
+  it("preserves the legacy probe when the local container is confirmed absent", () => {
     interceptDocker(null, ownedContainer());
+    const capture = subprocess.spawnSync.getMockImplementation()!;
+    subprocess.spawnSync.mockImplementation((file, args, options) =>
+      args.join(" ") === "container inspect nemoclaw-vllm"
+        ? { status: 1, stdout: "[]", stderr: "Error: No such object: nemoclaw-vllm" }
+        : capture(file, args, options),
+    );
     expect(getLegacyHostLocalManagedVllmBridgeHost(18080)).toBeNull();
+    expectLocalSpawns(1);
+  });
+
+  it.each([
+    { state: "unavailable daemon", status: 1, stdout: "", stderr: "Cannot connect to Docker" },
+    { state: "malformed JSON", status: 0, stdout: "{", stderr: "" },
+    { state: "empty inspection", status: 0, stdout: "[]", stderr: "" },
+    {
+      state: "an unexpected container identity",
+      status: 0,
+      stdout: JSON.stringify([{ ...ownedContainer(), Name: "/other-vllm" }]),
+      stderr: "",
+    },
+    { state: "missing process status", status: null, stdout: "", stderr: "" },
+  ])("rejects an inspection with $state instead of treating it as absence", (result) => {
+    interceptDocker(null, ownedContainer());
+    subprocess.spawnSync.mockReturnValue(result as ReturnType<typeof subprocess.spawnSync>);
+    expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080)).toThrow(
+      "Managed vLLM container inspection failed",
+    );
     expectLocalSpawns(1);
   });
 });

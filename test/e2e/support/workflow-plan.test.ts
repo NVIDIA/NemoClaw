@@ -678,6 +678,10 @@ describe("E2E workflow plan", () => {
       ["inference-routing-openclaw-native"],
     ],
     ["src/lib/actions/sandbox/inference-route-health.ts", ["inference-routing-openclaw-native"]],
+    ["src/lib/inference/local.ts", ["inference-routing"]],
+    ["src/lib/inference/serving/vllm-host-local-lifecycle.ts", ["inference-routing"]],
+    ["src/lib/inference/serving/vllm-host-local-network.ts", ["inference-routing"]],
+    ["src/lib/inference/vllm-docker-env.ts", ["inference-routing"]],
   ])("selects the live owners of %s", (changedFile, targets) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
       expect.arrayContaining(targets),

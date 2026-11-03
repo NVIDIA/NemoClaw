@@ -5,7 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { dockerCapture } from "../../adapters/docker/local-model-runtime";
+import { dockerCapture, dockerRun } from "../../adapters/docker/local-model-runtime";
 import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
@@ -285,31 +285,67 @@ export class UnsafeLegacyVllmBindingsError extends Error {
   }
 }
 
+export class ManagedVllmInspectionError extends Error {
+  constructor() {
+    super(
+      "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+    );
+  }
+}
+
 /** Reject unsafe owned bearerless bindings and select their private probe address. */
 export function getLegacyHostLocalManagedVllmBridgeHost(
   servingPort: number,
   capture: typeof dockerCapture = dockerCapture,
 ): string | null {
   const dockerEnv = buildLocalManagedVllmDockerEnv();
+  const inspection = dockerRun(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
+    env: dockerEnv,
+    replaceEnv: true,
+    ignoreError: true,
+    suppressOutput: true,
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  if (inspection.error || inspection.status !== 0) {
+    if (
+      !inspection.error &&
+      inspection.status === 1 &&
+      ["", "[]"].includes(String(inspection.stdout ?? "").trim()) &&
+      /^(?:Error response from daemon:\s*|Error:\s*)?No such (?:object|container): nemoclaw-vllm\.?$/iu.test(
+        String(inspection.stderr ?? "").trim(),
+      )
+    )
+      return null;
+    throw new ManagedVllmInspectionError();
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(inspectHostLocalContainer(capture, dockerEnv));
+    parsed = JSON.parse(String(inspection.stdout));
   } catch {
-    return null;
+    throw new ManagedVllmInspectionError();
   }
-  if (!Array.isArray(parsed) || parsed.length !== 1 || !parsed[0]) return null;
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 1 ||
+    !parsed[0] ||
+    typeof parsed[0] !== "object"
+  ) {
+    throw new ManagedVllmInspectionError();
+  }
   const row = parsed[0] as DockerInspectRow;
   const labels = row.Config?.Labels;
   if (
     typeof row.Id !== "string" ||
     !/^[a-f0-9]{12,64}$/u.test(row.Id) ||
     row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
-    row.State?.Running !== true ||
-    !labels ||
-    typeof labels !== "object" ||
-    Array.isArray(labels)
-  )
-    return null;
+    typeof row.State?.Running !== "boolean" ||
+    labels === undefined ||
+    (labels !== null && (typeof labels !== "object" || Array.isArray(labels)))
+  ) {
+    throw new ManagedVllmInspectionError();
+  }
+  if (!row.State?.Running || labels === null) return null;
   const labelMap = labels as Record<string, unknown>;
   if (
     labelMap[HOST_LOCAL_VLLM_MANAGED_LABEL] !== "true" ||

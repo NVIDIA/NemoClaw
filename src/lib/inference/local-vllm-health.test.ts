@@ -31,6 +31,11 @@ function inspectBearerlessVllmBindings(bindings: { HostIp: string; HostPort: str
   vi.spyOn(localModelDocker, "dockerCapture").mockImplementation(
     (argv) => responses.get(argv.join(" ")) ?? "",
   );
+  vi.spyOn(localModelDocker, "dockerRun").mockReturnValue({
+    status: bindings ? 0 : 1,
+    stdout: responses.get("container inspect nemoclaw-vllm") ?? "",
+    stderr: bindings ? "" : "Error: No such object: nemoclaw-vllm",
+  } as ReturnType<typeof localModelDocker.dockerRun>);
 }
 
 describe("recorded bearerless vLLM health ports", () => {
