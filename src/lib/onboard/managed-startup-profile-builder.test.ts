@@ -7,6 +7,11 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { buildConfig as buildOpenClawConfig } from "../../../scripts/generate-openclaw-config.mts";
+import {
+  createHermesSwitchyardRoutingIntent,
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../hermes-switchyard-routing";
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
 import { maybePromptForInferenceInputCapability } from "./inference-input-capability";
 import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
@@ -581,6 +586,7 @@ describe("buildManagedStartupProfile", () => {
 
     expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
+      switchyardRouting: null,
       webSearch: { enabled: true, provider: "tavily" },
     });
     expect(built.profile.inference).toMatchObject({
@@ -749,7 +755,30 @@ describe("buildManagedStartupProfile", () => {
     const built = buildManagedStartupProfile(hermesInput());
     expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
+      switchyardRouting: null,
       webSearch: { enabled: false, provider: "tavily" },
+    });
+  });
+
+  it("persists validated Switchyard routing in the Hermes startup profile (#13862)", () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nemotron-nano" },
+      capable: { provider: "openai-api", model: "gpt-5.2" },
+    });
+    const built = buildManagedStartupProfile(
+      hermesInput({
+        environment: {
+          [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+        },
+      }),
+    );
+
+    expect(built.profile.agentConfig).toMatchObject({
+      agent: "hermes",
+      switchyardRouting: routing,
+    });
+    expect(decodeManagedStartupProfile(built.encodedProfile).agentConfig).toMatchObject({
+      switchyardRouting: routing,
     });
   });
 
