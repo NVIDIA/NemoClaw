@@ -8,11 +8,10 @@
  * arbitrary native home/workspace state.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import {
   SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
@@ -20,6 +19,7 @@ import {
   SANDBOX_SURVIVAL_INSTALL_TIMEOUT_MS,
   SANDBOX_SURVIVAL_LIFECYCLE_READINESS,
   SANDBOX_SURVIVAL_MARKER_PATHS,
+  SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
   SANDBOX_SURVIVAL_NATIVE_READINESS,
   SANDBOX_SURVIVAL_OPENSHELL_DELETE_TIMEOUT_MS,
   SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
@@ -32,14 +32,22 @@ import {
   assertExitZero,
   outputContainsSandbox,
   resultText,
+  type SandboxClient,
   sandboxAccessEnv,
 } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  completedAgentRunId,
+  nativePluginWriteScript,
+  nativeToolCallOutcome,
+  nativeToolName,
+} from "../fixtures/native-plugin-evidence.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-survival";
 const DASHBOARD_PORT = Number(process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789");
@@ -55,21 +63,6 @@ function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_DASHBOARD_PORT: String(DASHBOARD_PORT),
   };
-}
-
-async function expectSandboxExecAlive(
-  sandboxName: string,
-  exec: (
-    script: string,
-    artifactName: string,
-  ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
-  artifactName: string,
-): Promise<void> {
-  const alive = await exec("echo alive", artifactName);
-  expect(
-    alive.exitCode === 0 && alive.stdout.trim() === "alive",
-    `${sandboxName} exec failed: ${resultText(alive)}`,
-  ).toBe(true);
 }
 
 async function waitForNativeAgentReady(
@@ -93,75 +86,47 @@ async function waitForNativeAgentReady(
   });
 }
 
-function nativeSurvivalPluginInstallScript(): string {
-  const packageJson = JSON.stringify({
-    name: "@nemoclaw/e2e-survival-plugin",
-    version: "1.0.0",
-    type: "module",
-    main: "index.js",
-    files: ["index.js", "openclaw.plugin.json"],
-    openclaw: { extensions: ["./index.js"] },
-    peerDependencies: { openclaw: ">=2026.7.1" },
-  });
-  const manifest = JSON.stringify({
-    id: "e2e-survival-plugin",
-    name: "E2E Survival Plugin",
-    version: "1.0.0",
-    description: "Native stop/start persistence fixture",
-    activation: { onStartup: true },
-    contracts: { tools: ["survival_probe"] },
-    configSchema: { type: "object", properties: {}, additionalProperties: false },
-  });
-  const entrypoint = `const plugin = {
-  id: "e2e-survival-plugin",
-  name: "E2E Survival Plugin",
-  version: "1.0.0",
-  register(api) {
-    api.registerTool({
-      name: "survival_probe",
-      label: "Survival Probe",
-      description: "Prove a native plugin remains executable after OpenShell stop/start.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-      async execute() {
-        const details = { survived: true };
-        return { content: [{ type: "text", text: JSON.stringify(details) }], details };
-      },
-    });
-  },
-};
-export default plugin;
-`;
-  return [
-    "set -eu",
-    "source_dir=/sandbox/e2e-survival-plugin-source",
-    'rm -rf -- "$source_dir"',
-    'mkdir -p -- "$source_dir"',
-    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
-    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
-    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
-  ].join("\n");
-}
-
-async function expectNativeSurvivalPluginInvocation(
-  exec: (
-    script: string,
-    artifactName: string,
-  ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
-): Promise<void> {
-  const invocation = await exec(
-    `. /tmp/nemoclaw-proxy-env.sh && printf 'header = "Authorization: Bearer %s"\\n' "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy '*' --max-time 30 --silent --show-error --fail-with-body --config - -H 'Content-Type: application/json' --data '{"agentId":"main","tool":"survival_probe","args":{}}' "http://127.0.0.1:\${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"`,
-    "post-openshell-start-native-plugin-invoke",
+/** Exercise the plugin through normal agent admission and inspect host-owned execution records. */
+async function expectNativeSurvivalPluginInvocation(sandbox: SandboxClient): Promise<void> {
+  const toolName = nativeToolName("v1");
+  const turn = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--thinking",
+      "off",
+      "--session-id",
+      `e2e-plugin-${randomUUID()}`,
+      "-m",
+      `Run the local ${toolName} tool once with no arguments.`,
+    ],
+    {
+      artifactName: "post-openshell-start-native-plugin-invoke",
+      env: sandboxAccessEnv(),
+      timeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
+    },
   );
-  const document = parseOpenClawJsonDocuments(invocation.stdout)[0] as
-    | { ok?: boolean; result?: { details?: { survived?: boolean } } }
-    | undefined;
-  expect(
-    invocation.exitCode === 0 &&
-      document?.ok === true &&
-      document.result?.details?.survived === true,
-    resultText(invocation),
-  ).toBe(true);
+  const runId = completedAgentRunId(turn.stdout);
+  // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
+  const audit = await pollUntil({
+    artifactPrefix: "post-openshell-start-native-plugin-invoke-audit",
+    attempts: 5,
+    delayMs: 1_000,
+    probe: async (_attempt, artifactName) => {
+      const page = await sandbox.exec(
+        SANDBOX_NAME,
+        ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
+        { artifactName, env: sandboxAccessEnv(), timeoutMs: 30_000 },
+      );
+      return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
+    },
+    accept: (outcome) => outcome !== "pending",
+  });
+  expect(audit.value, "the plugin tool must start and succeed in this agent run").toBe("succeeded");
 }
 
 test(
@@ -318,7 +283,6 @@ test(
       });
 
     progress.phase("prove baseline sandbox access and native agent readiness");
-    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
     await waitForNativeAgentReady(execShell, "baseline-native-agent-ready", DASHBOARD_PORT);
 
     progress.phase("write persistent OpenClaw markers");
@@ -330,10 +294,7 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
     progress.phase("install a native OpenClaw plugin package");
-    await execShell(
-      nativeSurvivalPluginInstallScript(),
-      "pre-openshell-stop-native-plugin-install",
-    );
+    await execShell(nativePluginWriteScript("v1"), "pre-openshell-stop-native-plugin-install");
 
     progress.phase("stop the sandbox through OpenShell");
     const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
@@ -364,7 +325,15 @@ test(
       markers,
       "post-openshell-start-marker-read",
     );
-    await expectNativeSurvivalPluginInvocation(execShell);
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      { ...buildAvailabilityProbeEnv(), ...hosted.env },
+      [apiKey],
+      false,
+    );
+    await expectNativeSurvivalPluginInvocation(sandbox);
 
     progress.phase("destroy the sandbox");
     await sandbox.cleanupSandbox(SANDBOX_NAME, {
