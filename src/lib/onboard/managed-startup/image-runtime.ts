@@ -1753,6 +1753,7 @@ function applyAdapter(
         break;
       case "hermes":
         installHermesManagedPolicy();
+        installHermesSwitchyardRoutingFiles(mapped.configurationEnvironment);
         sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
         // Normalize before the coordinator commits a newly applied profile so
         // the durable transaction never records generator-created 0600 files as
@@ -1822,9 +1823,12 @@ export async function applyManagedStartupImageProfile(
   if (mapped.agent !== result.application.profile.agent) {
     fail(`mapped ${mapped.agent} environment for ${result.application.profile.agent}`);
   }
-  if (expectedAgent === "hermes" && !result.adapterApplied && !options.ownerResult) {
-    // Committed startup replays still repair generator-created 0600 files.
-    normalizeHermesManagedConfiguration();
+  if (expectedAgent === "hermes" && !result.adapterApplied) {
+    if (!options.ownerResult) {
+      // The delegated owner already normalized its configuration files.
+      normalizeHermesManagedConfiguration();
+    }
+    verifyHermesSwitchyardRoutingFiles(mapped.configurationEnvironment);
   }
   let corporateCaMerged: boolean;
   if (result.adapterApplied) {

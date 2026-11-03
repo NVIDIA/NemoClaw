@@ -391,6 +391,11 @@ PR image publication builds each shipped agent on native AMD64 and ARM64 runners
 The workflow retains PR all-agent image contracts for seven days so manual PR E2E can bind them
 after review. An expired contract blocks live E2E before candidate execution.
 Each platform retains its own digest contract and runs the direct startup checks.
+If native startup exhausts its command-boundary probes, the error includes a JSON diagnostic summary in the CI log.
+Two observations, each limited to five seconds, read container state and the final 80 log lines before cleanup.
+The summary records available state fields, read results, and fixed error flags while excluding raw logs, configuration, and credentials.
+A false flag does not exclude an error missing from the retained log tail.
+Use the summary to diagnose startup; container removal still requires separate verification.
 For OpenClaw, those checks also run the shared agent-reload proof against the image's generated
 gateway policy and installed distribution. The proof checks live named-agent discovery, gateway
 health, and a nonzero exit after a restart-class bind failure. Google Chat's reload-off exception

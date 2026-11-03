@@ -847,7 +847,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -902,7 +902,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -967,7 +967,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -1172,7 +1172,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -1206,7 +1206,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -1233,7 +1233,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -1259,7 +1259,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -1308,7 +1308,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
               ? extractRunBlock(
                   DOCKERFILE,
                   "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-                  "# Patch OpenClaw media fetch",
+                  "# Patch OpenClaw network boundaries",
                 )
               : extractRunBlock(
                   DOCKERFILE_BASE,
@@ -1394,7 +1394,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             label: "production Dockerfile",
             file: DOCKERFILE,
             startMarker: "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            endMarker: "# Patch OpenClaw media fetch",
+            endMarker: "# Patch OpenClaw network boundaries",
           },
           {
             label: "base Dockerfile",
@@ -1433,7 +1433,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
@@ -1456,7 +1456,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             label: "production Dockerfile",
             file: DOCKERFILE,
             startMarker: "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            endMarker: "# Patch OpenClaw media fetch",
+            endMarker: "# Patch OpenClaw network boundaries",
           },
           {
             label: "base Dockerfile",
@@ -1490,7 +1490,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           extractRunBlock(
             DOCKERFILE,
             "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
+            "# Patch OpenClaw network boundaries",
           ),
         );
 

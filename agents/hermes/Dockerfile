@@ -93,7 +93,7 @@ COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts src/lib/hermes-switchyard-routing.ts /src/lib/
 COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
-COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts /src/lib/inference/native-provider/
 COPY src/lib/inference/native-nvidia/contract.ts /src/lib/inference/native-nvidia/contract.ts
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
