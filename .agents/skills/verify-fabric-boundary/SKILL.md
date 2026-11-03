@@ -1,6 +1,6 @@
 ---
 name: verify-fabric-boundary
-description: Verify, as a user of a Fabric-managed agent on a DGX Spark, the NemoClaw–NeMo Fabric boundary — inference, native tools and interfaces, skills, plugins, mounted extensions, and their retention across runtime restart, stop/start, recreation, a configuration change, restore, and teardown. Choose the agent from the files under agents/. Use after changing adapters, harness images, Fabric, OpenShell, mounts, or lifecycle code, before claiming that an agent's native capabilities work through NemoClaw.
+description: Verify, as a user of a Fabric-managed agent on a DGX Spark, the NemoClaw–NeMo Fabric boundary — inference, native tools and interfaces, skills, plugins, mounted extensions, and their retention across runtime restart, stop/start, recreation, a configuration change, restore, and teardown. Choose the agent from the skill's agent table. Use after changing adapters, harness images, Fabric, OpenShell, mounts, or lifecycle code, before claiming that an agent's native capabilities work through NemoClaw.
 disable-model-invocation: true
 ---
 
@@ -18,27 +18,26 @@ The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a
 ## Scope
 
 - **Gateway:** a managed Docker gateway on the DGX Spark running the skill, as in [verify-yaml-deployment's scope](../verify-yaml-deployment/SKILL.md#scope).
-- **Agent:** one sandbox named `assistant` with one Fabric agent, chosen from [agents/](agents/).
+- **Agent:** one sandbox named `assistant` with one Fabric agent from the [agent table](#choose-the-agent-and-target).
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
 - **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes` and `openclaw`, 131 for `deepagents-code`.
 
-Each agent file lists the agent–target pairs run to completion, with the revision, date, and counts by outcome.
+[Proven Pairs](#proven-pairs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome.
 A pair that isn't listed is unproven: say so with the result.
 
 ## Choose the Agent and Target
 
-| Agent file | `AGENT` | Harness (`ADAPTER_ID`) |
+| `AGENT` | Harness (`ADAPTER_ID`) | Scope |
 |---|---|---|
-| [agents/hermes.md](agents/hermes.md) | `hermes` | `nvidia.fabric.hermes` |
-| [agents/openclaw.md](agents/openclaw.md) | `openclaw` | `nvidia.fabric.openclaw` |
-| [agents/deepagents-code.md](agents/deepagents-code.md) | `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` |
+| `hermes` | `nvidia.fabric.hermes` | Every feature |
+| `openclaw` | `nvidia.fabric.openclaw` | Every feature |
+| `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` | Every feature except the `web-ui` case, which the check log omits |
 
 | Target file | `TARGET` |
 |---|---|
 | [../verify-yaml-deployment/targets/dgx-spark.md](../verify-yaml-deployment/targets/dgx-spark.md) | `dgx-spark` |
 
 Read the matching [verify-yaml-deployment agent file](../verify-yaml-deployment/agents/) and the target file before launching: they set the base YAML and the variables this file uses.
-The agent file here records this skill's scope for that agent and its Proven Pairs.
 
 Ask the user before every run: each run uses the Spark's GPU through its inference source, and some sources need credentials or a paid service.
 Also ask before a run that downloads a model, uses sudo, or installs a plugin package from the network.
@@ -270,8 +269,15 @@ grep -c '^| [a-z-]* | [A-Z][^|]* | *|' "$EVIDENCE/checks.md"
 The last count is the checks still without an outcome; it must be 0 for a complete run.
 Include the `checks.md` table and `findings.md`, with each finding's affected checks.
 A run is complete when every selected check has an outcome and cleanup finished; a complete run is not a claim that every check passed.
-Add the pair to the agent file's Proven Pairs only after a complete run, including cleanup, and record its inference source and counts by outcome there.
+Add the pair to [Proven Pairs](#proven-pairs) only after a complete run, including cleanup, and record its inference source and counts by outcome there.
 Mark an interrupted run as interrupted, keep its evidence, and don't add it.
+
+## Proven Pairs
+
+| Agent | Target | Inference source | Revision | Date | Passed | Failed | Not tested | Notes |
+|---|---|---|---|---|---|---|---|---|
+
+None yet.
 
 ## Hand Off
 
