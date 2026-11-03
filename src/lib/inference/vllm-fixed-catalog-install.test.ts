@@ -189,6 +189,28 @@ describe("fixed catalog vLLM installs", () => {
     process.env = { ...originalEnv };
   });
 
+  it("rejects an unsafe bridge before replacing a host-local container (#14083)", async () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const capture = mocks.dockerCapture.getMockImplementation()!;
+    mocks.dockerCapture.mockImplementation((args, ...rest) =>
+      args[0] === "network" ? JSON.stringify([{ Gateway: "0.0.0.0" }]) : capture(args, ...rest),
+    );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(spies.errSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "requires one private OpenShell bridge address",
+    );
+  });
+
   it("reports automatic GPU memory rejection before install effects", async () => {
     const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
     const availableMemoryBytes = 23_730_323_456;

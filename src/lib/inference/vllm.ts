@@ -796,9 +796,7 @@ export function buildVllmRunArgs(
   if (model.managedBearerAuth && !/^[a-f0-9]{64}$/.test(managedApiKey)) {
     throw new Error("Managed host-local vLLM requires a valid host-global API key");
   }
-  const managedPublishHost = model.managedBearerAuth
-    ? validateManagedVllmBridgeHost(managedBridgeHost ?? "")
-    : null;
+  const managedPublishHost = validateManagedVllmBridgeHost(managedBridgeHost ?? "");
   return [
     "--pull=never",
     "--init",
@@ -830,8 +828,9 @@ export function buildVllmRunArgs(
         ]
       : []),
     "-p",
-    `${model.managedBearerAuth ? "127.0.0.1:" : ""}${String(VLLM_PORT)}:8000`,
-    ...(model.managedBearerAuth ? ["-p", `${managedPublishHost}:${String(VLLM_PORT)}:8000`] : []),
+    `127.0.0.1:${String(VLLM_PORT)}:8000`,
+    "-p",
+    `${managedPublishHost}:${String(VLLM_PORT)}:8000`,
     "--name",
     containerName,
     "--entrypoint",
@@ -1250,7 +1249,7 @@ function startContainer(
       model,
       resolvedFlags,
       commandEnv,
-      model.managedBearerAuth ? resolveBridgeHost(dockerEnv) : undefined,
+      resolveBridgeHost(dockerEnv),
     );
   } catch (err) {
     return { ok: false, reason: (err as Error).message };

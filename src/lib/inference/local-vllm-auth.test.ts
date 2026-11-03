@@ -19,6 +19,7 @@ const managedClusterRecovery = vi.hoisted(() => ({
 }));
 const hostLocalRecovery = vi.hoisted(() => ({
   endpoint: vi.fn(),
+  bridgeHost: vi.fn<() => string | null>(() => null),
 }));
 const managedBridge = vi.hoisted(() => ({
   host: vi.fn(() => "172.18.0.1"),
@@ -36,6 +37,7 @@ vi.mock("./serving/managed-cluster-runtime-receipt", () => ({
 vi.mock("./serving/vllm-host-local-lifecycle", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./serving/vllm-host-local-lifecycle")>()),
   recoverHostLocalManagedVllmEndpoint: hostLocalRecovery.endpoint,
+  getLegacyHostLocalManagedVllmBridgeHost: hostLocalRecovery.bridgeHost,
   resolveManagedVllmBridgeHost: managedBridge.host,
 }));
 vi.mock("./vllm-api-key", async (importOriginal) => ({
@@ -118,6 +120,8 @@ beforeEach(() => {
   managedClusterRecovery.endpoint.mockReturnValue(null);
   hostLocalRecovery.endpoint.mockReset();
   hostLocalRecovery.endpoint.mockReturnValue(null);
+  hostLocalRecovery.bridgeHost.mockReset();
+  hostLocalRecovery.bridgeHost.mockReturnValue(null);
   managedBridge.host.mockReset();
   managedBridge.host.mockReturnValue("172.18.0.1");
   managedKey.load.mockReset();
@@ -131,6 +135,22 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("managed vLLM authentication", () => {
+  it("probes bearerless managed vLLM on the OpenShell bridge instead of Docker's default gateway (#14083)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.bridgeHost.mockReturnValue("172.18.0.1");
+    const capture = vi.fn((argv: readonly string[]) =>
+      argv[0] === "curl" || argv.includes("host.openshell.internal:172.18.0.1")
+        ? JSON.stringify({ data: [{ id: "test/model" }] })
+        : "",
+    );
+
+    expect(validateLocalProvider("vllm-local", capture, vi.fn())).toEqual({ ok: true });
+    const command = capture.mock.calls.find(([argv]) => argv[0] === "docker")?.[0];
+    expect(command).toContain("host.openshell.internal:172.18.0.1");
+    expect(command).not.toContain("host.openshell.internal:host-gateway");
+    expect(command).not.toContain("host.openshell.internal:172.17.0.1");
+  });
+
   it("keeps an explicit sandbox host override ahead of managed endpoint recovery", () => {
     const loadApiKeyImpl = vi.fn(() => API_KEY);
     expect(getLocalProviderBaseUrl("vllm-local", { hostUrl: "http://explicit-host" })).toBe(

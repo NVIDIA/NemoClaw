@@ -81,6 +81,7 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
 import {
+  getLegacyHostLocalManagedVllmBridgeHost,
   recoverHostLocalManagedVllmEndpoint,
   resolveManagedVllmBridgeHost,
 } from "./serving/vllm-host-local-lifecycle";
@@ -1691,9 +1692,12 @@ export function getLocalProviderContainerReachabilityCheck(
       const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
       const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
-      const hostAlias = managed.binding?.validationBaseUrl
-        ? `host.openshell.internal:${resolveManagedVllmBridgeHost()}`
-        : "host.openshell.internal:host-gateway";
+      const bridgeHost = managed.binding?.validationBaseUrl
+        ? resolveManagedVllmBridgeHost()
+        : !managed.binding && !configuredLocalInferenceHostUrl()
+          ? getLegacyHostLocalManagedVllmBridgeHost(VLLM_PORT)
+          : null;
+      const hostAlias = `host.openshell.internal:${bridgeHost ?? "host-gateway"}`;
       return [
         ...(managedBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
         "run",

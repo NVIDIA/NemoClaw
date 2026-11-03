@@ -346,6 +346,7 @@ export function mockSuccessfulVllmInstall(
       )(),
   ];
   const dockerCaptureByCommand = new Map<string, () => string>([
+    ["network", () => JSON.stringify([{ Gateway: "172.18.0.1" }])],
     ["container", () => ownershipHandlers[ownershipCallIndex++ % ownershipHandlers.length]()],
     ["ps", () => `${containerName}\n`],
   ]);
