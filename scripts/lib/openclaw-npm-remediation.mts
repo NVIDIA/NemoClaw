@@ -1086,78 +1086,6 @@ function remediateMusicMetadata(
   patchOpenClawMusicMetadataPackageGraph(packageDirectory, replacement, packageSpec);
 }
 
-function remediateBundledUndici(
-  packageDirectory: string,
-  packageSpec: string,
-  root: string,
-  env: NodeJS.ProcessEnv,
-): void {
-  const originalVersion = BUNDLED_UNDICI_VERSIONS[packageSpec];
-  if (!originalVersion) return;
-  const spec = UNDICI_REPLACEMENTS.find((entry) =>
-    entry.version.startsWith(originalVersion.slice(0, 2)),
-  );
-  if (!spec) throw new Error("Unreviewed bundled Undici major");
-  const metadataPath = join(packageDirectory, "package.json");
-  const metadataStat = lstatSync(metadataPath);
-  if (!metadataStat.isFile() || metadataStat.isSymbolicLink() || metadataStat.nlink !== 1)
-    throw new Error("Undici migration requires single regular plugin metadata");
-  const metadata = readJson(metadataPath);
-  const target = join(packageDirectory, "node_modules", "undici");
-  if (![originalVersion, spec.version].includes(metadata.dependencies?.undici))
-    throw new Error("Bundled Undici dependency changed after review");
-  const alreadyPatched = readJson(join(target, "package.json")).version === spec.version;
-  requirePackageIdentity(
-    readJson(join(target, "package.json")),
-    "undici",
-    alreadyPatched ? spec.version : originalVersion,
-    "Bundled Undici",
-  );
-  const archive = packReplacement(
-    `undici@${spec.version}`,
-    spec.integrity,
-    spec.tarball,
-    root,
-    env,
-  );
-  const replacement = extractArchive(
-    archive.archivePath,
-    join(root, `undici-${spec.version}`),
-    root,
-    env,
-  );
-  const replacementMetadata = readJson(join(replacement, "package.json"));
-  requirePackageIdentity(replacementMetadata, "undici", spec.version, "Undici replacement");
-  if (
-    Object.keys(replacementMetadata.dependencies ?? {}).length ||
-    replacementMetadata.engines?.node !== spec.engines.node
-  )
-    throw new Error("Undici replacement contract changed after review");
-  if (alreadyPatched) {
-    if (hashPackageTree(target) !== hashPackageTree(replacement)) {
-      throw new Error("Bundled Undici changed after remediation");
-    }
-  } else {
-    copyReplacementPackage(replacement, target);
-  }
-  metadata.dependencies.undici = spec.version;
-  writeJson(metadataPath, metadata);
-  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
-  if (existsSync(shrinkwrapPath)) {
-    const shrinkwrap = readJson(shrinkwrapPath);
-    const entry = shrinkwrap.packages?.["node_modules/undici"];
-    if (![originalVersion, spec.version].includes(entry?.version))
-      throw new Error("Bundled Undici shrinkwrap changed after review");
-    Object.assign(entry, {
-      version: spec.version,
-      integrity: spec.integrity,
-      resolved: spec.tarball,
-    });
-    shrinkwrap.packages[""].dependencies.undici = spec.version;
-    writeJson(shrinkwrapPath, shrinkwrap);
-  }
-}
-
 function patchOpenClawBundledBodyParser(
   packageDirectory: string,
   packageSpec: string,
@@ -2599,7 +2527,8 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     !patchesProxyAddr &&
     !supportsZod &&
     !patchesMsal
-  ) return;
+  )
+    return;
   if (
     !request.packageDirectory ||
     !isAbsolute(request.packageDirectory) ||
