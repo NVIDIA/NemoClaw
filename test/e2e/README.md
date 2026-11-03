@@ -596,6 +596,8 @@ onboarding, restore, rebuild, and cloud security checks. Expected nonzero outcom
 refusal does not trigger collection; a timeout still captures evidence. Diagnostic acquisition does
 not retry the mutation or replace its result.
 OpenClaw launch evidence reports whether a SQLite rejection concerns file metadata or the transcript table, without exposing paths, identities, or session contents. The existing evidence checks remain required.
+The weather lifecycle and sandbox survival fixtures invoke native plugins through an admitted agent turn with a local fixture request.
+They verify the actual paired tool result in that session's native store; the model's reply alone cannot establish execution.
 A failed native weather-plugin invocation also records unauthenticated liveness and readiness HTTP status codes, bounded to two three-second probes. It does not repeat the tool invocation or replace its failure.
 
 The same workflow publishes each Pi pull-request candidate by immutable digest after validating the

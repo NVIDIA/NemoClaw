@@ -19,7 +19,7 @@ const PACKAGE_SPEC = "openclaw@2026.10.5";
 const INTEGRITY =
   "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz";
-const LOCK_SHA256 = "02f1096028c223c17757b026c92e389a7904178995d588b3e3a4a5d8deb8d15f";
+const LOCK_SHA256 = "16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -175,7 +175,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toContain("qs@6.16.1");
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.12");
-    expect(verified).toContain("fast-uri@3.1.8");
+    expect(verified).toContain("fast-uri@3.1.9");
 
     expect(verified).not.toContain("fast-uri@3.1.6");
     expect(verified).toContain("hono@4.13.11");

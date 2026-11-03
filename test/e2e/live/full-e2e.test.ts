@@ -62,6 +62,10 @@ import { buildSandboxCredentialScanCommand } from "./sandbox-credential-boundary
 import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import {
+  buildNativePluginInvocationScript,
+  nativePluginInvocationSucceeded,
+} from "../fixtures/openclaw-agent-output.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
   cleanupAcquiredResource,
@@ -294,22 +298,18 @@ async function invokeNativeWeatherPlugin(
   const result = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
-      `. /tmp/nemoclaw-proxy-env.sh && printf 'header = "Authorization: Bearer %s"\\n' "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy '*' --max-time 30 --silent --show-error --fail-with-body --config - -H 'Content-Type: application/json' --data '{"agentId":"main","tool":"get_weather","args":{"location":"Santa Clara"}}' "http://127.0.0.1:\${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"`,
+      buildNativePluginInvocationScript({
+        tool: "get_weather",
+        plugin: "weather",
+        args: { location: "Santa Clara" },
+        details: { fixtureVersion: version, location: "Santa Clara" },
+      }),
     ),
     { artifactName, env: env(), timeoutMs: 60_000 },
   );
   await captureNativePluginFailureReadiness(sandbox, result, SANDBOX_NAME, artifactName, env());
-  const document = parseOpenClawJsonDocuments(result.stdout)[0] as
-    | {
-        ok?: boolean;
-        result?: { details?: { fixtureVersion?: string; location?: string } };
-      }
-    | undefined;
   expect(
-    result.exitCode === 0 &&
-      document?.ok === true &&
-      document.result?.details?.fixtureVersion === version &&
-      document.result.details.location === "Santa Clara",
+    result.exitCode === 0 && nativePluginInvocationSucceeded(result.stdout),
     resultText(result),
   ).toBe(true);
 }

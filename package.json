@@ -1,7 +1,7 @@
 {
   "name": "nemoclaw",
   "version": "0.0.0",
-  "description": "NemoClaw \u2014 run OpenClaw inside OpenShell with NVIDIA inference",
+  "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -173,7 +173,9 @@
     "p-retry"
   ],
   "overrides": {
-    "fast-uri": "3.1.7",
+    "axios": "1.20.0",
+    "fast-uri": "3.1.9",
+    "follow-redirects": "1.16.1",
     "undici": "$undici",
     "zod": "4.6.6"
   },

@@ -16,6 +16,7 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/security/",
   "src/lib/sandbox-base-image/security-package-specs.ts",
   "scripts/lib/openclaw-npm-remediation.mts",
+  "scripts/lib/patch-openclaw-dependency-overrides.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/patch-bundled-npm-brace-expansion.mts",

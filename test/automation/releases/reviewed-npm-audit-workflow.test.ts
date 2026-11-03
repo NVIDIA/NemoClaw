@@ -188,9 +188,13 @@ if (args[0] === "ci" && !fs.existsSync("package-lock.json")) {
 }
 if (args[0] === "ci") {
   const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+  const workspace = ${JSON.stringify(graphFixture.workspace ?? null)};
   for (const [location, entry] of Object.entries(lock.packages)) {
     if (!location) continue;
     fs.mkdirSync(location, { recursive: true });
+    if (workspace !== null && location === "node_modules/openclaw") {
+      fs.writeFileSync(location + "/pnpm-workspace.yaml", workspace);
+    }
     fs.writeFileSync(location + "/package.json", JSON.stringify({
       name: location.slice(location.lastIndexOf("node_modules/") + 13),
       version: entry.version,

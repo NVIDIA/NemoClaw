@@ -252,7 +252,8 @@
         "test/e2e/live/sandbox-credential-boundary.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
-        "test/e2e/fixtures/admin-approval-connect.sh"
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/openclaw-agent-output.ts"
       ],
       "fast": [
         "src/lib/onboard/gateway-host-runtime.test.ts",
@@ -276,7 +277,8 @@
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/security/admin-approval-helper.test.ts"
+        "test/security/admin-approval-helper.test.ts",
+        "test/e2e/support/native-plugin-invocation.test.ts"
       ]
     },
     {
@@ -1062,8 +1064,10 @@
         "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-phase-lifecycle.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/native-plugin-invocation.test.ts"
+      ],
+      "liveSources": ["test/e2e/fixtures/openclaw-agent-output.ts"]
     },
     {
       "live": "test/e2e/live/sessions-agents-cli.test.ts",

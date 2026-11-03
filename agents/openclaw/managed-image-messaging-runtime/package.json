@@ -19,7 +19,7 @@
     "agent-base": "6.0.2",
     "axios": "1.20.0",
     "https-proxy-agent": "5.0.1",
-    "nemoclaw-openclaw-override-fast-uri": "npm:fast-uri@4.1.5",
+    "nemoclaw-openclaw-override-fast-uri": "npm:fast-uri@4.2.3",
     "nemoclaw-openclaw-override-hono-node-server": "npm:@hono/node-server@2.1.1",
     "nemoclaw-openclaw-override-ip-address": "npm:ip-address@10.7.2",
     "nemoclaw-openclaw-override-protobufjs": "npm:protobufjs@8.8.0",
@@ -28,7 +28,10 @@
     "nemoclaw-openclaw-override-uuid": "npm:uuid@14.0.2",
     "openclaw": "2026.10.5",
     "undici": "8.12.3",
-    "zod": "4.6.6"
+    "zod": "4.6.6",
+    "nemoclaw-openclaw-override-undici7": "npm:undici@7.30.1",
+    "nemoclaw-openclaw-override-msal-node": "npm:@azure/msal-node@7.1.0",
+    "nemoclaw-openclaw-override-music-metadata": "npm:music-metadata@11.16.0"
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.0",
@@ -48,7 +51,7 @@
         "protobufjs": "8.8.0"
       }
     },
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "follow-redirects": "1.16.1",
     "hono": "4.13.11",
     "npm": {
@@ -61,7 +64,8 @@
     "body-parser": "2.4.0",
     "zod": "4.6.6",
     "@azure/msal-node": "7.1.0",
-    "qs": "6.16.1"
+    "qs": "6.16.1",
+    "axios": "1.20.0"
   },
   "engines": {
     "node": ">=24.16.0 <25 || >=26.1.0"

@@ -97,10 +97,11 @@ describe("OpenClaw managed messaging offline image build", () => {
 
     expect(runtimeManifest.overrides).toEqual({
       "@modelcontextprotocol/sdk": "1.32.0",
+      axios: "1.20.0",
       "proxy-addr": "2.0.8",
       hono: "4.13.11",
       tar: "7.5.22",
-      "fast-uri": "3.1.8",
+      "fast-uri": "3.1.9",
       undici: "8.12.3",
       npm: { ".": "12.2.1", undici: "6.29.1" },
       "@azure/msal-node": "7.1.0",

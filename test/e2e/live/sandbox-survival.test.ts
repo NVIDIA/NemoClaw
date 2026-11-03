@@ -12,7 +12,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import {
+  buildNativePluginInvocationScript,
+  nativePluginInvocationSucceeded,
+} from "../fixtures/openclaw-agent-output.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import {
   SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
@@ -136,16 +139,19 @@ async function expectNativeSurvivalPluginInvocation(
   ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
 ): Promise<void> {
   const invocation = await exec(
-    `. /tmp/nemoclaw-proxy-env.sh && printf 'header = "Authorization: Bearer %s"\\n' "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy '*' --max-time 30 --silent --show-error --fail-with-body --config - -H 'Content-Type: application/json' --data '{"agentId":"main","tool":"survival_probe","args":{}}' "http://127.0.0.1:\${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"`,
+    buildNativePluginInvocationScript(
+      {
+        tool: "survival_probe",
+        plugin: "e2e-survival-plugin",
+        args: {},
+        details: { survived: true },
+      },
+      10,
+    ),
     "post-openshell-start-native-plugin-invoke",
   );
-  const document = parseOpenClawJsonDocuments(invocation.stdout)[0] as
-    | { ok?: boolean; result?: { details?: { survived?: boolean } } }
-    | undefined;
   expect(
-    invocation.exitCode === 0 &&
-      document?.ok === true &&
-      document.result?.details?.survived === true,
+    invocation.exitCode === 0 && nativePluginInvocationSucceeded(invocation.stdout),
     resultText(invocation),
   ).toBe(true);
 }
