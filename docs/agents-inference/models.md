@@ -12,6 +12,8 @@ For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama
 
 ## Choose a Model and Capacity
 
+Check the model's identity and serving requirements against the selected host before applying.
+
 | Decision | Check before apply |
 |---|---|
 | Request API and agent | The [harness/API combination](inference.md#choose-the-request-api) accepts the model's serving protocol |

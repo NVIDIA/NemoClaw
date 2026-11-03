@@ -441,7 +441,7 @@ In each image, offline and as the image's own user, it checks:
 
 The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
-Use the [reference image procedure](../../docs/build-deploy/build.md#reference-contract-image) to run these locally.
+Use the [reference image procedure](agent-image-maintenance.md#qualify-the-reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 On `v1` pushes that build images, it then pushes the checked agent and proxy images, and the reference image the live suites pull, by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).

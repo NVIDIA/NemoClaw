@@ -171,6 +171,8 @@ Refer to [retention and explicit cleanup](../build-deploy/usage.md#remove-retain
 
 ## Next Steps
 
+After verifying the request and cleaning up or retaining your test deployment, use the relevant guide for routine operations.
+
 - [Change or recover a deployment](../build-deploy/usage.md#updates-and-recovery).
 - [Choose another inference configuration](../agents-inference/inference.md).
 - [Understand deployment data retention](../build-deploy/state.md#deletion-and-retention).

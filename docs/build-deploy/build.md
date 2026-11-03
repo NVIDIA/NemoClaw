@@ -140,68 +140,7 @@ The builder verifies archive and wheel hashes, retains upstream archives and loc
 The [source notice](../../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
-Run [image checks](../../internal-docs/contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](../../internal-docs/contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
-
-### Update the OpenClaw Pin
-
-OpenClaw's npm package has no lockfile, so the agent image copies `/app` from OpenClaw's published image, pinned by digest in `OPENCLAW_IMAGE` in [the Dockerfile](../../image/fabric/Dockerfile).
-When an agent starts, Fabric's OpenClaw adapter refuses versions outside `SUPPORTED_OPENCLAW_VERSIONS` in the pinned Fabric source.
-When you change the Fabric pin, check that set; if it changed, pin the digest of OpenClaw's published image for a supported version, then rebuild and qualify the OpenClaw image.
-
-### Update the Hermes Pin
-
-The agent image installs Hermes Agent from the release source pinned by `HERMES_REVISION` and `HERMES_SHA256` in [the Dockerfile](../../image/fabric/Dockerfile).
-Hermes's dashboard and browser chat need its web assets and TUI bundle built, so the image copies them from Hermes's published image, pinned by digest in `HERMES_IMAGE`.
-The build stops if any file that image shares with the pinned release source differs, apart from the `README.md` its build empties.
-When you move `HERMES_REVISION`, pin the digest of Hermes's published image for the same release, then rebuild and qualify the Hermes image.
-
-### Regenerate the Bundled Catalog
-
-The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
-Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, such as a freshly built agent image's `/opt/fabric/bin/python`. Pass that revision and checksum, and `--adapter` once for each adapter ID the current catalog lists:
-
-```sh
-python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM \
-  --adapter nvidia.fabric.claude --adapter nvidia.fabric.codex ... \
-  --output image/fabric/catalog.json
-```
-
-Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../../image/fabric/Dockerfile).
-The snapshot holds canonical descriptors and provenance only; it does not change any image.
-
-### Reference Contract Image
-
-Build the dummy image to exercise the provisioning interface with Fabric's real runtime and `fabric-agent-ctl`, but no native agent, credentials, or model.
-It installs NemoClaw's test-only Fabric adapter, a deterministic agent, the way the production images install Fabric's adapters.
-It is a test fixture, excluded from the production `agents` target and the bundled catalog.
-Its image catalog lists the adapter's [descriptor](../../image/fabric/test-adapter/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](../../internal-docs/contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
-On Linux ARM64, run from the repository root:
-
-```sh
-IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
-cargo images qualify nc-contract:dummy
-```
-
-Use `linux/amd64` on a native AMD64 host.
-The qualifier uses the inspected image ID and an owned disposable container with networking disabled, a read-only root filesystem, and temporary writable sandbox storage.
-It removes that container on success, failure, or timeout; the built image remains local.
-The suite starts, invokes, and stops one runtime through `fabric-agent-ctl` with NemoClaw's test adapter, under the conditions an OpenShell sandbox imposes.
-The [contract description](../../internal-docs/design/fabric-management.md#image-contract-and-reference-implementation) defines the dummy's settings.
-
-To build every production adapter image on a native Linux ARM64 host, run:
-
-```sh
-IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
-```
-
-Use `linux/amd64` on a native AMD64 host.
-The build adds the `io.nemoclaw.fabric.catalog` label to every image.
-NemoClaw checks how each image is assembled, not whether Fabric's adapters work: `cargo images qualify IMAGE...` checks every image offline, and runs one runtime's lifecycle only in the reference image, with NemoClaw's test adapter.
-Fabric's runtime and adapters are Fabric's to test.
-A passing reference lifecycle does not establish that a runtime stays healthy.
-See [upstream ownership](../../internal-docs/design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
-
-To extend an agent image with your own skills and tools, see [derived agent images](derived-images.md).
+To extend an agent image with your own skills and tools, refer to [derived agent images](derived-images.md).
 
 ## Build a Runtime Image
 
@@ -260,6 +199,3 @@ Load the rebuilt image on the execution daemon and update `spec.services.<name>.
 Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
 The runtime also reports its expected specification version and declared field location for invalid input, without echoing configuration values or user-defined map keys.
-
-Developers must increment `nemoclaw_runtime::SPEC_VERSION` when serialized fields or validation changes make the runtime contract incompatible.
-The supervisor, SDK requirements, and provider check share that constant; the label does not identify an exact source revision.

@@ -80,6 +80,8 @@ The current tests establish configuration, compilation, API attachment, and drif
 
 ## Choose a Service Mode
 
+Choose an external endpoint when its operator owns availability, or a managed service when NemoClaw must install the runtime. The following paths have different prerequisites and retention behavior.
+
 | Situation | Configuration and owning guide | Example to adapt |
 |---|---|---|
 | You already operate a compatible endpoint or have a hosted API | External `endpoint`, matching `provider`/`api`, and a credential reference when required | [OpenClaw external endpoint](../../examples/inference-tuning.yaml), [Hermes authentication](../../examples/hermes-auth.yaml) |

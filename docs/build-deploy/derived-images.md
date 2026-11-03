@@ -34,6 +34,8 @@ Add files anywhere else; prefer paths outside `/sandbox`, which OpenShell manage
 
 ## Use Your Additions
 
+Connect files added to the image through the selected harness configuration; adding them to the image alone does not make the agent use them.
+
 - **Skills:** point the harness configuration's `skills` paths at them, as in [skills on a mounted volume](../agents-inference/agents.md#skills-on-a-mounted-volume), using the path inside the image instead of a mount.
 - **Tools:** binaries on the agent's `PATH` are available to harnesses that run commands, within the sandbox policy.
 - **Network access** for your tools still comes from the sandbox policy: [grants](../security/sandbox-network.md) decide which hosts they can reach.
@@ -47,6 +49,8 @@ NemoClaw doesn't compare Fabric versions: the image's own Fabric runtime reports
 An image from an older base can fail at apply with `sandbox unavailable`; `openshell logs SANDBOX --source sandbox` shows why, for example a missing `fabric-agent-ctl`.
 
 ## What Fails Early
+
+Inspect image and adapter validation before relying on a runtime request to discover an incompatible image.
 
 | Problem | When and how it's reported |
 |---|---|

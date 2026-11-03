@@ -5,24 +5,24 @@
       "title": "About",
       "pages": [
         {
-          "title": "Documentation index",
-          "source": "docs/README.md",
-          "slug": "index"
-        },
-        {
-          "title": "Understand NemoClaw",
+          "title": "Overview",
           "source": "docs/about/overview.md",
           "slug": "overview"
         },
         {
-          "title": "Explore the ecosystem",
+          "title": "Architecture Overview",
+          "source": "docs/about/architecture-overview.md",
+          "slug": "architecture-overview"
+        },
+        {
+          "title": "Ecosystem",
           "source": "docs/about/ecosystem.md",
           "slug": "ecosystem"
         },
         {
-          "title": "Architecture overview",
-          "source": "docs/about/architecture-overview.md",
-          "slug": "architecture-overview"
+          "title": "Release Notes",
+          "source": "docs/about/release-notes.md",
+          "slug": "release-notes"
         }
       ]
     },
@@ -30,17 +30,17 @@
       "title": "Get Started",
       "pages": [
         {
-          "title": "Check prerequisites",
+          "title": "Check Prerequisites",
           "source": "docs/get-started/prerequisites.md",
           "slug": "prerequisites"
         },
         {
-          "title": "Deploy your first OpenClaw agent",
+          "title": "Deploy Your First OpenClaw Agent",
           "source": "docs/get-started/first-deployment.md",
           "slug": "get-started"
         },
         {
-          "title": "Assess migration",
+          "title": "Assess Migration from an Earlier Version",
           "source": "docs/get-started/migration.md",
           "slug": "migration"
         }
@@ -50,17 +50,17 @@
       "title": "Build and Deploy",
       "pages": [
         {
-          "title": "Build local artifacts",
+          "title": "Build Local Artifacts",
           "source": "docs/build-deploy/build.md",
           "slug": "build"
         },
         {
-          "title": "Build a derived agent image",
+          "title": "Build a Derived Agent Image",
           "source": "docs/build-deploy/derived-images.md",
           "slug": "derived-images"
         },
         {
-          "title": "Use desired state",
+          "title": "Use Desired State",
           "source": "docs/build-deploy/usage.md",
           "slug": "usage"
         },
@@ -70,17 +70,17 @@
           "slug": "kubernetes"
         },
         {
-          "title": "Definitions and references",
+          "title": "Define Once or Configure Inline",
           "source": "docs/build-deploy/configuration-references.md",
           "slug": "configuration-references"
         },
         {
-          "title": "Locate and preserve state",
+          "title": "Locate and Preserve Deployment State",
           "source": "docs/build-deploy/state.md",
           "slug": "state"
         },
         {
-          "title": "Configure a container service",
+          "title": "Configure a Container Service",
           "source": "docs/build-deploy/container-services.md",
           "slug": "container-contract"
         }
@@ -90,37 +90,37 @@
       "title": "Agents and Inference",
       "pages": [
         {
-          "title": "Agent runtimes",
+          "title": "Configure and Access Native Agents",
           "source": "docs/agents-inference/agents.md",
           "slug": "agents"
         },
         {
-          "title": "Access agent interfaces",
+          "title": "Access Agent Interfaces",
           "source": "docs/agents-inference/interfaces.md",
           "slug": "interfaces"
         },
         {
-          "title": "Configure inference",
+          "title": "Configure Inference APIs, Limits, and Authentication",
           "source": "docs/agents-inference/inference.md",
           "slug": "inference"
         },
         {
-          "title": "Select a managed model",
+          "title": "Select a Managed Model",
           "source": "docs/agents-inference/models.md",
           "slug": "models"
         },
         {
-          "title": "Inline model recipes",
+          "title": "Use Inline Model Recipes",
           "source": "docs/agents-inference/recipes.md",
           "slug": "recipes"
         },
         {
-          "title": "Configure an SSH model service",
+          "title": "Configure an SSH Model Service",
           "source": "docs/agents-inference/remote-service.md",
           "slug": "remote-service"
         },
         {
-          "title": "Use OAuth-refresh providers",
+          "title": "Use an OpenShell OAuth-Refresh Provider",
           "source": "docs/agents-inference/oauth-refresh.md",
           "slug": "oauth-refresh"
         }
@@ -130,7 +130,7 @@
       "title": "Observability",
       "pages": [
         {
-          "title": "Troubleshoot deployment operations",
+          "title": "Diagnose a Failed Deployment Operation",
           "source": "docs/observability/troubleshooting.md",
           "slug": "troubleshooting"
         }
@@ -140,17 +140,17 @@
       "title": "References",
       "pages": [
         {
-          "title": "CLI reference",
+          "title": "NemoClaw CLI Reference",
           "source": "docs/references/cli.md",
           "slug": "reference/cli"
         },
         {
-          "title": "V1 YAML configuration reference",
+          "title": "YAML Configuration Reference",
           "source": "docs/references/v1-configuration.md",
           "slug": "reference/configuration"
         },
         {
-          "title": "Fabric harnesses",
+          "title": "Fabric Harnesses",
           "source": "docs/references/fabric-harnesses.md",
           "slug": "reference/fabric-harnesses"
         },
@@ -160,12 +160,12 @@
           "slug": "sdk"
         },
         {
-          "title": "OpenTofu provider",
+          "title": "OpenTofu Provider Reference",
           "source": "docs/references/provider.md",
           "slug": "provider"
         },
         {
-          "title": "Compatibility across releases",
+          "title": "Compatibility Across Releases",
           "source": "docs/references/compatibility.md",
           "slug": "compatibility"
         }
@@ -175,17 +175,17 @@
       "title": "Resources",
       "pages": [
         {
-          "title": "Project resources",
+          "title": "Documentation Index",
+          "source": "docs/README.md",
+          "slug": "index"
+        },
+        {
+          "title": "Documentation and Project Resources",
           "source": "docs/resources/resources.md",
           "slug": "resources"
         },
         {
-          "title": "Release notes",
-          "source": "docs/resources/release-notes.md",
-          "slug": "release-notes"
-        },
-        {
-          "title": "Check current limits",
+          "title": "Current Limits",
           "source": "docs/resources/limits.md",
           "slug": "limits"
         }
@@ -195,22 +195,22 @@
       "title": "Security",
       "pages": [
         {
-          "title": "Security and credential ownership",
+          "title": "Security and Credential Ownership",
           "source": "docs/security/security.md",
           "slug": "security"
         },
         {
-          "title": "Threat model",
+          "title": "Threat Model",
           "source": "docs/security/threat-model.md",
           "slug": "threat-model"
         },
         {
-          "title": "Sandbox policy",
+          "title": "Configure Sandbox Policy",
           "source": "docs/security/sandbox-network.md",
           "slug": "sandbox-network"
         },
         {
-          "title": "Rotate credentials",
+          "title": "Rotate Credentials",
           "source": "docs/security/credential-rotation.md",
           "slug": "credential-rotation"
         }

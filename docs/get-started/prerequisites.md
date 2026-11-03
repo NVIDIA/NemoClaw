@@ -8,6 +8,8 @@ They can have different requirements; a working client binary does not qualify t
 
 ## Identify Each Host
 
+Record where each component runs before checking tool and network requirements.
+
 | Role | Must be available there |
 |---|---|
 | Client running NemoClaw | Matching native bundle, writable deployment state directory, referenced credentials/TLS files, and access to the gateway and selected engine |
@@ -53,6 +55,8 @@ The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`
 There are no release downloads or installer yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 
 ## Runtime and Inference Requirements
+
+Choose the gateway and model placement that matches the available engine and endpoint.
 
 | Configuration | Requirements and owning guide |
 |---|---|

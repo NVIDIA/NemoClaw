@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Find Documentation and Project Resources
+# Documentation and Project Resources
 
-Use the [documentation index](../README.md) for the v1 development branch.
+Use the [documentation index](../README.md) for the v1 development branch and [Release Notes](../about/release-notes.md) for its development changes and release boundary.
 Keep the documentation, configuration schema, and runtime bundle matched to the source revision you use.
 
 ## Documentation for Coding Agents
@@ -12,6 +12,8 @@ Repository Markdown and the [source-pinned v1 field reference](../references/v1-
 Use [CLI reference](../references/cli.md) for accepted commands and [migration](../get-started/migration.md) for earlier-product boundaries.
 
 ### Choose the v1 Sources
+
+Match the guide, bundle, and schema to the same implementation revision before using any hosted or checkout-local reference.
 
 | Source | Use |
 |---|---|

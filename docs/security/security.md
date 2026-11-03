@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Review Security and Credential Ownership
+# Security and Credential Ownership
 
 Select controls for the actual sandbox image, engine host, gateway, and inference endpoint.
 Parser acceptance and protocol fixtures do not establish security qualification on a deployment host.
@@ -21,6 +21,8 @@ See the [threat model](threat-model.md) for what a deployment protects and from 
 Host-specific security qualification is part of [qualification](https://github.com/NVIDIA/NemoClaw/issues/12641).
 
 ### Identify the Trust Boundaries
+
+Account for host operators, gateway operators, sandbox processes, and endpoint operators separately.
 
 | Actor or component | Access to account for |
 |---|---|
@@ -89,6 +91,8 @@ The [subprocess tests](../../crates/nemoclaw-sdk/src/process.rs) and [bundled CL
 
 ### Separate the TLS Connections
 
+Each connection has its own trust and authentication settings; trusting one layer does not configure the others.
+
 | Connection | Current configuration boundary |
 |---|---|
 | Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` names a CA that replaces the system roots, and a client certificate and key for mutual TLS, through environment references to file paths |
@@ -129,6 +133,8 @@ Traces can contain prompts, model output, tool calls and their arguments, and fi
 - **Before sharing a trace:** review it for credentials, personal data, and confidential files. Keep the full-payload setting disabled unless you need it.
 
 ## Harden a Deployment
+
+Apply the controls at the boundary that enforces them and verify the resulting permissions before admitting untrusted work.
 
 - **Give each agent its own sandbox and volumes,** and grant only the hosts, methods, and tools its task needs.
 - **Use rootless Podman or a dedicated Docker host,** and limit who administers the engine; administrators can read every container's data.

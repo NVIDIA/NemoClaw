@@ -151,6 +151,8 @@ An offline render of the pinned chart places the Kubernetes settings in the gate
 
 ## Verify and Change the Configuration
 
+Review the policy selected for the sandbox before applying changes; configuration admission and an agent reply are separate checks.
+
 ```mermaid
 flowchart LR
     YAML["Authored policy"] --> Validate["SDK and pinned OpenShell validation"]

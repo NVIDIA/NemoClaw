@@ -49,6 +49,8 @@ Requests fail between these two steps, until both sides use the same key.
 
 ## Gateway Connections
 
+Rotate the credential with the component that issues it; changing a reference in YAML alone does not revoke an old value.
+
 | Credential | How to rotate |
 |---|---|
 | External gateway bearer token or mTLS files | The gateway operator issues new ones; update the referenced environment values or files. NemoClaw reads them on every run. |
@@ -56,6 +58,8 @@ Requests fail between these two steps, until both sides use the same key.
 | Development credentials for a managed Kubernetes gateway | Their certificates are valid for 365 days and aren't rotated in place. Create a new deployment before they expire, or use the [OIDC profile](../build-deploy/kubernetes.md). |
 
 ## Platform Credentials
+
+Replace the platform-issued value at its source, then refresh any client or workload that still uses the old value.
 
 | Credential | How to rotate |
 |---|---|

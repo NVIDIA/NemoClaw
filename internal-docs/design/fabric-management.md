@@ -58,7 +58,7 @@ The dummy reference image installs NemoClaw's [test-only adapter](../../image/fa
 The adapter is packaged like Fabric's own adapters, with its [descriptor](../../image/fabric/test-adapter/dummy.fabric-adapter.json) where Fabric finds installed adapters.
 It is installed only in the separate `dummy` target; it is never a fallback for a real adapter.
 A deployment runs it with `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the bundled catalog does not list it.
-See [building the reference image](../../docs/build-deploy/build.md#reference-contract-image).
+See [building the reference image](../contributing/agent-image-maintenance.md#qualify-the-reference-contract-image).
 
 The dummy configuration uses `metadata.name` and `harness.adapter_id: org.nemoclaw.dummy`.
 Its optional `harness.settings` fields are `reply` (string), `fail_start` (boolean), and `fail_stop` (boolean).
@@ -92,7 +92,7 @@ An explicit sandbox policy replaces the image's filesystem and process defaults 
 
 The bundled [`catalog.json`](../../image/fabric/catalog.json) is the descriptors of the adapters NemoClaw builds images for, from Fabric's catalog package at the revision and checksum pinned in the Dockerfile.
 It supports offline authoring; it says nothing about an installed runtime, credentials, or inference readiness.
-[Regenerate it](../../docs/build-deploy/build.md#regenerate-the-bundled-catalog) when the Fabric pin changes.
+[Regenerate it](../contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog) when the Fabric pin changes.
 
 ## Upstream Ownership
 

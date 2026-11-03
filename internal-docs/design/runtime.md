@@ -16,6 +16,8 @@ The SDK consumes that contract with execution disabled and adds deployment field
 Those deployment fields are excluded from runtime JSON; the supervisor validates the serving contract before starting work.
 The runtime does not depend on the SDK, provider, OpenShell, Fabric, or Docker transport.
 
+When serialized runtime fields or validation changes make this contract incompatible, increment `nemoclaw_runtime::SPEC_VERSION` in `crates/nemoclaw-runtime/src/lib.rs`. The supervisor, SDK requirements, and provider check share that constant; the image label does not identify an exact source revision. This maintenance rule follows the constant's source comment in inspected `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`.
+
 The executable has these boundaries:
 
 | Concern | Owner |

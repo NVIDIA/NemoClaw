@@ -9,6 +9,8 @@ It hasn't been qualified on specific hosts ([#12641](https://github.com/NVIDIA/N
 
 ## What a Deployment Protects
 
+Locate each asset before selecting policy and retention controls.
+
 | Asset | Where it lives |
 |---|---|
 | Upstream credentials: inference, web search, and API keys | The caller's environment; OpenShell holds installed values for routing |
@@ -18,6 +20,8 @@ It hasn't been qualified on specific hosts ([#12641](https://github.com/NVIDIA/N
 | Deployment state | The local state directory, holding resource identities and settings but no credential values |
 
 ## Threats and Mitigations
+
+The protections below depend on the component that enforces each boundary.
 
 | Threat | Mitigation | Relies on |
 |---|---|---|
@@ -31,6 +35,8 @@ It hasn't been qualified on specific hosts ([#12641](https://github.com/NVIDIA/N
 | State or configuration drifts out of band | Plans compare observed objects with state, including each sandbox's loaded policy hash | OpenTofu refresh; OpenShell's reported state |
 
 ## Assumptions and Remaining Risks
+
+These boundaries do not protect against every privileged actor or failure of an upstream service.
 
 - **The host administrator is trusted.** Anyone who administers the Docker or Podman engine, or the cluster, can read containers, volumes, and process environments, including generated keys.
 - **The sandbox is the boundary within an agent.** Tools and processes inside one sandbox share its files and credentials; tool restrictions don't isolate them from each other.

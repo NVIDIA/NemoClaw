@@ -5,9 +5,11 @@
 
 Use `nemoclaw` from a [verified native bundle](../build-deploy/build.md).
 Run commands from the directory containing your deployment YAML, and select the same state directory for every operation.
-The [CLI parser](../../crates/nemoclaw-cli/src/args.rs) defines the commands and options below; [process tests](../../crates/nemoclaw-cli/tests/commands.rs) cover execution behavior.
+The [v1 CLI parser](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-cli/src/args.rs) defines the commands and options below; the [matching process tests](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-cli/tests/commands.rs) cover execution behavior.
 
 ## Commands
+
+Use these commands for deployment authoring and lifecycle operations; invocation of the running agent belongs to its native interface.
 
 | Syntax | Input | Result and effect |
 |---|---|---|
@@ -39,6 +41,8 @@ Use `--non-interactive` with plan or apply to fail with the unresolved reference
 Credential values are not written to desired state, output, diagnostics, or deployment state by this fulfillment step.
 
 ## Options
+
+Global options can appear before or after the subcommand. Command-specific options are listed with their scope below.
 
 | Option | Scope | Meaning |
 |---|---|---|
