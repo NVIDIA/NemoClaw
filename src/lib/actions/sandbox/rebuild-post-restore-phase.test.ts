@@ -332,10 +332,11 @@ describe("rebuild post-restore phase", () => {
   );
 
   it("completes offline restoration before one native final start (#7102, #9946, #11764)", async () => {
+    const health = vi.spyOn(rebuildMessaging, "runMessagingHealthChecksAfterRebuild");
+    const forward = vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild);
     await runRebuildPostRestorePhase(input());
-
     expect(rebuildHermesPostRestore.refreshRestoredHermesInferenceRoute).not.toHaveBeenCalled();
-
+    expect(health).toHaveBeenCalledAfter(forward);
     expect(order).toEqual([
       "maintenance-begin",
       "messaging",

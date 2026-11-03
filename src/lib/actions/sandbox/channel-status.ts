@@ -339,7 +339,7 @@ async function buildBasicChannelReport(
   if (enabled) {
     signals.push(...(await buildConfigStatusSignals(sandboxName, channelName, entry, agent, deps)));
   }
-  if (diagnostic.deepProbe !== undefined) {
+  if (diagnostic.deepProbe !== undefined || channelHealthStatusHook(channelName, agent)) {
     // Channel has a deep probe this path does not run: the summary view never
     // runs it, and a paused channel is not probed in detail view. Say so instead
     // of leaving a silent all-[ok] that reads as healthy (#6743).
@@ -647,7 +647,7 @@ async function waitForChannelReadiness(
       attempts,
       elapsedMs,
       lastTransitionAt: lastObserved.lastTransitionAt,
-      lastObserved,
+      lastObserved: { ...lastObserved },
     },
   };
 }

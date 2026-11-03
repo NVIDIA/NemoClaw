@@ -42,6 +42,7 @@ import {
 import {
   finalizePendingMessagingRemovalsAfterRestore,
   reapplyMessagingManifestBeforeAgentStart,
+  runMessagingHealthChecksAfterRebuild,
 } from "./rebuild-messaging-phase";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
@@ -656,6 +657,12 @@ export async function runRebuildPostRestorePhase(
     }
   }
   if (postRestoreComplete) {
+    await runMessagingHealthChecksAfterRebuild(
+      sandboxName,
+      effectiveMessagingPlan,
+      log,
+      mcpRuntimeSelection,
+    );
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {
       console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);

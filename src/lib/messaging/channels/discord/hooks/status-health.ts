@@ -14,6 +14,7 @@ import {
 } from "../../channel-health";
 import { HERMES_DISCORD_STATUS_PROBE } from "./hermes-status-probe";
 import { cliName } from "../../../../onboard/branding";
+import { probeOpenClawDiscordConnection } from "./openclaw-bridge-health";
 
 export const DISCORD_STATUS_HEALTH_HOOK_HANDLER_ID = "discord.statusHealth";
 
@@ -21,14 +22,22 @@ export function createDiscordStatusHealthHook(
   options: ChannelStatusHealthHookOptions = {},
 ): MessagingHookHandler {
   return async (context) => {
-    if (context.channelId !== "discord" || context.inputs?.agent !== "hermes") return {};
     const inputs = context.inputs;
+    const agent = inputs?.agent;
+    if (
+      !inputs ||
+      context.channelId !== "discord" ||
+      (agent !== "hermes" && agent !== "openclaw")
+    ) {
+      return {};
+    }
+    const sandboxName = inputs.currentSandbox;
     let state = "unknown";
     if (
       inputs.channelEnabledInRegistry === true &&
       inputs.presetApplied === true &&
       inputs.presetOnGateway === true &&
-      typeof inputs.currentSandbox === "string" &&
+      typeof sandboxName === "string" &&
       options.executeSandboxCommand
     ) {
       try {
@@ -38,32 +47,42 @@ export function createDiscordStatusHealthHook(
           options.timeoutMs > 0
             ? Math.min(options.timeoutMs, 8_000)
             : 8_000;
-        const result = await options.executeSandboxCommand(
-          inputs.currentSandbox,
-          // A quoted heredoc preserves these fixed probe bytes without shell expansion.
-          `/opt/hermes/.venv/bin/python - <<'NEMOCLAW_DISCORD_PROBE'\n${HERMES_DISCORD_STATUS_PROBE}\nNEMOCLAW_DISCORD_PROBE`,
-          timeoutMs,
-        );
-        const stdout = typeof result?.stdout === "string" ? result.stdout : "";
-        if (
-          result?.status === 0 &&
-          stdout.length <= 256 &&
-          stdout.startsWith("NEMOCLAW_DISCORD_STATUS_V1\n")
-        ) {
-          const payload: unknown = JSON.parse(stdout.slice("NEMOCLAW_DISCORD_STATUS_V1\n".length));
+        const execute = options.executeSandboxCommand;
+        if (agent === "openclaw") {
+          state = await probeOpenClawDiscordConnection(
+            (command, timeout) => execute(sandboxName, command, timeout),
+            timeoutMs,
+          );
+        } else {
+          const result = await execute(
+            sandboxName,
+            // A quoted heredoc preserves these fixed probe bytes without shell expansion.
+            `/opt/hermes/.venv/bin/python - <<'NEMOCLAW_DISCORD_PROBE'\n${HERMES_DISCORD_STATUS_PROBE}\nNEMOCLAW_DISCORD_PROBE`,
+            timeoutMs,
+          );
+          const stdout = typeof result?.stdout === "string" ? result.stdout : "";
           if (
-            typeof payload === "object" &&
-            payload !== null &&
-            "state" in payload &&
-            typeof payload.state === "string"
-          )
-            state = payload.state;
+            result?.status === 0 &&
+            stdout.length <= 256 &&
+            stdout.startsWith("NEMOCLAW_DISCORD_STATUS_V1\n")
+          ) {
+            const payload: unknown = JSON.parse(
+              stdout.slice("NEMOCLAW_DISCORD_STATUS_V1\n".length),
+            );
+            if (
+              typeof payload === "object" &&
+              payload !== null &&
+              "state" in payload &&
+              typeof payload.state === "string"
+            )
+              state = payload.state;
+          }
         }
       } catch {
         /* Failed probes cannot establish authentication. */
       }
     }
-    const report = healthReport(inputs, state);
+    const report = healthReport(inputs, state, agent);
     return {
       outputs: {
         channelHealth: {
@@ -87,7 +106,11 @@ export function createDiscordStatusHealthHookRegistration(
   };
 }
 
-function healthReport(inputs: MessagingHookInputMap, state: string): ChannelHealthReport {
+function healthReport(
+  inputs: MessagingHookInputMap,
+  state: string,
+  agent: "hermes" | "openclaw",
+): ChannelHealthReport {
   const registered = inputs.channelEnabledInRegistry === true;
   const policy = inputs.presetApplied === true && inputs.presetOnGateway === true;
   const verdict = !registered
@@ -100,15 +123,20 @@ function healthReport(inputs: MessagingHookInputMap, state: string): ChannelHeal
           ? "healthy"
           : state === "inactive"
             ? "inactive"
-            : "unknown";
+            : state === "blocked"
+              ? "blocked"
+              : "unknown";
+  const agentName = agent === "openclaw" ? "OpenClaw" : "Hermes";
   const detail =
     verdict === "credential_rejected"
-      ? "Hermes reports that Discord rejected the bot token."
+      ? `${agentName} reports that Discord rejected the bot token.`
       : verdict === "healthy"
-        ? "Hermes reports a connected Discord adapter."
+        ? `${agentName} reports a connected Discord adapter.`
         : verdict === "inactive"
-          ? "The Hermes Discord adapter is not connected."
-          : "Discord authentication is unverified; configuration and policy do not establish a connection.";
+          ? `The ${agentName} Discord adapter is not connected.`
+          : verdict === "blocked"
+            ? `${agentName} reports a blocked Discord gateway.`
+            : "Discord authentication is unverified; configuration and policy do not establish a connection.";
   const sandbox =
     typeof inputs.currentSandbox === "string" && inputs.currentSandbox
       ? `'${inputs.currentSandbox.replace(/'/g, "'\\''")}'`
@@ -119,11 +147,13 @@ function healthReport(inputs: MessagingHookInputMap, state: string): ChannelHeal
       ? `Replace DISCORD_BOT_TOKEN with a bot token from the Discord Developer Portal, then run ${command} channels add discord.`
       : verdict === "healthy"
         ? undefined
-        : `Inspect Hermes gateway status and logs, then retry ${command} channels status --channel discord.`;
-  return {
+        : verdict === "blocked"
+          ? `Check Discord application settings and ${agentName} gateway logs, then retry ${command} channels status --channel discord.`
+          : `Inspect ${agentName} gateway status and logs, then retry ${command} channels status --channel discord.`;
+  const report: ChannelHealthReport = {
     schemaVersion: 1,
     channel: "discord",
-    agent: "hermes",
+    agent,
     verdict,
     probedAt: typeof inputs.probedAt === "string" ? inputs.probedAt : "",
     signals: [
@@ -140,13 +170,43 @@ function healthReport(inputs: MessagingHookInputMap, state: string): ChannelHeal
           : "discord policy coverage is missing or unverified",
       },
       {
-        label: "Discord runtime authentication",
+        label:
+          agent === "openclaw" ? "Discord runtime connection" : "Discord runtime authentication",
         severity:
-          verdict === "healthy" ? "ok" : verdict === "credential_rejected" ? "fail" : "warn",
+          verdict === "healthy"
+            ? "ok"
+            : verdict === "credential_rejected" || verdict === "blocked"
+              ? "fail"
+              : "warn",
         detail,
         ...(hint ? { hint } : {}),
       },
     ],
     hints: hint ? [hint] : [],
   };
+  if (agent === "openclaw") {
+    report.signals.push({
+      label: "Agent responses",
+      severity: "info",
+      detail: "Not tested. Discord connectivity does not verify model responses.",
+    });
+    const terminal = ["unconfigured", "policy_gap", "credential_rejected", "blocked"].includes(
+      verdict,
+    );
+    report.readiness = {
+      state: verdict === "healthy" ? "ready" : terminal ? "terminal" : "waiting",
+      category:
+        verdict === "healthy"
+          ? null
+          : verdict === "credential_rejected"
+            ? "credential"
+            : verdict === "policy_gap"
+              ? "policy"
+              : "runtime",
+      reason: verdict,
+      retryable: !terminal && verdict !== "healthy",
+      lastTransitionAt: null,
+    };
+  }
+  return report;
 }
