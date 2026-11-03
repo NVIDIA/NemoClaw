@@ -721,7 +721,7 @@ test
 );
 
 test(
-  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
+  "TC-INF-09 local compatible routing and private bearerless vLLM validation (#5744, #14083)",
   {
     timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
     meta: {
@@ -730,6 +730,7 @@ test(
         "start the local compatible endpoint",
         "onboard to the compatible endpoint",
         "request sandbox chat through inference.local",
+        "validate a privately published bearerless provider from Docker",
       ],
     },
   },
@@ -770,6 +771,7 @@ test(
       contract: [
         "a custom OpenAI-compatible endpoint onboards",
         "sandbox inference.local routes chat to compatible endpoint",
+        "production bearerless provider validation reaches private bindings across distinct Docker gateways",
       ],
       endpointUrl: fake.baseUrl,
       model,
@@ -811,6 +813,86 @@ test(
             request.path === "/v1/chat/completions",
         ),
     ).toBe(true);
+
+    progress.phase("validate a privately published bearerless provider from Docker");
+    const validationState = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bearerless-"));
+    const cidfile = path.join(validationState, "container-id");
+    cleanup.add("remove the bearerless validation container by its recorded ID", async () => {
+      const id = fs.existsSync(cidfile) ? fs.readFileSync(cidfile, "utf8").trim() : null;
+      expect(id === null || /^[a-f0-9]{64}$/u.test(id), "invalid cleanup container ID").toBe(true);
+      const removed = id
+        ? await host.command("docker", ["--context", "default", "rm", "--force", id], {
+            artifactName: "tc-inf-09-bearerless-vllm-cleanup",
+            env: buildAvailabilityProbeEnv(),
+            timeoutMs: 30_000,
+          })
+        : null;
+      expect(removed?.exitCode ?? 0, removed ? resultText(removed) : "no container created").toBe(
+        0,
+      );
+      fs.rmSync(validationState, { recursive: true, force: true });
+    });
+    const validation = await host.command(
+      process.execPath,
+      [
+        "-e",
+        String.raw`
+const assert = require('node:assert/strict');
+const { execFileSync, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const local = require('./dist/lib/inference/local.js');
+const { resolveManagedVllmBridgeHost } = require('./dist/lib/inference/serving/vllm-host-local-network.js');
+const docker = (...args) => execFileSync('docker', ['--context', 'default', ...args], {
+  encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'],
+});
+assert.match(docker('context', 'inspect', 'default', '--format', '{{.Endpoints.docker.Host}}'), /^unix:\/\//);
+const existing = spawnSync('docker', ['--context', 'default', 'container', 'inspect', 'nemoclaw-vllm'], {
+  encoding: 'utf8', timeout: 30_000,
+});
+assert.notEqual(existing.status, 0, 'refusing to replace an existing managed container');
+assert.match(existing.stderr, /No such (?:object|container)/i);
+const bridge = resolveManagedVllmBridgeHost();
+const defaultNetwork = JSON.parse(docker('network', 'inspect', 'bridge'));
+const openshellNetwork = JSON.parse(docker('network', 'inspect', 'openshell-docker'));
+assert.notEqual(bridge, defaultNetwork[0].IPAM.Config[0].Gateway, 'the gateways must differ');
+const cidfile = process.argv[1];
+docker('create', '--name', 'nemoclaw-vllm', '--cidfile', cidfile,
+  '--label', 'com.nvidia.nemoclaw.managed-vllm=true',
+  '--publish', '127.0.0.1:18080:8000', '--publish', bridge + ':18080:8000',
+  'node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea',
+  'node', '-e', "require('node:http').createServer((req, res) => { res.setHeader('content-type', 'application/json'); require('node:fs').appendFileSync('/tmp/requests', [req.method, req.url, req.headers.host, req.socket.remoteAddress].join(' ') + '\\n'); res.end(JSON.stringify({data:[{id:'bearerless-bridge-proof'}]})); }).listen(8000, '0.0.0.0');");
+const id = fs.readFileSync(cidfile, 'utf8').trim();
+docker('start', id);
+const inspection = JSON.parse(docker('inspect', id));
+// Readiness retries only the idempotent fixture GET while Node starts.
+// Six attempts, a ten-second retry budget, and per-attempt errors are retained.
+execFileSync('curl', ['--noproxy', '*', '--silent', '--show-error', '--fail',
+  '--retry', '5', '--retry-connrefused', '--retry-delay', '1', '--retry-max-time', '10',
+  '--connect-timeout', '1', '--max-time', '2', 'http://127.0.0.1:18080/v1/models'],
+  { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'inherit'] });
+const command = local.getLocalProviderContainerReachabilityCheck('vllm-local');
+assert(command?.includes('host.openshell.internal:' + bridge), 'the production probe must select the published bridge');
+const result = local.validateLocalProvider('vllm-local');
+const requests = docker('exec', id, 'cat', '/tmp/requests');
+console.log(JSON.stringify({defaultNetwork, openshellNetwork, inspection, command, result, requests}));
+assert.deepEqual(result, {ok: true});
+assert.match(requests, /^GET \/v1\/models host\.openshell\.internal:18080 \S+$/m);
+`,
+        cidfile,
+      ],
+      {
+        artifactName: "tc-inf-09-bearerless-vllm-container-validation",
+        cwd: REPO_ROOT,
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          DOCKER_CONTEXT: "default",
+          NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL: "",
+          NEMOCLAW_VLLM_PORT: "18080",
+        },
+        timeoutMs: 3 * 60_000,
+      },
+    );
+    expect(validation.exitCode, resultText(validation)).toBe(0);
   },
 );
 

@@ -2264,6 +2264,10 @@ The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` con
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
+After production onboarding, the Spark case requests the managed vLLM health endpoint through loopback and the private OpenShell bridge.
+It requires connection refusal through every other assigned host address, including IPv6 when configured.
+The target inventory records IPv6 applicability, and request artifacts retain exit codes and HTTP status output alongside the Docker inspection.
+Source tests own the exact default/custom port bindings and authentication permutations; these live requests prove Docker and host network enforcement.
 
 Run the target from a clean candidate checkout on the Spark host:
 
@@ -2696,6 +2700,17 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 ## DGX Station Express
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+
+## Bearerless vLLM Provider Validation
+
+TC-INF-09 in the existing `inference-routing` target also invokes production
+provider validation against an owned bearerless Docker fixture. It requires
+distinct Docker-default and OpenShell gateways and publishes only loopback and
+the OpenShell gateway on port 18080. The retained evidence includes Docker
+inspection, the selected probe command, validation result, container request log,
+and removal by its recorded container ID. Bounded connection-refusal retries
+cover only the fixture's idempotent readiness GET while Node starts.
+Source tests own authentication, ownership, and port permutations.
 
 ## DCode Native Local Inference
 

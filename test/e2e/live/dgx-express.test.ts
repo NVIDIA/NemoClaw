@@ -27,6 +27,7 @@ import {
   classifyDockerContainerInspection,
   inspectSandboxIdentity,
   listedSandboxNames,
+  vllmPublicationProbeUrls,
 } from "../support/spark-express-vllm-safety.ts";
 import {
   cleanupSandbox,
@@ -51,7 +52,6 @@ interface VllmContainerInspection {
     readonly DeviceRequests: Array<{ Count: number; Capabilities: string[][] }>;
     readonly IpcMode: string;
     readonly NetworkMode: string;
-    readonly PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
     readonly ShmSize: number;
   };
   readonly Mounts: Array<{ Destination: string; RW: boolean; Type: string }>;
@@ -224,6 +224,7 @@ test(
         "qualify the physical DGX Spark host",
         "select Spark Express option 2 and onboard through the local-model profile",
         "verify catalog-owned vLLM runtime configuration",
+        "prove managed vLLM host listener isolation",
         "prove sandbox inference and unrelated egress denial",
       ],
     },
@@ -370,19 +371,6 @@ test(
     expect(inspection.HostConfig.NetworkMode).toBe(plan.recipe.spec.runtime.networkMode);
     expect(inspection.HostConfig.IpcMode).toBe(plan.recipe.spec.runtime.ipcMode);
     expect(inspection.HostConfig.ShmSize).toBe(plan.recipe.spec.runtime.sharedMemoryBytes);
-    const portBindings = inspection.HostConfig.PortBindings["8000/tcp"];
-    expect(portBindings).toHaveLength(2);
-    expect(portBindings).toContainEqual({ HostIp: "127.0.0.1", HostPort: "8000" });
-    expect(portBindings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          HostIp: expect.stringMatching(/^(?!127\.0\.0\.1$)(?!0\.0\.0\.0$).+/u),
-          HostPort: "8000",
-        }),
-      ]),
-    );
-    const bridgeBinding = portBindings.find(({ HostIp }) => HostIp !== "127.0.0.1");
-    expect(bridgeBinding?.HostIp).toBe(resolveManagedVllmBridgeHost());
     expect(inspection.HostConfig.DeviceRequests).toEqual(
       expect.arrayContaining([expect.objectContaining({ Count: -1, Capabilities: [["gpu"]] })]),
     );
@@ -395,6 +383,46 @@ test(
         }),
       ]),
     );
+
+    progress.phase("prove managed vLLM host listener isolation");
+    const probes = vllmPublicationProbeUrls(resolveManagedVllmBridgeHost());
+    await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
+    const probeArgs = [
+      "-q",
+      "--noproxy",
+      "*",
+      "--globoff",
+      "--silent",
+      "--show-error",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      "--write-out",
+      "%{exitcode} %{http_code}\n",
+    ];
+    const allowed = await host.command(
+      "curl",
+      [...probeArgs, ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url])],
+      {
+        artifactName: "spark-express-vllm-publication-allowed",
+        env: e2eEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(allowed.exitCode, resultText(allowed)).toBe(0);
+    expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
+    const refused = await host.command(
+      "curl",
+      [...probeArgs, ...probes.denied.flatMap((url) => ["--output", "/dev/null", url])],
+      {
+        artifactName: "spark-express-vllm-publication-denied",
+        env: e2eEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(refused.exitCode, resultText(refused)).toBe(7);
+    expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
 
     progress.phase("prove sandbox inference and unrelated egress denial");
     await expectOpenAiChatThroughSandbox(

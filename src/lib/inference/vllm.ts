@@ -1222,6 +1222,26 @@ export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<Pers
   }
 }
 
+function preflightHostLocalVllmContainer(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  dockerEnv: Record<string, string>,
+  resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
+    resolveManagedVllmBridgeHost(dockerCapture, env),
+  expectedReplacementContainerId?: string,
+): { ok: true } | { ok: false; reason: string } {
+  try {
+    validateManagedVllmBridgeHost(resolveBridgeHost(dockerEnv));
+  } catch (error) {
+    return { ok: false, reason: (error as Error).message };
+  }
+  return vllmContainerReplacementTarget(
+    profile.containerName,
+    model.managedBearerAuth || expectedReplacementContainerId !== undefined ? dockerEnv : undefined,
+    expectedReplacementContainerId,
+  );
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
@@ -2490,15 +2510,15 @@ async function runVllmInstall(
       return { ok: false };
     }
   } else {
-    const replacement = vllmContainerReplacementTarget(
-      runtimeProfile.containerName,
-      model.managedBearerAuth || recoveredHostLocalContainerId !== undefined
-        ? localDockerEnv
-        : undefined,
+    const preflight = preflightHostLocalVllmContainer(
+      runtimeProfile,
+      model,
+      localDockerEnv,
+      opts.resolveManagedBridgeHost,
       recoveredHostLocalContainerId,
     );
-    if (!replacement.ok) {
-      console.error(`  vLLM install failed: ${replacement.reason}`);
+    if (!preflight.ok) {
+      console.error(`  vLLM install failed: ${preflight.reason}`);
       return { ok: false };
     }
   }

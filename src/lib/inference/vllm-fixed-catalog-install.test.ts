@@ -189,7 +189,7 @@ describe("fixed catalog vLLM installs", () => {
     process.env = { ...originalEnv };
   });
 
-  it("rejects an unsafe bridge before replacing a host-local container (#14083)", async () => {
+  it("rejects an unsafe bridge before downloads or container replacement (#14083)", async () => {
     const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
     mockSuccessfulVllmInstall(mocks, profile.containerName);
     const capture = mocks.dockerCapture.getMockImplementation()!;
@@ -204,11 +204,35 @@ describe("fixed catalog vLLM installs", () => {
     });
 
     expect(result).toEqual({ ok: false });
+    expect(mocks.probeHostStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
     expect(mocks.dockerForceRm).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
     expect(spies.errSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "requires one private OpenShell bridge address",
     );
+  });
+
+  it("rechecks the bridge after downloads before replacing a host-local container", async () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const capture = mocks.dockerCapture.getMockImplementation()!;
+    const bridge = vi.fn().mockReturnValueOnce("172.18.0.1").mockReturnValue("0.0.0.0");
+    mocks.dockerCapture.mockImplementation((args, ...rest) =>
+      args[0] === "network" ? JSON.stringify([{ Gateway: bridge() }]) : capture(args, ...rest),
+    );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerSpawn).toHaveBeenCalled();
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
   });
 
   it("reports automatic GPU memory rejection before install effects", async () => {
