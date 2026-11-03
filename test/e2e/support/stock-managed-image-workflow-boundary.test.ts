@@ -83,7 +83,7 @@ describe("stock onboarding managed-image publication boundary", () => {
     value.jobs["generate-matrix"].needs = ["base-image-publication"];
 
     expect(validateBaseImagePublicationGate(value)).toContain(
-      "generate-matrix must not wait for managed-image publication",
+      "generate-matrix must wait only for reviewed SDK packaging",
     );
   });
 });

@@ -3,6 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  checkGatewayRouteCompatibility,
+  type CurrentGatewayRouteCompatibilityCheck,
+} from "../../../inference/gateway-route-compatibility";
+import {
+  LLAMA_CPP_CREDENTIAL_ENV,
+  LLAMA_CPP_HOST_OPENAI_BASE_URL,
+} from "../../../inference/llama-cpp/contract";
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import { createProviderReviewDeps } from "../../setup-inference";
 import { handleProviderInferenceState } from "./provider-inference";
@@ -24,6 +32,9 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
     });
     expect(calls.rejected).toHaveBeenCalledWith("provider_selection");
     expect(calls.exit).toHaveBeenCalledWith(1);
@@ -220,6 +231,9 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
     });
     expect(calls.resolveHostLocalInferenceStartupSelection).not.toHaveBeenCalled();
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
@@ -261,6 +275,9 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://127.0.0.1:11435/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-responses",
     });
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
@@ -312,6 +329,9 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
     });
     expect(calls.setupInference).toHaveBeenCalled();
   });
@@ -393,5 +413,342 @@ describe("provider inference review recovery", () => {
       provider: "ollama-local",
       model: "qwen3.5:9b",
     });
+  });
+
+  describe("compatible-endpoint route metadata (#13654)", () => {
+    const compatibleSelection = {
+      ...baseSelection,
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+
+    function interruptedCompatibleSession(
+      route: { endpointUrl: string | null; preferredInferenceApi: string | null } = {
+        endpointUrl: compatibleSelection.endpointUrl,
+        preferredInferenceApi: compatibleSelection.preferredInferenceApi,
+      },
+    ) {
+      const session = createSession({
+        sandboxName: "dcode-resume",
+        provider: compatibleSelection.provider,
+        model: compatibleSelection.model,
+        endpointUrl: route.endpointUrl,
+        credentialEnv: route.endpointUrl ? compatibleSelection.credentialEnv : null,
+        preferredInferenceApi: route.preferredInferenceApi,
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      });
+      session.steps.provider_selection.status = "failed";
+      return session;
+    }
+
+    // The real check with no other registered sandbox: the only way to fail
+    // is a requested custom route without endpoint or API-family metadata.
+    const checkRouteOnEmptyGateway = vi.fn<CurrentGatewayRouteCompatibilityCheck>((request) =>
+      checkGatewayRouteCompatibility({ ...request, sandboxes: [] }),
+    );
+
+    it("checkpoints the endpoint, API family, and credential name before review", async () => {
+      const prompt = vi.fn(async (): Promise<string> => {
+        throw new Error("interrupted at review");
+      });
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        setupNim: vi.fn(async () => ({ ...compatibleSelection })),
+        prompt,
+      });
+
+      await expect(
+        handleProviderInferenceState({ ...baseOptions(deps), sandboxName: "dcode-resume" }),
+      ).rejects.toThrow("interrupted at review");
+
+      expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(calls.startStep.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        prompt.mock.invocationCallOrder[0],
+      );
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    });
+
+    it("shows the review again on interactive resume of the interrupted selection", async () => {
+      const prompt = vi.fn(async () => "1");
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        prompt,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+        isInferenceRouteReady: vi.fn(() => false),
+      });
+
+      await handleProviderInferenceState({
+        ...baseOptions(deps, interruptedCompatibleSession()),
+        resume: true,
+        sandboxName: "dcode-resume",
+      });
+
+      expect(checkRouteOnEmptyGateway).toHaveBeenCalledWith(
+        expect.objectContaining({
+          route: expect.objectContaining({
+            provider: "compatible-endpoint",
+            endpointUrl: "https://integrate.api.nvidia.com/v1",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            preferredInferenceApi: "openai-completions",
+          }),
+        }),
+      );
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(calls.setupNim).not.toHaveBeenCalled();
+      expect(prompt).toHaveBeenCalledOnce();
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "dcode-resume",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "compatible-endpoint",
+        "https://integrate.api.nvidia.com/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        expect.any(Object),
+      );
+    });
+
+    it("continues to inference setup on non-interactive resume of the interrupted selection", async () => {
+      const prompt = vi.fn(async () => "1");
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => true,
+        prompt,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+        isInferenceRouteReady: vi.fn(() => false),
+      });
+
+      await handleProviderInferenceState({
+        ...baseOptions(deps, interruptedCompatibleSession()),
+        resume: true,
+        sandboxName: "dcode-resume",
+      });
+
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(prompt).not.toHaveBeenCalled();
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "dcode-resume",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "compatible-endpoint",
+        "https://integrate.api.nvidia.com/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        expect.any(Object),
+      );
+    });
+
+    it("asks for the provider again when an earlier release saved no route metadata", async () => {
+      const prompt = vi.fn(async () => "1");
+      const setupNim = vi.fn(async () => ({ ...compatibleSelection }));
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        prompt,
+        setupNim,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+        isInferenceRouteReady: vi.fn(() => false),
+      });
+
+      await handleProviderInferenceState({
+        ...baseOptions(
+          deps,
+          interruptedCompatibleSession({ endpointUrl: null, preferredInferenceApi: null }),
+        ),
+        resume: true,
+        sandboxName: "dcode-resume",
+      });
+
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(setupNim).toHaveBeenCalledOnce();
+      expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(calls.startStep.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        calls.setupInference.mock.invocationCallOrder[0],
+      );
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "dcode-resume",
+        "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "compatible-endpoint",
+        "https://integrate.api.nvidia.com/v1",
+        "COMPATIBLE_API_KEY",
+        null,
+        [],
+        expect.any(Object),
+      );
+    });
+
+    it("still refuses a non-interactive resume of a session saved without that metadata", async () => {
+      const prompt = vi.fn(async () => "1");
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => true,
+        prompt,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+      });
+
+      await expect(
+        handleProviderInferenceState({
+          ...baseOptions(
+            deps,
+            interruptedCompatibleSession({ endpointUrl: null, preferredInferenceApi: null }),
+          ),
+          resume: true,
+          sandboxName: "dcode-resume",
+        }),
+      ).rejects.toThrow("exit 1");
+
+      expect(prompt).not.toHaveBeenCalled();
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("compatible-anthropic-endpoint route metadata (#13654)", () => {
+    const anthropicRoute = {
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      endpointUrl: "https://anthropic-proxy.example.test",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    };
+    const checkRouteOnEmptyGateway = vi.fn<CurrentGatewayRouteCompatibilityCheck>((request) =>
+      checkGatewayRouteCompatibility({ ...request, sandboxes: [] }),
+    );
+
+    it("checkpoints the endpoint, API family, and credential name before review", async () => {
+      const prompt = vi.fn(async (): Promise<string> => {
+        throw new Error("interrupted at review");
+      });
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        setupNim: vi.fn(async () => ({ ...baseSelection, ...anthropicRoute })),
+        prompt,
+      });
+
+      await expect(
+        handleProviderInferenceState({ ...baseOptions(deps), sandboxName: "anthropic-resume" }),
+      ).rejects.toThrow("interrupted at review");
+
+      expect(calls.startStep).toHaveBeenCalledWith("provider_selection", anthropicRoute);
+      expect(calls.setupInference).not.toHaveBeenCalled();
+    });
+
+    it("shows the review again on interactive resume of the interrupted selection", async () => {
+      const prompt = vi.fn(async () => "1");
+      const { deps, calls } = createDeps({
+        isNonInteractive: () => false,
+        prompt,
+        checkGatewayRouteCompatibility: checkRouteOnEmptyGateway,
+        isInferenceRouteReady: vi.fn(() => false),
+      });
+      const session = createSession({
+        sandboxName: "anthropic-resume",
+        ...anthropicRoute,
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      });
+      session.steps.provider_selection.status = "failed";
+
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "anthropic-resume",
+      });
+
+      expect(checkRouteOnEmptyGateway).toHaveBeenCalledWith(
+        expect.objectContaining({ route: expect.objectContaining(anthropicRoute) }),
+      );
+      expect(calls.exit).not.toHaveBeenCalled();
+      expect(prompt).toHaveBeenCalledOnce();
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "anthropic-resume",
+        anthropicRoute.model,
+        anthropicRoute.provider,
+        anthropicRoute.endpointUrl,
+        anthropicRoute.credentialEnv,
+        null,
+        [],
+        expect.any(Object),
+      );
+    });
+  });
+
+  // llama-cpp-local is native local inference for OpenClaw, so resume uses
+  // the native discovery preflight, not the shared custom-route check.
+  it("checkpoints llama-cpp-local route metadata and resumes through the native preflight (#13654)", async () => {
+    const llamaRoute = {
+      provider: "llama-cpp-local",
+      model: "local-gguf",
+      endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL,
+      credentialEnv: LLAMA_CPP_CREDENTIAL_ENV,
+      preferredInferenceApi: "openai-completions",
+    };
+    const interrupted = createDeps({
+      isNonInteractive: () => false,
+      setupNim: vi.fn(async () => ({ ...baseSelection, ...llamaRoute })),
+      prompt: vi.fn(async (): Promise<string> => {
+        throw new Error("interrupted at review");
+      }),
+    });
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(interrupted.deps),
+        sandboxName: "llama-resume",
+      }),
+    ).rejects.toThrow("interrupted at review");
+    expect(interrupted.calls.startStep).toHaveBeenCalledWith("provider_selection", llamaRoute);
+
+    const prompt = vi.fn(async () => "1");
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+    const session = createSession({
+      sandboxName: "llama-resume",
+      ...llamaRoute,
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "failed";
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "llama-resume",
+    });
+
+    expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: expect.objectContaining(llamaRoute),
+        nativeLocalSelection: true,
+      }),
+    );
+    expect(calls.exit).not.toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledOnce();
   });
 });

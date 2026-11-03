@@ -258,6 +258,13 @@ function dcodeHealthDeps(
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
+    commandExecutor: {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: `dcode ${dcodeAgent.expectedVersion}`,
+        stderr: "",
+      })),
+    },
     gatewayHealth: vi.fn(async () => true),
     forwardsHealthy: vi.fn(() => true),
     inferenceProbe: vi.fn(async () => ({

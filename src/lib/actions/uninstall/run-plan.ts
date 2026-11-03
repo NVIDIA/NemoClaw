@@ -96,6 +96,7 @@ import {
 } from "../../onboard/host-gateway-process";
 import {
   assertGatewayStatePathSafe,
+  hasDefaultGatewayEvidence,
   prepareGatewayProviderAuthorityRetirement,
   GATEWAYS_SUBDIR,
   type GatewayRegistryEntry,
@@ -202,6 +203,7 @@ export interface UninstallRunDeps {
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts?: readonly number[];
+  sweepDefaultGatewayAbsent?: boolean;
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -549,6 +551,7 @@ interface UninstallRuntime {
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts: readonly number[];
+  sweepDefaultGatewayAbsent: boolean;
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -615,6 +618,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
     retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
+    sweepDefaultGatewayAbsent: deps.sweepDefaultGatewayAbsent ?? false,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -3199,6 +3203,8 @@ async function discoverOtherGatewayEnvironments(
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
     try {
       if (
+        (!runtime.sweepDefaultGatewayAbsent ||
+          hasDefaultGatewayEvidence(path.dirname(sharedRoot))) &&
         fs
           .readdirSync(sharedRoot)
           .some(

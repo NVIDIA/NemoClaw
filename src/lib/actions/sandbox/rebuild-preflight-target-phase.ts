@@ -25,6 +25,7 @@ import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { prepareManagedRebuildProfileHandoff } from "./agents/managed-workload-rebuild-profile";
 import {
+  getPersistedSandboxTargetGateway,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
@@ -300,6 +301,7 @@ export async function prepareRebuildTargetPreflights(args: {
     try {
       recreateOptions.managedWorkloadRebuild = prepareManagedRebuildProfileHandoff({
         catalogHandoff: managedWorkloadRebuildCatalog,
+        gatewayPort: getPersistedSandboxTargetGateway(sandboxEntry).gatewayPort,
         targetConfig,
         recreateOptions,
         messagingPlan,

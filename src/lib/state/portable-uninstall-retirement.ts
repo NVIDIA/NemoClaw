@@ -14,6 +14,7 @@ import {
   releaseProcessBoundLock,
   tryAcquireProcessBoundLockAt,
   type ProcessBoundLockHandle,
+  type RegistryLockDeps,
 } from "./registry/lock";
 
 const NAMES = {
@@ -106,6 +107,8 @@ const tails = new Map<string, Promise<void>>();
 
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
+export const PORTABLE_HOST_FENCE_BUSY_MESSAGE =
+  "Host maintenance is in progress. Retry this command after it completes.";
 
 /** Require the current asynchronous operation to own the exact Portable host fence. */
 export function assertCurrentPortableHostFenceHeld(homeDir: string): void {
@@ -156,6 +159,7 @@ function releaseFenceReference(owner: FenceOwner): void {
 export async function withPortableHostFence<T>(
   homeDir: string,
   operation: () => Promise<T> | T,
+  lockDeps: RegistryLockDeps = {},
 ): Promise<T> {
   const lockPath = portableHostFencePath(homeDir);
   const inherited = owners.getStore();
@@ -181,7 +185,7 @@ export async function withPortableHostFence<T>(
     const drained = new Promise<void>((resolve) => (resolveDrained = resolve));
     owner = {
       active: true,
-      handle: acquireProcessBoundLockAt(lockPath),
+      handle: acquireProcessBoundLockAt(lockPath, lockDeps),
       path: lockPath,
       references: 1,
       released: false,
@@ -243,7 +247,7 @@ export async function withPortableHostFenceTry<T>(
     }
   }
   if (tails.has(lockPath)) {
-    throw new Error("Host maintenance is in progress. Retry this command after it completes.");
+    throw new Error(PORTABLE_HOST_FENCE_BUSY_MESSAGE);
   }
 
   let finish!: () => void;
@@ -254,7 +258,7 @@ export async function withPortableHostFenceTry<T>(
   try {
     const handle = tryAcquireProcessBoundLockAt(lockPath);
     if (!handle) {
-      throw new Error("Host maintenance is in progress. Retry this command after it completes.");
+      throw new Error(PORTABLE_HOST_FENCE_BUSY_MESSAGE);
     }
     let resolveDrained!: () => void;
     const drained = new Promise<void>((resolve) => (resolveDrained = resolve));

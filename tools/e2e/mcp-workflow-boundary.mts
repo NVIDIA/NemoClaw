@@ -215,7 +215,7 @@ function validateJobIdentity(
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
       jobName === "mcp-bridge-dev"
-        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
+        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB, REVIEWED_SDK_ARTIFACT_JOB]
         : ["base-image-publication", "generate-matrix", REVIEWED_SDK_ARTIFACT_JOB],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
@@ -620,11 +620,15 @@ function validateJobExecution(
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const dockerAuth = namedStep(job, "Authenticate to Docker Hub");
     const prepare = namedStep(job, "Prepare E2E workspace");
+    const sdkDownload = namedStep(job, REVIEWED_SDK_DOWNLOAD_NAME);
+    const sdkInstall = namedStep(job, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
     const reviewedNpm = namedStep(job, "Install reviewed npm for trusted OpenShell verification");
     const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
     const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
     const dockerAuthIndex = steps.indexOf(dockerAuth);
     const prepareIndex = steps.indexOf(prepare);
+    const sdkDownloadIndex = steps.indexOf(sdkDownload);
+    const sdkInstallIndex = steps.indexOf(sdkInstall);
     const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
     const installIndex = steps.indexOf(install);
     const restoreCliIndex = steps.indexOf(restoreCli);
@@ -646,8 +650,10 @@ function validateJobExecution(
       dockerAuthIndex !== trustedNodeSetupIndex + 2 ||
       steps.indexOf(reviewedNpm) !== dockerAuthIndex + 1 ||
       trustedCheckoutIndex !== dockerAuthIndex + 2 ||
-      prepareIndex !== installIndex + 1 ||
-      restoreCliIndex !== prepareIndex + 1 ||
+      sdkDownloadIndex !== installIndex + 1 ||
+      prepareIndex !== sdkDownloadIndex + 1 ||
+      sdkInstallIndex !== prepareIndex + 1 ||
+      restoreCliIndex !== sdkInstallIndex + 1 ||
       trustedInstallSequence.some((step, offset) => steps[dockerAuthIndex + 1 + offset] !== step)
     ) {
       errors.push(
@@ -665,9 +671,10 @@ function validateJobExecution(
       errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
     }
     if (
+      sdkDownloadIndex < 0 ||
       prepareIndex < 0 ||
       restoreCliIndex < prepareIndex ||
-      contentSha256(steps.slice(prepareIndex, restoreCliIndex + 1)) !==
+      contentSha256(steps.slice(sdkDownloadIndex, restoreCliIndex + 1)) !==
         MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
     ) {
       errors.push(
@@ -928,8 +935,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["base-image-publication", "generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend on publication and matrix generation`,
+    JSON.stringify(["base-image-publication", "generate-matrix", REVIEWED_SDK_ARTIFACT_JOB]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on publication, matrix generation, and SDK packaging`,
   );
   requireEqual(
     errors,

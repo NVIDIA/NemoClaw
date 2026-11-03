@@ -22,7 +22,7 @@ NemoClaw resolves the registered sandbox, invokes the native command through tha
 | Native agent runtime | Owns the agent gateway, background work, cron work, hooks, and child processes. |
 | NemoClaw host CLI | Resolves the registered sandbox and agent, invokes the native lifecycle command, verifies gateway health, and repairs host-side forwards. |
 
-NemoClaw does not signal a gateway process, authorize a process exit, or respawn an agent-owned process.
+The NemoClaw host CLI leaves process signaling and respawning to the selected runtime.
 It does not add a second gateway lifecycle controller inside the sandbox.
 
 <AgentOnly variant="hermes">
@@ -40,8 +40,19 @@ For Hermes, NemoClaw polls the agent health endpoint for the timeout declared in
 It waits through the shared settle window and requires the gateway to remain healthy before it reports success.
 
 `recover` checks the native health endpoint.
-If a built-in gateway is stopped, `recover` reports that state instead of relaunching the process.
-Use `gateway restart` to request a native restart, or restart the sandbox through OpenShell when the native command cannot run.
+A healthy gateway is not restarted.
+
+<AgentOnly variant="openclaw">
+If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If the existing Hermes supervisor is waiting for authenticated gated recovery after a clean exit or exit status `79`, `recover` requests a supervised gateway relaunch before verification.
+Otherwise, `recover` reports a stopped gateway without relaunching it.
+Separately, `recover` validates and releases a NemoClaw cron restore gate left by an interrupted rebuild.
+</AgentOnly>
+
+For other stopped gateways or a forced runtime reload, use `gateway restart`.
+If the native command cannot run, restart the sandbox through OpenShell.
 
 <AgentOnly variant="hermes">
 Hermes can close the OpenShell exec relay while its native restart command replaces the gateway.

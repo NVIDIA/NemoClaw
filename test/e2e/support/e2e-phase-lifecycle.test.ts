@@ -653,7 +653,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         runner.enqueue(
           shellResult(
             0,
-            "unknown-home\nworkspace\npackage\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
+            "unknown-home\nworkspace\npackage\nnpm-cache\nplugin\nhook\ncron\nchild-agent\nconfiguration\n",
           ),
         );
         runner.enqueue(shellResult(0, `NAME PHASE\n${sandboxName} Ready\n`));
@@ -738,6 +738,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
         );
         expect(nativeStateWrite?.args).toContain(
+          "/sandbox/.npm/_cacache/nemoclaw-dcode-cache-marker",
+        );
+        expect(nativeStateWrite?.args).toContain(
           "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",
         );
         expect(nativeStateWrite?.args).toContain(
@@ -756,6 +759,9 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         expect(nativeStateRead?.args).toContain("/sandbox/workspace/nemoclaw-dcode/project.txt");
         expect(nativeStateRead?.args).toContain(
           "/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt",
+        );
+        expect(nativeStateRead?.args).toContain(
+          "/sandbox/.npm/_cacache/nemoclaw-dcode-cache-marker",
         );
         expect(nativeStateRead?.args).toContain(
           "/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt",

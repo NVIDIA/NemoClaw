@@ -3060,8 +3060,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox: () =>
               selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
             listRegistrySandboxes: registry.listSandboxes,
-            planRegisteredExtraProviders: (gatewayName) =>
-              planRegisteredExtraProviders(gatewayName, { runOpenshell }),
+            planRegisteredExtraProviders: (gatewayName, options) =>
+              planRegisteredExtraProviders(gatewayName, { runOpenshell, ...options }),
             resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
             createSandbox: preparedDcodeRuntime.bindCreateSandbox((...createArgs) =>
               withSandboxPortReservationScope((dashboardPortReservationScope) =>
@@ -3077,7 +3077,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   ...createArgs,
                   opts.allowRemovedImmutabilityStateRecord === true,
                   fromImage ?? null,
-                  opts.toolDisclosure ?? null,
+                  ...([opts.toolDisclosure ?? null, opts.switchyardRouting !== undefined] as const),
                 ),
               ),
             ),

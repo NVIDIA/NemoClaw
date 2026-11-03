@@ -182,6 +182,8 @@ describe("destroySandbox flow", () => {
       harness.runOpenshellSpy.mockImplementation((args: unknown) => {
         const argv = Array.isArray(args) ? args : [];
         switch (`${String(argv[0])}:${String(argv[1])}`) {
+          case "gateway:list":
+            return { status: 0, stdout: "[]", stderr: "" };
           case "sandbox:delete":
             trace.push("delete");
             harness.setSandboxPresent(false);
@@ -250,6 +252,8 @@ describe("destroySandbox flow", () => {
         harness.runOpenshellSpy.mockImplementation((args: unknown) => {
           const argv = Array.isArray(args) ? args : [];
           switch (`${String(argv[0])}:${String(argv[1])}`) {
+            case "gateway:list":
+              return { status: 0, stdout: "[]", stderr: "" };
             case "sandbox:delete":
               crossedDeleteBoundary = true;
               harness.setSandboxPresent(false);
@@ -859,11 +863,13 @@ describe("destroySandbox flow", () => {
       const harness = createDestroyHarness();
 
       await expect(harness.destroySandbox("alpha", options)).resolves.toBeUndefined();
-
       expect(harness.promptSpy).not.toHaveBeenCalled();
-      expect(harness.cleanupGatewaySpy.mock.calls).toEqual(
-        cleanupExpected ? [["nemoclaw-19080", harness.runOpenshellSpy]] : [],
-      );
+      expect(
+        harness.cleanupGatewaySpy.mock.calls.map(([gatewayName, runOpenshell]) => [
+          gatewayName,
+          typeof runOpenshell,
+        ]),
+      ).toEqual(cleanupExpected ? [["nemoclaw-19080", "function"]] : []);
     },
   );
 
@@ -893,7 +899,6 @@ describe("destroySandbox flow", () => {
     );
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.events).toEqual([]);
-    expect(harness.selectGatewaySpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.stopAllSpy).not.toHaveBeenCalled();
@@ -925,7 +930,6 @@ describe("destroySandbox flow", () => {
     expect(harness.events).toEqual([]);
     expect(harness.events).not.toContain("wipe");
     expect(harness.events).not.toContain("detach");
-    expect(harness.selectGatewaySpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
@@ -948,9 +952,8 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.selectGatewaySpy).toHaveBeenCalledOnce();
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "list", "-o", "json"],
+      ["sandbox", "list", "-g", "nemoclaw-19080", "-o", "json"],
       expect.any(Object),
     );
     expect(harness.events).toEqual([]);

@@ -54,6 +54,7 @@ const OPAQUE_INPUTS = [
   ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
+  "agents/hermes/patch-agent-home.py",
   "agents/hermes/patch-external-supervisor-recovery.py",
   "agents/hermes/patch-external-supervisor-restart.py",
   "agents/hermes/patch-mcp-http-proxy.py",
@@ -143,6 +144,15 @@ describe("Vitest opaque-input watch triggers", () => {
     },
   );
 
+  it.each([".github/pr-limits.json", ".github/workflows/pr-limit.yaml"])(
+    "maps each PR-limit input to its enforcement test [%s]",
+    (inputPath) => {
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/automation/pull-requests/pr-limit-workflow.test.ts",
+      ]);
+    },
+  );
+
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
@@ -202,6 +212,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
+      "test/runtime/messaging/messaging-build-applier-integrity.test.ts",
       "test/generation/providerless-agent-config.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
@@ -214,6 +225,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/patch-session-list-preview.py")).toEqual([
       "test/agents/hermes/hermes-session-list-preview-patch.test.ts",
+    ]);
+    expect(triggeredBy("agents/hermes/patch-agent-home.py")).toEqual([
+      "test/agents/hermes/hermes-agent-home-patch.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/patch-external-supervisor-recovery.py")).toEqual([
       "test/agents/hermes/hermes-external-supervisor-recovery-patch.test.ts",
@@ -229,6 +243,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "test/generation/providerless-agent-config.test.ts",
+      "test/agents/hermes/hermes-image-build-probes.test.ts",
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
@@ -281,6 +296,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
@@ -424,6 +440,16 @@ describe("Vitest opaque-input watch triggers", () => {
 
       expect(trigger.pattern.global).toBe(false);
       expect(trigger.pattern.sticky).toBe(false);
+    },
+  );
+
+  it.each(["Dockerfile", "Dockerfile.base"])(
+    "selects the build-module dependency proof for %s",
+    (file) => {
+      const proof = "test/runtime/messaging/messaging-build-applier-integrity.test.ts";
+      expect(resolveVitestWatchTests(file)).toContain(proof);
+      expect(resolveVitestWatchTests(path.resolve(file))).toContain(proof);
+      expect(resolveVitestWatchTests(`agents/hermes/${file}`)).not.toContain(proof);
     },
   );
 

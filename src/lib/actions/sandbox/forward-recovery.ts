@@ -37,6 +37,10 @@ import {
   retargetHermesApiPortInUrl,
 } from "../../onboard/hermes-api-port";
 import { resolveDashboardForwardBind } from "../../onboard/dashboard-runtime";
+import {
+  createHermesApiForwardMigration,
+  isRegisteredHermesApiForward,
+} from "../../agent/hermes-api-forward";
 import { isWsl } from "../../platform";
 import * as registry from "../../state/registry";
 export type SandboxForwardHealth = boolean;
@@ -143,6 +147,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
       }),
       assertCurrent,
       assertRollbackCurrent,
+      readSandbox: () => readForwardSandbox(input.sandboxName),
     },
   };
 }
@@ -568,7 +573,18 @@ export async function ensureSandboxPortForward(
   sandboxName: string,
   options: SandboxForwardRecoveryOptions = {},
 ): Promise<boolean> {
-  const port = resolveSandboxDashboardPort(sandboxName);
+  return ensureSandboxDashboardForwardForPort(
+    sandboxName,
+    resolveSandboxDashboardPort(sandboxName),
+    options,
+  );
+}
+
+async function ensureSandboxDashboardForwardForPort(
+  sandboxName: string,
+  port: number,
+  options: SandboxForwardRecoveryOptions,
+): Promise<boolean> {
   const sandbox = readForwardSandbox(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
   const bind = resolveDashboardForwardBind(sandbox, {
@@ -768,7 +784,12 @@ export async function ensureSandboxPortForwardForPort(
   // A listener this sandbox does not own is reported, never replaced. A
   // launch onto it would only fail as "occupied", and reporting the forward
   // as restored would send the dashboard token to that process (#11149).
-  if (listener === "foreign" || listener === "indeterminate") {
+  const sandbox = readForwardSandbox(sandboxName);
+  const canMigrateApi =
+    listener === "foreign" &&
+    isRegisteredHermesApiForward(sandbox, port, expectedBind ?? "127.0.0.1") &&
+    !forwardTarget.startsWith("0.0.0.0:");
+  if (listener === "indeterminate" || (listener === "foreign" && !canMigrateApi)) {
     console.error(nonOwnedForwardListenerRefusal(sandboxName, port));
     return false;
   }
@@ -785,8 +806,26 @@ export async function ensureSandboxPortForwardForPort(
       expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
     );
     const adapter = createOpenShellForwardAdapterForAuthority(runtime);
-    const assertCurrent = async () =>
-      assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority);
+    const migration = createHermesApiForwardMigration({
+      adapter,
+      forward,
+      readSandbox: () => (canMigrateApi ? readForwardSandbox(sandboxName) : null),
+      requireRegisteredApi: canMigrateApi,
+      assertCurrent: () =>
+        assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority),
+    });
+    const { assertCurrent } = migration;
+    if (canMigrateApi) {
+      const started = await migration.migrate();
+      if (started === null) {
+        console.error(nonOwnedForwardListenerRefusal(sandboxName, port));
+        return false;
+      }
+      if (started.state !== "started" && started.state !== "reused") {
+        throw new Error(forwardOperationFailureMessage(started));
+      }
+      return acceptSuccessfulForward();
+    }
     if (listener === "stale") {
       const retirement = await adapter.retireLegacyForward({
         forward,
@@ -820,9 +859,17 @@ export async function ensureHermesDashboardPortForwardIfEnabled(
   return ensureHermesDashboardPortForward(sandboxName, {
     getRecoveryConfig: (name) => getHermesDashboardRecoveryConfig(name, readForwardSandbox),
     isPortForwardHealthy: (name, port) =>
-      isSandboxPortForwardHealthy(name, port, undefined, runtimeSelection),
+      isSandboxPortForwardHealthy(
+        name,
+        port,
+        resolveDashboardForwardBind(readForwardSandbox(name), {
+          requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+          wsl: isWsl(),
+        }),
+        runtimeSelection,
+      ),
     ensurePortForward: (name, port) =>
-      ensureSandboxPortForwardForPort(name, port, { runtimeSelection }),
+      ensureSandboxDashboardForwardForPort(name, port, { runtimeSelection }),
   });
 }
 

@@ -7,19 +7,19 @@ import os from "node:os";
 import path from "node:path";
 import { runInNewContext } from "node:vm";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// This suite exercises the controller after reviewed 0.1.3 projection.
+const runtime = vi.hoisted(() => ({ version: "0.1.3" }));
 vi.mock("../../../src/lib/onboard/openshell-version.ts", async (original) => ({
   ...(await original<typeof import("../../../src/lib/onboard/openshell-version.ts")>()),
-  SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.1.3",
+  get SUPPORTED_OPENSHELL_FALLBACK_VERSION() {
+    return runtime.version;
+  },
 }));
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   configureLocalInferenceRoute,
-  assertLocalInferenceAgentResponse,
-  localInferenceAgentCommand,
   localInferenceProbe,
   managedImageLocalInferenceBaseUrl,
   createManagedImageSandboxWithDiagnostics,
@@ -124,87 +124,101 @@ function nativeQualificationFixture(
   return { adapter, binding, imported, input, metadata, prepared, route, runOpenshell };
 }
 
-it.each([
-  ["openclaw", "ollama"],
-  ["hermes", "ollama"],
-  ["langchain-deepagents-code", "ollama"],
-  ["openclaw", "nim"],
-  ["hermes", "nim"],
-  ["langchain-deepagents-code", "nim"],
-  ["openclaw", "vllm"],
-  ["hermes", "vllm"],
-  ["langchain-deepagents-code", "vllm"],
-  ["openclaw", "llama-cpp"],
-] as const)(
-  "registers the exact %s %s native boundary without a global inference route",
-  async (agent, kind) => {
-    const f = nativeQualificationFixture(agent, kind);
-    expect(f.prepared.document.binaries).toContain(
-      agent === "langchain-deepagents-code" ? "/opt/venv/bin/python3" : "/usr/bin/python3.13",
-    );
-    const receipt = await configureLocalInferenceRoute(
-      f,
-      f.input,
-      { [f.route.credentialEnv]: "fixture-local-token" },
-      f.adapter,
-    );
-    expect(receipt).toEqual({
-      ...f.binding,
-      profileId: f.prepared.profileId,
-      providerName: f.prepared.providerName,
-      schemaVersion: 1,
-      providerId: "fixture-owned-id",
-    });
-    expect(f.imported).toEqual([f.prepared.document]);
-    expect(f.adapter.createProvider).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      name: f.prepared.providerName,
-      type: f.prepared.profileId,
-      credentials: [{ name: f.binding.credentialEnv, value: "fixture-local-token" }],
-      config: [],
-      fromExisting: false,
-    });
-    expect(f.runOpenshell.mock.calls[0][0]).toEqual([
-      "policy",
-      "list",
-      "-g",
-      "nemoclaw",
-      "--global",
-      "--page-size",
-      "1",
-      "--output",
-      "json",
-    ]);
-    expect(f.runOpenshell).toHaveBeenCalledTimes(1);
-  },
-);
-
-it("refuses an existing qualification provider without adopting or rotating it", async () => {
-  const f = nativeQualificationFixture("openclaw", "ollama");
-  f.adapter.getProvider.mockReset().mockResolvedValue({ ok: true, value: f.metadata });
-  await expect(
-    configureLocalInferenceRoute(
-      f,
-      f.input,
-      { [f.route.credentialEnv]: "fixture-token" },
-      f.adapter,
-    ),
-  ).rejects.toThrow("without a matching NemoClaw ownership receipt");
-  expect(f.adapter.createProvider).not.toHaveBeenCalled();
-  expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+beforeEach(() => {
+  runtime.version = "0.1.3";
 });
+describe.each(["0.1.3", "0.1.5"])("OpenShell %s native inference", (version) => {
+  beforeEach(() => {
+    runtime.version = version;
+  });
 
-it.each(["", "raw\ncredential"])(
-  "rejects invalid qualification credential %j before importing a profile",
-  async (credential) => {
-    const f = nativeQualificationFixture("hermes", "ollama");
+  it.each([
+    ["openclaw", "ollama"],
+    ["hermes", "ollama"],
+    ["langchain-deepagents-code", "ollama"],
+    ["openclaw", "nim"],
+    ["hermes", "nim"],
+    ["langchain-deepagents-code", "nim"],
+    ["openclaw", "vllm"],
+    ["hermes", "vllm"],
+    ["langchain-deepagents-code", "vllm"],
+    ["openclaw", "llama-cpp"],
+  ] as const)(
+    "registers the exact %s %s native boundary without a global inference route",
+    async (agent, kind) => {
+      const f = nativeQualificationFixture(agent, kind);
+      expect(f.prepared.document.binaries).toContain(
+        agent === "langchain-deepagents-code" ? "/opt/venv/bin/python3" : "/usr/bin/python3.13",
+      );
+      const receipt = await configureLocalInferenceRoute(
+        f,
+        f.input,
+        { [f.route.credentialEnv]: "fixture-local-token" },
+        f.adapter,
+      );
+      expect(receipt).toEqual({
+        ...f.binding,
+        profileId: f.prepared.profileId,
+        providerName: f.prepared.providerName,
+        schemaVersion: 1,
+        providerId: "fixture-owned-id",
+      });
+      expect(f.imported).toEqual([f.prepared.document]);
+      expect(f.adapter.createProvider).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        name: f.prepared.providerName,
+        type: f.prepared.profileId,
+        credentials: [{ name: f.binding.credentialEnv, value: "fixture-local-token" }],
+        config: [],
+        fromExisting: false,
+      });
+      expect(f.runOpenshell.mock.calls[0][0]).toEqual([
+        "policy",
+        "list",
+        "-g",
+        "nemoclaw",
+        "--global",
+        "--page-size",
+        "1",
+        "--output",
+        "json",
+      ]);
+      expect(f.runOpenshell).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("refuses an existing qualification provider without adopting or rotating it", async () => {
+    const f = nativeQualificationFixture("openclaw", "ollama");
+    f.adapter.getProvider.mockReset().mockResolvedValue({ ok: true, value: f.metadata });
     await expect(
-      configureLocalInferenceRoute(f, f.input, { [f.route.credentialEnv]: credential }, f.adapter),
-    ).rejects.toThrow("required for protected local inference");
-    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+      configureLocalInferenceRoute(
+        f,
+        f.input,
+        { [f.route.credentialEnv]: "fixture-token" },
+        f.adapter,
+      ),
+    ).rejects.toThrow("without a matching NemoClaw ownership receipt");
     expect(f.adapter.createProvider).not.toHaveBeenCalled();
-  },
-);
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "raw\ncredential"])(
+    "rejects invalid qualification credential %j before importing a profile",
+    async (credential) => {
+      const f = nativeQualificationFixture("hermes", "ollama");
+      await expect(
+        configureLocalInferenceRoute(
+          f,
+          f.input,
+          { [f.route.credentialEnv]: credential },
+          f.adapter,
+        ),
+      ).rejects.toThrow("required for protected local inference");
+      expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+      expect(f.adapter.createProvider).not.toHaveBeenCalled();
+    },
+  );
+});
 
 function runNativeQualificationProbe(handle: string, model = "fixture-model") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-qualification-"));
@@ -242,102 +256,6 @@ function runNativeQualificationProbe(handle: string, model = "fixture-model") {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
-
-describe("protected local inference agent response", () => {
-  it.each([
-    { response: "", expected: 'response=""' },
-    { response: "unexpected answer", expected: 'response="unexpected answer"' },
-    { response: "fixture-private-value", expected: 'response="<REDACTED>"' },
-    { response: "x".repeat(600), expected: `response="${"x".repeat(512)}"` },
-  ])("reports bounded, redacted rejected output [%#]", ({ response, expected }) => {
-    expect(() =>
-      assertLocalInferenceAgentResponse(
-        {
-          agent: "hermes",
-          image: IMAGE,
-          sandbox: VALID_SANDBOX,
-          localProvider: "ollama",
-          model: "fixture-model",
-        },
-        response,
-        { NVIDIA_API_KEY: "fixture-private-value" },
-      ),
-    ).toThrow(expected);
-  });
-  const openclaw = {
-    status: "ok",
-    result: {
-      meta: { aborted: false, agentMeta: { provider: "inference", model: "fixture-model" } },
-      payloads: [{ text: "PONG" }],
-    },
-  };
-  const dcode = { data: { status: "success", exit_code: 0, response: "PONG" } };
-  const input = (agent: "openclaw" | "hermes" | "langchain-deepagents-code") => ({
-    agent,
-    image: IMAGE,
-    sandbox: VALID_SANDBOX,
-    localProvider: "ollama" as const,
-    model: "fixture-model",
-  });
-
-  it.each([
-    ["openclaw", JSON.stringify(openclaw), "openclaw"],
-    ["hermes", "PONG\n", "hermes"],
-    ["langchain-deepagents-code", JSON.stringify(dcode), "dcode"],
-  ] as const)(
-    "uses %s's configured route and accepts its assistant response",
-    (agent, stdout, binary) => {
-      const command = localInferenceAgentCommand(input(agent));
-      expect(command[0]).toBe(binary);
-      expect(command).not.toContain("--model");
-      expect(command).not.toContain("--provider");
-      expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
-    },
-  );
-
-  it.each([
-    [
-      "openclaw",
-      JSON.stringify({ ...openclaw, result: { ...openclaw.result, payloads: [], prompt: "PONG" } }),
-    ],
-    ["hermes", "request failed; prompt was PONG"],
-    [
-      "langchain-deepagents-code",
-      JSON.stringify({ data: { ...dcode.data, response: "", prompt: "PONG" } }),
-    ],
-    [
-      "langchain-deepagents-code",
-      JSON.stringify({ data: { ...dcode.data, status: "turn_limit" } }),
-    ],
-    ["langchain-deepagents-code", JSON.stringify({ data: { ...dcode.data, exit_code: 1 } })],
-    ["openclaw", "not JSON"],
-    ["langchain-deepagents-code", "null"],
-  ] as const)("rejects %s diagnostics or an incomplete turn", (agent, stdout) => {
-    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).toThrow();
-  });
-
-  it.each([
-    ["aborted", { ...openclaw.result.meta, aborted: true }],
-    [
-      "wrong provider",
-      { ...openclaw.result.meta, agentMeta: { provider: "nvidia", model: "fixture-model" } },
-    ],
-    [
-      "wrong model",
-      { ...openclaw.result.meta, agentMeta: { provider: "inference", model: "other-model" } },
-    ],
-  ])("rejects an OpenClaw %s result even when its text is PONG", (_reason, meta) => {
-    expect(() =>
-      assertLocalInferenceAgentResponse(
-        input("openclaw"),
-        JSON.stringify({
-          ...openclaw,
-          result: { ...openclaw.result, meta },
-        }),
-      ),
-    ).toThrow("configured local model");
-  });
-});
 
 it.each([
   "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",

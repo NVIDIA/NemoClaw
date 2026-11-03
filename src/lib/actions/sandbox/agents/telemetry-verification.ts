@@ -42,7 +42,9 @@ export async function readTelemetryAgentCommand<T>(
   timeoutLimitMs = 1_000,
 ): Promise<T | null> {
   return withTelemetryEvidence(async (remainingMs, signal) => {
-    const runtimeSelection = resolveSandboxConfigRuntimeSelection(sandboxName);
+    const runtimeSelection = resolveSandboxConfigRuntimeSelection(sandboxName, {
+      observationOnly: true,
+    });
     if (target.kind === "named" && target.gatewayName !== runtimeSelection.gatewayName)
       throw new Error("Native evidence target does not match the recorded sandbox gateway");
     const reader = createSupervisedSandboxCommandReader(signal);

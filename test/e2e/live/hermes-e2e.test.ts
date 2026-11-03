@@ -490,6 +490,7 @@ test(
     expect(profilesBeforeRecovery.exitCode, resultText(profilesBeforeRecovery)).toBe(0);
 
     await assertHermesSkillLifecycle({
+      apiPort: HERMES_API_PORT,
       env: commandEnv(),
       host,
       inference,

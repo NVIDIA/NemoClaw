@@ -215,6 +215,7 @@ it("recovers only the marked isolated sandbox, gateway, volumes and network", as
 it.each([
   ["0.0.116", "--limit"],
   ["0.1.3", "--page-size"],
+  ["0.1.5", "--page-size"],
 ])("confirms strict absence with OpenShell %s before continuing cleanup", async (version, flag) => {
   mocks.capture
     .mockReset()

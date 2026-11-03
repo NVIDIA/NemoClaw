@@ -47,16 +47,21 @@ jobs:
                   (login === "*" ||
                     /^(?=.{1,39}$)[a-z\d](?:(?:[a-z\d]|-(?!-))*[a-z\d])?$/.test(login)) &&
                   typeof value === "string" &&
-                  /^(0|[1-9]\d*)$/.test(value) &&
-                  Number.isSafeInteger(Number(value)),
+                  (value === "unlimited" ||
+                    (/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(Number(value)))),
               )
             ) {
               throw new Error("Invalid PR limit policy values");
             }
             const normalizedAuthor = author.toLowerCase();
-            const limit = Number(
-              Object.hasOwn(policy, normalizedAuthor) ? policy[normalizedAuthor] : policy["*"],
-            );
+            const allowance = Object.hasOwn(policy, normalizedAuthor)
+              ? policy[normalizedAuthor]
+              : policy["*"];
+            if (allowance === "unlimited") {
+              core.info(`Author ${author} is exempt from the open PR limit`);
+              return;
+            }
+            const limit = Number(allowance);
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               ...context.repo,
               state: "open",

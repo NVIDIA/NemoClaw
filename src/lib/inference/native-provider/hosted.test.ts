@@ -112,15 +112,27 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
     ]);
   });
 
-  it("refuses an existing provider without ownership proof before mutation (#12589)", async () => {
-    const { lifecycle, adapter, methods } = fixture(definition);
-    await expect(
-      lifecycle.ensureNativeProvider({ adapter, target, credentialValue: "test-secret" }),
-    ).rejects.toThrow(/without a matching.*ownership receipt/u);
-    expect(methods.updateProvider).not.toHaveBeenCalled();
-    expect(methods.ensureProviderPolicyComposition).not.toHaveBeenCalled();
-    expect(methods.createProvider).not.toHaveBeenCalled();
-  });
+  it.each([
+    { gatewayName: "test-gateway", quotedGateway: "'test-gateway'" },
+    { gatewayName: "gw'; $(touch /tmp/x) #", quotedGateway: "'gw'\\''; $(touch /tmp/x) #'" },
+  ])(
+    "refuses an existing provider without ownership proof before mutation on gateway $gatewayName (#12589)",
+    async ({ gatewayName, quotedGateway }) => {
+      const { lifecycle, adapter, methods } = fixture(definition);
+      await expect(
+        lifecycle.ensureNativeProvider({
+          adapter,
+          target: { kind: "named", gatewayName },
+          credentialValue: "test-secret",
+        }),
+      ).rejects.toThrow(
+        `OpenShell provider '${definition.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed. Check whether any sandbox on this gateway uses this provider. If none does, remove it with \`openshell provider delete -g ${quotedGateway} '${definition.providerName}'\`, then run onboarding again.`,
+      );
+      expect(methods.updateProvider).not.toHaveBeenCalled();
+      expect(methods.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+      expect(methods.createProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [

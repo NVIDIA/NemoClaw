@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../../onboard/openshell-version";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   scopeGatewayOpenshellArgs,
 } from "./gateway-scope";
+import { OperatorRefusalError } from "../../domain/operator-refusal";
 import { captureSanitizedResolvedOpenshellAsync } from "./sanitized-capture";
 
 type PolicyCommandResult = {
@@ -57,7 +61,7 @@ function document(result: PolicyCommandResult): Record<string, unknown> {
 }
 
 async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
-  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+  if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
     const history = document(
       await run(["policy", "list", "--global", "--page-size", "1", "--output", "json"]),
     );
@@ -99,7 +103,7 @@ export async function requireNativeProviderPolicy(
   const run = commandForGateway(gatewayName, command);
   // The trusted controller projects this pin with the reviewed runtime.
   // A mismatched server must still pass the strict policy response checks.
-  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+  if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
     await requireSandboxPolicyAuthority(run);
     return;
   }
@@ -112,15 +116,13 @@ export async function requireNativeProviderPolicy(
     Array.isArray(settings) ||
     (settings as Record<string, unknown>).providers_v2_enabled !== "true"
   ) {
-    throw new Error(
-      // Keep each line short: onboard bounds every displayed diagnostic line.
-      [
-        `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,
-        "NemoClaw does not activate it on existing gateways. Ask its administrator to review attached providers and enable composition with:",
-        `  openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
-        "Then retry.",
-      ].join("\n"),
-    );
+    // Keep each line short: onboard bounds every displayed diagnostic line.
+    throw new OperatorRefusalError([
+      `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,
+      "NemoClaw does not activate it on existing gateways. Ask its administrator to review attached providers and enable composition with:",
+      `  openshell settings set -g ${gatewayName} --global --key providers_v2_enabled --value true --yes`,
+      "Then retry.",
+    ]);
   }
   await requireSandboxPolicyAuthority(run);
 }
@@ -133,7 +135,7 @@ export async function initializeNativeProviderPolicy(
   const run = commandForGateway(gatewayName, command);
   // The trusted controller projects this pin with the reviewed runtime.
   // A mismatched server must still pass the strict policy response checks.
-  if (String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3") {
+  if (usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION)) {
     await requireSandboxPolicyAuthority(run);
     return;
   }

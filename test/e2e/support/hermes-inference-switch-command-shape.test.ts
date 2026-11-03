@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFile, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +23,7 @@ import {
   expectAuthenticatedBaselineInventoryRequest,
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
+  hermesApiCommand,
   hermesGatewayPid,
   hostedInstallModel,
   parseHermesGatewayPid,
@@ -475,15 +479,138 @@ describe("Hermes inference switch command shape", () => {
       );
     const delay = vi.fn().mockResolvedValue(undefined);
 
-    const result = await runHermesPongWithRetry({
-      delay,
-      expectedModel: "target-model",
-      run,
-    });
-    expect(result.stdout).toContain("baseline-model");
+    await expect(
+      runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
+    ).rejects.toThrow("Hermes PONG probe did not return a successful response");
     expect(run.mock.calls).toEqual([[1]]);
     expect(delay).not.toHaveBeenCalled();
   });
+
+  it("rejects a successful transport response without PONG", async () => {
+    const run = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stdout: '{"model":"target-model","choices":[{"message":{"content":"OTHER"}}]}',
+      stderr: "",
+    } as ShellProbeResult);
+
+    await expect(runHermesPongWithRetry({ expectedModel: "target-model", run })).rejects.toThrow(
+      "Hermes PONG probe did not return a successful response",
+    );
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [408, "end", 22],
+    [429, "end", 22],
+    [503, "end", 22],
+    [200, "write", 28],
+  ] as const)(
+    "retries an HTTP %i failure while preserving its body",
+    async (status, firstResponseMethod, expectedExitCode) => {
+      const failureBody =
+        '{"message":"Service is not ready","type":"Service Unavailable","code":503}';
+      const successBody = '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}';
+      const replies = [
+        { status, body: failureBody, method: firstResponseMethod },
+        { status: 200, body: successBody, method: "end" as const },
+      ];
+      let requests = 0;
+      const server = createServer((request, response) => {
+        request.resume();
+        const reply = replies[requests++];
+        response.writeHead(reply.status, { "Content-Type": "application/json" });
+        response[reply.method](reply.body);
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        const address = server.address();
+        assert(address && typeof address !== "string", "Missing probe server address");
+        const command = hermesApiCommand('{"model":"target-model"}')
+          .replace("http://localhost:8642", `http://127.0.0.1:${address.port}`)
+          .replace("--max-time 120", "--max-time 0.5");
+        const results: ShellProbeResult[] = [];
+        const delay = vi.fn().mockResolvedValue(undefined);
+        const run = vi.fn(async () => {
+          let result: ShellProbeResult;
+          try {
+            const output = await promisify(execFile)("bash", ["-c", command], {
+              env: {
+                ...process.env,
+                NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
+                NO_PROXY: "127.0.0.1",
+              },
+            });
+            result = { ...output, exitCode: 0 } as ShellProbeResult;
+          } catch (error) {
+            const failed = error as { stdout: string; stderr: string; code: number };
+            result = {
+              stdout: failed.stdout,
+              stderr: failed.stderr,
+              exitCode: failed.code,
+            } as ShellProbeResult;
+          }
+          results.push(result);
+          return result;
+        });
+        const result = await runHermesPongWithRetry({ expectedModel: "target-model", run, delay });
+        expect(results[0].exitCode).toBe(expectedExitCode);
+        expect(results[0].stdout).toBe(failureBody);
+        expect(results[0].stderr).toContain(`__NEMOCLAW_HTTP_STATUS__=${status}`);
+        expect(result.stdout).toBe(successBody);
+        expect(requests).toBe(2);
+        expect(delay.mock.calls).toEqual([[5_000]]);
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
+
+  it("fails after three transient HTTP failures and retains the last body", async () => {
+    const run = vi.fn().mockResolvedValue({
+      exitCode: 22,
+      stdout: '{"code":503,"message":"Service is not ready"}',
+      stderr: "__NEMOCLAW_HTTP_STATUS__=503\n",
+    });
+    const delay = vi.fn().mockResolvedValue(undefined);
+    const onEvidence = vi.fn();
+    await expect(
+      runHermesPongWithRetry({ expectedModel: "target-model", run, delay, onEvidence }),
+    ).rejects.toThrow("Service is not ready");
+    expect(run.mock.calls).toEqual([[1], [2], [3]]);
+    expect(delay.mock.calls).toEqual([[5_000], [5_000]]);
+    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ outcome: "exhausted" }));
+  });
+
+  it.each([
+    [22, "401", '{"message":"Unauthorized"}'],
+    [22, "403", '{"message":"Forbidden"}'],
+    [22, "400", '{"message":"ECONNRESET"}'],
+    [22, "503", '{"message":"denied by network policy"}'],
+    [22, "503", '{"message":"invalid JSON request"}'],
+    [0, "200", '{"message":"Service is not ready","code":503}'],
+    [0, "200", '{"model":"wrong-model","choices":[{"message":{"content":"PONG"}}]}'],
+    [0, "302", '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}'],
+    [60, "000", "TLS certificate verification failed"],
+    [28, "401", "Operation timed out"],
+    [28, "403", "Operation timed out"],
+    [28, "400", "Operation timed out"],
+    [28, "200", "Unauthorized; operation timed out"],
+  ])(
+    "does not retry terminal HTTP evidence (exit %i, status %s)",
+    async (exitCode, status, stdout) => {
+      const run = vi
+        .fn()
+        .mockResolvedValue({ exitCode, stdout, stderr: `__NEMOCLAW_HTTP_STATUS__=${status}\n` });
+      const delay = vi.fn().mockResolvedValue(undefined);
+      await expect(
+        runHermesPongWithRetry({ expectedModel: "target-model", run, delay }),
+      ).rejects.toThrow("Hermes PONG probe did not return a successful response");
+      expect(run).toHaveBeenCalledOnce();
+      expect(delay).not.toHaveBeenCalled();
+    },
+  );
 
   it("retries an explicit Hermes transport failure and retains aggregate evidence", async () => {
     const transient = {
@@ -519,6 +646,33 @@ describe("Hermes inference switch command shape", () => {
     );
   });
 
+  it("reports the final Hermes probe diagnostic after bounded retry exhaustion", async () => {
+    const first = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: ECONNRESET",
+    } as ShellProbeResult;
+    const final = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: rawError=503 final gateway unavailable",
+    } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(final);
+    const onEvidence = vi.fn();
+
+    await expect(
+      runHermesPongWithRetry({
+        attempts: 2,
+        delay: async () => {},
+        expectedModel: "target-model",
+        onEvidence,
+        run,
+      }),
+    ).rejects.toThrow("rawError=503 final gateway unavailable");
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ outcome: "exhausted" }));
+  });
+
   it("does not retry mixed Hermes authentication and transport evidence", async () => {
     const terminal = {
       exitCode: 1,
@@ -530,7 +684,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
-    ).resolves.toBe(terminal);
+    ).rejects.toThrow("Hermes PONG probe did not return a successful response");
     expect(run).toHaveBeenCalledOnce();
     expect(delay).not.toHaveBeenCalled();
   });
@@ -546,7 +700,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
-    ).resolves.toBe(terminal);
+    ).rejects.toThrow("Hermes PONG probe did not return a successful response");
     expect(run).toHaveBeenCalledOnce();
     expect(delay).not.toHaveBeenCalled();
   });
@@ -796,6 +950,7 @@ describe("Hermes inference switch command shape", () => {
 
     await expect(
       runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, ["hosted-key"], [], {
+        artifactNamePrefix: "hermes-inference-set-after-cli",
         artifacts: { writeJson },
         attempts: 2,
         delay: async () => {},
@@ -803,6 +958,8 @@ describe("Hermes inference switch command shape", () => {
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(command).toHaveBeenCalledTimes(2);
+    expect(command.mock.calls[0]?.[2]?.artifactName).toBe("hermes-inference-set-after-cli-1");
+    expect(command.mock.calls[1]?.[2]?.artifactName).toBe("hermes-inference-set-after-cli-2");
     expect(writeJson).toHaveBeenCalledWith(
       "inference-switch-retry-evidence.json",
       expect.objectContaining({ outcome: "passed-after-retry" }),

@@ -10,6 +10,13 @@ case "${PLATFORM:-}" in
     exit 1
     ;;
 esac
+case "${RESOLUTION_MODE:-build-local}" in
+  build-local | reference-or-candidate) ;;
+  *)
+    echo "ERROR: PR base resolution mode is invalid." >&2
+    exit 1
+    ;;
+esac
 write_dcode_resolution() {
   [ "$AGENT" = "langchain-deepagents-code" ] || return 0
   local identity_ref="$1" inspect_ref="$2" expected_revision="$3"
@@ -58,6 +65,17 @@ write_dcode_resolution() {
 }
 build_local_base() {
   local reason="$1"
+  if [ "${RESOLUTION_MODE:-build-local}" = reference-or-candidate ]; then
+    echo "::notice::${DISPLAY_NAME} ${reason}; using the exact candidate base"
+    {
+      printf 'ref=candidate\n'
+      printf 'local=deferred\n'
+    } >>"$GITHUB_OUTPUT"
+    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+    printf '### %s PR base\n\nExact candidate base at `%s`.\nReason: %s.\n' \
+      "$DISPLAY_NAME" "$CANDIDATE_SHA" "$reason" >>"$GITHUB_STEP_SUMMARY"
+    return 0
+  fi
   echo "::notice::${DISPLAY_NAME} ${reason}; building the exact PR base locally"
   local local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
   local local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"

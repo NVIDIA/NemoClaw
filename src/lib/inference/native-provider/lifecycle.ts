@@ -7,6 +7,7 @@ import type {
   OpenShellProviderError,
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
+import { shellQuote } from "../../core/shell-quote";
 
 export type NativeProviderAttachment = Readonly<{
   schemaVersion: 1;
@@ -26,6 +27,22 @@ export class NativeProviderError extends Error {
     super(message);
     this.name = "NativeProviderError";
   }
+}
+
+/**
+ * Refuse a provider that has no NemoClaw receipt, and name the command that
+ * clears it. Each name is shell-quoted because operators copy the command.
+ */
+export function unownedNativeProviderMessage(
+  providerName: string,
+  target: OpenShellGatewayTarget,
+): string {
+  const gatewayFlag = target.kind === "named" ? ` -g ${shellQuote(target.gatewayName)}` : "";
+  return [
+    `OpenShell provider '${providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+    "Check whether any sandbox on this gateway uses this provider.",
+    `If none does, remove it with \`openshell provider delete${gatewayFlag} ${shellQuote(providerName)}\`, then run onboarding again.`,
+  ].join(" ");
 }
 
 export class NativeProviderCredentialExpiredError extends NativeProviderError {
@@ -230,9 +247,7 @@ export async function ensureNativeProvider(input: {
   if (before) {
     const receipt = nativeProviderAttachmentFromMetadata(before, profile);
     if (!input.expected) {
-      throw new NativeProviderError(
-        `OpenShell provider '${profile.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-      );
+      throw new NativeProviderError(unownedNativeProviderMessage(profile.providerName, target));
     }
     if (input.expected && input.expected.providerId !== receipt.providerId) {
       throw new NativeProviderError(

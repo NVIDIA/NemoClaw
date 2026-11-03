@@ -255,8 +255,12 @@ export function assertPortableManagedBootstrapNotSelected(
 export async function prepareSandboxWorkloadForPortableLifecycle(
   runtime: ManagedWorkloadOnboardRuntime,
   portableLifecycle: boolean,
+  switchyardRoutingConfigured = false,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
+  if (switchyardRoutingConfigured && workload.source.kind !== "managed-image") {
+    throw new Error("Hermes Switchyard routing requires the managed Hermes image.");
+  }
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
   }
@@ -613,7 +617,11 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     const profile = input.runtime.ensurePreparedProfile(input.workload);
     if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");
     dashboardRemoteBindPrepared =
-      profile.profile.dashboard.agent === "openclaw" && profile.profile.dashboard.mode === "remote";
+      profile.profile.dashboard.agent === "openclaw"
+        ? profile.profile.dashboard.mode === "remote"
+        : profile.profile.dashboard.agent === "hermes" &&
+          profile.profile.dashboard.mode === "loopback-forwarded" &&
+          launchInput.env?.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
     const rootApplyRequest = createManagedStartupRootApplyRequest({
       agent: profile.profile.agent,
       encodedProfile: profile.encodedProfile,

@@ -42,8 +42,7 @@ const path = require("path");
 const { promises: dnsPromises } = require("node:dns");
 const { isIP } = require("node:net");
 const { isErrnoException }: typeof import("../core/errno") = require("../core/errno");
-const { validateName } = require("../runner");
-const { shellQuote } = require("../core/shell-quote");
+const { validateName, shellQuote } = require("../runner");
 const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("../state/audit/operational");
@@ -529,7 +528,9 @@ function isHermesCompatHashRecoveryError(error: unknown): boolean {
 function hermesCompatHashRecoveryError(sandboxName: string): SandboxConfigError {
   return new SandboxConfigError([
     "  Hermes integrity metadata is not ready for a configuration write.",
-    `  Run: nemoclaw ${shellQuote(sandboxName)} recover`,
+    `  Back up needed data from ${shellQuote(sandboxName)} before recovery.`,
+    "  Rebuild preserves the native home and may retain this mismatch.",
+    "  Repair the integrity state from a trusted backup or create a fresh Hermes sandbox.",
     "  The configuration write was not applied.",
   ]);
 }

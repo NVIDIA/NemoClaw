@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -50,6 +51,146 @@ describe("dual-Station vLLM API key persistence", () => {
     expect(loadDualStationVllmApiKey({ stateDir: temporaryDirectory() })).toBeNull();
   });
 
+  it.each(["write", "sync"])("keeps the final key absent when the %s fails (#13074)", (failure) => {
+    const stateDir = temporaryDirectory();
+    const filePath = dualStationVllmApiKeyPath(stateDir);
+    const write = fs.writeFileSync;
+    const injected = new Error("interrupted key persistence");
+    const spy =
+      failure === "write"
+        ? vi.spyOn(fs, "writeFileSync").mockImplementationOnce((descriptor) => {
+            write(descriptor, "partial", "utf8");
+            throw injected;
+          })
+        : vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+            throw injected;
+          });
+    try {
+      expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow(injected);
+      expect(fs.existsSync(filePath)).toBe(false);
+      expect(fs.readdirSync(stateDir)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+    const generated = ensureDualStationVllmApiKey({ stateDir });
+    expect(loadDualStationVllmApiKey({ stateDir })).toBe(generated);
+  });
+
+  it("keeps incomplete keys invisible to concurrent readers (#13074)", () => {
+    const stateDir = temporaryDirectory();
+    const write = fs.writeFileSync;
+    const spy = vi.spyOn(fs, "writeFileSync").mockImplementationOnce((descriptor, value) => {
+      expect(loadDualStationVllmApiKey({ stateDir })).toBeNull();
+      write(descriptor, value, "utf8");
+    });
+    try {
+      const generated = ensureDualStationVllmApiKey({ stateDir });
+      expect(loadDualStationVllmApiKey({ stateDir })).toBe(generated);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("returns the winner's complete key when another creator publishes first (#13074)", () => {
+    const stateDir = temporaryDirectory();
+    const write = fs.writeFileSync;
+    const winner = "cd".repeat(32);
+    const spy = vi.spyOn(fs, "writeFileSync").mockImplementationOnce((descriptor, value) => {
+      expect(
+        ensureDualStationVllmApiKey({ stateDir, randomBytes: () => Buffer.alloc(32, 0xcd) }),
+      ).toBe(winner);
+      write(descriptor, value, "utf8");
+    });
+    try {
+      expect(
+        ensureDualStationVllmApiKey({ stateDir, randomBytes: () => Buffer.alloc(32, 0xab) }),
+      ).toBe(winner);
+      expect(loadDualStationVllmApiKey({ stateDir })).toBe(winner);
+      expect(fs.readdirSync(stateDir)).toEqual([
+        path.basename(dualStationVllmApiKeyPath(stateDir)),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("removes its temporary key when publication fails (#13074)", () => {
+    const stateDir = temporaryDirectory();
+    const spy = vi.spyOn(fs, "linkSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("publication denied"), { code: "EACCES" });
+    });
+    try {
+      expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow("publication denied");
+      expect(loadDualStationVllmApiKey({ stateDir })).toBeNull();
+      expect(fs.readdirSync(stateDir)).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("preserves a temporary file owned by another creation attempt (#13074)", () => {
+    const stateDir = temporaryDirectory();
+    const id = "00000000-0000-4000-8000-000000000000";
+    const temporaryPath = path.join(
+      stateDir,
+      `.${path.basename(dualStationVllmApiKeyPath(stateDir))}.${id}.tmp`,
+    );
+    fs.writeFileSync(temporaryPath, "other creator", { mode: 0o600 });
+    const spy = vi.spyOn(crypto, "randomUUID").mockReturnValue(id);
+    try {
+      expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow();
+      expect(fs.readFileSync(temporaryPath, "utf8")).toBe("other creator");
+      expect(loadDualStationVllmApiKey({ stateDir })).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("retains a complete key while reporting directory sync failure (#13074)", () => {
+    const stateDir = temporaryDirectory();
+    const sync = fs.fsyncSync;
+    const spy = vi
+      .spyOn(fs, "fsyncSync")
+      .mockImplementationOnce(sync)
+      .mockImplementationOnce((descriptor) => {
+        expect(fs.fstatSync(descriptor).isDirectory()).toBe(true);
+        throw new Error("directory sync failed");
+      });
+    try {
+      expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow("directory sync failed");
+      const persisted = loadDualStationVllmApiKey({ stateDir });
+      expect(persisted).toMatch(/^[a-f0-9]{64}$/);
+      expect(ensureDualStationVllmApiKey({ stateDir })).toBe(persisted);
+      expect(fs.readdirSync(stateDir)).toEqual([
+        path.basename(dualStationVllmApiKeyPath(stateDir)),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("rejects a symlink published by a competing creator (#13074)", () => {
+    const root = temporaryDirectory();
+    const stateDir = path.join(root, "state");
+    const outside = path.join(root, "outside");
+    fs.writeFileSync(outside, `${"cd".repeat(32)}\n`, { mode: 0o600 });
+    const link = fs.linkSync;
+    const spy = vi.spyOn(fs, "linkSync").mockImplementationOnce((source, target) => {
+      fs.symlinkSync(outside, target);
+      link(source, target);
+    });
+    try {
+      expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow("symbolic link");
+      expect(fs.readFileSync(outside, "utf8")).toBe(`${"cd".repeat(32)}\n`);
+      expect(fs.lstatSync(dualStationVllmApiKeyPath(stateDir)).isSymbolicLink()).toBe(true);
+      expect(fs.readdirSync(stateDir)).toEqual([
+        path.basename(dualStationVllmApiKeyPath(stateDir)),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("rejects malformed or overly permissive key files", () => {
     const stateDir = temporaryDirectory();
     const filePath = dualStationVllmApiKeyPath(stateDir);
@@ -59,6 +200,8 @@ describe("dual-Station vLLM API key persistence", () => {
     fs.chmodSync(filePath, 0o600);
     fs.writeFileSync(filePath, "not-a-key\n");
     expect(() => loadDualStationVllmApiKey({ stateDir })).toThrow("malformed");
+    expect(() => ensureDualStationVllmApiKey({ stateDir })).toThrow("malformed");
+    expect(fs.readFileSync(filePath, "utf8")).toBe("not-a-key\n");
   });
 
   it("refuses to follow a symbolic-link key path", () => {

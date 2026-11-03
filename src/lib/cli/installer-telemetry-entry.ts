@@ -15,7 +15,6 @@ import {
   TELEMETRY_CONTEXT_ENV,
 } from "../actions/telemetry/operation";
 
-const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const OUTCOMES: readonly TelemetryOutcome[] = [
   "completed",
   "checked",
@@ -35,7 +34,7 @@ const STATES: readonly TelemetryState[] = [
 
 function installedVersion(): string | undefined {
   const value = process.env.NEMOCLAW_TELEMETRY_INSTALLED_VERSION;
-  return value && VERSION_PATTERN.test(value) ? value : undefined;
+  return value || undefined;
 }
 
 function readBuildVersion(identityPath: string): string | undefined {
@@ -48,8 +47,7 @@ function readBuildVersion(identityPath: string): string | undefined {
       file.close();
     }
     const identity = JSON.parse(raw) as { nemoclawVersion?: unknown };
-    return typeof identity.nemoclawVersion === "string" &&
-      VERSION_PATTERN.test(identity.nemoclawVersion)
+    return typeof identity.nemoclawVersion === "string" && identity.nemoclawVersion.length > 0
       ? identity.nemoclawVersion
       : undefined;
   } catch {
@@ -73,7 +71,7 @@ async function main(): Promise<void> {
     }
     if (process.env.NEMOCLAW_TELEMETRY_INSTALLER_PHASE === "installed") {
       const version = installedVersion();
-      recordTelemetryVersions({ installed: version ?? "unknown" });
+      recordTelemetryVersions({ installed: version ?? null });
       recordTelemetryTarget({
         scope: "cli",
         outcome: version ? "completed" : "unverified",
@@ -121,7 +119,7 @@ async function main(): Promise<void> {
     state,
     args[2] as TelemetryScope,
     Number(args[1]),
-    { installed: actual ?? "unknown" },
+    { installed: actual ?? null },
   );
 }
 

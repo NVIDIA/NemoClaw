@@ -18,7 +18,7 @@ import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-ima
 import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { gatewayIdForStateDir } from "../../src/lib/onboard/gateway/process-environment.ts";
 
-const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = ["0.0.116", "0.1.3"] as const;
+const MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS = ["0.0.116", "0.1.3", "0.1.5"] as const;
 export type ManagedImageHarnessOpenShellVersion =
   (typeof MANAGED_IMAGE_HARNESS_OPENSHELL_VERSIONS)[number];
 
@@ -63,7 +63,7 @@ export function isManagedImageHarnessWorkload(
     labels?.["openshell.ai/managed-by"] === "openshell" &&
     labels["openshell.ai/sandbox-name"] === expected.sandbox &&
     record?.Image === expected.imageContentId &&
-    (expected.runtimeVersion === "0.1.3"
+    (expected.runtimeVersion === "0.1.3" || expected.runtimeVersion === "0.1.5"
       ? labels["openshell.ai/isolation-role"] === "sandbox" &&
         labels["openshell.ai/sandbox-namespace"] === gatewayIdForStateDir(expected.stateDir) &&
         record.HostConfig?.NetworkMode === "none"
@@ -406,14 +406,67 @@ export async function waitForLocalInferenceAgentPairing<
   }
 }
 
+function openClawAnswerDiagnostic(envelope: unknown): string {
+  const record = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const category = (value: unknown, allowed: readonly string[]) =>
+    typeof value === "string" && allowed.includes(value)
+      ? value
+      : value === undefined
+        ? "absent"
+        : "other";
+  const length = (value: unknown) => (typeof value === "string" ? value.length : null);
+  const flag = (value: unknown) => (typeof value === "boolean" ? value : null);
+  const result = record(record(envelope).result);
+  const meta = record(result.meta);
+  const completion = record(meta.completion);
+  const payloads = Array.isArray(result.payloads) ? result.payloads : null;
+  const sampled = payloads?.slice(0, 32) ?? [];
+  const textLengths = sampled.map((payload) => length(record(payload).text));
+  // Only fixed categories and scalar measurements may leave the agent envelope.
+  return JSON.stringify({
+    payloadCount: payloads?.length ?? null,
+    sampledPayloadCount: sampled.length,
+    payloadTextLengths: textLengths,
+    finalVisibleTextLength: length(meta.finalAssistantVisibleText),
+    finalRawTextLength: length(meta.finalAssistantRawText),
+    stopReason: category(meta.stopReason ?? completion.stopReason, [
+      "stop",
+      "length",
+      "toolUse",
+      "tool_calls",
+      "end_turn",
+      "error",
+      "aborted",
+      "superseded",
+    ]),
+    terminalReplyKind: category(meta.terminalReplyKind, ["silent-empty"]),
+    livenessState: category(meta.livenessState, ["blocked", "working", "paused", "abandoned"]),
+    aborted: flag(meta.aborted),
+    yielded: flag(meta.yielded),
+    continuationPending: flag(meta.continuationPending),
+    refusal: flag(completion.refusal),
+    pendingToolCallCount: Array.isArray(meta.pendingToolCalls)
+      ? meta.pendingToolCalls.length
+      : null,
+  });
+}
+
 export function assertLocalInferenceAgentResponse(
   input: ManagedImageOpenShellE2eInputs,
   stdout: string,
+  routeCompleted: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  if (!routeCompleted)
+    throw new Error(`${input.agent} did not complete a request through its configured local model`);
   let response: unknown = stdout;
+  let openClawDiagnostic: string | undefined;
   if (input.agent === "openclaw") {
     const envelope = JSON.parse(stdout);
+    openClawDiagnostic = openClawAnswerDiagnostic(envelope);
     const result = envelope?.result;
     if (
       envelope?.status !== "ok" ||
@@ -421,7 +474,9 @@ export function assertLocalInferenceAgentResponse(
       result?.meta?.agentMeta?.provider !== "inference" ||
       result?.meta?.agentMeta?.model !== input.model
     )
-      throw new Error("OpenClaw did not complete through its configured local model");
+      throw new Error(
+        `OpenClaw did not complete through its configured local model; diagnostic=${openClawDiagnostic}`,
+      );
     response = result.payloads?.map((payload: { text?: string }) => payload.text ?? "").join("\n");
   } else if (input.agent === "langchain-deepagents-code") {
     const envelope = JSON.parse(stdout);
@@ -429,12 +484,60 @@ export function assertLocalInferenceAgentResponse(
       throw new Error("LangChain Deep Agents Code did not complete its local inference turn");
     response = envelope.data.response;
   }
-  // Hermes oneshot stdout contains only its final response. JSON agents expose
-  // assistant output separately; a prompt echoed in metadata cannot pass.
-  if (typeof response !== "string" || !/^PONG[.!]?$/iu.test(response.trim()))
+  // The direct provider probe owns the PONG assertion. Agent models may answer
+  // the same prompt differently, so require a completed assistant turn here.
+  const answer = typeof response === "string" ? response.trim() : "";
+  if (!answer || /reply with exactly one word: pong/iu.test(answer))
     throw new Error(
-      `${input.agent} local inference did not return PONG; response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`,
+      `${input.agent} local inference returned no assistant answer; ${
+        openClawDiagnostic === undefined
+          ? `response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`
+          : `diagnostic=${openClawDiagnostic}`
+      }`,
     );
+}
+
+export async function readProtectedLocalInferenceCount(
+  input: ManagedImageOpenShellE2eInputs,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  const ollama = input.localProvider === "ollama";
+  const routePort = Number(new URL(localInferenceBaseUrl(input)).port);
+  const portText = ollama ? String(routePort) : env.NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_PORT;
+  const token = ollama
+    ? env.NEMOCLAW_OLLAMA_PROXY_TOKEN
+    : env.NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN;
+  const port = Number(portText);
+  if (
+    !Number.isInteger(port) ||
+    port < 1024 ||
+    port > 65_535 ||
+    port !== routePort ||
+    !token ||
+    !/^[a-f0-9]{48}$/u.test(token)
+  )
+    throw new Error("protected local inference receipt authority is unavailable");
+  const model = input.model ?? "";
+  if (ollama && !model) throw new Error("protected local inference receipt model is unavailable");
+  const receiptPath = ollama
+    ? `/_nemoclaw/e2e-inference-receipt?${new URLSearchParams({ model })}`
+    : "/_nemoclaw/e2e-inference-receipt";
+  const response = await fetch(`http://127.0.0.1:${port}${receiptPath}`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error("protected local inference receipt is unavailable");
+  const receipt: unknown = await response.json();
+  if (
+    !receipt ||
+    typeof receipt !== "object" ||
+    !("completedRequests" in receipt) ||
+    !Number.isSafeInteger(receipt.completedRequests) ||
+    (receipt.completedRequests as number) < 0 ||
+    (ollama && (!("model" in receipt) || receipt.model !== model))
+  )
+    throw new Error("protected local inference receipt is malformed");
+  return receipt.completedRequests as number;
 }
 
 export async function verifyManagedImageLocalInferenceRoute(
@@ -464,7 +567,7 @@ export function managedImageHarnessContainerListArgs(
     "label=openshell.ai/managed-by=openshell",
     "--filter",
     `label=openshell.ai/sandbox-name=${sandbox}`,
-    ...(runtimeVersion === "0.1.3"
+    ...(runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5"
       ? ["--filter", "label=openshell.ai/isolation-role=sandbox"]
       : []),
   ];
@@ -473,5 +576,5 @@ export function managedImageHarnessContainerListArgs(
 export function managedImageSandboxListLimitFlag(
   runtimeVersion: ManagedImageHarnessOpenShellVersion,
 ): string {
-  return runtimeVersion === "0.1.3" ? "--page-size" : "--limit";
+  return runtimeVersion === "0.1.3" || runtimeVersion === "0.1.5" ? "--page-size" : "--limit";
 }

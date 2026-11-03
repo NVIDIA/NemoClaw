@@ -505,6 +505,8 @@ describe("onboard command options", () => {
               checkpointUpdatedAt: "2026-08-13T00:00:00.000Z",
               machineRevision: 1,
               profile: "portable",
+              recordedAgent: null,
+              recordedCustomImage: false,
             },
           },
         },
@@ -790,11 +792,11 @@ describe("onboard command options", () => {
         checkpointUpdatedAt: "2026-08-13T20:00:00.000Z",
         machineRevision: 2,
         profile: "default" as const,
+        recordedAgent: "openclaw",
+        recordedCustomImage: false,
       },
     }));
-    const runOnboard = vi.fn(async () => {
-      throw new OnboardResumeIntentRaceError();
-    });
+    const runOnboard = vi.fn().mockRejectedValue(new OnboardResumeIntentRaceError());
     const errors: string[] = [];
 
     await expect(

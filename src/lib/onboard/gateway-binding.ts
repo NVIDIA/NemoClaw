@@ -29,6 +29,7 @@ import {
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
+  registryEntryGatewayPort,
   type SandboxGatewayBinding,
 } from "./gateway-binding/identity";
 import { DEFAULT_GATEWAY_PORT, resolveDockerDriverGatewayBinding } from "./gateway/state-dir";
@@ -43,6 +44,7 @@ export {
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
+  registryEntryGatewayPort,
 };
 export type { SandboxGatewayBinding };
 

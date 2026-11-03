@@ -26,6 +26,7 @@ import {
   isHostedCustomEndpoint,
   prepareHostedNativeProvider,
   prepareCustomNativeProvider,
+  readCustomNativeSandboxPolicy,
   usesCustomNativeOnboarding,
 } from "../inference/native-provider/setup";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
@@ -52,6 +53,7 @@ import {
   ensureNativeNvidiaProvider,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
   persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
@@ -235,6 +237,7 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  sandboxPolicyReader?: Parameters<typeof readCustomNativeSandboxPolicy>[0]["reader"];
   recordMigratedProviderCredential?: (
     name: string,
     credentialEnv: string,
@@ -920,6 +923,9 @@ function createGatewayRouteStager(input: {
   revalidateSandboxIdentity?: (operation: string) => void;
 }) {
   let stagedRoute: Parameters<OpenShellInferenceRouteMutator["setInferenceRoute"]>[0] | null = null;
+  let deferredReservation:
+    | import("./inference-providers/types").DeferredInferenceRouteReservation
+    | null = null;
   const stagedProviderUpserts: Array<
     () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>
   > = [];
@@ -977,11 +983,26 @@ function createGatewayRouteStager(input: {
       return true;
     },
     hasStagedRoute: () => stagedRoute !== null,
+    deferReservation: (
+      route: import("./inference-providers/types").DeferredInferenceRouteReservation,
+    ) => {
+      deferredReservation = route;
+    },
     successResult: (): SetupInferenceResult => {
       if (!stagedRoute) {
         if (stagedProviderUpserts.length > 0)
           throw new Error("The staged inference provider has no deferred route to publish.");
-        return { ok: true };
+        const reservation = deferredReservation;
+        if (!reservation) return { ok: true };
+        // A sandbox-attached provider leaves the shared route unchanged, but the
+        // published source still owns its registry row until backup succeeds.
+        return {
+          ok: true,
+          deferredInferenceRoute: async (reserve) => {
+            input.revalidateSandboxIdentity?.("reserve the backed-up sandbox inference route");
+            reserve(reservation);
+          },
+        };
       }
       const request = stagedRoute;
       const providerUpserts = [...stagedProviderUpserts];
@@ -1026,7 +1047,7 @@ function createGatewayRouteStager(input: {
             ) {
               throw new Error("The replacement inference route was not verified.");
             }
-            reserve();
+            reserve(deferredReservation ?? undefined);
           } catch (error) {
             const live = await input.deps.inferenceRouteObserver.observeInferenceRoute({
               target,
@@ -1242,13 +1263,35 @@ export function createSetupInference(
         let hostLocalInferenceRuntimeProviderId: string | undefined;
         let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
-        let nativeHostedEndpoint: string | undefined;
+        let nativeProviderEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
         let retainedNativeHostedCredential = false;
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved || nativeLocalRecreationSource) return true;
+          const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
+            provider: selectedProvider,
+            model: selectedModel,
+            endpointUrl:
+              nativeProviderEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
+            endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
+            credentialEnv: nativeHostedCredentialEnv ?? credentialEnv,
+            preferredInferenceApi: selectedInferenceApi,
+            gatewayName,
+            reservationSessionId: options.reservationSessionId,
+            hostLocalInferenceReceipt,
+            ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
+            ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+            ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
+              ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
+              : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
+              ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
+              : {}),
+          };
           // Local Ollama cleanup runs after this reservation; it must not unload
           // a model while its source route remains published.
           const publishedSource = options.deferPublishedRouteReservation
@@ -1268,6 +1311,7 @@ export function createSetupInference(
             // The sandbox phase owns the replacement reservation after its
             // pre-delete backup succeeds. Keep the current source connectable
             // if that backup rejects the workspace.
+            routeStager.deferReservation(route);
             return true;
           }
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
@@ -1275,27 +1319,6 @@ export function createSetupInference(
           // refuses this one and blames a session that no longer exists
           // (#11051). Release it here, before the first write, so the refusal
           // is reserved for a reservation that is genuinely contended.
-          const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
-            provider: selectedProvider,
-            model: selectedModel,
-            endpointUrl: nativeHostedEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
-            endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
-            credentialEnv: nativeHostedCredentialEnv ?? credentialEnv,
-            preferredInferenceApi: selectedInferenceApi,
-            gatewayName,
-            reservationSessionId: options.reservationSessionId,
-            hostLocalInferenceReceipt,
-            ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-            ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
-            ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-            ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
-            ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
-              ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
-              : {}),
-            ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
-              ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
-              : {}),
-          };
           if (releaseAbandonedRouteReservation(name, route)) {
             deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
           }
@@ -1516,6 +1539,15 @@ export function createSetupInference(
               );
             const selectedCredentialEnv = credentialEnv || customNativeCredentialEnv(provider);
             const credentialValue = deps.hydrateCredentialEnv(selectedCredentialEnv) || null;
+            const sandboxPolicyDocument = await readCustomNativeSandboxPolicy({
+              gatewayName,
+              sandboxName: sandboxName!,
+              recordedSandbox,
+              rebuildSandboxPolicyDocument: options.rebuildSandboxPolicyDocument,
+              reader: deps.sandboxPolicyReader,
+              redactDiagnostic: (message) => hostLocalInferenceFailureDetail(message, deps),
+            });
+            revalidateSandboxIdentity?.("prepare the custom native provider");
             nativeHostedProviderAttachment = await prepareCustomNativeProvider({
               gatewayName,
               provider,
@@ -1524,6 +1556,7 @@ export function createSetupInference(
               credentialEnv: selectedCredentialEnv,
               credentialValue,
               adapter: deps.providerAdapter,
+              sandboxPolicyDocument,
               recordedAttachment:
                 recordedSandbox?.provider === provider
                   ? recordedSandbox.nativeHostedProviderAttachment
@@ -1599,7 +1632,7 @@ export function createSetupInference(
                     readAuthority: deps.getNativeHostedProviderAuthority,
                     writeAuthority: deps.setNativeHostedProviderAuthority,
                   });
-                  nativeHostedEndpoint =
+                  nativeProviderEndpoint =
                     nativeHostedProviderAttachment.endpointUrl ??
                     hostedNativeProvider(provider)!.endpoint;
                   nativeHostedCredentialEnv = "OPENAI_API_KEY";
@@ -1656,6 +1689,7 @@ export function createSetupInference(
                 ? { recordedSandboxName: recordedSandbox.name }
                 : {}),
             });
+            nativeProviderEndpoint = NVIDIA_HOSTED_NATIVE_ENDPOINT;
             // The retained gateway credential is unavailable to a host-side smoke.
             retainedNativeHostedCredential = !credentialValue;
             if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
@@ -1889,7 +1923,7 @@ export function createSetupInference(
               provider,
               model,
               endpointUrl:
-                nativeHostedEndpoint ??
+                nativeProviderEndpoint ??
                 nativeHostedProviderAttachment?.endpointUrl ??
                 hostedNativeProvider(provider)?.endpoint ??
                 endpointUrl,
