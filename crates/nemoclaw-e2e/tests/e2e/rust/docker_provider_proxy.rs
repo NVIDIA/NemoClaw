@@ -92,11 +92,9 @@ impl Drop for OwnedResources {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE and NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE/_REPLACEMENT_IMAGE; creates only uniquely owned Docker resources"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE and NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE; creates only uniquely owned Docker resources"]
 async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     let image = std::env::var("NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE").unwrap();
-    let replacement_image = std::env::var("NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE").unwrap();
-    assert_ne!(image, replacement_image);
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     assert!(bundle.is_absolute());
     let directory = tempfile::tempdir().unwrap();
@@ -160,10 +158,6 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     assert!(
         engine.image(&image).await.unwrap().is_some(),
         "load the explicit proxy image first"
-    );
-    assert!(
-        engine.image(&replacement_image).await.unwrap().is_some(),
-        "load the explicit replacement proxy image first"
     );
     assert!(engine.container(&name).await.unwrap().is_none());
     assert!(engine.volume(&volume).await.unwrap().is_none());
@@ -251,40 +245,8 @@ async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
         .write_files(&id, "/data", &[("inference-key", &key, 0o600)])
         .await
         .unwrap();
-    let original_volume = engine.volume(&volume).await.unwrap().unwrap();
-    let mut changed = serde_json::to_value(&document).unwrap();
-    changed["spec"]["services"]["ollama-auth"]["image"] = json!(replacement_image);
-    document = Document::parse(changed.to_string().as_bytes()).unwrap();
-    let replacement = deployment.apply(&document, &cancel).await.unwrap();
-    assert!(
-        replacement
-            .changes
-            .iter()
-            .any(|change| change.resource.starts_with("docker_container.")
-                && change.actions.iter().any(|action| action == "create"))
-    );
-    assert!(!replacement.changes.iter().any(|change| {
-        change
-            .resource
-            .starts_with("ollama_proxy_credential_storage.")
-            || change.resource.starts_with("openshell_inference.")
-    }));
-    let image_id = engine.container(&name).await.unwrap().unwrap().id.unwrap();
-    assert_ne!(image_id, id);
-    assert_eq!(
-        engine.volume(&volume).await.unwrap().unwrap().created_at,
-        original_volume.created_at
-    );
-    assert_eq!(
-        engine
-            .read_file(&image_id, "/data/inference-key", 64)
-            .await
-            .unwrap()
-            .unwrap(),
-        key
-    );
-    let id = image_id;
-    // Provider reconciliation may recreate disposable compute; credentials
+    // The docker-ollama-proxy integration scenario owns a replaced proxy
+    // keeping its key volume and registration. Provider reconciliation may recreate disposable compute; credentials
     // must stay in the independently retained volume.
     let retained_volume = engine.volume(&volume).await.unwrap().unwrap();
     docker(&["rm", "--force", &id]);

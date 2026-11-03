@@ -35,16 +35,9 @@ pub(super) fn agent() -> (&'static str, &'static str) {
 }
 
 /// The platform's agent image, Hermes, Deep Agents Code, the reference dummy,
-/// then the two proxy images.
-pub(super) fn names() -> [&'static str; 6] {
-    [
-        agent().0,
-        HERMES,
-        DEEPAGENTS_CODE,
-        DUMMY,
-        "proxy-a",
-        "proxy-b",
-    ]
+/// then the proxy image.
+pub(super) fn names() -> [&'static str; 5] {
+    [agent().0, HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a"]
 }
 
 /// The Deep Agents Code agent image, whose terminal the interface test opens.
@@ -112,32 +105,27 @@ fn timed_build(tag: &str, build: impl FnOnce() -> Result<()>) -> Result<()> {
     result
 }
 
-/// Two proxy images with distinct digests, for the image-change check: the
-/// Bake proxy target, with a different label each.
+/// The proxy image the Docker provider lifecycle test runs: the Bake proxy
+/// target, labelled as [`pull`] derives it.
 pub(super) fn build_proxies(platform: &str, prefix: &str) -> Result<()> {
     let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    for variant in ["a", "b"] {
-        let tag = format!("{prefix}:proxy-{variant}");
-        timed_build(&tag, || {
-            run(docker()
-                .env("AGENT_PLATFORM", &docker_platform)
-                .args([
-                    "buildx",
-                    "bake",
-                    "ollama-proxy",
-                    "--load",
-                    "--progress",
-                    "plain",
-                ])
-                .arg("--set")
-                .arg(format!("ollama-proxy.tags={tag}"))
-                .arg("--set")
-                .arg(format!(
-                    "ollama-proxy.labels.org.nemoclaw.test=proxy-{variant}"
-                )))
-        })?;
-    }
-    Ok(())
+    let tag = format!("{prefix}:proxy-a");
+    timed_build(&tag, || {
+        run(docker()
+            .env("AGENT_PLATFORM", &docker_platform)
+            .args([
+                "buildx",
+                "bake",
+                "ollama-proxy",
+                "--load",
+                "--progress",
+                "plain",
+            ])
+            .arg("--set")
+            .arg(format!("ollama-proxy.tags={tag}"))
+            .arg("--set")
+            .arg("ollama-proxy.labels.org.nemoclaw.test=proxy-a"))
+    })
 }
 
 /// Build the platform's images under the shared names and save them to [`ARCHIVE`].
@@ -324,7 +312,7 @@ fn pull_one(commit: &str, platform: &str, prefix: &str, name: &str) -> Result<()
 
 /// Pull the images `commit` pushed for this platform instead of building
 /// them, and name each `PREFIX:NAME`, recording each name in `owned` before
-/// the next. The proxy pair is the pushed proxy, a label apart, as
+/// the next. The proxy image is the pushed proxy with a label, as
 /// [`build_proxies`] makes it.
 pub(super) fn pull(
     commit: &str,
@@ -336,16 +324,14 @@ pub(super) fn pull(
         owned.push(format!("{prefix}:{name}"));
         pull_one(commit, platform, prefix, name)?;
     }
-    for variant in ["a", "b"] {
-        let tag = format!("{prefix}:proxy-{variant}");
-        owned.push(tag.clone());
-        build_layer(
-            &tag,
-            &format!("FROM {prefix}:ollama-proxy\nLABEL org.nemoclaw.test=proxy-{variant}\n"),
-            &[],
-        )
-        .map_err(|_| format!("cannot derive {tag} from the pushed proxy"))?;
-    }
+    let tag = format!("{prefix}:proxy-a");
+    owned.push(tag.clone());
+    build_layer(
+        &tag,
+        &format!("FROM {prefix}:ollama-proxy\nLABEL org.nemoclaw.test=proxy-a\n"),
+        &[],
+    )
+    .map_err(|_| format!("cannot derive {tag} from the pushed proxy"))?;
     Ok(())
 }
 
@@ -404,7 +390,7 @@ mod tests {
         let target = agent().0;
         assert_eq!(
             unused(&[target]),
-            [HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a", "proxy-b"]
+            [HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a"]
         );
         assert!(unused(&names()).is_empty());
     }

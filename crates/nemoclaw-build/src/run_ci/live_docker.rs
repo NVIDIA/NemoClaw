@@ -349,10 +349,6 @@ fn prepare(
             by_digest(&prefix, "proxy-a")?,
         ),
         (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE".into(),
-            by_digest(&prefix, "proxy-b")?,
-        ),
-        (
             "NEMOCLAW_TEST_GATEWAY_STATE".into(),
             path(&inputs.join("recovery-state")),
         ),
