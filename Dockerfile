@@ -1636,6 +1636,10 @@ RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
 USER sandbox
 
 # Generate token-free gateway config at build time; the entrypoint supplies the token.
+# Defer the runtime managed proxy until build-time plugin commands complete.
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+    node /scripts/generate-openclaw-config.mts
+
 # Validate both tool-search modes against the installed OpenClaw schema and fail on drift.
 # hadolint ignore=DL3059
 RUN set -eu; \
