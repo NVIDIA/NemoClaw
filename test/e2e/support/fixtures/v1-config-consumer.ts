@@ -16,10 +16,7 @@ export function mockPinnedV1ConsumerBuilds() {
     } else if (command === "cargo") {
       const env = options?.env ?? {};
       const target = env.CARGO_TARGET_DIR!;
-      const marker = path.join(target, "compiled");
-      if (!fs.existsSync(marker)) {
-        fs.mkdirSync(target, { recursive: true });
-        fs.writeFileSync(marker, "compiled consumer");
+      if (fs.mkdirSync(target, { recursive: true }) !== undefined) {
         state.builds += 1;
       }
       state.workspaces.add(path.dirname(target));
