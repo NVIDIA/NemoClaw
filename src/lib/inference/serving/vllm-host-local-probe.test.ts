@@ -36,7 +36,7 @@ describe("bearerless managed vLLM container probe", () => {
       const row = ownedContainer();
       row.NetworkSettings.Ports["8000/tcp"] = [{ HostIp: host, HostPort: "18080" }];
       expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080, dockerCapture(row))).toThrow(
-        "NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard",
+        "Managed bearerless vLLM has unsafe host bindings. Stop the owned `nemoclaw-vllm` container. Re-run `onboard` with the same CLI, `NEMOCLAW_PROVIDER=install-vllm`, and the original model and port settings to recreate it with private bindings.",
       );
     },
   );

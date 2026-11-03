@@ -230,7 +230,7 @@ For every single-host profile, Docker publishes that port only on `127.0.0.1` an
 Bearerless profiles do not require NemoClaw's managed bearer key.
 Existing containers keep their published bindings until they are recreated.
 Managed route recovery rejects owned bearerless containers whose bindings do not match the required pair.
-Stop the owned `nemoclaw-vllm` container, then re-run `NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard` to recreate it with private bindings.
+Stop the owned `nemoclaw-vllm` container, then re-run `NEMOCLAW_PROVIDER=install-vllm $$nemoclaw onboard` to recreate it with private bindings.
 Keep the original model and port settings.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.

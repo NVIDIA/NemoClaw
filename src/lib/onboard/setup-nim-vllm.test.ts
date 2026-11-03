@@ -350,7 +350,9 @@ describe("setupNim vLLM route containment", () => {
     expect(runCapture).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Stop the owned"));
     expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard"),
+      expect.stringContaining(
+        "Re-run `onboard` with the same CLI, `NEMOCLAW_PROVIDER=install-vllm`",
+      ),
     );
   });
 

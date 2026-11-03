@@ -279,7 +279,7 @@ function inspectHostLocalContainer(
 export class UnsafeLegacyVllmBindingsError extends Error {
   constructor() {
     super(
-      "Managed bearerless vLLM has unsafe host bindings. Stop the owned `nemoclaw-vllm` container. Re-run `NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard` with the original model and port settings to recreate it with private bindings.",
+      "Managed bearerless vLLM has unsafe host bindings. Stop the owned `nemoclaw-vllm` container. Re-run `onboard` with the same CLI, `NEMOCLAW_PROVIDER=install-vllm`, and the original model and port settings to recreate it with private bindings.",
     );
   }
 }

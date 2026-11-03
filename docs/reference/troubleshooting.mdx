@@ -2853,7 +2853,7 @@ For a NemoClaw-managed Spark profile, derive the host port from the managed cont
 New containers publish that host port on `127.0.0.1` and the private `openshell-docker` bridge gateway, independently of bearer authentication.
 Existing containers keep their published bindings until they are recreated.
 Managed route recovery rejects owned bearerless containers with unsafe bindings.
-Stop the owned `nemoclaw-vllm` container, then re-run `NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard` to recreate it with private bindings.
+Stop the owned `nemoclaw-vllm` container, then re-run `NEMOCLAW_PROVIDER=install-vllm $$nemoclaw onboard` to recreate it with private bindings.
 Keep the original model and port settings.
 
 ```bash

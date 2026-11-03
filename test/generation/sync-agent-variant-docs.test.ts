@@ -293,6 +293,22 @@ Run $$nemoclaw list.
     }
   });
 
+  it.each([
+    ["inference/set-up-vllm.mdx", "openclaw", "nemoclaw"],
+    ["inference/set-up-vllm.mdx", "hermes", "nemohermes"],
+    ["inference/set-up-vllm.mdx", "deepagents", "nemo-deepagents"],
+    ["reference/troubleshooting.mdx", "openclaw", "nemoclaw"],
+    ["reference/troubleshooting.mdx", "hermes", "nemohermes"],
+    ["reference/troubleshooting.mdx", "deepagents", "nemo-deepagents"],
+  ] as const)("renders managed vLLM recovery in %s for %s", (page, variant, cli) => {
+    const sourcePath = path.join(REPO_ROOT, "docs", page);
+    const source = readFileSync(sourcePath, "utf8");
+    const rendered = renderAgentVariantPage(source, variant, { sourcePath });
+    expect(rendered).toContain(
+      `Stop the owned \`nemoclaw-vllm\` container, then re-run \`NEMOCLAW_PROVIDER=install-vllm ${cli} onboard\` to recreate it with private bindings.`,
+    );
+  });
+
   function renderHermesCommandsVariant(source: string): string {
     return renderAgentVariantPage(source, "hermes", {
       sourcePath: "/repo/docs/reference/commands.mdx",
