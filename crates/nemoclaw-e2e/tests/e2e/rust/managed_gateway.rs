@@ -51,7 +51,7 @@ const STORAGE: &str = "openshell_gateway_storage.runtime";
 async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu() {
     let path =
         |name| PathBuf::from(std::env::var_os(name).expect("explicit managed qualification path"));
-    let mut document =
+    let document =
         Document::parse(fs::File::open(path("NEMOCLAW_TEST_GATEWAY_DOCUMENT")).unwrap()).unwrap();
     assert!(matches!(document.spec.gateway, Gateway::Managed(_)));
     assert!(
@@ -181,17 +181,8 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
             }
             assert_eq!(bindings(&directory)[STORAGE], first[STORAGE]);
         }
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        let old = engine.container(&name).await.unwrap().unwrap().id;
-        *document.spec.gateway.endpoint_mut() = format!("http://127.0.0.1:{port}");
-        deployment
-            .scenario_runtime_stage(&document, true, &cancel)
-            .await
-            .unwrap();
-        assert_ne!(engine.container(&name).await.unwrap().unwrap().id, old);
-        assert_eq!(bindings(&directory)[STORAGE], first[STORAGE]);
+        // The SDK's runtime_compile tests own what an endpoint port change
+        // reaches: the gateway container, not its storage.
         let state_path = directory.join("terraform.tfstate");
         let prior = fs::read(&state_path).unwrap();
         let data_path = engine

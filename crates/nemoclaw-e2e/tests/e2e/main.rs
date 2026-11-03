@@ -29,8 +29,6 @@ mod managed_gateway;
 mod pseudo_terminal;
 #[path = "rust/registry_fixture.rs"]
 mod registry_fixture;
-#[path = "rust/spark.rs"]
-mod spark;
 
 #[cfg(target_os = "linux")]
 #[path = "rust/remote_models.rs"]
