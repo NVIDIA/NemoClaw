@@ -244,6 +244,7 @@ function publicFetchAttemptValidationOptions(
     }),
     reply: "PERSONAL_PUBLIC_FETCH_OK",
     toolEvidenceValidator: (candidate) => assessPersonalPublicFetchToolEvidence(candidate).matches,
+    toolEvidenceProjector: projectPersonalPublicFetchToolEvidenceArtifact,
     ...overrides,
   };
 }
@@ -265,7 +266,7 @@ async function expectAggregatePublicFetchFailure(
 
   expect(artifact.webFetchResultCounts).toMatchObject({ total: 1, [countName]: 0 });
   expect(artifact.qualifyingWebFetchResults).toBe(0);
-  expect(result.failure).toContain(`${countName}=0`);
+  expect(result.failure).toContain(`"${countName}":0`);
   for (const sensitiveValue of [
     PUBLIC_FETCH_URL,
     PUBLIC_FETCH_EXPECTATION.content,
@@ -276,6 +277,7 @@ async function expectAggregatePublicFetchFailure(
     expect(JSON.stringify(artifact)).not.toContain(sensitiveValue);
     expect(result.failure).not.toContain(sensitiveValue);
   }
+  expect(result.failure).not.toContain("www.wikidata.org");
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
@@ -724,7 +726,7 @@ describe("common-egress agent parsing and classification helpers", () => {
         toolEvidenceValidator: () => false,
       }),
     );
-    expect(result.failure).toContain("forbiddenTools=1; forbiddenProviders=1");
+    expect(result.failure).toContain('"forbiddenProviderMentionCount":1,"forbiddenToolCount":1');
     expect(result.failure).not.toContain(providerSentinel);
     expect(result.failure).not.toContain(toolSentinel);
   });
@@ -809,7 +811,7 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
     expect(result).toMatchObject({
       attempt: { passed: false, failureClass: "deterministic" },
-      failure: expect.stringContaining("finalSuccess=false"),
+      failure: expect.stringContaining('"finalSuccess":false'),
     });
   });
 
@@ -850,9 +852,33 @@ describe("common-egress agent parsing and classification helpers", () => {
     );
 
     expect(artifact).toEqual({
+      completion: {
+        runCompleted: false,
+        aborted: false,
+        errorPresent: false,
+        stopReasonIsStop: false,
+        stopReasonAccepted: true,
+        toolCalls: null,
+        toolFailures: null,
+        finalTextPresent: false,
+        finalTextMatchesPayload: false,
+      },
       schemaVersion: 1,
       attempt: 2,
       diagnosticSummary: "command-exited-nonzero",
+      response: {
+        stdoutPresent: true,
+        stderrPresent: true,
+        jsonDocumentCount: 0,
+        responseRecordCount: 0,
+        payloadCount: 0,
+        incompleteTurn: false,
+        timeoutPhase: "none",
+        abandoned: false,
+        replayRisk: false,
+        incompleteTurnError: false,
+        assistantReplyPresent: false,
+      },
       exitCode: 1,
       failureClass: "authentication",
       signal: null,

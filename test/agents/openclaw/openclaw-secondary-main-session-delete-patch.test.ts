@@ -75,12 +75,28 @@ describe("OpenClaw secondary-agent main-session delete compatibility patch", () 
     );
   });
 
-  it("patches exactly one reviewed 2026.9.1 sessions.delete runtime", () => {
+  it.each(["2026.3.11", "2026.4.24", "2026.9.1"])(
+    "rejects retired runtime %s before discovery",
+    (version) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-session-version-"));
+      try {
+        fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
+        expect(() => patchOpenClawSecondaryAgentMainSessionDelete(path.join(root, "dist"))).toThrow(
+          "is not reviewed",
+        );
+        expect(fs.readdirSync(root)).toEqual(["package.json"]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("patches exactly one reviewed 2026.9.2 sessions.delete runtime", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-session-delete-patch-"));
     const dist = path.join(root, "dist");
     fs.mkdirSync(dist);
     fs.mkdirSync(path.join(dist, "worker"));
-    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.1" }));
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.2" }));
     fs.writeFileSync(
       path.join(dist, "sessions-delete-fixture.js"),
       `${fixture()}\nconst diagnostic = "Cannot delete the main session (";\n`,
@@ -92,11 +108,11 @@ describe("OpenClaw secondary-agent main-session delete compatibility patch", () 
     try {
       expect(patchOpenClawSecondaryAgentMainSessionDelete(dist)).toMatchObject({
         status: "patched",
-        version: "2026.9.1",
+        version: "2026.9.2",
       });
       expect(patchOpenClawSecondaryAgentMainSessionDelete(dist)).toMatchObject({
         status: "already-patched",
-        version: "2026.9.1",
+        version: "2026.9.2",
       });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

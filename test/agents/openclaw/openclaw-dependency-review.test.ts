@@ -184,19 +184,10 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
-  check_contains "$openclaw_block" '"$OPENCLAW_PACK_PATH"' "$dockerfile local install path"
-  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"' "$dockerfile pack directory"
-  if [ "$dockerfile" = Dockerfile.base ]; then
-    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ]' "$dockerfile source archive path guard"
-  fi
-  check_contains "$openclaw_block" '--archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@\${OPENCLAW_VERSION}"' "$dockerfile legacy remediated identity"
-  check_contains "$openclaw_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "$dockerfile remediation result guard"
-  check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
   check_not_contains "$openclaw_block" 'REGISTRY_INTEGRITY=$(npm view' "$dockerfile inline integrity lookup"
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
-  check_contains "$openclaw_block" "OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'" "$dockerfile direct provenance recipe"
-  check_contains "$openclaw_block" "OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'" "$dockerfile remediated provenance recipe"
+  check_contains "$openclaw_block" "OPENCLAW_RECIPE='locked-ci+reviewed-lifecycle-v2'" "$dockerfile locked provenance recipe"
   check_contains "$openclaw_block" '"recipe=\${OPENCLAW_RECIPE}"' "$dockerfile selected provenance recipe"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
@@ -247,13 +238,10 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'expectedPatchedTreeIntegrity' "$remediation_helper"
 	grep -Fq 'expectedPatchedMetadataIntegrity' "$remediation_helper"
 	grep -Fq 'hashPackageTree' "$remediation_helper"
-	grep -Fq 'patchOpenClawCorePackageGraph' "$remediation_helper"
 	grep -Fq 'patchOpenClawDiagnosticsPackageGraph' "$remediation_helper"
 	grep -Fq 'remediateInstalledOfficialOpenClawPlugin' "$messaging_build_applier"
 	grep -Fq 'patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacement)' "$remediation_helper"
 	for package_spec in \
-		'openclaw@2026.3.11' \
-		'openclaw@2026.6.10' \
 		'@openclaw/diagnostics-otel@2026.6.10' \
 		'@openclaw/slack@2026.6.10' \
 		'@openclaw/msteams@2026.6.10' \
@@ -331,30 +319,14 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
     expect(source).toContain("#4533");
   });
 
-  it.each([
-    "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
-    "OPENCLAW_VERSION=2026.3.11",
-    "OPENCLAW_VERSION=2026.4.24",
-    "OPENCLAW_2026_3_11_INTEGRITY",
-    "OPENCLAW_2026_3_11_TARBALL",
-    "OPENCLAW_2026_4_24_INTEGRITY",
-    "OPENCLAW_2026_4_24_TARBALL",
-  ])(
-    "keeps production Docker build workflows behind the build-arg guard [%s]",
-    (fixtureSelector) => {
-      const workflows = workflowContracts();
-      const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
-        findProductionBuildGuardCoverage(name, workflow),
-      );
-
-      expect(discoveredBuilds.length).toBeGreaterThan(0);
-      expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
-
-      const productionWorkflowContract = JSON.stringify(workflows);
-
-      expect(productionWorkflowContract).not.toContain(fixtureSelector);
-    },
-  );
+  it("keeps production Docker build workflows behind the build-arg guard", () => {
+    const workflows = workflowContracts();
+    const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
+      findProductionBuildGuardCoverage(name, workflow),
+    );
+    expect(discoveredBuilds.length).toBeGreaterThan(0);
+    expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
+  });
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
     const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(
@@ -382,16 +354,13 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
       expect(output).toBe("openclaw_build_arg=\n");
     }
 
-    for (const input of ["v2026.6.10", "2026.6.10-beta.1", "2026.6.10 trailing", "2026.4.24"]) {
+    for (const input of ["v2026.6.10", "2026.6.10-beta.1", "2026.6.10 trailing"]) {
       const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, JSON.stringify(input)).toBe(1);
       expect(output).toBe("");
     }
 
-    for (const input of [
-      "2026.6.10\r",
-      "2026.6.9\nNEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\nOPENCLAW_VERSION=2026.4.24",
-    ]) {
+    for (const input of ["2026.6.10\r", "2026.6.9\nBASE_IMAGE=injected"]) {
       const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, JSON.stringify(input)).toBe(1);
       expect(output).toBe("");

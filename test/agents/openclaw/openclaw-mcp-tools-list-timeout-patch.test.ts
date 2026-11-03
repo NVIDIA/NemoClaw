@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { patchManagedTransportDiagnosticsText } from "../../../scripts/patch-openclaw-managed-transport-diagnostics.mts";
 import {
+  auditOpenClawMcpToolsListTimeout,
   INJECTED_TOOLS_LIST_TIMEOUT_HELPER,
   MARKER,
   patchMcpToolsListTimeoutText,
@@ -20,7 +21,7 @@ import {
   TOOLS_LIST_TIMEOUT_MIN_MS,
 } from "../../../scripts/patch-openclaw-mcp-tools-list-timeout.mts";
 
-/** Mirrors the reviewed OpenClaw 2026.9.1 bundle-mcp timeout boundary. */
+/** Mirrors the reviewed OpenClaw 2026.9.2 bundle-mcp timeout boundary. */
 function bundleMcpRuntimeFixture(): string {
   return [
     'import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";',
@@ -200,18 +201,17 @@ describe("patchMcpToolsListTimeoutText", () => {
 });
 
 describe("patchOpenClawMcpToolsListTimeout", () => {
-  it.each(["2026.3.11", "2026.4.24"])(
-    "skips the unsupported legacy OpenClaw %s fixture before bundle discovery",
+  it.each(["2026.3.11", "2026.4.24", "2026.9.1"])(
+    "rejects retired OpenClaw %s before bundle discovery",
     (version) => {
       const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-"));
       const distDir = path.join(packageRoot, "dist");
       fs.mkdirSync(distDir);
       fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version }));
       try {
-        expect(patchOpenClawMcpToolsListTimeout(distDir)).toEqual({
-          status: "skipped-unsupported-version",
-          version,
-        });
+        expect(() => patchOpenClawMcpToolsListTimeout(distDir)).toThrow("is not reviewed");
+        expect(() => auditOpenClawMcpToolsListTimeout(distDir)).toThrow("is not reviewed");
+        expect(fs.readdirSync(distDir)).toEqual([]);
       } finally {
         fs.rmSync(packageRoot, { recursive: true, force: true });
       }
