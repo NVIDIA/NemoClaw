@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AsyncResource } from "node:async_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -9,7 +10,11 @@ import { blockRebuildOnLegacySharedLocalRoute } from "./rebuild-preflight-phase"
 
 import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
-import { rebuildOnboardDependencies } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  rebuildFlowHelpers,
+  rebuildOnboardDependencies,
+  registry,
+} from "../../../../test/helpers/rebuild-flow-harness";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -20,6 +25,7 @@ import type {
   RegistryInferenceRoute,
 } from "../../onboard/rebuild-route-handoff";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import { withGatewayRouteMutationLockSync } from "../../inference/gateway-route-mutation-lock";
 import {
   pinRebuildTargetGatewayForReadiness,
   runRebuildGatewayRecoveryAfterReadiness,
@@ -76,6 +82,9 @@ describe("rebuild inference route timeout", () => {
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(() =>
+        withGatewayRouteMutationLockSync("nemoclaw", () => undefined, { timeoutMs: 25 }),
+      ).not.toThrow();
     },
   );
 
@@ -100,6 +109,48 @@ describe("rebuild inference route timeout", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
+  });
+
+  it("holds the route from readiness through recreation while allowing inner lock reentry", async () => {
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "7200");
+    const harness = createCompatibleRebuild(false);
+    const entry = registry.load().sandboxes.alpha;
+    const competingContext = new AsyncResource("rebuild-route-writer");
+    let routeReady = true;
+    const changeRoute = vi.fn(() => {
+      routeReady = false;
+    });
+    const attemptRouteChange = () =>
+      competingContext.runInAsyncScope(() =>
+        withGatewayRouteMutationLockSync("nemoclaw", changeRoute, {
+          timeoutMs: 25,
+          pollIntervalMs: 1,
+        }),
+      );
+    vi.mocked(rebuildOnboardDependencies.isInferenceRouteReady).mockImplementation(() => {
+      expect(attemptRouteChange).toThrow("Timed out waiting for the sandbox mutation lock");
+      return routeReady;
+    });
+    harness.onboardSpy.mockImplementationOnce(async () => {
+      await rebuildFlowHelpers.withRebuildRouteMutationLocks(entry, async () => {
+        expect(attemptRouteChange).toThrow("Timed out waiting for the sandbox mutation lock");
+        expect(routeReady).toBe(true);
+      });
+    });
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(rebuildOnboardDependencies.isInferenceRouteReady).toHaveBeenCalled();
+      expect(changeRoute).not.toHaveBeenCalled();
+      expect(attemptRouteChange).not.toThrow();
+      expect(changeRoute).toHaveBeenCalledOnce();
+      expect(routeReady).toBe(false);
+    } finally {
+      competingContext.emitDestroy();
+    }
   });
 });
 

@@ -8,7 +8,9 @@ import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
+import { withGatewayRouteMutationLock } from "../../../inference/gateway-route-mutation-lock";
 import { webSearchEnvFor } from "../../../inference/web-search";
+import { withDashboardPortReservationLock } from "../../../onboard/dashboard-port";
 import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
 import { snapshotCredentialEnv } from "../../../onboard/credential-env";
 import {
@@ -34,6 +36,19 @@ import {
 } from "../rebuild-preflight-confirmation";
 import type { RebuildSandboxExecutionOptions } from "../rebuild-prepared-recovery";
 import { readRebuildRecoveryRoute } from "../rebuild-recreate-journal";
+
+/** Hold after the sandbox lock so route reuse stays valid through inner onboarding. */
+export function withRebuildRouteMutationLocks(
+  entry: SandboxEntry | undefined,
+  operation: () => Promise<void>,
+): Promise<void> {
+  if (!entry) return operation();
+  const gatewayName = resolveGatewayName(registryEntryGatewayPort(entry));
+  // Inner onboarding takes the dashboard reservation before the gateway route lock.
+  return withDashboardPortReservationLock(() =>
+    withGatewayRouteMutationLock(gatewayName, operation),
+  );
+}
 
 export async function withRebuildHostFence(
   homeDir: string,

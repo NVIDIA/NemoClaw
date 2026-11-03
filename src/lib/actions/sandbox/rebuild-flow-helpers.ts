@@ -68,6 +68,7 @@ export { resolveSandboxGatewayName };
 export {
   delegateRebuildToOwningRegistry,
   withRebuildHostFence,
+  withRebuildRouteMutationLocks,
   restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild/owning-registry";
 
