@@ -752,7 +752,16 @@ toml_section_scalar() {
 
 toml_provider_metadata() {
   local field="$1"
-  local line route provider _api
+  local line route provider _api value
+  case "$field" in
+    route) value="$(toml_section_scalar nemoclaw provider_route)" ;;
+    provider) value="$(toml_section_scalar nemoclaw upstream_provider)" ;;
+  esac
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  # Older generated configs carry identity only in this comment.
   [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in

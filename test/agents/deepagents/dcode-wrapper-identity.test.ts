@@ -69,6 +69,18 @@ function buildFixture(tempDir: string, configContent: string): Fixture {
       `readonly DEEPAGENTS_CONFIG_FILE="${configFile}"`,
     )
     .replace(
+      'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
+      `readonly DEEPAGENTS_AUTH_FILE="${tempDir}/auth.json"`,
+    )
+    .replace(
+      'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
+      `readonly DEEPAGENTS_CODEX_AUTH_FILE="${tempDir}/chatgpt-auth.json"`,
+    )
+    .replace(
+      'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
+      `readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="${tempDir}/dcode-auto-approval"`,
+    )
+    .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
       `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
@@ -115,6 +127,59 @@ function withTempDir(run: (dir: string) => void): void {
 describe.skipIf(!canRun)(
   "agents/langchain-deepagents-code/dcode-wrapper.sh identity command",
   () => {
+    it.each(["status", "whoami", "identity"])(
+      "'%s' retains generated route identity after TOML comments are removed (#14084)",
+      (sub) => {
+        withTempDir((dir) => {
+          const generated = spawnSync(
+            process.execPath,
+            [path.join(path.dirname(WRAPPER), "generate-config.ts")],
+            {
+              env: {
+                PATH: process.env.PATH,
+                HOME: dir,
+                NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+                NEMOCLAW_INFERENCE_PROVIDER_ID: "nvidia-prod",
+                NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+                NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+              },
+              encoding: "utf8",
+            },
+          );
+          expect(generated.status, generated.stderr).toBe(0);
+          // DCode's TOML preference writer discards comments when it saves a selection.
+          const rewritten = fs
+            .readFileSync(path.join(dir, ".deepagents/config.toml"), "utf8")
+            .split("\n")
+            .filter((line) => !line.trimStart().startsWith("#"))
+            .join("\n");
+          const run = runBashWrapper(buildFixture(dir, rewritten), [sub], {});
+
+          expect(run.status, run.stderr).toBe(0);
+          expect(run.launched).toBe(false);
+          expect(run.stdout).toContain("Route:    nvidia-prod");
+          expect(run.stdout).toContain("Provider: nvidia-prod");
+          expect(run.stdout).toContain("Model:    openai:nvidia/nemotron-3-ultra-550b-a55b");
+          expect(run.stdout).toContain("Endpoint: https://integrate.api.nvidia.com/v1");
+        });
+      },
+    );
+
+    it.each(["\u001b[31m", "x".repeat(257), `sk-${OPAQUE}`])(
+      "filters unsafe structured identity value %j (#14084)",
+      (value) => {
+        withTempDir((dir) => {
+          const config = `${SAMPLE_CONFIG}\n[nemoclaw]\nprovider_route = "${value}"\nupstream_provider = "${value}"\n`;
+          const run = runBashWrapper(buildFixture(dir, config), ["status"], {});
+
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(value);
+          expect(run.stdout).not.toContain("Route:");
+          expect(run.stdout).not.toContain("Provider:");
+        });
+      },
+    );
+
     it.each(["status", "whoami", "identity"])(
       "'%s' reports the sandbox identity and does not launch dcode",
       (sub) => {
