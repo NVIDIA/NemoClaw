@@ -120,11 +120,13 @@ import {
   sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
+  assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  hermesSwitchyardRoutingCreateIntentFields,
   initialOpenClawToolDisclosure,
   isValidSavedResourceProfile,
   replacesSameNameSandbox,
@@ -829,6 +831,13 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    assertHermesSwitchyardRoutingReusable({
+      agentName: (this.options.agent as { name?: string } | null)?.name,
+      entry: registryEntry,
+      env: this.options.env,
+      recreate: this.options.recreateSandbox(false),
+      sandboxState: sandboxReuseState,
+    });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
@@ -999,6 +1008,12 @@ class SandboxStateFlow<
       this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
+      ...Object.values(
+        hermesSwitchyardRoutingCreateIntentFields(
+          (this.options.agent as { name?: string } | null)?.name,
+          this.options.env,
+        ),
+      ).map((routing) => JSON.stringify(routing)),
     ].join("|");
     if (!createIntent) return lightFingerprint;
     // Extra providers are live gateway attachments, not durable build intent.

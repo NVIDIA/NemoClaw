@@ -107,6 +107,7 @@ export type StatusFlowHarnessOptions = {
         compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
         hostMounts?: SandboxHostMount[];
         dashboardRemoteBindPrepared?: boolean;
+        gatewayPort?: number | null;
       })
     | null;
   versionCheck?: {

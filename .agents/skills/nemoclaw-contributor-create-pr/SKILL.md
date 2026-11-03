@@ -14,7 +14,7 @@ Before publication, follow [Validation](references/validation.md) and [Publicati
 
 When changing live E2E evidence, require the implementation handoff to apply [Define the Live Contract](../../references/e2e-authoring.md#define-the-live-contract), or [Move or Remove Evidence](../../references/e2e-authoring.md#move-or-remove-evidence) when pruning or relocating assertions. Route incomplete handoffs back to implementation.
 
-1. Write the description from the canonical base’s `.github/PULL_REQUEST_TEMPLATE.md`; keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
+1. Write the description from the canonical base's `.github/PULL_REQUEST_TEMPLATE.md`; keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
 2. Validate the comment:
 
    ```sh
@@ -22,7 +22,7 @@ When changing live E2E evidence, require the implementation handoff to apply [De
    /tmp/pr-session-report report-comment.md
    ```
 
-3. Publish through the [publication procedure](references/publication.md), preserving main’s description sections, DCO, and draft requirements. Read all pages of PR comments before posting, including after an uncertain retry. Reuse an existing opening report from the PR author or a repository maintainer. If absent, either may post it with `gh pr comment NUMBER --body-file report-comment.md`. When a maintainer takes over an existing or automated PR, do not require the original author to post the report or add a separate takeover record.
+3. Publish through the [publication procedure](references/publication.md), preserving main's description sections, DCO, and draft requirements. Read all pages of PR comments before posting, including after an uncertain retry. Reuse an existing opening report from the PR author or a repository maintainer. If absent, either may post it with `gh pr comment NUMBER --body-file report-comment.md`. When a maintainer takes over an existing or automated PR, do not require the original author to post the report or add a separate takeover record.
 4. Read back the description and comments. Verify the description has no report, exactly one eligible opening report exists, and its contents match the intended report. CI accepts the PR author and accounts with repository `maintain` or `admin` permission, verified through GitHub's collaborator-permission API. Keep the exact summary `Authoring session — opening`. Validate the retrieved files with `/tmp/pr-session-report --pr description.md report-comment-1.md report-comment-2.md`; pass comments from eligible accounts, including later reports and unrelated comments. Ignore reports from other accounts.
 5. Follow checks and automated reviews on the latest commit. If the metadata job fetched comments before the opening report was posted, wait for that run to finish, then use `gh run rerun --job JOB_ID` for its failed `commit-lint` job. Select the job from this PR's latest-revision run; a rerun retains the original revision but fetches current comments. Reruns require repository write permission, so external contributors may need a maintainer. Confirm the rerun passes.
 
@@ -34,7 +34,12 @@ Preserve historical reports and their cutoffs. Optional later commit or merge re
 
 ## Session Report
 
-Report the session that wrote the change, up to a cutoff you state. When publishing or taking over a PR without the original authoring-session evidence, mark the fields unavailable; the report does not need to come from the person who wrote the change.
+Report the session that wrote the change, up to a cutoff you state. When publishing or taking over a PR, locate and inspect the available authoring record through that cutoff. If the original authoring-session evidence cannot be located or accessed, mark the fields unavailable; the report does not need to come from the person who wrote the change. A publishing session must use the authoring record when available, not its own activity.
+
+Use the harness session identity and recorded repository or branch activity to confirm the match; a PR mention alone is insufficient.
+Inspect persisted records even after conversation compaction. A compacted conversation does not establish that the underlying record is missing.
+For each field, extract the available evidence first. Use `partial` or `unavailable` only for a concrete gap after inspection; state the source checked and the missing evidence or access failure. "Not audited" is not an evidence gap.
+If the authoring record cannot be located or accessed, report that limitation; do not substitute a publishing session or invent values.
 Give each row one status:
 
 - `recorded`: the session record covers the whole session.
@@ -42,8 +47,13 @@ Give each row one status:
 - `unavailable`: it can't establish the field; the value is `-`, and the last column says why.
 
 A missing record never means zero.
+Read harness/version metadata, model and reasoning changes, timestamps, compaction events, tool invocations, and instruction injections/read results. Do not infer historical settings from current defaults.
+Count attempted tool invocations, including failures, at a stated layer. Report wrapper calls and observable nested invocations separately; never add them together. Unobserved nested calls remain a limitation.
+State the session window and elapsed time, including idle time. Distinguish the whole session from a task-only interval; other work in that session does not make its totals unavailable.
+For forks or branches, identify inherited history and the active authoring scope. Exclude inherited calls from new activity counts; disclose gaps when the boundary cannot be established.
 Count a skill or instruction file only when its full contents appear in the record, injected or completely read; instruction files are guidance outside skills, such as `AGENTS.md`, not source files read for the change.
-Don't publish session file paths or IDs; comments are public.
+Include guidance templates in the instruction inventory when fully read. A listed skill, file path, or truncated read does not establish a complete read.
+Don't publish raw records, session file paths, IDs, or secrets; comments are public.
 
 For example:
 
@@ -58,9 +68,9 @@ For example:
 | Models | recorded | gpt-6-astra | Turn context; no changes |
 | Reasoning levels | recorded | medium; high | Effort changes, in order |
 
-Where to find the record:
+Locate the record using the harness's available session metadata or export, then its local storage when accessible:
 
-- **Codex CLI:** `CODEX_HOME/sessions/YYYY/MM/DD/rollout-….jsonl`, which is not a stable interface. In a forked session, exclude the parent's activity.
+- **Codex CLI/Desktop:** `${CODEX_HOME:-$HOME/.codex}/sessions/YYYY/MM/DD/rollout-….jsonl`; also check `archived_sessions` under that root when appropriate. Paths and record schemas can change; confirm identity from metadata.
 - **Pi:** `~/.pi/agent/sessions/--<path>--/<timestamp>_<session-id>.jsonl`. Read only the active branch; a branch summary is not a compaction.
 
 ## Completion
