@@ -21,6 +21,7 @@ import {
   type RuntimeProviderSnapshotLifecycleState,
   type RuntimeProviderSnapshotOperation,
   type RuntimeProviderSnapshotPreflightReceipt,
+  type RuntimeProviderSnapshotRestoreOptions,
   type RuntimeProviderSnapshotRestoreReceipt,
   type RuntimeProviderSnapshotRestoreSource,
   type RuntimeProviderSnapshotSurface,
@@ -702,6 +703,31 @@ function restoreProviderHandle(
     .digest("hex");
 }
 
+/**
+ * Acceleration compatibility for restore. An explicit CPU-to-accelerated
+ * conversion may restore a CPU-only snapshot; every other change stays a
+ * provider-owned equality decision.
+ */
+export function canRestoreAcceleration(
+  canRepresent: (
+    source: RuntimeProviderRuntimeReceipt["acceleration"],
+    target: RuntimeProviderRuntimeReceipt["acceleration"],
+  ) => boolean,
+  source: RuntimeProviderRuntimeReceipt["acceleration"],
+  target: RuntimeProviderRuntimeReceipt["acceleration"],
+  options?: RuntimeProviderSnapshotRestoreOptions,
+): boolean {
+  if (
+    options?.allowAccelerationEnable === true &&
+    source.kind === "none" &&
+    target.kind !== "none"
+  ) {
+    return true;
+  }
+  return canRepresent(source, target);
+}
+
+/** Validate a restore request against live provider state, including acceleration compatibility. */
 function validateRestoreRequest(
   providerId: string,
   driver: RuntimeProviderSnapshotDriver,
@@ -709,6 +735,7 @@ function validateRestoreRequest(
   preflightValue: RuntimeProviderSnapshotPreflightReceipt,
   sourceValue: RuntimeProviderSnapshotRestoreSource,
   managedProfileValue: RuntimeProviderManagedProfileRestoreAuthority,
+  restoreOptions?: RuntimeProviderSnapshotRestoreOptions,
 ): {
   readonly expected: RuntimeProviderSnapshotPreflightReceipt;
   readonly source: RuntimeProviderSnapshotRestoreSource;
@@ -751,7 +778,14 @@ function validateRestoreRequest(
   const observed = observeAndNormalize(driver.observe, sandbox, providerId);
   assertUnchanged(providerId, expected, observed);
   const canRepresentAcceleration = driver.canRepresentAcceleration ?? isDeepStrictEqual;
-  if (!canRepresentAcceleration(source.runtime.acceleration, observed.runtime.acceleration)) {
+  if (
+    !canRestoreAcceleration(
+      canRepresentAcceleration,
+      source.runtime.acceleration,
+      observed.runtime.acceleration,
+      restoreOptions,
+    )
+  ) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' cannot represent the snapshot acceleration state`,
     );
@@ -800,10 +834,18 @@ export function createRuntimeProviderSnapshotSurface(
     canRepresentAcceleration: driver.canRepresentAcceleration,
     canRestoreLifecycle: driver.canRestoreLifecycle,
     prepareStoppedStateCapture: driver.prepareStoppedStateCapture,
-    validateRestore(sandbox, preflight, source, managedProfile) {
-      validateRestoreRequest(providerId, driver, sandbox, preflight, source, managedProfile);
+    validateRestore(sandbox, preflight, source, managedProfile, restoreOptions) {
+      validateRestoreRequest(
+        providerId,
+        driver,
+        sandbox,
+        preflight,
+        source,
+        managedProfile,
+        restoreOptions,
+      );
     },
-    restore(sandbox, preflight, sourceValue, managedProfileValue) {
+    restore(sandbox, preflight, sourceValue, managedProfileValue, restoreOptions) {
       const { expected, source, managedProfile, observed } = validateRestoreRequest(
         providerId,
         driver,
@@ -811,6 +853,7 @@ export function createRuntimeProviderSnapshotSurface(
         preflight,
         sourceValue,
         managedProfileValue,
+        restoreOptions,
       );
       const providerProof = driver.restoreManagedProfile(sandbox, managedProfile, observed.runtime);
       if (

@@ -710,6 +710,12 @@ export type RuntimeProviderBootstrapSurface =
   | RuntimeProviderNativeArtifactBootstrapSurface
   | RuntimeProviderUnsupportedSurface;
 
+/** Caller-declared intent for a restore into a runtime whose acceleration was deliberately changed. */
+export interface RuntimeProviderSnapshotRestoreOptions {
+  /** Accept a CPU-only (`none`) snapshot restored into a sandbox that now has acceleration. */
+  readonly allowAccelerationEnable?: boolean;
+}
+
 export type RuntimeProviderSnapshotSurface =
   | RuntimeProviderSupportedSurface<{
       /**
@@ -755,12 +761,14 @@ export type RuntimeProviderSnapshotSurface =
         preflight: RuntimeProviderSnapshotPreflightReceipt,
         source: RuntimeProviderSnapshotRestoreSource,
         managedProfile: RuntimeProviderManagedProfileRestoreAuthority,
+        options?: RuntimeProviderSnapshotRestoreOptions,
       ): void;
       restore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
         source: RuntimeProviderSnapshotRestoreSource,
         managedProfile: RuntimeProviderManagedProfileRestoreAuthority,
+        options?: RuntimeProviderSnapshotRestoreOptions,
       ): RuntimeProviderSnapshotRestoreReceipt;
     }>
   | RuntimeProviderUnsupportedSurface;

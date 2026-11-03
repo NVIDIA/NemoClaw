@@ -105,7 +105,7 @@ async function restoreWorkspace(
   };
 }
 
-function managedDockerRestoreFixture(sourceDevices: string[], initialTarget: string) {
+function managedDockerRestoreFixture(sourceDevices: string[] | null, initialTarget: string) {
   const target = { ...sandbox("openclaw"), openshellDriver: "docker" };
   let device = initialTarget;
   const captureHostCommand = vi.fn((_command: string, args: string[]) => ({
@@ -155,7 +155,9 @@ function managedDockerRestoreFixture(sourceDevices: string[], initialTarget: str
         schemaVersion: 1,
         providerId: "docker",
         runtime: { kind: "docker-container", handle: "c".repeat(64) },
-        acceleration: { kind: "gpu", vendor: "nvidia", devices: sourceDevices },
+        acceleration: sourceDevices
+          ? { kind: "gpu", vendor: "nvidia", devices: sourceDevices }
+          : { kind: "none" },
       },
     }),
     restoreManagedProfile: () => "unused-source-proof",
@@ -173,11 +175,11 @@ function managedDockerRestoreFixture(sourceDevices: string[], initialTarget: str
     selectTarget: (selection: string) => {
       device = selection;
     },
-    run: () =>
+    run: (options: Partial<RecreatedSandboxRestoreOptions> = {}) =>
       restoreRecreatedSandboxStateWithManagedAuthority(
         "alpha",
         retainedManifest,
-        { targetAgentType: "openclaw" },
+        { targetAgentType: "openclaw", ...options },
         {
           getSandbox: () => target,
           requireProvider: () => runtimeProvider,
@@ -405,5 +407,37 @@ describe("managed rebuild restore authority", () => {
     expect(
       fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
     ).toHaveLength(1);
+  });
+
+  describe("deliberate CPU-to-GPU recreate", () => {
+    it("rejects a CPU-only snapshot restored into a GPU sandbox without the enable flag", async () => {
+      const fixture = managedDockerRestoreFixture(null, "0");
+
+      expect(await fixture.run()).toMatchObject({
+        success: false,
+        error: expect.stringContaining("cannot represent the snapshot acceleration state"),
+      });
+      expect(fixture.restore).not.toHaveBeenCalled();
+    });
+
+    it("restores a CPU-only snapshot into a GPU sandbox when the enable is deliberate", async () => {
+      const fixture = managedDockerRestoreFixture(null, "0");
+
+      expect(await fixture.run({ allowAccelerationEnable: true })).toMatchObject({
+        success: true,
+        restoredDirs: ["workspace"],
+      });
+      expect(fixture.restore).toHaveBeenCalledOnce();
+    });
+
+    it("still rejects a GPU snapshot restored into a different GPU with the flag set", async () => {
+      const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=0"], "all");
+
+      expect(await fixture.run({ allowAccelerationEnable: true })).toMatchObject({
+        success: false,
+        error: expect.stringContaining("cannot represent the snapshot acceleration state"),
+      });
+      expect(fixture.restore).not.toHaveBeenCalled();
+    });
   });
 });

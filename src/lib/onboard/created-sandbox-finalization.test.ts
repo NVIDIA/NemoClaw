@@ -743,6 +743,58 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(publishedTarget);
   });
 
+  it.each([
+    {
+      allowAccelerationEnable: true,
+      expected: { targetAgentType: "hermes", allowAccelerationEnable: true },
+    },
+    { allowAccelerationEnable: undefined, expected: { targetAgentType: "hermes" } },
+  ])(
+    "forwards a deliberate GPU enable to state restore (allow=$allowAccelerationEnable)",
+    async ({ allowAccelerationEnable, expected }) => {
+      const restoreRecreatedSandboxState = vi.fn(async () => ({
+        success: true,
+        restoredDirs: ["."],
+        failedDirs: [],
+        restoredFiles: [],
+        failedFiles: [],
+      }));
+
+      await finalizeCreatedSandbox(
+        {
+          sandboxName: "hermes",
+          restoreBackupPath: "/tmp/hermes-backup",
+          preUpgradeBackup: false,
+          targetAgentType: "hermes",
+          validateManagedDcode: false,
+          provider: "compatible-endpoint",
+          model: "demo",
+          preferredInferenceApi: "openai-completions",
+          ...(allowAccelerationEnable ? { allowAccelerationEnable } : {}),
+        },
+        {
+          ...preparedRestoreAuthority("hermes"),
+          restoreRecreatedSandboxState,
+          migrateHermesLegacyDashboardState: async () => ({ status: 0, stdout: "", stderr: "" }),
+          getDcodeSelectionDrift: vi.fn(),
+          register: vi.fn((target) => target),
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      );
+
+      expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
+        "hermes",
+        "/tmp/hermes-backup",
+        expected,
+        expect.any(Function),
+      );
+    },
+  );
+
   it("migrates restored legacy Hermes dashboard state before registration", async () => {
     const order: string[] = [];
     const register = vi.fn((target) => {

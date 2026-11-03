@@ -78,6 +78,8 @@ export type CreatedSandboxFinalizationOptions = {
   preferredInferenceApi: string | null;
   endpointUrl?: string | null;
   nativeProvider?: boolean;
+  /** The recreate deliberately enabled sandbox GPU, so a CPU-only backup may be restored. */
+  allowAccelerationEnable?: boolean;
 };
 
 export type CreatedSandboxFinalizationDeps = {
@@ -769,6 +771,7 @@ export function createOnboardCreatedSandboxCompletion(
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         previousEntry,
         targetAgentType: agent?.name ?? "openclaw",
+        allowAccelerationEnable: gpuConfig?.sandboxGpuEnabled === true,
         customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
         reconcileOpenClawInference: createContext.reconcileOpenClawInference,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
@@ -930,6 +933,7 @@ export async function finalizeCreatedSandbox(
     }
     const restoreOptions = {
       targetAgentType: options.targetAgentType,
+      ...(options.allowAccelerationEnable ? { allowAccelerationEnable: true } : {}),
     } satisfies RecreatedSandboxRestoreOptions;
     const resolveTarget = async () => {
       preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
