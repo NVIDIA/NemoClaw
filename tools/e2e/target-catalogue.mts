@@ -327,6 +327,19 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
 ] as const;
 
+const OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS = [
+  "agents/openclaw/manifest.yaml",
+  "nemoclaw-blueprint/blueprint.yaml",
+  "nemoclaw/package.json",
+  "nemoclaw/src/index.ts",
+  "nemoclaw/src/denied-search-state.ts",
+  "nemoclaw/src/runtime-context.ts",
+  "nemoclaw/src/search-config.ts",
+  "scripts/generate-openclaw-config.mts",
+  "scripts/nemoclaw-start.sh",
+  "src/lib/openclaw/agent-json-provenance.ts",
+] as const;
+
 function commonEgressTarget(options: {
   displayName: string;
   environment?: Readonly<Record<string, string>>;
@@ -334,6 +347,7 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
+  prAdvisorSelectable?: boolean;
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -344,6 +358,7 @@ function commonEgressTarget(options: {
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
     profile: options.profile ?? "nvidia-inference",
+    prAdvisorSelectable: options.prAdvisorSelectable,
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -653,7 +668,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     displayName: "Networking: OpenClaw answers through balanced egress",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
+    prAdvisorSelectable: true,
     selector: "^common-egress.+C1.+$",
+    owningPaths: OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS,
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
@@ -674,6 +691,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     runnerComparison: false,
     owningPaths: [
+      ...OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS,
       "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
       "nemoclaw-blueprint/policies/tiers.yaml",
       "src/lib/onboard/policy-selection.ts",

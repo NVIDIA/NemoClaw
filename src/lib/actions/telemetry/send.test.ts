@@ -4,11 +4,7 @@
 import fs from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { TelemetryOperationContext, TelemetrySnapshot } from "../../domain/telemetry/event";
-import {
-  resolveTelemetryDeliveryConfig,
-  telemetryRuntime,
-  TELEMETRY_ENDPOINT,
-} from "../../adapters/telemetry/http";
+import { resolveTelemetryDeliveryConfig, telemetryRuntime } from "../../adapters/telemetry/http";
 import {
   beginInstallerTelemetry,
   isTelemetryOperationActive,
@@ -80,7 +76,7 @@ it.each([undefined, "qa-telemetry:client:attempt-1"])(
     const config = resolveTelemetryDeliveryConfig({
       NEMOCLAW_TELEMETRY_TEST_LABEL: testLabel,
     });
-    expect(config?.endpoint.href).toBe(TELEMETRY_ENDPOINT);
+    expect(config?.endpoint.href).toBe("https://events.telemetry.data.nvidia.com/v1.1/events/json");
     expect(config?.localReceiver).not.toBe(true);
   },
 );
@@ -89,13 +85,17 @@ it("starts CLI and installer contexts without a test label", async () => {
   allowLocalTelemetry();
   await withTelemetryOperation("update", async () => {
     expect(isTelemetryOperationActive()).toBe(true);
-    expect(telemetryRuntime.config?.endpoint.href).toBe(TELEMETRY_ENDPOINT);
+    expect(telemetryRuntime.config?.endpoint.href).toBe(
+      "https://events.telemetry.data.nvidia.com/v1.1/events/json",
+    );
     telemetryRuntime.config = null; // Keep this context test offline at finalization.
   });
 
   const directory = beginInstallerTelemetry("install");
   expect(directory).not.toBeNull();
-  expect(telemetryRuntime.config?.endpoint.href).toBe(TELEMETRY_ENDPOINT);
+  expect(telemetryRuntime.config?.endpoint.href).toBe(
+    "https://events.telemetry.data.nvidia.com/v1.1/events/json",
+  );
   fs.rmSync(directory!, { recursive: true, force: true });
 });
 
@@ -173,7 +173,7 @@ it.each([
     expect(await sendOperationTelemetry(context, 1_000)).toBe("accepted");
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, request] = fetchMock.mock.calls[0];
-    expect(url.href).toBe(TELEMETRY_ENDPOINT);
+    expect(url.href).toBe("https://events.telemetry.data.nvidia.com/v1.1/events/json");
     expect(request).toMatchObject({ redirect: "error", credentials: "omit" });
     const body = JSON.parse(String(request.body));
     expect(body.events).toHaveLength(1);
