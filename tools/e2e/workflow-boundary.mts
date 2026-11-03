@@ -3494,6 +3494,17 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch",
     );
   }
+  if (
+    [asRecord(workflow.env), jobEnv, runVitestEnv].some((env) =>
+      ["TAVILY_API_KEY", "NEMOCLAW_E2E_TAVILY_AUTHENTICATED"].some((key) =>
+        Object.hasOwn(env, key),
+      ),
+    )
+  ) {
+    errors.push(
+      "hosted live E2E must not define TAVILY_API_KEY or NEMOCLAW_E2E_TAVILY_AUTHENTICATED",
+    );
+  }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '"^${TARGET_ID}:"');

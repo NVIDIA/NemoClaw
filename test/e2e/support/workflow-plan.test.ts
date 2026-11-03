@@ -684,6 +684,31 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each(["test/e2e/live/gpu-e2e-helpers.ts", "test/e2e/live/gpu-e2e-ollama.ts"])(
+    "selects the live targets that import %s when it changes",
+    (file) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
+      expect(
+        Object.values(plan.catalogueMatrices).flatMap((rows) => rows.map((row) => row.id)),
+      ).toEqual(
+        expect.arrayContaining([
+          "gpu-e2e",
+          "gpu-double-onboard",
+          "llama-cpp-generic-gpu",
+          "inference-routing-openclaw-native",
+          "openclaw-inference-switch",
+          "openclaw-compatible-anthropic-inference-switch",
+        ]),
+      );
+      expect(selectedWorkflowJobs(plan)).toEqual(
+        expect.arrayContaining([
+          "managed-image-protected-runtime",
+          "managed-image-multiarch-startup",
+        ]),
+      );
+    },
+  );
+
   it("selects Hermes GPU startup when its output proof changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -1367,7 +1392,7 @@ describe("E2E workflow plan", () => {
       "| `ubuntu-repo-cloud-openclaw / docker` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu managed-runtime host; NVIDIA hosted inference | typed-registry |  |",
     );
     expect(complete.stdout).toContain(
-      "| `vllm-docker-storage / docker` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
+      "| `vllm-docker-storage / docker` | none | vLLM storage gate handles host capacity and startup errors survive Docker restarts | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
     );
     expect(complete.stdout).toContain(
       "| `channels-add-remove / default-docker` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",

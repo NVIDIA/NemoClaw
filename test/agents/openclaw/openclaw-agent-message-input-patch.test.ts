@@ -254,6 +254,24 @@ resolveAgentMessageOpts(${JSON.stringify({ timeout, ...(explicit ? { messageFile
     ).toThrow("Incomplete");
   });
 
+  it.each(["2026.3.11", "2026.4.24", "2026.9.1"])(
+    "rejects retired runtime %s before discovery",
+    (version) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-message-version-"));
+      try {
+        fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
+        const dist = path.join(root, "dist");
+        expect(() => patchOpenClawAgentMessageInput(dist)).toThrow("Unsupported OpenClaw version");
+        expect(() => patchOpenClawAgentMessageInput(dist, true)).toThrow(
+          "Unsupported OpenClaw version",
+        );
+        expect(fs.readdirSync(root)).toEqual(["package.json"]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("audits the installed native parser and rejects unsupported versions", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-message-patch-"));
     const dist = path.join(root, "dist");

@@ -78,32 +78,44 @@ describe("Pi candidate contract validation", () => {
     expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
   });
 
-  it("validates a published candidate contract with plain Node", () => {
+  it("records the publication release in a Pi candidate contract with plain Node (#14026)", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const candidate = required(workflow.jobs?.["pi-candidate"], "missing Pi candidate job");
+    const publication = required(
+      workflow.jobs?.["pi-candidate-publish"],
+      "missing Pi publication job",
+    );
+    expect(candidate.needs).toContain("publication-identity");
+    expect(publication.needs).toContain("publication-identity");
+    expect(candidate.env?.RELEASE).toBe("${{ needs.publication-identity.outputs.release }}");
+    expect(publication.env?.RELEASE).toBe("${{ needs.publication-identity.outputs.release }}");
+    const producer = step(candidate, "Record the exact Pi candidate contract");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-contract-"));
     try {
-      const contractPath = path.join(directory, "contract.json");
-      fs.writeFileSync(
-        contractPath,
-        JSON.stringify(candidateContract({ platform: "linux/arm64" })),
-      );
-      const result = spawnSync(
-        process.execPath,
-        [
-          path.join(root, "tools/managed-images/validate-candidate-contract.mts"),
-          "--contract",
-          contractPath,
-          "--platform",
-          "linux/arm64",
-        ],
-        {
-          cwd: root,
-          encoding: "utf8",
-          env: { ...process.env, NODE_OPTIONS: "" },
-          timeout: 5_000,
+      const result = spawnSync("bash", ["-c", producer.run ?? ""], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH ?? "",
+          DIGEST,
+          PLATFORM: "linux/arm64",
+          PUBLICATION_COHORT: "ghrun-12345-1",
+          RELEASE: "v0.0.141",
+          REPOSITORY: "ghcr.io/nvidia/nemoclaw/pi-sandbox",
+          RUNNER_TEMP: directory,
+          SOURCE_REVISION: "b".repeat(40),
         },
-      );
+        timeout: 5_000,
+      });
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("Validated candidate contract for pi on linux/arm64");
+      const contract = JSON.parse(
+        fs.readFileSync(
+          path.join(directory, "managed-candidate-contract", "contract.json"),
+          "utf8",
+        ),
+      );
+      expect(contract.source.release).toBe("v0.0.141");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

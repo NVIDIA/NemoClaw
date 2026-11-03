@@ -203,7 +203,11 @@ elif [[ -n "$cache_from" ]]; then
   usage
 fi
 
-for command in curl docker jq node sha256sum; do
+required_commands=(curl docker jq node sha256sum)
+if [[ "$runtime_user" == sandbox && (-n "$cache_to" || -n "$cache_from") ]]; then
+  required_commands+=(python3 tar)
+fi
+for command in "${required_commands[@]}"; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "ERROR: protected managed-image build requires $command" >&2
     exit 1
@@ -602,7 +606,15 @@ build_agent() {
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${runtime_user}"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
-  run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
+  if [[ "$agent" == openclaw && "$runtime_user" == sandbox && -n "$cache_from" &&
+    (-e "$cache_from/openclaw-runtime" || -L "$cache_from/openclaw-runtime") ]]; then
+    node "$controller_root/scripts/checks/protected-openclaw-image-handoff.mts" restore \
+      "$cache_from/openclaw-runtime" "$revision" "$cohort" "$platform" \
+      "$runtime_user" "$base_reference" "$metadata"
+  fi
+  if [[ ! -f "$metadata" ]]; then
+    run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
+  fi
 
   local digest
   digest="$(jq -er '."containerimage.digest"' "$metadata")"
@@ -671,6 +683,11 @@ build_agent() {
     }' >>"$contracts"
 
   if [[ -n "$cache_to" ]]; then
+    if [[ "$agent" == openclaw && "$runtime_user" == sandbox ]]; then
+      node "$controller_root/scripts/checks/protected-openclaw-image-handoff.mts" export \
+        "$cache_to/openclaw-runtime" "$revision" "$cohort" "$platform" \
+        "$runtime_user" "$base_reference" "$reference"
+    fi
     # OCI inputs remain available when the offline build misses a cached layer.
     local stage
     for stage in "${agent_stages[@]}"; do
