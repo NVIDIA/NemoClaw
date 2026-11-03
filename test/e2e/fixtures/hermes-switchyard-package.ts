@@ -6,8 +6,9 @@
 export const HERMES_SWITCHYARD_PACKAGE_PROBE = String.raw`
 pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"
 test -n "$pid"
-/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I - "$pid" <<'PY'
+/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I -X faulthandler - "$pid" <<'PY'
 import hashlib
+import json
 from importlib.metadata import version
 import os
 from pathlib import Path
@@ -18,6 +19,27 @@ import tomllib
 import nemo_relay
 from agent import relay_runtime
 
+capture = os.environ.get('NEMOCLAW_HERMES_CRASH_CAPTURE') == '1'
+if capture:
+    import resource
+    Path('/tmp/nemoclaw-hermes-crash').mkdir(mode=0o700)
+    assert resource.getrlimit(resource.RLIMIT_CORE) == (0, 268435456)
+    resource.setrlimit(resource.RLIMIT_CORE, (268435456, 268435456))
+    executable = os.readlink('/proc/self/exe')
+    print('NEMOCLAW_HERMES_CRASH_PROCESS=' + json.dumps({
+        'pid': os.getpid(), 'executable': executable,
+        'python_sha256': hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
+        'python_version': platform.python_version(),
+        'kernel': platform.release(), 'architecture': platform.machine(),
+        'hermes_version': version('hermes-agent'), 'relay_version': version('nemo-relay'),
+    }), flush=True)
+
+def capture_maps(stage):
+    if capture:
+        # Mapping metadata only: never read mapped memory, environment or locals.
+        print('NEMOCLAW_HERMES_MAPS_' + stage + '\n' + Path('/proc/self/maps').read_text(), flush=True)
+
+capture_maps('initial')
 bundle = Path('/opt/nemo-relay/plugins/switchyard')
 library = bundle / 'libswitchyard_nemo_relay_plugin.so'
 expected_digest = {
@@ -25,6 +47,8 @@ expected_digest = {
     'aarch64': '07f7b9c8051dede541d7d0dfc73bf10a702c33bf8c93f1e222ee2e1d6b471897',
 }[platform.machine()]
 assert hashlib.sha256(library.read_bytes()).hexdigest() == expected_digest
+if capture:
+    print('NEMOCLAW_HERMES_SWITCHYARD_SHA256=' + expected_digest, flush=True)
 manifest = tomllib.loads((bundle / 'relay-plugin.toml').read_text())
 assert manifest['defaults']['enabled'] is False
 assert manifest['integrity']['sha256'] == 'sha256:' + expected_digest
@@ -82,10 +106,12 @@ target = "default"
         assert runtime.managed_execution_enabled(), runtime._plugin_configuration_state
         assert str(library) in Path('/proc/self/maps').read_text()
         assert nemo_relay.plugin.report() is not None
+        capture_maps('before_shutdown')
     finally:
         runtime.shutdown()
         os.environ.pop(relay_runtime.RELAY_PLUGINS_CONFIG_ENV)
     assert nemo_relay.plugin.report() is None
+    capture_maps('after_shutdown')
 # The separate probe must not change the gateway's routing state.
 assert library.name not in Path(f'/proc/{pid}/maps').read_text()
 print('Switchyard package, disabled gateway, native activation, and cleanup verified')
