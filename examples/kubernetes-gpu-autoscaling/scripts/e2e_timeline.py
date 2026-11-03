@@ -58,9 +58,9 @@ def note_user(user_id: int, ok: int, err: int, tokens: int) -> None:
     }
 
 
-def rows_for_users(n: int) -> list[dict[str, int]]:
+def rows_for_users(n: int, start: int = 0) -> list[dict[str, int]]:
     rows: list[dict[str, int]] = []
-    for i in range(n):
+    for i in range(start, start + n):
         rows.append(_counts.get(i, {"user": i, "ok": 0, "err": 0, "tokens": 0}))
     return rows
 

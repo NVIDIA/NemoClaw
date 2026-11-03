@@ -18,4 +18,6 @@ Apply one pairing file in this directory. Each file is one NemoClaw config: a ma
 
 OpenClaw and Deep Agents use their own namespaces, so either can stay up beside the Hermes deployment.
 
+Step 6d keeps both OpenClaw and Hermes in namespace `nemoclaw-v1-gpu-autoscaling-mixed`. [`install-two-runtimes.sh`](scripts/install-two-runtimes.sh) installs release `nemoclaw-gpu-ollama` and release `nemoclaw-gpu-vllm`, each with `maxReplicas` 8. [`render-mixed-sandboxes.sh`](scripts/render-mixed-sandboxes.sh) prints 2 OpenClaw sandboxes and 6 Hermes sandboxes.
+
 GPU utilization and LLM latency use the same client. Switch the chart metric with [`set-hpa-metric.sh`](scripts/set-hpa-metric.sh). Recorded Hermes and Deep Agents runs are in [`RESULTS-6b.md`](RESULTS-6b.md) and [`RESULTS-6c.md`](RESULTS-6c.md).

@@ -12,6 +12,8 @@ Setup and load-test steps live in [`../README.md`](../README.md). Pairing files 
 | `check.sh` | Validate the three pairing files and read the cluster. Does not apply. |
 | `validate-yaml.py` | Schema check used by `check.sh`. |
 | `render-sandboxes.sh` | Print a pairing file expanded to `E2E_USERS` sandboxes. Does not apply. |
+| `render-mixed-sandboxes.sh` | Print 2 OpenClaw sandboxes and 6 Hermes sandboxes for step 6d. Does not apply. |
+| `install-two-runtimes.sh` | Install the vLLM and Ollama chart releases, each with ceiling 8. |
 | `invoke.sh` | One operator prompt through `openshell sandbox exec` after `oidc`. |
 | `client-openclaw.sh` | OpenClaw client. Flags: GPU utilization `INFLIGHT=4 MAX_TOKENS=2048`. Latency omits them. Does not print the HPA. |
 | `client-hermes.sh` | Hermes client. Flags: GPU utilization `INFLIGHT=2 MAX_TOKENS=1024`. Latency omits them (`INFLIGHT=1 MAX_TOKENS=2048` in the code). Does not print the HPA. |
@@ -32,3 +34,4 @@ Setup and load-test steps live in [`../README.md`](../README.md). Pairing files 
 | `test-metrics-proxy-metrics-contract.ts` | Rolling `latency_avg` uses a 30s window and expires so HPA can scale down. |
 | `test-metrics-proxy-newest-sample-window.ts` | The 30s window ages from the newest sample. |
 | `test-hpa-idle-replicas-contract.sh` | Idle latency HPA `1/0` is a ready baseline. |
+| `test-render-mixed-sandboxes.sh` | Step 6d renders 2 OpenClaw sandboxes and 6 Hermes sandboxes on separate Services. |

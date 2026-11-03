@@ -2111,6 +2111,23 @@ hpa_common_verify_gpu_capacity() {
   fi
 }
 
+# Ceiling for a second runtime on the same GPUs. maxReplicas may equal the
+# node's allocatable GPUs. Pods that do not fit stay Pending.
+hpa_common_verify_shared_gpu_ceiling() {
+  local requested="${1:?requested GPU replicas}"
+  if [[ ! "${requested}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "GPU replica count must be a positive integer" >&2
+    return 1
+  fi
+  local allocatable
+  allocatable="$(hpa_common_allocatable_gpus)"
+  if ((10#${requested} > 10#${allocatable})); then
+    echo "Requested ${requested} GPU replicas, but Ready nodes report ${allocatable} allocatable GPUs." >&2
+    return 1
+  fi
+  echo "Shared GPU ceiling: maxReplicas=${requested} on ${allocatable} allocatable GPUs. Pods above the free count stay Pending."
+}
+
 hpa_common_verify_gpu_hpa_metric() {
   local ns="${1:-${NAMESPACE:-nemoclaw-gpu}}"
   local metric_name

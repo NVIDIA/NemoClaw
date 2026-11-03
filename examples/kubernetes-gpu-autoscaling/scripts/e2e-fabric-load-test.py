@@ -499,7 +499,7 @@ async def run_test(args: argparse.Namespace) -> int:
             client_log,
             max_tokens=pinned_tokens,
             inflight=args.inflight_per_user,
-            users=timeline.rows_for_users(args.users),
+            users=timeline.rows_for_users(args.users, args.user_offset),
         )
 
     timeline_task = asyncio.create_task(timeline.tick_until(stop_load, write_client_tick))
@@ -516,7 +516,7 @@ async def run_test(args: argparse.Namespace) -> int:
                 log_path=logs_dir / f"{sandbox_name(args.prefix, i)}.log",
             )
         )
-        for i in range(args.users)
+        for i in range(args.user_offset, args.user_offset + args.users)
     ]
 
     deadline = time.monotonic() + args.duration + 30
@@ -604,6 +604,12 @@ def main() -> int:
         description="Hermes + vLLM client: N users send hermes -z into N sandboxes; pass --users"
     )
     parser.add_argument("--users", type=int, required=True)
+    parser.add_argument(
+        "--user-offset",
+        type=int,
+        default=int(os.environ.get("E2E_USER_OFFSET", "0")),
+        help="First sandbox index. Sandbox user-0002 is offset 2.",
+    )
     parser.add_argument("--prefix", default=os.environ.get("SANDBOX_PREFIX", ""))
     parser.add_argument("--output", default=os.environ.get("E2E_OUTPUT_DIR", "./e2e-results/hermes-v1"))
     parser.add_argument("--duration", type=int, default=int(os.environ.get("DURATION_SEC", "900")))
@@ -627,7 +633,7 @@ def main() -> int:
     parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "2")))
     parser.add_argument("--scale-down-wait-loops", type=int, default=int(os.environ.get("SCALE_DOWN_WAIT_LOOPS", "40")))
     args = parser.parse_args()
-    if args.users < 1 or args.inflight_per_user < 1 or args.inflight_start < 1:
+    if args.users < 1 or args.user_offset < 0 or args.inflight_per_user < 1 or args.inflight_start < 1:
         print("--users, --inflight-per-user, and --inflight-start must be >= 1", file=sys.stderr)
         return 2
     if args.inflight_start > args.inflight_per_user:

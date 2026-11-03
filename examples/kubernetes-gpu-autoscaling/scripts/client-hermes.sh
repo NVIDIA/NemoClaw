@@ -39,6 +39,7 @@ fail() {
 
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-10}"
+export E2E_USER_OFFSET="${E2E_USER_OFFSET:-0}"
 export V1_NAMESPACE="${V1_NAMESPACE:-nemoclaw-v1-gpu-autoscaling}"
 export NEMOCLAW_V1_STATE_DIR="${NEMOCLAW_V1_STATE_DIR:-${RECIPE_DIR}/.local/gpu-autoscaling}"
 # hermes (default) or deepagents. client-deepagents.sh sets it.
@@ -64,6 +65,7 @@ command -v kubectl >/dev/null 2>&1 || fail "missing command: kubectl"
 command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 command -v jq >/dev/null 2>&1 || fail "missing command: jq"
 [[ "${E2E_USERS}" =~ ^[1-9][0-9]*$ ]] || fail "E2E_USERS must be a positive integer"
+[[ "${E2E_USER_OFFSET}" =~ ^[0-9]+$ ]] || fail "E2E_USER_OFFSET must be a non-negative integer"
 [[ -f "${NEMOCLAW_V1_STATE_DIR}/terraform.tfstate" ]] \
   || fail "missing ${NEMOCLAW_V1_STATE_DIR}/terraform.tfstate. Apply the v1 YAML first."
 
@@ -79,12 +81,12 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 hpa_max="$(kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.maxReplicas}' 2>/dev/null || true)"
 [[ "${hpa_max}" =~ ^[1-9][0-9]*$ ]] || fail "HPA ${NAMESPACE}/${HPA_NAME} has no maxReplicas. Set the ceiling on the DGX with install-hpa.sh."
 
-echo "Client: ${E2E_USERS} end users → ${E2E_USERS} sandboxes (1:1 ${AGENT_KIND})."
+echo "Client: ${E2E_USERS} end users → sandboxes ${E2E_USER_OFFSET} through $((E2E_USER_OFFSET + E2E_USERS - 1)) (1:1 ${AGENT_KIND})."
 echo "inflight/user: ${INFLIGHT}  max_tokens: ${MAX_TOKENS}  HPA maxReplicas: ${hpa_max}"
 agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}" "${AGENT_KIND}"
 
 unhealthy=0
-for ((i = 0; i < E2E_USERS; i += 1)); do
+for ((i = E2E_USER_OFFSET; i < E2E_USER_OFFSET + E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
   phase="$(kubectl get pod "${name}" -n "${V1_NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
   ready="$(kubectl get pod "${name}" -n "${V1_NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)"
@@ -101,7 +103,7 @@ done
 # block, so llama3.2:3b hangs on ask_user until the 290s Fabric deadline.
 if [[ "${AGENT_KIND}" == "openclaw" ]]; then
   echo "Pin OpenClaw tools.profile=minimal on ${E2E_USERS} sandboxes."
-  for ((i = 0; i < E2E_USERS; i += 1)); do
+  for ((i = E2E_USER_OFFSET; i < E2E_USER_OFFSET + E2E_USERS; i += 1)); do
     name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
     if ! kubectl exec -i -n "${V1_NAMESPACE}" "${name}" -c agent -- python3 - <<'PY'
 import glob
@@ -152,6 +154,7 @@ mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${RECIPE_DIR}" || fail "cannot cd to ${RECIPE_DIR}"
 exec python3 "${SCRIPT_DIR}/e2e-fabric-load-test.py" \
   --users "${E2E_USERS}" \
+  --user-offset "${E2E_USER_OFFSET}" \
   --prefix "${SANDBOX_PREFIX}" \
   --output "${E2E_OUTPUT_DIR}" \
   --duration "${DURATION_SEC}" \

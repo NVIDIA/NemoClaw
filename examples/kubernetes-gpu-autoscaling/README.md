@@ -193,6 +193,7 @@ kubectl get pods -n nemoclaw-v1-gpu-autoscaling-openclaw
 | 6a OpenClaw + Ollama | [`openclaw-ollama.yaml`](openclaw-ollama.yaml) | `nvidia.fabric.openclaw` | `ollama` | `.local/gpu-autoscaling-openclaw` | `nemoclaw-v1-gpu-autoscaling-openclaw` |
 | 6b Hermes + vLLM | [`hermes-vllm.yaml`](hermes-vllm.yaml) | `nvidia.fabric.hermes` | `vllm` | `.local/gpu-autoscaling` | `nemoclaw-v1-gpu-autoscaling` |
 | 6c Deep Agents + NIM | [`deepagents-nim.yaml`](deepagents-nim.yaml) | `nvidia.fabric.langchain.deepagents` | `nim` | `.local/gpu-autoscaling-deepagents` | `nemoclaw-v1-gpu-autoscaling-dagent` |
+| 6d OpenClaw + Hermes | rendered `.local/openclaw-hermes.yaml` | OpenClaw and Hermes | `ollama` and `vllm`, one release each | `.local/gpu-autoscaling-mixed` | `nemoclaw-v1-gpu-autoscaling-mixed` |
 
 Each file declares sandboxes `user-0000` and `user-0001`. `render-sandboxes.sh` prints a wider file. It does not apply. Put the real image digest and a new `metadata.uid` in that file before apply. `.local/` is gitignored. Do not commit it.
 
@@ -215,6 +216,32 @@ kubectl get pods -n nemoclaw-v1-gpu-autoscaling-openclaw
 ```
 
 Deep Agents uses `render-sandboxes.sh deepagents-nim` and `--state-dir .local/gpu-autoscaling-deepagents`. The chart must serve NIM.
+
+### 6d. OpenClaw and Hermes together
+
+Step 6d runs 2 OpenClaw sandboxes and 6 Hermes sandboxes in one deployment. It installs this same chart twice. The vLLM release is `nemoclaw-gpu-vllm`. The Ollama release is `nemoclaw-gpu-ollama`. Each Horizontal Pod Autoscaler ceiling is 8. Both releases schedule onto the same GPUs. A pod that does not fit stays Pending. A quiet runtime holds only the replicas it is still running. Scale-down removes one of those replicas every 10 seconds after a 60 second wait.
+
+`DCGM_NAMESPACE=gpu-operator` matches this DGX. The script installs the vLLM release with Prometheus and Envoy, then adds the Ollama release.
+
+```bash
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
+DCGM_NAMESPACE=gpu-operator ./scripts/install-two-runtimes.sh
+```
+
+Put the real image digests in `openclaw-ollama.yaml` and `hermes-vllm.yaml` before rendering. Export each image's metadata to its own file. Do not commit those files or `.local/`.
+
+```bash
+export PATH="/home/maggiez/NemoClaw-v1/dist/linux_amd64/bin:${HOME}/.local/openshell-0.1.4:${PATH}"
+export NEMOCLAW_OPENCLAW_IMAGE_METADATA="${PWD}/openclaw.metadata.json"
+export NEMOCLAW_HERMES_IMAGE_METADATA="${PWD}/hermes.metadata.json"
+export GPU_OLLAMA_API_KEY="$(kubectl -n nemoclaw-gpu-ollama get secret nemoclaw-gpu-ollama-metrics-proxy-inference-api -o jsonpath='{.data.api-key}' | base64 -d)"
+export GPU_VLLM_API_KEY="$(kubectl -n nemoclaw-gpu-vllm get secret nemoclaw-gpu-vllm-metrics-proxy-inference-api -o jsonpath='{.data.api-key}' | base64 -d)"
+./scripts/render-mixed-sandboxes.sh > .local/openclaw-hermes.yaml
+nemoclaw apply --non-interactive --state-dir .local/gpu-autoscaling-mixed .local/openclaw-hermes.yaml
+kubectl get pods -n nemoclaw-v1-gpu-autoscaling-mixed
+```
+
+`user-0000` and `user-0001` are OpenClaw. `user-0002` through `user-0007` are Hermes. Ready means each pod is `1/1 Running`. Skip apply when those pods are already Running.
 
 Apply writes `terraform.tfstate` in the state directory from that command. Apply refuses to take over a namespace that already exists. OpenClaw and Deep Agents use their own namespaces, so their sandboxes can stay up beside Hermes.
 
@@ -257,6 +284,28 @@ E2E_USERS=10 ./scripts/client-hermes.sh
 ```
 
 OpenClaw GPU utilization is `INFLIGHT=4 MAX_TOKENS=2048` with [`client-openclaw.sh`](scripts/client-openclaw.sh). OpenClaw latency omits the flags (`INFLIGHT=1`, `MAX_TOKENS=2048`). Deep Agents GPU utilization is `INFLIGHT=3` with [`client-deepagents.sh`](scripts/client-deepagents.sh). One chat in flight stayed at 5 GPUs.
+
+Step 6d uses one state directory and two clients. Run them in two terminals after the mixed pods are Ready. Each client reads its own HPA.
+
+```bash
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
+export NEMOCLAW_V1_STATE_DIR=.local/gpu-autoscaling-mixed
+export V1_NAMESPACE=nemoclaw-v1-gpu-autoscaling-mixed
+NAMESPACE=nemoclaw-gpu-ollama HPA_NAME=nemoclaw-gpu-ollama-metrics-proxy \
+  E2E_USERS=2 E2E_USER_OFFSET=0 INFLIGHT=4 MAX_TOKENS=2048 \
+  ./scripts/client-openclaw.sh
+```
+
+```bash
+cd /home/maggiez/NemoClaw-v1/examples/kubernetes-gpu-autoscaling
+export NEMOCLAW_V1_STATE_DIR=.local/gpu-autoscaling-mixed
+export V1_NAMESPACE=nemoclaw-v1-gpu-autoscaling-mixed
+NAMESPACE=nemoclaw-gpu-vllm HPA_NAME=nemoclaw-gpu-vllm-metrics-proxy \
+  E2E_USERS=6 E2E_USER_OFFSET=2 INFLIGHT=2 MAX_TOKENS=1024 \
+  ./scripts/client-hermes.sh
+```
+
+Watch each pool with `./scripts/get-hpa.sh -n nemoclaw-gpu-ollama -w` and `./scripts/get-hpa.sh -n nemoclaw-gpu-vllm -w`. Switch one pool's metric with `NAMESPACE=nemoclaw-gpu-ollama RELEASE=nemoclaw-gpu-ollama ./scripts/set-hpa-metric.sh latency_avg` or `NAMESPACE=nemoclaw-gpu-vllm RELEASE=nemoclaw-gpu-vllm ./scripts/set-hpa-metric.sh gpu_utilization`.
 
 A laptop uses the same `INFLIGHT` and `MAX_TOKENS` flags. It does not run `get-hpa.sh`. The DGX watch above is the HPA print. This Fabric client still runs on the DGX, next to the apply state. Fabric does not serve the v0 Hermes HTTP port, so the laptop cannot send chats to `:8642`.
 
