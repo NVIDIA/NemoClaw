@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { patchOpenClawMusicMetadataPackageGraph } from "../../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  buildRemediatedOpenClawPluginArchive,
+  hashPackageTree,
+  patchOpenClawMusicMetadataPackageGraph,
+} from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const roots: string[] = [];
 const dependencies = {
@@ -89,4 +94,81 @@ it("preserves npm's nested parser dependencies across replacement and retry", ()
   patchOpenClawMusicMetadataPackageGraph(plugin, replacement, "@openclaw/whatsapp@2026.9.2");
   patchOpenClawMusicMetadataPackageGraph(plugin, replacement, "@openclaw/whatsapp@2026.9.2");
   expect(readFileSync(path.join(nested, "index.js"), "utf8")).toBe("retained dependency");
+});
+
+it("rebuilds the WhatsApp archive with the fixed parser and rejects source drift", () => {
+  const { plugin, target, replacement } = fixture();
+  const root = path.dirname(plugin);
+  const metadataPath = path.join(plugin, "package.json");
+  const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+  metadata.bundledDependencies = ["baileys"];
+  writeFileSync(metadataPath, JSON.stringify(metadata));
+  const expected = path.join(root, "expected");
+  cpSync(plugin, expected, { recursive: true });
+  const expectedParser = path.join(expected, "node_modules/baileys/node_modules/music-metadata");
+  rmSync(expectedParser, { recursive: true });
+  cpSync(replacement, expectedParser, { recursive: true });
+  const expectedTree = hashPackageTree(expected);
+  const pack = (directory: string, filename: string) => {
+    const staging = mkdtempSync(path.join(root, "pack-"));
+    cpSync(directory, path.join(staging, "package"), { recursive: true });
+    const result = spawnSync("tar", ["-czf", filename, "-C", staging, "package"], {
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+  };
+  const sourceArchive = path.join(root, "whatsapp.tgz");
+  const replacementArchive = path.join(root, "replacement.tgz");
+  pack(plugin, sourceArchive);
+  pack(replacement, replacementArchive);
+  // Only the registry transport is synthetic; extraction, dispatch, remediation,
+  // npm packing, and the emitted archive integrity checks use the real consumers.
+  const npmExecutable = path.join(root, "registry-fixture.cjs");
+  writeFileSync(
+    npmExecutable,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const integrity = "sha512-D5zZHjQUbfR+JhHjnwdbgeB4qj7zVJtisCB1I0GAI5sjSPGqPLoY14WMIzMeR8iA+4nSFswVLpO4crksZUybBg==";
+if (args[1] !== "music-metadata@11.16.0") process.exit(1);
+if (args[0] === "view" && args[2] === "dist.integrity") console.log(integrity);
+else if (args[0] === "view" && args[2] === "dist.tarball") console.log("https://registry.npmjs.org/music-metadata/-/music-metadata-11.16.0.tgz");
+else if (args[0] === "pack" && args[2] === "--pack-destination") {
+  fs.copyFileSync(${JSON.stringify(replacementArchive)}, path.join(args[3], "music-metadata.tgz"));
+  console.log(JSON.stringify([{ filename: "music-metadata.tgz", integrity }]));
+} else process.exit(1);
+`,
+    { mode: 0o700 },
+  );
+  const request = {
+    archivePath: sourceArchive,
+    packageSpec: "@openclaw/whatsapp@2026.9.2",
+    workingDirectory: path.join(root, "work"),
+    expectedPatchedTreeIntegrity: expectedTree,
+    env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: npmExecutable },
+  };
+  const result = buildRemediatedOpenClawPluginArchive(request);
+  const extracted = path.join(root, "output");
+  mkdirSync(extracted);
+  const unpack = spawnSync("tar", ["-xzf", result.archivePath, "-C", extracted], {
+    encoding: "utf8",
+  });
+  expect(unpack.status, unpack.stderr).toBe(0);
+  const parser = path.join(extracted, "package/node_modules/baileys/node_modules/music-metadata");
+  expect(JSON.parse(readFileSync(path.join(parser, "package.json"), "utf8")).version).toBe(
+    "11.16.0",
+  );
+  expect(readFileSync(path.join(parser, "parser.js"), "utf8")).toBe("11.16.0");
+  expect(hashPackageTree(path.join(extracted, "package"))).toBe(expectedTree);
+  expect(result.treeIntegrity).toBe(expectedTree);
+  const sourceMetadata = path.join(target, "package.json");
+  const changed = JSON.parse(readFileSync(sourceMetadata, "utf8"));
+  changed.version = "11.14.0";
+  writeFileSync(sourceMetadata, JSON.stringify(changed));
+  pack(plugin, sourceArchive);
+  expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(
+    "Bundled music metadata must be music-metadata@11.15.0",
+  );
+  expect(readFileSync(path.join(target, "parser.js"), "utf8")).toBe("11.15.0");
 });
