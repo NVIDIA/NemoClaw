@@ -72,6 +72,8 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
         "file:///etc/passwd",
         "https://metadata.google.internal/",
         "https://metadata.google.internal./",
+        "https://metadata/",
+        "https://[fd00:ec2::254]/v1",
         "http://8.8.8.8:11434/v1",
         "http://[2001:db8::1]:11434/v1",
         // The client connects to 8.8.8.8; the private address is in the path.
@@ -80,6 +82,8 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
         "https://[::ffff:224.0.0.1]/v1",
         "https://[::ffff:0.0.0.0]/v1",
         "http://[::ffff:10.0.0.1]:11434/v1",
+        "https://[::169.254.169.254]/v1",
+        "https://[64:ff9b::169.254.169.254]/v1",
     ] {
         assert!(validate_endpoint(endpoint, false).is_err(), "{endpoint}");
     }
@@ -92,6 +96,15 @@ fn endpoint_policy_rejects_credentials_metadata_and_remote_plaintext() {
         assert!(validate_endpoint(endpoint, false).is_ok(), "{endpoint}");
     }
     assert!(validate_endpoint("http://172.20.0.1:17671", true).is_err());
+}
+
+#[test]
+fn managed_gateway_network_is_written_without_leading_zeros() {
+    let mut document =
+        Document::parse(include_str!("fixtures/config/spark.yaml").as_bytes()).unwrap();
+    // Docker rejects the leading zero when it creates the network.
+    document.spec.gateway.as_managed_mut().unwrap().network_cidr = "172.030.110.0/24".into();
+    assert!(document.validate().is_err());
 }
 
 #[test]

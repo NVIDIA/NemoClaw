@@ -42,7 +42,7 @@ Rebuild it from the new release's base when you upgrade; see [derived agent imag
 Provider type names, inputs, and outputs can change between releases.
 Each release's [provider guide](provider.md) and schema snapshots describe that release's types.
 
-The examples under [`examples/hcl`](../examples/hcl) are supported with the release they ship in: [`travel`](../examples/hcl/travel/main.tf), which a system test applies unchanged, and [`travel-team`](../examples/hcl/travel-team/README.md).
+The examples under [`examples/hcl`](../examples/hcl) are supported with the release they ship in: [`travel`](../examples/hcl/travel/main.tf), which an integration scenario applies unchanged, and [`travel-team`](../examples/hcl/travel-team/README.md).
 Their resources follow the provider's [lifecycle rules](provider.md#openshell-resource-lifecycles), and destroy keeps what [deployment state](state.md#understand-the-retained-resources) lists as retained.
 
 ## Import, Adoption, and State Backends

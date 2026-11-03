@@ -488,7 +488,7 @@ fn the_bundled_adapters_accept_their_p0_interfaces_only() {
         rejected_interfaces(
             &catalog,
             openclaw,
-            json!({"dashboard": {"enabled": true, "port": 18789, "public_origins": ["https://claw.example"]}})
+            json!({"dashboard": {"enabled": true, "port": 18789}})
         )
         .is_empty()
     );
