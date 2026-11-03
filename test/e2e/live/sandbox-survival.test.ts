@@ -19,6 +19,7 @@ import {
   SANDBOX_SURVIVAL_INSTALL_TIMEOUT_MS,
   SANDBOX_SURVIVAL_LIFECYCLE_READINESS,
   SANDBOX_SURVIVAL_MARKER_PATHS,
+  SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT,
   SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
   SANDBOX_SURVIVAL_NATIVE_READINESS,
   SANDBOX_SURVIVAL_OPENSHELL_DELETE_TIMEOUT_MS,
@@ -114,13 +115,17 @@ async function expectNativeSurvivalPluginInvocation(sandbox: SandboxClient): Pro
   // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
   const audit = await pollUntil({
     artifactPrefix: "post-openshell-start-native-plugin-invoke-audit",
-    attempts: 5,
-    delayMs: 1_000,
+    attempts: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT.attempts,
+    delayMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT.delayMs,
     probe: async (_attempt, artifactName) => {
       const page = await sandbox.exec(
         SANDBOX_NAME,
         ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
-        { artifactName, env: sandboxAccessEnv(), timeoutMs: 30_000 },
+        {
+          artifactName,
+          env: sandboxAccessEnv(),
+          timeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT.timeoutMs,
+        },
       );
       return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
     },
