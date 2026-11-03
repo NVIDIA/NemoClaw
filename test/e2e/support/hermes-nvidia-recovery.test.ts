@@ -9,7 +9,9 @@ import {
   writeFileSync,
   symlinkSync,
   linkSync,
-  statSync,
+  openSync,
+  fstatSync,
+  closeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,14 +54,22 @@ function fixture() {
       timeout: 10_000,
       maxBuffer: 128 * 1024,
     });
-  return { home, path, config, save, run };
+  const read = () => {
+    const fd = openSync(path, "r");
+    try {
+      return { mode: fstatSync(fd).mode, config: YAML.parse(readFileSync(fd, "utf8")) };
+    } finally {
+      closeSync(fd);
+    }
+  };
+  return { home, path, config, save, run, read };
 }
 
 describe.skipIf(process.platform === "win32")("Hermes NVIDIA damaged-state fixture", () => {
   it("seeds only three exact sentinels and fingerprints retained settings (#14094)", () => {
     const f = fixture();
     const before = structuredClone(f.config);
-    const mode = statSync(f.path).mode;
+    const beforeMode = f.read().mode;
     const seeded = f.run("seed");
     expect(seeded.status, seeded.stderr).toBe(0);
     const evidence = JSON.parse(seeded.stdout);
@@ -69,13 +79,13 @@ describe.skipIf(process.platform === "win32")("Hermes NVIDIA damaged-state fixtu
       configFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       userState: true,
     });
-    const damaged = YAML.parse(readFileSync(f.path, "utf8"));
+    const { mode, config: damaged } = f.read();
     const expected = structuredClone(before);
     expected.model.api_key = sentinel;
     expected.providers["nvidia-prod"]!.api_key = sentinel;
     expected.custom_providers[0]!.api_key = sentinel;
     expect(damaged).toEqual(expected);
-    expect(statSync(f.path).mode).toBe(mode);
+    expect(mode).toBe(beforeMode);
     expect(f.run("verify").status).toBe(1);
     // This support test checks the fixture; the live test owns actual guarded recovery.
     f.save(before);
