@@ -30,6 +30,17 @@ function dockerCapture(row: ReturnType<typeof ownedContainer>, gateway = "172.18
 }
 
 describe("bearerless managed vLLM container probe", () => {
+  it.each(["0.0.0.0", "::"])(
+    "rejects route recovery for an owned container published on %s (#14083)",
+    (host) => {
+      const row = ownedContainer();
+      row.NetworkSettings.Ports["8000/tcp"] = [{ HostIp: host, HostPort: "18080" }];
+      expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080, dockerCapture(row))).toThrow(
+        "NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard",
+      );
+    },
+  );
+
   it("selects the published OpenShell bridge with the same Docker environment (#14083)", () => {
     const capture = dockerCapture(ownedContainer());
     expect(getLegacyHostLocalManagedVllmBridgeHost(18080, capture)).toBe("172.18.0.1");
@@ -78,18 +89,6 @@ describe("bearerless managed vLLM container probe", () => {
         row.Config.Labels["com.nvidia.nemoclaw.vllm-role"] = "head";
       },
     ],
-    [
-      "all-interface binding",
-      (row) => {
-        row.NetworkSettings.Ports["8000/tcp"][1]!.HostIp = "0.0.0.0";
-      },
-    ],
-    [
-      "different port",
-      (row) => {
-        row.NetworkSettings.Ports["8000/tcp"][1]!.HostPort = "19000";
-      },
-    ],
   ] satisfies Array<[string, (row: ReturnType<typeof ownedContainer>) => void]>)(
     "does not select the bridge for a %s",
     (_label, change) => {
@@ -99,13 +98,24 @@ describe("bearerless managed vLLM container probe", () => {
     },
   );
 
+  it.each([
+    ["a public second binding", { HostIp: "0.0.0.0", HostPort: "18080" }],
+    ["a mismatched host port", { HostIp: "172.18.0.1", HostPort: "19000" }],
+  ] as const)("rejects an owned container with %s", (_label, binding) => {
+    const row = ownedContainer();
+    row.NetworkSettings.Ports["8000/tcp"][1] = binding;
+    expect(() => getLegacyHostLocalManagedVllmBridgeHost(18080, dockerCapture(row))).toThrow(
+      "unsafe host bindings",
+    );
+  });
+
   it("rejects a public OpenShell gateway", () => {
-    expect(
+    expect(() =>
       getLegacyHostLocalManagedVllmBridgeHost(
         18080,
         dockerCapture(ownedContainer(), "203.0.113.1"),
       ),
-    ).toBeNull();
+    ).toThrow("requires one private OpenShell bridge address");
   });
 
   it("preserves the legacy probe when Docker inspection is unavailable", () => {

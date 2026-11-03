@@ -2264,10 +2264,6 @@ The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` con
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
-After production onboarding, the Spark case requests the managed vLLM health endpoint through loopback and the private OpenShell bridge.
-It requires connection refusal through every other assigned host address, including IPv6 when configured.
-The target inventory records IPv6 applicability, and request artifacts retain exit codes and HTTP status output alongside the Docker inspection.
-Source tests own the exact default/custom port bindings and authentication permutations; these live requests prove Docker and host network enforcement.
 
 Run the target from a clean candidate checkout on the Spark host:
 
@@ -2700,6 +2696,9 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 ## DGX Station Express
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+After installation, this target requires vLLM health requests to succeed on loopback and the private OpenShell gateway and refuse every other assigned IPv4/IPv6 host address.
+The existing controller retains the inspected bindings, probe targets and per-request results for the candidate revision.
+Source tests own port and authentication permutations; these runtime requests prove Docker and host network enforcement.
 
 ## Bearerless vLLM Provider Validation
 

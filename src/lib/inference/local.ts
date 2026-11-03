@@ -84,6 +84,7 @@ import {
   getLegacyHostLocalManagedVllmBridgeHost,
   recoverHostLocalManagedVllmEndpoint,
   resolveManagedVllmBridgeHost,
+  UnsafeLegacyVllmBindingsError,
 } from "./serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
@@ -1092,6 +1093,8 @@ export type ManagedVllmProviderState =
 
 export interface ManagedVllmProviderBindingOptions {
   hostUrl?: string | null;
+  /** Validated recorded bearerless port; otherwise use the process vLLM port. */
+  legacyServingPort?: number;
   /** Compatibility seam for the Station lifecycle resolver. */
   getManagedBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
   loadApiKeyImpl?: () => string | null;
@@ -1226,7 +1229,12 @@ export function getManagedVllmProviderState(
       ...(hostLocalEndpoint.serving ? { serving: hostLocalEndpoint.serving } : {}),
     };
   }
-  if (!managedClusterEndpoint) return stationState;
+  if (!managedClusterEndpoint) {
+    if (stationState.kind === "absent") {
+      getLegacyHostLocalManagedVllmBridgeHost(options.legacyServingPort ?? VLLM_PORT);
+    }
+    return stationState;
+  }
   return {
     kind: "ready",
     baseUrl: `${managedClusterEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
@@ -1520,15 +1528,17 @@ export function probeLocalProviderHealth(
     (options.findReachableOllamaHostImpl ?? findReachableOllamaHost)();
   }
 
+  const legacyVllmPort = recordedLocalVllmHostPort(options.recordedEndpointUrl) ?? VLLM_PORT;
   let managedState: ManagedVllmProviderState = { kind: "absent" };
   if (provider === "vllm-local") {
     try {
       managedState = getManagedVllmProviderState({
+        legacyServingPort: legacyVllmPort,
         getManagedBaseUrlImpl: options.getManagedVllmBaseUrlImpl,
         loadApiKeyImpl: options.loadVllmApiKeyImpl,
         recoverManagedClusterVllmEndpointImpl: options.recoverManagedClusterVllmEndpointImpl,
       });
-    } catch {
+    } catch (error) {
       return {
         ok: false,
         providerLabel,
@@ -1536,7 +1546,9 @@ export function probeLocalProviderHealth(
         failureLabel: "unhealthy",
         probeLabel: "vllm backend",
         detail:
-          "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
+          error instanceof UnsafeLegacyVllmBindingsError
+            ? error.message
+            : "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
       };
     }
   }
@@ -1560,7 +1572,7 @@ export function probeLocalProviderHealth(
   const endpoint = managedValidationBaseUrl
     ? `${managedValidationBaseUrl}/models`
     : provider === "vllm-local"
-      ? `http://127.0.0.1:${recordedLocalVllmHostPort(options.recordedEndpointUrl) ?? VLLM_PORT}/v1/models`
+      ? `http://127.0.0.1:${legacyVllmPort}/v1/models`
       : getLocalProviderHealthEndpoint(provider);
   if (!endpoint) return null;
 

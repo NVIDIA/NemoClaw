@@ -10,6 +10,7 @@ import {
 } from "../inference/endpoint-ssrf-preflight";
 import type { RequestedServingProfileModel } from "../inference/serving/requested-profile-model";
 import type { ManagedVllmProviderBinding } from "../inference/local";
+import { UnsafeLegacyVllmBindingsError } from "../inference/serving/vllm-host-local-lifecycle";
 import { resolveVllmModelAlias } from "../inference/vllm-models";
 import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
@@ -273,8 +274,12 @@ export function createSetupNimVllmHandler(
     let managedBinding: ReturnType<SetupNimVllmDeps["getManagedVllmProviderBinding"]>;
     try {
       managedBinding = deps.getManagedVllmProviderBinding();
-    } catch {
-      console.error("  Managed vLLM authentication state is unsafe or unreadable.");
+    } catch (error) {
+      console.error(
+        error instanceof UnsafeLegacyVllmBindingsError
+          ? `  ${error.message}`
+          : "  Managed vLLM authentication state is unsafe or unreadable.",
+      );
       deps.exitProcess(1);
     }
     state.endpointUrl = managedBinding?.baseUrl ?? deps.getLocalProviderBaseUrl(state.provider);

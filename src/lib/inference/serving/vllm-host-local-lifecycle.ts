@@ -276,55 +276,67 @@ function inspectHostLocalContainer(
   });
 }
 
-/** Select the probe address only for an owned, bearerless container with bounded bindings. */
+export class UnsafeLegacyVllmBindingsError extends Error {
+  constructor() {
+    super(
+      "Managed bearerless vLLM has unsafe host bindings. Stop the owned `nemoclaw-vllm` container. Re-run `NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard` with the original model and port settings to recreate it with private bindings.",
+    );
+  }
+}
+
+/** Reject unsafe owned bearerless bindings and select their private probe address. */
 export function getLegacyHostLocalManagedVllmBridgeHost(
   servingPort: number,
   capture: typeof dockerCapture = dockerCapture,
 ): string | null {
+  const dockerEnv = buildVllmDockerEnv();
+  let parsed: unknown;
   try {
-    const dockerEnv = buildVllmDockerEnv();
-    const parsed: unknown = JSON.parse(inspectHostLocalContainer(capture, dockerEnv));
-    if (!Array.isArray(parsed) || parsed.length !== 1 || !parsed[0]) return null;
-    const row = parsed[0] as DockerInspectRow;
-    const labels = row.Config?.Labels;
-    if (
-      typeof row.Id !== "string" ||
-      !/^[a-f0-9]{12,64}$/u.test(row.Id) ||
-      row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
-      row.State?.Running !== true ||
-      !labels ||
-      typeof labels !== "object" ||
-      Array.isArray(labels)
-    )
-      return null;
-    const labelMap = labels as Record<string, unknown>;
-    if (
-      labelMap[HOST_LOCAL_VLLM_MANAGED_LABEL] !== "true" ||
-      labelMap[HOST_LOCAL_VLLM_AUTH_LABEL] !== undefined ||
-      labelMap[DUAL_STATION_VLLM_ROLE_LABEL] !== undefined
-    )
-      return null;
-    const ports = row.NetworkSettings?.Ports;
-    if (!ports || typeof ports !== "object" || Array.isArray(ports)) return null;
-    const bindings = (ports as Record<string, unknown>)[
-      `${String(HOST_LOCAL_VLLM_CONTAINER_PORT)}/tcp`
-    ];
-    if (!Array.isArray(bindings) || bindings.length !== 2) return null;
-    const bridge = resolveManagedVllmBridgeHost(capture, dockerEnv);
-    const expectedHosts = new Set(["127.0.0.1", bridge]);
-    for (const binding of bindings) {
-      if (
-        !binding ||
-        typeof binding !== "object" ||
-        binding.HostPort !== String(servingPort) ||
-        !expectedHosts.delete(binding.HostIp)
-      )
-        return null;
-    }
-    return expectedHosts.size === 0 ? bridge : null;
+    parsed = JSON.parse(inspectHostLocalContainer(capture, dockerEnv));
   } catch {
     return null;
   }
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !parsed[0]) return null;
+  const row = parsed[0] as DockerInspectRow;
+  const labels = row.Config?.Labels;
+  if (
+    typeof row.Id !== "string" ||
+    !/^[a-f0-9]{12,64}$/u.test(row.Id) ||
+    row.Name !== `/${HOST_LOCAL_VLLM_CONTAINER_NAME}` ||
+    row.State?.Running !== true ||
+    !labels ||
+    typeof labels !== "object" ||
+    Array.isArray(labels)
+  )
+    return null;
+  const labelMap = labels as Record<string, unknown>;
+  if (
+    labelMap[HOST_LOCAL_VLLM_MANAGED_LABEL] !== "true" ||
+    labelMap[HOST_LOCAL_VLLM_AUTH_LABEL] !== undefined ||
+    labelMap[DUAL_STATION_VLLM_ROLE_LABEL] !== undefined
+  )
+    return null;
+  const ports = row.NetworkSettings?.Ports;
+  const bindings =
+    ports && typeof ports === "object" && !Array.isArray(ports)
+      ? (ports as Record<string, unknown>)[`${String(HOST_LOCAL_VLLM_CONTAINER_PORT)}/tcp`]
+      : null;
+  const bridge = resolveManagedVllmBridgeHost(capture, dockerEnv);
+  const expectedHosts = new Set(["127.0.0.1", bridge]);
+  if (
+    !Array.isArray(bindings) ||
+    bindings.length !== 2 ||
+    !bindings.every(
+      (binding) =>
+        binding &&
+        typeof binding === "object" &&
+        binding.HostPort === String(servingPort) &&
+        expectedHosts.delete(binding.HostIp),
+    )
+  ) {
+    throw new UnsafeLegacyVllmBindingsError();
+  }
+  return bridge;
 }
 
 /** Recover only the exact authenticated host-local container with bounded host bindings. */

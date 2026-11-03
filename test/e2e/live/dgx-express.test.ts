@@ -10,6 +10,7 @@ import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/se
 import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
+import { buildLocalManagedVllmDockerEnv } from "../../../src/lib/inference/vllm-docker-env.ts";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
@@ -224,7 +225,6 @@ test(
         "qualify the physical DGX Spark host",
         "select Spark Express option 2 and onboard through the local-model profile",
         "verify catalog-owned vLLM runtime configuration",
-        "prove managed vLLM host listener isolation",
         "prove sandbox inference and unrelated egress denial",
       ],
     },
@@ -384,46 +384,6 @@ test(
       ]),
     );
 
-    progress.phase("prove managed vLLM host listener isolation");
-    const probes = vllmPublicationProbeUrls(resolveManagedVllmBridgeHost());
-    await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
-    const probeArgs = [
-      "-q",
-      "--noproxy",
-      "*",
-      "--globoff",
-      "--silent",
-      "--show-error",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      "--write-out",
-      "%{exitcode} %{http_code}\n",
-    ];
-    const allowed = await host.command(
-      "curl",
-      [...probeArgs, ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url])],
-      {
-        artifactName: "spark-express-vllm-publication-allowed",
-        env: e2eEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(allowed.exitCode, resultText(allowed)).toBe(0);
-    expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
-    const refused = await host.command(
-      "curl",
-      [...probeArgs, ...probes.denied.flatMap((url) => ["--output", "/dev/null", url])],
-      {
-        artifactName: "spark-express-vllm-publication-denied",
-        env: e2eEnv(),
-        timeoutMs: 60_000,
-      },
-    );
-    expect(refused.exitCode, resultText(refused)).toBe(7);
-    expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
-
     progress.phase("prove sandbox inference and unrelated egress denial");
     await expectOpenAiChatThroughSandbox(
       sandbox,
@@ -474,6 +434,48 @@ test(
         install: () => progress.phase("install Station Express from the candidate checkout"),
         assert: () => progress.phase("assert managed Super VL and routed inference"),
         cleanup: () => progress.phase("clean up the job runtime"),
+      },
+      verifyPublication: async (env) => {
+        const probes = vllmPublicationProbeUrls(
+          resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, env)),
+        );
+        await artifacts.writeJson("station-express-vllm-publication-probes", probes);
+        const probeArgs = [
+          "-q",
+          "--noproxy",
+          "*",
+          "--globoff",
+          "--silent",
+          "--show-error",
+          "--connect-timeout",
+          "3",
+          "--max-time",
+          "5",
+          "--write-out",
+          "%{exitcode} %{http_code}\n",
+        ];
+        const allowed = await host.command(
+          "curl",
+          [...probeArgs, ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url])],
+          {
+            artifactName: "station-express-vllm-publication-allowed",
+            env,
+            timeoutMs: 30_000,
+          },
+        );
+        expect(allowed.exitCode, resultText(allowed)).toBe(0);
+        expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
+        const refused = await host.command(
+          "curl",
+          [...probeArgs, ...probes.denied.flatMap((url) => ["--output", "/dev/null", url])],
+          {
+            artifactName: "station-express-vllm-publication-denied",
+            env,
+            timeoutMs: 60_000,
+          },
+        );
+        expect(refused.exitCode, resultText(refused)).toBe(7);
+        expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
       },
       writeEvidence: (name, value) => artifacts.writeJson(name, value),
     });

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
 import { resolveVllmModelAlias } from "../inference/vllm-models";
+import { getLegacyHostLocalManagedVllmBridgeHost } from "../inference/serving/vllm-host-local-lifecycle";
 import { bindStationExpressProviderSelection } from "./station-express-resume";
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import {
@@ -308,6 +309,49 @@ describe("setupNim vLLM route containment", () => {
       "  To install 'required/model', stop the managed vLLM deployment, then rerun the original install/onboard command.",
     );
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("localhost");
+  });
+
+  it("shows the replacement step before probing an owned public bearerless container (#14083)", async () => {
+    let recoveryError: unknown;
+    try {
+      getLegacyHostLocalManagedVllmBridgeHost(8000, (args) =>
+        args[0] === "container"
+          ? JSON.stringify([
+              {
+                Id: "a".repeat(64),
+                Name: "/nemoclaw-vllm",
+                State: { Running: true },
+                Config: { Labels: { "com.nvidia.nemoclaw.managed-vllm": "true" } },
+                NetworkSettings: {
+                  Ports: {
+                    "8000/tcp": [
+                      { HostIp: "0.0.0.0", HostPort: "8000" },
+                      { HostIp: "::", HostPort: "8000" },
+                    ],
+                  },
+                },
+              },
+            ])
+          : JSON.stringify([{ Gateway: "172.18.0.1" }]),
+      );
+    } catch (error) {
+      recoveryError = error;
+    }
+    const runCapture = vi.fn();
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture,
+        getManagedVllmProviderBinding: () => {
+          throw recoveryError;
+        },
+      }),
+    );
+    await expect(handler(state(null))).rejects.toThrow("exit 1");
+    expect(runCapture).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Stop the owned"));
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard"),
+    );
   });
 
   it("fails closed before probing a managed dual endpoint whose key is missing", async () => {

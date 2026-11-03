@@ -229,6 +229,9 @@ The single-host path pulls the vLLM image, downloads model weights into `~/.cach
 For every single-host profile, Docker publishes that port only on `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge.
 Bearerless profiles do not require NemoClaw's managed bearer key.
 Existing containers keep their published bindings until they are recreated.
+Managed route recovery rejects owned bearerless containers whose bindings do not match the required pair.
+Stop the owned `nemoclaw-vllm` container, then re-run `NEMOCLAW_PROVIDER=install-vllm nemoclaw onboard` to recreate it with private bindings.
+Keep the original model and port settings.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
 NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the container ID and API-key fingerprint.

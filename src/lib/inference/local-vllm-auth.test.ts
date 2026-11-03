@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DUAL_STATION_VLLM_RUNTIME } from "./vllm-station-cluster";
+import { UnsafeLegacyVllmBindingsError } from "./serving/vllm-host-local-lifecycle";
 
 interface ManagedBaseUrlOverrides {
   loadApiKey?: () => string | null;
@@ -48,6 +49,8 @@ vi.mock("./vllm-api-key", async (importOriginal) => ({
 import {
   CONTAINER_REACHABILITY_IMAGE,
   getLocalProviderBaseUrl,
+  getLocalProviderAvailabilityEndpoint,
+  getLocalProviderValidationBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getLocalProviderHealthEndpoint,
@@ -135,6 +138,23 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("managed vLLM authentication", () => {
+  it("refuses all default routes to an owned legacy container with unsafe bindings (#14083)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.bridgeHost.mockImplementation(() => {
+      throw new UnsafeLegacyVllmBindingsError();
+    });
+    const capture = vi.fn(() => JSON.stringify({ data: [{ id: "test/model" }] }));
+    expect(() => getManagedVllmProviderBinding()).toThrow("NEMOCLAW_PROVIDER=install-vllm");
+    expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderHealthEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
+    expect(probeLocalProviderHealth("vllm-local")?.detail).toContain("Stop the owned");
+    expect(validateLocalProvider("vllm-local", capture).ok).toBe(false);
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("probes bearerless managed vLLM on the OpenShell bridge instead of Docker's default gateway (#14083)", () => {
     lifecycle.baseUrl.mockReturnValue(null);
     hostLocalRecovery.bridgeHost.mockReturnValue("172.18.0.1");
