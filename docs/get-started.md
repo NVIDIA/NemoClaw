@@ -5,7 +5,8 @@
 
 In this tutorial, you configure one OpenClaw sandbox with an existing OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
-The commands use the v1 source-built tools and the maintained `examples/openclaw.yaml` configuration.
+The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `86b8d94273`](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/examples/openclaw.yaml).
+The example at this revision keys providers and sandboxes by name; examples in other checkouts can use a different YAML shape.
 A successful apply starts a runtime; only an invocation checks whether the agent replies.
 
 ## Prepare the Tools and Services
@@ -14,9 +15,21 @@ Complete the [first-deployment prerequisites](prerequisites.md#before-the-first-
 You need a gateway you can operate, an endpoint that serves a known model, the matching OpenShell CLI, Docker Buildx, and `jq` for reading the runtime ID.
 The image commands below use a native Linux ARM64 build host and a Docker engine that retains image digests.
 The endpoint must be reachable from OpenShell, not only from your client host.
-Run commands from the repository root on the client host unless noted otherwise.
 
-[Build a native bundle](build.md#build-a-native-bundle) from this checkout and add its CLI to `PATH`:
+Use a separate worktree at the inspected v1 implementation revision so the example, bundle, and image come from the same source.
+From the root of your NemoClaw checkout, run:
+
+```sh
+git fetch origin v1
+git worktree add --detach ../nemoclaw-v1 86b8d94273a76a696e06b300dc29f7035b163667
+cd ../nemoclaw-v1
+```
+
+Choose another unused directory if `../nemoclaw-v1` already exists; do not replace an existing worktree.
+Run the remaining commands from this v1 worktree root on the client host unless noted otherwise.
+Do not substitute an example or a bundle from the documentation checkout: its configuration shape can differ.
+
+[Build a native bundle](build.md#build-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
 
 ```sh
 export PATH="$PWD/dist/linux_arm64/bin:$PATH"
@@ -27,7 +40,7 @@ Check that help lists `plan`, `apply`, and `destroy`.
 Keep this bundle unchanged for this deployment; if you rebuild it, keep a separate copy of the original bundle for recovery.
 There are no v1 release downloads or installer in this source-build workflow.
 
-[Build the OpenClaw image](build.md#build-agent-images) on the native Linux ARM64 build host:
+[Build the OpenClaw image](build.md#build-agent-images) from the same v1 revision on the native Linux ARM64 build host:
 
 ```sh
 cargo images build --platform linux/arm64 openclaw
@@ -40,7 +53,7 @@ An image build does not start an agent or prove that a model will reply.
 
 ## Configure One Deployment
 
-Copy the maintained example into a new deployment directory and create a fresh UUID:
+Copy `examples/openclaw.yaml` from the v1 worktree into a new deployment directory and create a fresh UUID:
 
 ```sh
 mkdir -p .local/first-deployment
@@ -49,7 +62,7 @@ uuidgen
 ```
 
 Edit `.local/first-deployment/deployment.yaml` using the UUID from `uuidgen`.
-Keep the example's named provider `local`, named sandbox `assistant`, and agent name `main` for this exercise.
+Keep the example's provider key `local`, sandbox key `assistant`, and agent name `main` for this exercise.
 Replace the following illustrative values before planning:
 
 | YAML path | Your value |
