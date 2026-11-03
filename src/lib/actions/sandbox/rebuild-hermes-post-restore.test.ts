@@ -3,6 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as projection from "../../onboard/hermes/initial-inference-route";
+import { patchHermesInferenceConfig } from "../inference-set";
+import { applyHermesManagedRoute } from "../../hermes-managed-route";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../inference-credential";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../inference/native-nvidia/contract";
+import type { ConfigObject } from "../../security/credential-filter";
 import * as registry from "../../state/registry";
 import * as capture from "../../adapters/openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
@@ -312,6 +317,125 @@ describe("Hermes rebuild post-restore verification", () => {
     expect(harness.logSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("rebuilt successfully"),
     );
+  });
+});
+
+describe("restored Hermes NVIDIA credential handoff", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function fixture(discord: boolean) {
+    const runtime = { gatewayName: "selected-gateway", workspace: "default" };
+    const entry: registry.SandboxEntry = {
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: runtime.gatewayName,
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      provider: "nvidia-prod",
+      lifecycleGeneration: "replacement-generation",
+      lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("replacement-id")!,
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "nvidia-provider-id",
+      },
+    };
+    const config: ConfigObject = {
+      display: { show_reasoning: false },
+      mcp_servers: { example: { command: "example-mcp" } },
+      ...(discord ? { discord: { require_mention: true, allowed_users: ["123"] } } : {}),
+    };
+    applyHermesManagedRoute(config, {
+      upstreamProvider: entry.provider!,
+      model: entry.model!,
+      baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      inferenceApi: "openai-completions",
+      contextWindow: 131072,
+    });
+    Object.assign(config.model, { temperature: 0.25 });
+    const target = {
+      agentName: "hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configDir: "/sandbox/.hermes",
+      configFile: "config.yaml",
+      format: "yaml" as const,
+      sensitiveFiles: [],
+    };
+    const handle = "openshell:resolve:env:v8_NVIDIA_INFERENCE_API_KEY";
+    const io = {
+      withSandboxMutationLock: async <T>(_name: string, action: () => Promise<T>) => action(),
+      readNvidiaCredentialHandle: vi.fn(async () => handle),
+      readCredentialHandle: vi.fn(async () => {
+        throw new Error("NVIDIA restore must not read local-provider credentials");
+      }),
+      resolveAgentConfig: vi.fn(() => target),
+      readSandboxConfig: vi.fn(() => config),
+      writeSandboxConfig: vi.fn(),
+      restartGateway: vi.fn(async () => ({ ok: true })),
+    } satisfies Omit<
+      projection.InitialHermesInferenceRouteDeps,
+      "getSandbox" | "patchHermesInferenceConfig"
+    >;
+    const createRoute = projection.createInitialHermesInferenceRoute;
+    // Inject I/O through the existing seam; execute the real factory with the caller's options.
+    vi.spyOn(projection, "createInitialHermesInferenceRoute").mockImplementation(
+      (overrides, options) =>
+        createRoute({ ...io, patchHermesInferenceConfig, ...overrides }, options),
+    );
+    vi.spyOn(capture, "captureSanitizedResolvedOpenshell").mockReturnValue({
+      status: 0,
+      output: "Id: replacement-id",
+      stdout: "Id: replacement-id",
+      stderr: "",
+    });
+    const run = () => refreshRestoredHermesInferenceRoute("alpha", runtime, () => entry, {});
+    return { config, entry, handle, io, run, runtime, target };
+  }
+
+  it.each([false, true])(
+    "writes fresh NVIDIA references with Discord enrolled: %s (#14020)",
+    async (discord) => {
+      const f = fixture(discord);
+      expect(f.config.model.api_key).toBe(NVIDIA_INFERENCE_PLACEHOLDER);
+      expect(f.config.providers["nvidia-prod"]!.api_key).toBe(NVIDIA_INFERENCE_PLACEHOLDER);
+      expect(f.config.custom_providers[0]!.api_key).toBe(NVIDIA_INFERENCE_PLACEHOLDER);
+      const expected = structuredClone(f.config);
+
+      await f.run();
+
+      expected.model.api_key = f.handle;
+      expected.providers["nvidia-prod"]!.api_key = f.handle;
+      expected.custom_providers[0]!.api_key = f.handle;
+      expect(f.config).toEqual(expected);
+      expect(f.io.readNvidiaCredentialHandle).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        f.runtime.gatewayName,
+        f.entry.nativeNvidiaProviderAttachment,
+      );
+      expect(f.io.readCredentialHandle).not.toHaveBeenCalled();
+      expect(f.io.writeSandboxConfig).toHaveBeenCalledExactlyOnceWith("alpha", f.target, expected, {
+        restoreNativeLocalCredential: true,
+      });
+      expect(f.io.writeSandboxConfig.mock.calls[0]![2]).toBe(f.config);
+      expect(f.io.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects an invalid restored NVIDIA route before writing (#14020)", async () => {
+    const f = fixture(true);
+    f.config.model.base_url = "https://other.example/v1";
+    const before = structuredClone(f.config);
+
+    await expect(f.run()).rejects.toThrow();
+
+    expect(f.io.readSandboxConfig).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      f.target,
+      f.runtime.gatewayName,
+    );
+    expect(f.config).toEqual(before);
+    expect(f.io.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.io.restartGateway).not.toHaveBeenCalled();
   });
 });
 

@@ -77,6 +77,7 @@ describe("terminal-agent connect inference route", () => {
         agentName: "LangChain Deep Agents Code",
         commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
+        gatewayName: "nemoclaw-8091",
         sandboxName: "deep-code",
       }),
     ).rejects.toThrow("process.exit(1)");
@@ -99,6 +100,7 @@ describe("terminal-agent connect inference route", () => {
         agentName: "Other Terminal Agent",
         commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
+        gatewayName: "nemoclaw-8091",
         sandboxName: "other-box",
       }),
     ).resolves.toBeUndefined();
@@ -124,6 +126,7 @@ describe("terminal-agent connect inference route", () => {
         agentName: "LangChain Deep Agents Code",
         commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
+        gatewayName: "nemoclaw-8091",
         sandboxName: "deep-code",
       }),
     ).rejects.toThrow("process.exit(1)");
@@ -134,8 +137,15 @@ describe("terminal-agent connect inference route", () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
-  it("accepts Pi when its runtime satisfies the declared version without an inference route", async () => {
-    const capture = vi.fn(() => ({ status: 0, output: "pi 0.84.1" }));
+  it("runs Pi smoke and version checks on the owning gateway without an inference route", async () => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        output: "NEMOCLAW_AGENT_SMOKE_BEGIN\npi 0.84.1\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
+      })
+      .mockReturnValueOnce({ status: 0, output: "pi 0.84.1" });
+    const commandExecutor = commandExecutorThrough(capture);
 
     await expect(
       runTerminalAgentConnectProbe({
@@ -143,18 +153,32 @@ describe("terminal-agent connect inference route", () => {
           ...otherTerminalAgent,
           name: "pi",
           displayName: "Pi",
+          runtime: {
+            kind: "terminal",
+            interactive_command: "pi",
+            smoke_commands: ["pi --version"],
+          },
           versionCommand: "pi --version",
           expectedVersion: "0.84.1",
           versionScheme: "semver",
         },
         agentName: "Pi",
-        commandExecutor: commandExecutorThrough(capture),
+        commandExecutor,
         ensureInferenceRoute: () => ({ routeHealthy: null }),
+        gatewayName: "nemoclaw-8091",
         sandboxName: "pi-box",
       }),
     ).resolves.toBeUndefined();
 
-    expect(capture).toHaveBeenCalledOnce();
+    expect(commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+    expect(commandExecutor.runBuffered).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } }),
+    );
+    expect(commandExecutor.runBuffered).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw-8091" } }),
+    );
     expect(exitSpy).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("terminal smoke checks passed"));
   });
@@ -172,6 +196,7 @@ describe("terminal-agent connect inference route", () => {
         agentName: "LangChain Deep Agents Code",
         commandExecutor: commandExecutorThrough(capture),
         ensureInferenceRoute,
+        gatewayName: "nemoclaw-8091",
         sandboxName: "deep-code",
       }),
     ).rejects.toThrow("process.exit(1)");

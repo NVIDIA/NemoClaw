@@ -385,6 +385,7 @@ async function rebuildSandboxUnlocked(
           return null;
         }
         return openRebuildRecreateJournal({
+          retainedBackupPath: recoveryManifest?.backupPath,
           target: {
             sandboxName,
             gatewayName: recreateOptions.targetGatewayName,
