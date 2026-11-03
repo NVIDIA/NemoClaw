@@ -21,7 +21,6 @@ UPSTREAM_MANIFEST = "75cda1cfb2545eab51e89edcafebeb33b86c003cc0c52fbd9763abeeddc
 MODULES = {
     "sqlite-store.worker.mjs",
     "worker-chunk-CMCl78Z0.mjs",
-    "worker-chunk-A05CVh6v.mjs",
     "worker-chunk-BS-ufNRt.mjs",
     "worker-chunk-ue1VvP9S.mjs",
     "worker-chunk-DjEXxQHh.mjs",

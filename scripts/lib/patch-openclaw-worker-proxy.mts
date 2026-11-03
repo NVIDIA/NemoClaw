@@ -25,10 +25,6 @@ const PATCHES = [
     `async function assertExplicitProxyAllowed(Ot,Zt,_n,Dn,kn){${OPENCLAW_EXPLICIT_PROXY_GUARD}/* nemoclaw: worker explicit proxy */`,
   ],
   [
-    "return fetchWithSsrFGuard(_n?withTrustedEnvProxyGuardedFetchMode(kn):withStrictGuardedFetchMode(kn))",
-    'const hostGatewayPolicy=process.env.OPENSHELL_SANDBOX === "1"&&_n&&new URL(kn.url).hostname === "host.openshell.internal"?{...kn.policy,allowedHostnames:[...kn.policy?.allowedHostnames??[],"host.openshell.internal"]}:kn.policy;return fetchWithSsrFGuard(_n?withTrustedEnvProxyGuardedFetchMode({...kn,policy:hostGatewayPolicy}):withStrictGuardedFetchMode(kn))/* nemoclaw: worker host gateway */',
-  ],
-  [
     "let Mi=Ln===GUARDED_FETCH_MODE.STRICT&&isManagedProxyActive(),",
     'let Mi=Ln===GUARDED_FETCH_MODE.STRICT&&(isManagedProxyActive()||(process.env.OPENSHELL_SANDBOX === "1"&&!wi)),/* nemoclaw: worker strict proxy */',
   ],
@@ -84,15 +80,11 @@ const ARCHIVE_PATCHES: Record<string, readonly (readonly [string, string])[]> = 
       `async function assertExplicitProxyAllowed(Ot,Kt,Zt,_n,Dn){${OPENCLAW_EXPLICIT_PROXY_GUARD}/* nemoclaw: worker explicit proxy */`,
     ],
     [
-      "return fetchWithSsrFGuard(Zt?withTrustedEnvProxyGuardedFetchMode(Dn):withStrictGuardedFetchMode(Dn))",
-      'const hostGatewayPolicy=process.env.OPENSHELL_SANDBOX === "1"&&Zt&&new URL(Dn.url).hostname === "host.openshell.internal"?{...Dn.policy,allowedHostnames:[...Dn.policy?.allowedHostnames??[],"host.openshell.internal"]}:Dn.policy;return fetchWithSsrFGuard(Zt?withTrustedEnvProxyGuardedFetchMode({...Dn,policy:hostGatewayPolicy}):withStrictGuardedFetchMode(Dn))/* nemoclaw: worker host gateway */',
-    ],
-    [
       "let ea=Jn===GUARDED_FETCH_MODE.STRICT&&isManagedProxyActive(),",
       'let ea=Jn===GUARDED_FETCH_MODE.STRICT&&(isManagedProxyActive()||(process.env.OPENSHELL_SANDBOX === "1"&&!Di)),/* nemoclaw: worker strict proxy */',
     ],
+    PATCHES[3],
     PATCHES[4],
-    PATCHES[5],
     WORKER_ARCHIVE_DELETE_PATCHES["sqlite-store.worker.mjs"],
     ...ARCHIVE_TOOL_CATALOG_PATCHES["sqlite-store.worker.mjs"],
   ],
@@ -111,14 +103,8 @@ const ARCHIVE_PATCHES: Record<string, readonly (readonly [string, string])[]> = 
       'let b=f===Y.STRICT&&(isManagedProxyActive()||(process.env.OPENSHELL_SANDBOX === "1"&&!M)),/* nemoclaw: worker strict proxy */',
     ],
   ],
-  "worker-chunk-A05CVh6v.mjs": [
-    [
-      "return l(n?c(i):u(i))",
-      'const hostGatewayPolicy=process.env.OPENSHELL_SANDBOX === "1"&&n&&new URL(i.url).hostname === "host.openshell.internal"?{...i.policy,allowedHostnames:[...i.policy?.allowedHostnames??[],"host.openshell.internal"]}:i.policy;return l(n?c({...i,policy:hostGatewayPolicy}):u(i))/* nemoclaw: worker host gateway */',
-    ],
-  ],
   "worker-chunk-DjEXxQHh.mjs": [WORKER_ARCHIVE_DELETE_PATCHES["worker-chunk-DjEXxQHh.mjs"]],
-  "worker-chunk-BS-ufNRt.mjs": [PATCHES[4]],
+  "worker-chunk-BS-ufNRt.mjs": [PATCHES[3]],
   "worker-chunk-ue1VvP9S.mjs": [
     [
       "r=2147483647,i=15e3,a=3e4",

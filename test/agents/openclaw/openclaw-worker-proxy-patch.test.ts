@@ -83,6 +83,23 @@ function runtime(
   ) as Runtime;
 }
 
+it.each([true, "archive"] as const)(
+  "preserves the caller's host policy for a sandbox proxy request (%s)",
+  (worker) => {
+    const policy = {
+      hostnameAllowlist: ["host.openshell.internal"],
+      allowedHostnames: ["existing.example"],
+    };
+    const result = runtime(true, undefined, {}, worker).webFetch(
+      { url: "http://host.openshell.internal:8080/", policy },
+      true,
+    );
+    expect(result.mode).toBe("trusted_env_proxy");
+    expect(result.policy).toBe(policy);
+    expect(result.policy.allowedHostnames).toEqual(["existing.example"]);
+  },
+);
+
 describe("OpenClaw 2026.9.5 worker proxy compatibility", () => {
   it("binds the shared guard to exactly one native validator entrypoint", () => {
     const patched = patchOpenClawExplicitProxyText(SOURCE);
@@ -194,18 +211,14 @@ describe("OpenClaw 2026.9.5 worker proxy compatibility", () => {
     [true, true, "host.openshell.internal"],
     [true, true, "10.0.0.1"],
     [true, true, "public.example"],
-  ])("limits sandbox=%s proxy=%s web_fetch exceptions for %s", (sandbox, proxy, hostname) => {
+  ])("preserves sandbox=%s proxy=%s web_fetch policy for %s", (sandbox, proxy, hostname) => {
     const policy = {
       allowedHostnames: ["existing.example"],
       hostnameAllowlist: ["host.openshell.internal"],
     };
     const result = runtime(sandbox).webFetch({ url: `http://${hostname}/`, policy }, proxy);
     expect(result.mode).toBe(proxy ? "trusted_env_proxy" : "strict");
-    expect([...result.policy.allowedHostnames!]).toEqual(
-      sandbox && proxy && hostname === "host.openshell.internal"
-        ? ["existing.example", "host.openshell.internal"]
-        : ["existing.example"],
-    );
+    expect([...result.policy.allowedHostnames!]).toEqual(["existing.example"]);
     expect(result.policy.hostnameAllowlist).toEqual(policy.hostnameAllowlist);
     expect(policy.allowedHostnames).toEqual(["existing.example"]);
   });
@@ -344,16 +357,14 @@ describe("OpenClaw 2026.10.5 embedded worker proxy", () => {
       }),
     ).rejects.toThrow("root-owned OpenShell proxy endpoint");
   });
-  it.each([true, false])("limits the host exception to a trusted proxy request (%s)", (proxy) => {
+  it.each([true, false])("keeps the host policy when selecting a trusted proxy (%s)", (proxy) => {
     const worker = runtime(true, undefined, {}, "archive");
     const policy = {
       hostnameAllowlist: ["host.openshell.internal"],
       allowedHostnames: ["existing"],
     };
     const result = worker.webFetch({ url: "http://host.openshell.internal:8000/", policy }, proxy);
-    expect(result.policy.allowedHostnames).toEqual(
-      proxy ? ["existing", "host.openshell.internal"] : ["existing"],
-    );
+    expect(result.policy.allowedHostnames).toEqual(["existing"]);
     expect(
       worker.webFetch({ url: "http://127.0.0.1/", policy }, true).policy.allowedHostnames,
     ).toEqual(["existing"]);

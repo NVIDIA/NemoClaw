@@ -88,7 +88,8 @@ globalThis.fetch = networkFetch;
 ${splitGraph ? `await import(pathToFileURL(${JSON.stringify(path.join(directory, "worker.mjs"))}));` : ""}
 const { createWebFetchTool, assertExplicitProxyAllowed } = await import(pathToFileURL(${JSON.stringify(proofModule)}));
 const cases = [
-  { id: "sandbox-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowed: true },
+  { id: "sandbox-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowed: false },
+  { id: "sandbox-explicit-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowHost: true, allowed: true },
   { id: "sandbox-public", sandbox: true, proxy: true, host: "public.example", allowed: true },
   { id: "sandbox-private", sandbox: true, proxy: true, host: "127.0.0.1", allowed: false },
   { id: "sandbox-strict-host", sandbox: true, proxy: false, host: "host.openshell.internal", allowed: false },
@@ -100,7 +101,9 @@ for (const scenario of cases) {
   else delete process.env.OPENSHELL_SANDBOX;
   requests = [];
   globalThis.__nemoclawWorkerGuardObservations = [];
-  const policy = { allowedHostnames: ["keep.example"], allowRfc2544BenchmarkRange: true };
+  const allowedHostnames = scenario.allowHost
+    ? ["keep.example", "host.openshell.internal"] : ["keep.example"];
+  const policy = { allowedHostnames, allowRfc2544BenchmarkRange: true };
   const url = "http://" + scenario.host + ":1234/" + scenario.id;
   const tool = createWebFetchTool({
     config: { tools: { web: { fetch: {
@@ -125,10 +128,9 @@ for (const scenario of cases) {
     // The split module imports the patched strict-mode export, which selects
     // trusted proxy transport while retaining the caller's hostname policy.
     url, mode: ${splitGraph ? '"trusted_env_proxy"' : 'scenario.proxy ? "trusted_env_proxy" : "strict"'},
-    policy: { ...policy, allowedHostnames: scenario.id === "sandbox-host"
-      ? ["keep.example", "host.openshell.internal"] : ["keep.example"] },
+    policy,
   }], scenario.id);
-  assert.deepEqual(policy, { allowedHostnames: ["keep.example"], allowRfc2544BenchmarkRange: true }, scenario.id);
+  assert.deepEqual(policy, { allowedHostnames, allowRfc2544BenchmarkRange: true }, scenario.id);
 }
 // Supply root-file observations at the filesystem boundary. The real bundled
 // guard, URL parser, ownership checks, and denial path remain in the call.
@@ -174,7 +176,7 @@ try {
 } finally {
   process.getBuiltinModule = getBuiltinModule;
 }
-console.log("real worker web_fetch proxy proof: 6 scenarios passed; 9 explicit-proxy checks passed");
+console.log("real worker web_fetch proxy proof: 7 scenarios passed; 9 explicit-proxy checks passed");
 ${options.archivedWorkerDirectory ? "process.exit(0);" : ""}
 `,
     );
@@ -209,7 +211,7 @@ ${options.archivedWorkerDirectory ? "process.exit(0);" : ""}
         `Real worker proxy proof failed: ${result.stderr || result.stdout || result.error}`,
       );
     }
-    if (!result.stdout.includes("real worker web_fetch proxy proof: 6 scenarios passed")) {
+    if (!result.stdout.includes("real worker web_fetch proxy proof: 7 scenarios passed")) {
       throw new Error("Real worker proxy proof did not report completion");
     }
   } finally {
