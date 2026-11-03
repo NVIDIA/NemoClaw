@@ -16,9 +16,10 @@ run "cluster" {
   }
 
   variables {
-    kubeconfig       = var.kubeconfig
-    reply            = "nemoclaw-stub-reply"
-    pull_credentials = var.pull_credentials
+    kubeconfig = var.kubeconfig
+    reply      = "nemoclaw-stub-reply"
+    # The module reads TF_VAR_pull_credentials itself, as an object; the
+    # test file's var.pull_credentials would be the raw string.
   }
 }
 
