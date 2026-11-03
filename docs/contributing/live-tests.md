@@ -278,18 +278,17 @@ To run one of them by hand, supply its inputs as its section describes.
 
 ## Docker Provider Lifecycle
 
-On Linux with local Docker, provide a verified bundle and two different, already loaded digest-pinned images containing the Ollama proxy executable.
+On Linux with local Docker, provide a verified bundle and an already loaded digest-pinned image containing the Ollama proxy executable.
 Run from the repository root:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE=repository@sha256:YOUR_REPLACEMENT_DIGEST \
   cargo test -p nemoclaw-e2e --test e2e docker_provider_proxy:: -- --ignored
 ```
 
 This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
-It checks SDK apply, export/reapply, failed readiness, image changes and container replacement with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes.
+It checks SDK apply, export/reapply, failed readiness, a removed container recreated with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes. The `docker-ollama-proxy` integration scenario owns a replaced proxy keeping its key volume and registration.
 OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
 
 
