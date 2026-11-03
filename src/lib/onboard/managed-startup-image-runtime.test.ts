@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1109,6 +1110,7 @@ describe("managed startup image runtime", () => {
       capable: { provider: "openai-api", model: "openai/capable-model" },
     });
     const original = managedStartupE2eProfile("hermes", false);
+    assert(original.agentConfig.agent === "hermes");
     const profile = {
       ...original,
       agentConfig: {
@@ -1213,6 +1215,7 @@ describe("managed startup image runtime", () => {
         capable: { provider: "openai-api", model: "openai/capable-model" },
       });
       const original = managedStartupE2eProfile("hermes", false);
+      assert(original.agentConfig.agent === "hermes");
       const profile = {
         ...original,
         agentConfig: {
@@ -1307,7 +1310,7 @@ describe("managed startup image runtime", () => {
           (failure: Error) => failure.message,
         ),
       ).resolves.toEqual(error === null ? null : expect.stringMatching(error));
-      const routingTargets = [
+      const routingTargets: readonly string[] = [
         HERMES_RELAY_PLUGINS_FILE,
         HERMES_RELAY_PLUGIN_STATE_FILE,
         HERMES_SWITCHYARD_DEPLOYMENT_FILE,
