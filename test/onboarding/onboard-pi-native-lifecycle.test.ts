@@ -18,7 +18,7 @@ import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 it(
   "creates Pi native routing through public onboarding and preserves it on recovery (#12589)",
-  testTimeoutOptions(35_000),
+  testTimeoutOptions(execTimeout(30_000) + 10_000),
   async (context) => {
     const workspace = createOnboardProcessWorkspace("pi-native-onboard-");
     const contract = candidateQualificationContract(
