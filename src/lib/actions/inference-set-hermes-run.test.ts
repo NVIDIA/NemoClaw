@@ -12,14 +12,86 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
 }));
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
+import {
+  createHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTE_ID,
+} from "../hermes-switchyard-routing";
 import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
+import {
+  encodeManagedStartupProfile,
+  type ManagedStartupHermesConfig,
+} from "../onboard/managed-startup/profile";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet Hermes routing", () => {
   beforeEach(() => {
     portableMocks.assertUnavailable.mockReset();
+  });
+
+  it("rejects an unmatched model before a provider request while Switchyard is active (#13862)", async () => {
+    const baseProfile = managedStartupE2eProfile("hermes");
+    expect(baseProfile.agentConfig.agent).toBe("hermes");
+    const agentConfig = baseProfile.agentConfig as ManagedStartupHermesConfig;
+    const encodedProfile = encodeManagedStartupProfile({
+      ...baseProfile,
+      agentConfig: {
+        ...agentConfig,
+        switchyardRouting: createHermesSwitchyardRoutingIntent({
+          efficient: { provider: "nvidia-prod", model: "nvidia/efficient-model" },
+          capable: { provider: "openai-api", model: "openai/capable-model" },
+        }),
+      },
+    });
+    const config: ConfigObject = { model: { default: HERMES_SWITCHYARD_ROUTE_ID } };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "nvidia-prod",
+        model: HERMES_SWITCHYARD_ROUTE_ID,
+        workload: {
+          schemaVersion: 1,
+          kind: "managed-image",
+          reference: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"1".repeat(64)}`,
+          release: "v0.1.0",
+          sourceRevision: "2".repeat(40),
+          sourceCohort: "ghrun-1-1",
+          capabilityContractVersion: 1,
+          startupProfileContractVersion: 1,
+          encodedProfile,
+          startupProfileSha256: "3".repeat(64),
+          credentialProxyReplayRequired: true,
+          shared: true,
+        },
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+    });
+    const getProvider = vi.spyOn(deps.providerAdapter, "getProvider");
+    const attachProvider = vi.spyOn(deps.providerAdapter, "attachProvider");
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "openai-api",
+          model: "unmatched-model",
+          sandboxName: "hermes",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("adaptive Switchyard routing is enabled");
+
+    expect(config).toEqual({ model: { default: HERMES_SWITCHYARD_ROUTE_ID } });
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(getProvider).not.toHaveBeenCalled();
+    expect(attachProvider).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("reads the attached native handle before publishing a Hermes switch", async () => {

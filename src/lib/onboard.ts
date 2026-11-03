@@ -3078,7 +3078,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   ...createArgs,
                   opts.allowRemovedImmutabilityStateRecord === true,
                   fromImage ?? null,
-                  opts.toolDisclosure ?? null,
+                  ...([opts.toolDisclosure ?? null, opts.switchyardRouting !== undefined] as const),
                 ),
               ),
             ),

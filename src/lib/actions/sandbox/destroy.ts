@@ -799,7 +799,14 @@ async function destroySandboxUnlocked(
     }
   }
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
-  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) {
+  if (
+    !(await confirmSandboxDestroy(
+      sandboxName,
+      normalized,
+      operationRuntimeSelection,
+      telemetryTarget.gatewayName,
+    ))
+  ) {
     await recordDestroyCompletion(sandboxName, "cancelled", undefined, telemetryTarget.gatewayName);
     telemetryTarget.completionRecorded = true;
     return;

@@ -45,6 +45,7 @@ export interface DriveInteractiveCommandOptions {
   readonly env: NodeJS.ProcessEnv;
   readonly progress: ChildProcessProgress;
   readonly rules: readonly InteractiveCommandRule[];
+  readonly signal?: AbortSignal;
   readonly timeoutMs: number;
 }
 
@@ -261,9 +262,11 @@ export function driveInteractiveCommand(
     let settled = false;
     let ptyChildPid: number | null = null;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    let terminationRequested = false;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = (): void => {
+      if (terminationRequested) return;
+      terminationRequested = true;
       // pty.fork() puts the onboard command in its own session. Kill that
       // exact process group, then let the driver reap it through its SIGTERM
       // handler. The delayed driver-group SIGKILL is only a hard fallback.
@@ -286,7 +289,12 @@ export function driveInteractiveCommand(
           child.kill("SIGKILL");
         }
       }, 1_000);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
     }, options.timeoutMs);
+    const onAbort = (): void => terminate();
 
     // Additional listeners alongside spawnObservedChild's own content-free
     // observer; this module needs the real transcript to match rule
@@ -312,6 +320,7 @@ export function driveInteractiveCommand(
       settled = true;
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       reject(error);
     });
     child.once("close", (code) => {
@@ -319,6 +328,7 @@ export function driveInteractiveCommand(
       settled = true;
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       const fired = stderrRest.match(/^FIRED\t(.*)$/);
       if (fired) firedTriggers.push(fired[1]);
       resolve({
@@ -329,5 +339,7 @@ export function driveInteractiveCommand(
         timedOut,
       });
     });
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
   });
 }

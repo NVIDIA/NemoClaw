@@ -176,4 +176,44 @@ describe("interactive PTY driver", () => {
       fs.rmSync(pidDir, { recursive: true, force: true });
     }
   });
+
+  it("terminates the driver and its forked PTY child when aborted", async () => {
+    const progress = observedProgress("onboard-interactive-pty abort cleanup");
+    const pidDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-abort-"));
+    const pidFile = path.join(pidDir, "child.pid");
+    const controller = new AbortController();
+    const pending = driveInteractiveCommand({
+      activityLabel: "command: onboard-interactive-pty-abort-cleanup",
+      cmd: [
+        "python3",
+        "-c",
+        "import os, signal, sys, time\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\nopen(sys.argv[1], 'w').write(str(os.getpid()))\ntime.sleep(30)",
+        pidFile,
+      ],
+      env: process.env,
+      progress,
+      rules: [],
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    });
+    try {
+      await vi.waitFor(() => expect(fs.existsSync(pidFile)).toBe(true), {
+        interval: 50,
+        timeout: 1_000,
+      });
+      const childPid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      controller.abort();
+      controller.abort();
+      const result = await pending;
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).not.toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(() => process.kill(childPid, 0)).toThrow();
+    } finally {
+      controller.abort();
+      await pending;
+      progress.stop();
+      fs.rmSync(pidDir, { recursive: true, force: true });
+    }
+  });
 });
