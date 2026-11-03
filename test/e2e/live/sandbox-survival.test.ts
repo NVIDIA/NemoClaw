@@ -8,7 +8,6 @@
  * arbitrary native home/workspace state.
  */
 
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,16 +32,13 @@ import {
   assertExitZero,
   outputContainsSandbox,
   resultText,
-  type SandboxClient,
   sandboxAccessEnv,
 } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
-  completedAgentRunId,
+  nativePluginAgentInvocationOutcome,
   nativePluginWriteScript,
-  nativeToolCallOutcome,
-  nativeToolName,
 } from "../fixtures/native-plugin-evidence.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
@@ -85,53 +81,6 @@ async function waitForNativeAgentReady(
       ),
     accept: (result) => result.exitCode === 0 && result.stdout.trim() === "ready",
   });
-}
-
-/** Exercise the plugin through normal agent admission and inspect host-owned execution records. */
-async function expectNativeSurvivalPluginInvocation(sandbox: SandboxClient): Promise<void> {
-  const toolName = nativeToolName("v1");
-  const turn = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "openclaw",
-      "agent",
-      "--agent",
-      "main",
-      "--json",
-      "--thinking",
-      "off",
-      "--session-id",
-      `e2e-plugin-${randomUUID()}`,
-      "-m",
-      `Run the local ${toolName} tool once with no arguments.`,
-    ],
-    {
-      artifactName: "post-openshell-start-native-plugin-invoke",
-      env: sandboxAccessEnv(),
-      timeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
-    },
-  );
-  const runId = completedAgentRunId(turn.stdout);
-  // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
-  const audit = await pollUntil({
-    artifactPrefix: "post-openshell-start-native-plugin-invoke-audit",
-    attempts: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT.attempts,
-    delayMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT.delayMs,
-    probe: async (_attempt, artifactName) => {
-      const page = await sandbox.exec(
-        SANDBOX_NAME,
-        ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
-        {
-          artifactName,
-          env: sandboxAccessEnv(),
-          timeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT.timeoutMs,
-        },
-      );
-      return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
-    },
-    accept: (outcome) => outcome !== "pending",
-  });
-  expect(audit.value, "the plugin tool must start and succeed in this agent run").toBe("succeeded");
 }
 
 test(
@@ -338,7 +287,17 @@ test(
       [apiKey],
       false,
     );
-    await expectNativeSurvivalPluginInvocation(sandbox);
+    const pluginOutcome = await nativePluginAgentInvocationOutcome(sandbox, {
+      sandboxName: SANDBOX_NAME,
+      version: "v1",
+      artifactName: "post-openshell-start-native-plugin-invoke",
+      env: sandboxAccessEnv(),
+      turnTimeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
+      audit: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT,
+    });
+    expect(pluginOutcome, "the plugin tool must start and succeed in this agent run").toBe(
+      "succeeded",
+    );
 
     progress.phase("destroy the sandbox");
     await sandbox.cleanupSandbox(SANDBOX_NAME, {
