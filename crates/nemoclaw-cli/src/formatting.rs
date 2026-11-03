@@ -365,9 +365,9 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
                 && change.actions.iter().any(|action| action == "delete")
             {
                 let warning = if planned {
-                    "Deletes sandbox files and conversation history."
+                    "Deletes sandbox files and conversation history, except on mounted volumes."
                 } else {
-                    "Sandbox files and conversation history deleted."
+                    "Sandbox files and conversation history deleted, except on mounted volumes."
                 };
                 output.push_str(&format!(
                     "    {}\n",
@@ -1001,6 +1001,27 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_deletion_says_mounted_volumes_survive() {
+        // Files on a volume mounted through driverConfig outlive the sandbox,
+        // so the deletion warning must not claim every file is gone.
+        for (args, outcome) in [
+            (&["nemoclaw", "plan", "deployment.yaml"][..], "planned"),
+            (&["nemoclaw", "apply", "deployment.yaml"][..], "succeeded"),
+            (&["nemoclaw", "destroy"][..], "destroyed"),
+        ] {
+            let text = render(
+                args,
+                json!({
+                    "outcome": outcome,
+                    "changes": [{"resource": "openshell_sandbox.assistant", "actions": ["delete", "create"]}]
+                }),
+            );
+            assert!(text.contains("conversation history"), "{text}");
+            assert!(text.contains("mounted volumes"), "{text}");
+        }
+    }
+
+    #[test]
     fn colored_results_keep_destructive_actions_explicit_and_json_unstyled() {
         let cli = Cli::try_parse_from(["nemoclaw", "destroy"]).unwrap();
         let mut context = RenderContext::new(&cli);
@@ -1018,7 +1039,9 @@ mod tests {
         .unwrap();
         assert!(colored.contains("\x1b[38;2;118;185;0mDestroy complete"));
         assert!(colored.contains("\x1b[33mdelete\x1b[0m  sandbox/assistant"));
-        assert!(colored.contains("\x1b[33mSandbox files and conversation history deleted.\x1b[0m"));
+        assert!(colored.contains(
+            "\x1b[33mSandbox files and conversation history deleted, except on mounted volumes.\x1b[0m"
+        ));
         let machine = super::render(
             CommandResult::Operation(serde_json::from_value(value).unwrap()),
             OutputFormat::Json,
