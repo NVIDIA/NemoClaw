@@ -9,7 +9,7 @@
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.0",
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "hono": "4.13.11",
     "npm": {
       ".": "12.2.1",
