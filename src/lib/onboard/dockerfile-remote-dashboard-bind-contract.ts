@@ -123,6 +123,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
+  // The same install with Teams dependency-only metadata pruning; the primary
+  // plugin tree is excluded and the generated dashboard config is untouched.
+  "b9d97e1cabe52b08a1cdff1851ae295419c4238112062e2303791ffa9bc39ba8",
   // Reviewed neutral-union validation for OpenClaw 2026.9.1's bundled a2a,
   // reef, and Telegram channel inventory.
   "6727034f71f9fadce7d076d0e9518c288f904b13b2be8037565b61a87b1dfbb0",

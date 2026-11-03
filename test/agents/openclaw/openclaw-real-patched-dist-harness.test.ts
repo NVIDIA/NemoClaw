@@ -1383,8 +1383,13 @@ try {
           );
           requireRuntimeIncludes(
             workerSource,
-            "/* nemoclaw: worker host gateway */",
-            "reviewed worker proxy patch",
+            "return fetchWithSsrFGuard(Zt?withTrustedEnvProxyGuardedFetchMode(Dn):withStrictGuardedFetchMode(Dn))",
+            "native worker fetch retains the caller's host policy",
+          );
+          requireRuntimeEqual(
+            String(workerSource.includes("const hostGatewayPolicy=")),
+            "false",
+            "worker fetch must not add implicit host admission",
           );
           requireRuntimeIncludes(
             workerSource,
