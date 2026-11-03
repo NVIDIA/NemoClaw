@@ -21,6 +21,7 @@ import {
   isOpenAiModelListResponse,
 } from "./serving/model-inventory";
 import { nimStatusByName, waitForNimHealth } from "./nim";
+import * as wait from "../core/wait";
 
 const MODELS_ENDPOINT = "http://127.0.0.1:8000/v1/models";
 
@@ -125,10 +126,56 @@ describe("model list health checks", () => {
     expect(inspectContainerState).toHaveBeenCalledTimes(1);
   });
 
-  it("reports NIM healthy when the port returns a model list", () => {
+  it("rejects NIM health when the recorded container cannot be inspected", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sleep = vi.spyOn(wait, "sleepSeconds").mockImplementation(() => {});
+    expect(
+      waitForNimHealth(9000, 60, {
+        container: "nemoclaw-nim-test",
+        runCaptureImpl: () => '{"data":[]}\n200',
+        inspectContainerState: () => "",
+      }),
+    ).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Cannot inspect NIM container nemoclaw-nim-test"),
+    );
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each(["created", "restarting"])(
+    "waits for a %s NIM container to run before reporting healthy",
+    (state) => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      let now = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const sleep = vi.spyOn(wait, "sleepSeconds").mockImplementation((seconds) => {
+        now += seconds * 1000;
+      });
+      const inspect = vi.fn().mockReturnValueOnce(state).mockReturnValue("running");
+      expect(
+        waitForNimHealth(9000, 60, {
+          container: "nemoclaw-nim-test",
+          runCaptureImpl: () => '{"data":[]}\n200',
+          inspectContainerState: inspect,
+          readContainerLogs: () => "",
+        }),
+      ).toBe(true);
+      expect(inspect).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledExactlyOnceWith(5);
+    },
+  );
+
+  it("reports NIM healthy when its container is running and the port returns a model list", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
-    expect(waitForNimHealth(9000, 60, { runCaptureImpl: () => '{"data":[]}\n200' })).toBe(true);
+    expect(
+      waitForNimHealth(9000, 60, {
+        container: "nemoclaw-nim-test",
+        inspectContainerState: () => "running",
+        runCaptureImpl: () => '{"data":[]}\n200',
+      }),
+    ).toBe(true);
   });
 
   it.each([

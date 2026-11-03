@@ -1247,7 +1247,12 @@ export function waitForNimHealth(
         ignoreError: true,
         timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
       });
-      if (state && state !== "running" && state !== "created" && state !== "restarting") {
+      if (!state) {
+        console.error(`  Cannot inspect NIM container ${container}; aborting health wait.`);
+        return false;
+      }
+      listed = listed && state === "running";
+      if (state !== "running" && state !== "created" && state !== "restarting") {
         console.error(`  NIM container ${container} is ${state}; aborting health wait.`);
         const tail = readContainerLogs(container, { tail: 30 });
         if (tail) {
