@@ -1901,7 +1901,13 @@ export function validateLocalProvider(
     }
   }
 
-  const containerCommand = getLocalProviderContainerReachabilityCheck(provider);
+  let containerCommand: string[] | null;
+  try {
+    containerCommand = getLocalProviderContainerReachabilityCheck(provider);
+  } catch (error) {
+    if (provider !== "vllm-local") throw error;
+    containerCommand = null;
+  }
   if (!containerCommand) {
     if (provider === "vllm-local") {
       return {

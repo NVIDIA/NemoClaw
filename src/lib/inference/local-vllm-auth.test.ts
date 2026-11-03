@@ -176,6 +176,37 @@ describe("managed vLLM authentication", () => {
     expect(command).not.toContain("host.openshell.internal:172.17.0.1");
   });
 
+  it.each([
+    { state: "unsafe bindings", failure: new UnsafeLegacyVllmBindingsError() },
+    {
+      state: "an unavailable bridge",
+      failure: new Error("Managed host-local vLLM could not inspect the OpenShell bridge"),
+    },
+  ])("returns a validation failure when a later inspection finds $state", ({ failure }) => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.bridgeHost
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
+      .mockImplementation(() => {
+        throw failure;
+      });
+    const capture = vi.fn(() => JSON.stringify({ data: [{ id: "test/model" }] }));
+    const prepareDockerEnvironment = vi.fn();
+
+    expect(validateLocalProvider("vllm-local", capture, vi.fn(), prepareDockerEnvironment)).toEqual(
+      {
+        ok: false,
+        message:
+          "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
+      },
+    );
+    expect(hostLocalRecovery.bridgeHost).toHaveBeenCalledTimes(3);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(expect.arrayContaining(["curl"]), {
+      ignoreError: true,
+    });
+    expect(prepareDockerEnvironment).not.toHaveBeenCalled();
+  });
+
   it("keeps an explicit sandbox host override ahead of managed endpoint recovery", () => {
     const loadApiKeyImpl = vi.fn(() => API_KEY);
     expect(getLocalProviderBaseUrl("vllm-local", { hostUrl: "http://explicit-host" })).toBe(
