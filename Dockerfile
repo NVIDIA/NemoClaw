@@ -1890,6 +1890,7 @@ ENV NPM_CONFIG_OFFLINE=true \
 # Prune non-runtime metadata from staged bundled plugin dependencies before
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
+# Preserve Teams' plugin fingerprint; trim only dependency metadata copied by Doctor.
 # hadolint ignore=DL3059,DL4006
 RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
     openclaw plugins install --force --accept-capabilities /opt/nemoclaw \
@@ -1903,7 +1904,15 @@ RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
             -name __tests__ -o -name test -o -name tests -o -name docs -o \
             -name examples \
         \) -prune -exec rm -rf {} +; \
-    fi
+    fi \
+    && for project in /sandbox/.openclaw/npm/projects/openclaw-msteams-*; do \
+        plugin_root="$project/node_modules/@openclaw/msteams"; \
+        [ -d "$plugin_root" ] || continue; \
+        find "$project/node_modules" -path "$plugin_root" -prune -o -type f \( \
+            -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
+            -name '*.map' -o -name '*.tsbuildinfo' \
+        \) -exec rm -f {} + || exit 1; \
+    done
 
 # Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
 # hadolint ignore=DL3059,DL4006
