@@ -45,13 +45,13 @@ run "verify" {
   assert {
     condition = alltrue([
       for binding in [
-        openshell_inference.inference_hosted-a8d817ca3be4ad5f0162f6a1,
-        openshell_inference.inference_nvidia-fb53344a6fee96a2c443bc8d,
-        openshell_inference.inference_nvidia-19888a8ae402abd5e6601795,
+        openshell_inference.inference_hosted-77c956680d74805e8e70e899,
+        openshell_inference.inference_nvidia-6328681429f2a6fb0a625c72,
+        openshell_inference.inference_nvidia-1a2e5ab65545fc51dfc45da1,
       ] :
       module.observed.registrations[binding.registration].credentials == { (binding.sandbox_env) = "env:${binding.server.credential_env}" }
       && contains(values(module.observed.registrations[binding.registration].config), binding.server.endpoint)
-    ]) && openshell_inference.inference_hosted-a8d817ca3be4ad5f0162f6a1.api == "anthropic-messages"
+    ]) && openshell_inference.inference_hosted-77c956680d74805e8e70e899.api == "anthropic-messages"
     error_message = "A registration's API, base URL, or credential differs from its provider."
   }
 
@@ -59,7 +59,7 @@ run "verify" {
   # the Hermes sandbox names only its own NVIDIA binding.
   assert {
     condition = (
-      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-a8d817ca3be4ad5f0162f6a1.registration)
+      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-77c956680d74805e8e70e899.registration)
       && length(module.observed.agents.assistant.providers) == 2
       && length(module.observed.agents.researcher.providers) == 1
       && length(setintersection(module.observed.agents.assistant.providers, module.observed.agents.researcher.providers)) == 0
@@ -72,11 +72,44 @@ run "verify" {
     condition = (
       module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
       && module.observed.agents.researcher.start.configuration == jsondecode(terraform_data.agent_researcher.input)
-      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-a8d817ca3be4ad5f0162f6a1.sandbox_env
+      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-77c956680d74805e8e70e899.sandbox_env
       && module.observed.agents.assistant.start.configuration.models.default == module.observed.agents.assistant.start.configuration.models.smart
       && module.observed.http.requests == []
     )
     error_message = "An agent did not start with its routes and key names, or inference was called."
+  }
+}
+
+# Verify's apply kept every identity on the OpenShift gateway: no gateway
+# change, the same sandboxes and registrations, and no agent started again.
+# var.baseline is what verify observed after deploy.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
+
+  variables {
+    baseline = run.verify.baseline
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.baseline.effects
+    error_message = "An unchanged apply changed the gateway."
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.sandboxes == var.baseline.sandboxes
+      && toset(module.observed.openshell.registrations) == toset(var.baseline.registrations)
+    )
+    error_message = "An unchanged apply replaced a sandbox or a registration."
+  }
+
+  assert {
+    condition     = module.observed.openshell.fabric_starts == var.baseline.fabric_starts
+    error_message = "An unchanged apply started an agent again."
   }
 }
 

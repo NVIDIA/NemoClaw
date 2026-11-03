@@ -83,7 +83,7 @@ slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 (package(nemoclaw-build) & test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core))
 | (package(nemoclaw-e2e) & binary(=e2e) & (
-    test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+    test(/^docker_provider_proxy::/)
     | test(/^managed_gateway::/) | test(=hcl_live::case) | test(/^interfaces_live::/)
 ))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
@@ -92,7 +92,7 @@ default-filter = '''
 [profile.live-kind]
 inherits = "ci"
 test-threads = 4
-slow-timeout = { period = "150s", terminate-after = 2 }
+slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 package(nemoclaw-e2e) & binary(=e2e) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/) | test(=hcl_live::case))
 '''

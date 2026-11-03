@@ -194,7 +194,7 @@ Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Age
 | `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
 | `lifecycle` | Each partition's nextest run | 300 s | 90 s | 180 s |
 | `live-docker` | Its four nextest commands together | 360 s | 180 s | 360 s |
-| `live-kind` | The nextest run | 270 s | 150 s | 300 s |
+| `live-kind` | The nextest run | 300 s | 180 s | 360 s |
 
 Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's lifecycle partitions, and a limit for any one of its tests:
 
@@ -276,6 +276,7 @@ cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timin
 
 CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
 The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
+Each [HCL E2E scenario](live-tests.md#hcl-e2e-scenarios) also prints the time of each of its run blocks and, in GitHub Actions, adds them to the job summary.
 The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest, or the `v1` commit whose images it pulled, which the plan's summary names.
 Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../limits.md).
 

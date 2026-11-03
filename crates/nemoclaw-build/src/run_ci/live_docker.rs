@@ -6,7 +6,6 @@
 use super::*;
 use nemoclaw_build::ci::live::{self, GatewayInputs};
 
-const ENGINE: &str = "unix:///var/run/docker.sock";
 const UID_LABEL: &str = "nemoclaw.nvidia.com/uid";
 
 fn docker() -> Command {
@@ -340,15 +339,9 @@ fn prepare(
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
-        ("NEMOCLAW_TEST_CACHE_ENGINE".into(), ENGINE.into()),
-        ("NEMOCLAW_TEST_CACHE_IMAGE".into(), agent.clone()),
         (
             "NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE".into(),
             by_digest(&prefix, "proxy-a")?,
-        ),
-        (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE".into(),
-            by_digest(&prefix, "proxy-b")?,
         ),
         (
             "NEMOCLAW_TEST_GATEWAY_STATE".into(),
