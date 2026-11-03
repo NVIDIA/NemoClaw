@@ -10,6 +10,7 @@ import {
 import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
 import { runInferenceSet } from "./inference-set";
 import { nativeLocalIdentity } from "../inference/native-local/contract";
+import { createDeps } from "../../../test/helpers/inference-set";
 
 vi.mock("../adapters/openshell/provider-policy", () => ({
   requireNativeProviderPolicy: vi.fn(async () => {}),
@@ -41,13 +42,65 @@ describe("OpenClaw native local live selection", () => {
     },
   );
 
+  it.each(["local", "hosted", "legacy router"])(
+    "rejects a router switch from %s without a native router receipt before mutation",
+    async (previous) => {
+      const deps =
+        previous === "local"
+          ? fixture()
+          : createDeps({
+              config: {},
+              entry: {
+                name: "alpha",
+                agent: "openclaw",
+                provider: previous === "legacy router" ? "nvidia-router" : "nvidia-prod",
+                model: "old-model",
+              },
+            });
+      const create = vi.spyOn(deps.providerAdapter, "createProvider");
+      const update = vi.spyOn(deps.providerAdapter, "updateProvider");
+      const attach = vi.spyOn(deps.providerAdapter, "attachProvider");
+      const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+      const deletion = vi.spyOn(deps.providerAdapter, "deleteProvider");
+      const route = vi.spyOn(deps.inferenceRouteMutator, "setInferenceRoute");
+
+      await expect(
+        runInferenceSet(
+          {
+            provider: "nvidia-router",
+            model: "routed-model",
+            sandboxName: "alpha",
+            noVerify: true,
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({
+        exitCode: 2,
+        message: expect.stringMatching(/Model Router.*native.*onboard/s),
+      });
+
+      expect(create).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
+      expect(detach).not.toHaveBeenCalled();
+      expect(deletion).not.toHaveBeenCalled();
+      expect(route).not.toHaveBeenCalled();
+      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(deps.calls.updateSession).not.toHaveBeenCalled();
+      expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    },
+  );
+
   it("detaches and retires local authority before publishing a shared selection", async () => {
     const deps = fixture();
     const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
     const deletion = vi.spyOn(deps.providerAdapter, "deleteProvider");
     await runInferenceSet(
       {
-        provider: "nvidia-router",
+        provider: "nvidia-nim",
         model: "routed-model",
         sandboxName: "alpha",
       },
@@ -63,7 +116,7 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
-        provider: "nvidia-router",
+        provider: "nvidia-nim",
         nativeLocalProviderAttachment: undefined,
       }),
     );
@@ -79,7 +132,7 @@ describe("OpenClaw native local live selection", () => {
     });
     await expect(
       runInferenceSet(
-        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        { provider: "nvidia-nim", model: "routed-model", sandboxName: "alpha" },
         deps,
       ),
     ).rejects.toThrow(/Failed to update NemoClaw registry.*restoring.*reattach rejected/s);
@@ -298,7 +351,7 @@ describe("OpenClaw native local live selection", () => {
     deps.listNativeLocalProviderAuthorities = () => [attachment];
     await expect(
       runInferenceSet(
-        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        { provider: "nvidia-nim", model: "routed-model", sandboxName: "alpha" },
         deps,
       ),
     ).rejects.toThrow(/retry inference set/);
@@ -313,11 +366,11 @@ describe("OpenClaw native local live selection", () => {
       name: "alpha",
       agent: "openclaw",
       gatewayName: "nemoclaw",
-      provider: "nvidia-router",
+      provider: "nvidia-nim",
       model: "routed-model",
     });
     await runInferenceSet(
-      { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+      { provider: "nvidia-nim", model: "routed-model", sandboxName: "alpha" },
       deps,
     );
     expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
@@ -337,7 +390,7 @@ describe("OpenClaw native local live selection", () => {
 
     await expect(
       runInferenceSet(
-        { provider: "nvidia-router", model: "routed-model", sandboxName: "alpha" },
+        { provider: "nvidia-nim", model: "routed-model", sandboxName: "alpha" },
         deps,
       ),
     ).rejects.toThrow(/conflicting gateway identity/);

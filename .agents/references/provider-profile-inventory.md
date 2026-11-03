@@ -149,6 +149,8 @@ Fresh setup and resume hold the gateway and router-port locks while reconciling 
 The sandbox receives an opaque credential reference and the native endpoint. The key stays in the managed provider boundary.
 Matching profiles and owned provider instances are reused. Import failure, profile collision, or missing ownership stops mutation.
 Existing shared-route sandboxes require the explicit recreation procedure owned by #12558.
+OpenClaw `inference set` reuses a verified native router attachment for model changes.
+Without that attachment, it stops before mutation and directs the user to explicit onboarding and recreation.
 
 [Native local tests](../../src/lib/inference/native-local.test.ts) cover profile ordering, attachment, reuse,
 credential isolation, temporary-file cleanup, configured ports, and denied endpoints.
