@@ -9,6 +9,7 @@ import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { assertRetainedRebuildSourceAbsent } from "./rebuild-recreate-journal";
 
 export interface RebuildSandboxExecutionOptions {
   throwOnError?: boolean;
@@ -72,6 +73,17 @@ export function validatePreparedRecoveryManifest(
     console.error("  Sandbox is untouched — no data was lost.");
     bail("Recovery registry entry has no NemoClaw-managed image fingerprint.");
     return null;
+  }
+  try {
+    assertRetainedRebuildSourceAbsent(
+      sandboxName,
+      validation.manifest.backupPath,
+      sandboxState.readRebuildMcpHandoff(validation.manifest)?.runtimeSelection,
+    );
+  } catch (error) {
+    return bail(
+      error instanceof Error ? error.message : "Cannot verify the interrupted rebuild source.",
+    );
   }
   return validation.manifest;
 }
