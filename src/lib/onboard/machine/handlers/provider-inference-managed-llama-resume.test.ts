@@ -450,6 +450,12 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     const entry = registryEntryFor(session);
     const status = await getSandboxStatusReport("spark-agent", {
       getSandbox: () => entry,
+      getSandboxStatusPreflightImpl: async () => ({
+        failure: null,
+        failureLayer: null,
+        suppressInferenceProbe: false,
+        exitCode: 0,
+      }),
       reconcile: async () => ({ state: "missing", output: "not found" }),
     });
 
