@@ -10,9 +10,11 @@ import { expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const { collectOperationEvent } =
   require("../../dist/lib/actions/telemetry/send.js") as typeof import("../../src/lib/actions/telemetry/send");
+const { CollectionDiagnostics } =
+  require("../../dist/lib/actions/telemetry/diagnostics.js") as typeof import("../../src/lib/actions/telemetry/diagnostics");
 const { isOperationEvent } =
   require("../../dist/lib/domain/telemetry/schema.js") as typeof import("../../src/lib/domain/telemetry/schema");
-const { createSupervisedSandboxCommandReader } =
+const { createSupervisedSandboxCommandReader, NativeTelemetryReadError } =
   require("../../dist/lib/actions/telemetry/native-reader.js") as typeof import("../../src/lib/actions/telemetry/native-reader");
 
 function fakeOpenShell(home: string, body: string) {
@@ -43,6 +45,7 @@ it("collects native JSON5 models through the packaged reader after the roster pr
         sandboxes: { selected: { name: "selected", agent: "openclaw", gatewayPort: 8080 } },
       }),
     );
+    const diagnostics = new CollectionDiagnostics();
     const result = await collectOperationEvent(
       {
         operation: "sandbox_rebuild",
@@ -62,10 +65,10 @@ it("collects native JSON5 models through the packaged reader after the roster pr
           },
         ],
       },
-      { signal: new AbortController().signal, deadlineAt: Date.now() + 2000 },
+      { signal: new AbortController().signal, deadlineAt: Date.now() + 2000, diagnostics },
     );
     expect(isOperationEvent(result)).toBe(true);
-    expect(result.parameters).toMatchObject({
+    expect(result.parameters, diagnostics.serialize()).toMatchObject({
       configuredAgentCount: 1,
       targetResults: [{ configurationPosition: 0, configurationStatus: "reported" }],
       configurations: [
@@ -100,6 +103,7 @@ it("cancels an owned native process group and removes reader signal listeners", 
   const beforeInt = process.listenerCount("SIGINT");
   let reader: ReturnType<typeof createSupervisedSandboxCommandReader> | undefined;
   let pids: number[] = [];
+  let readReason = "pending";
   try {
     fakeOpenShell(
       home,
@@ -121,8 +125,11 @@ it("cancels an owned native process group and removes reader signal listeners", 
         },
         { gatewayName: "nemoclaw", workspace: "default" },
       )
-      .catch((error: unknown) => error);
-    await vi.waitFor(() => expect(fs.existsSync(pidsFile)).toBe(true));
+      .catch((error: unknown) => {
+        readReason = error instanceof NativeTelemetryReadError ? error.reason : "unclassified";
+        return error;
+      });
+    await vi.waitFor(() => expect(fs.existsSync(pidsFile), readReason).toBe(true));
     pids = JSON.parse(fs.readFileSync(pidsFile, "utf8")) as number[];
     controller.abort();
     expect(await pending).toMatchObject({ reason: "cancelled" });
