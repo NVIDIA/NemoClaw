@@ -1618,6 +1618,16 @@ run, restart survival, credential non-exposure, and removal in one sandbox.
 After replacing plugin v1 with v2, it restarts through the native gateway
 command and invokes the updated tool through the running gateway. A separate
 CLI inspection cannot prove that the gateway discarded its cached plugin code.
+Each fixture version registers a distinct, no-argument local tool. A normal
+agent turn exercises admission and execution; metadata-only audit records must
+pair a successful completion with a start for the same run, tool, and call.
+This avoids assertions on weather fields, tool arguments, or reply wording.
+The audit read polls at most five times, one second apart, for asynchronous
+persistence; it never repeats the agent turn. Existing admin approval grants
+access to the audit command. Execution of each version's distinct tool proves
+installation and replacement; JSON plugin inventory proves removal. Those
+postconditions replace redundant install and uninstall exit checks. The same
+checks run for source installs and baked Launchables.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
 no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
 container, observes `Error`, and requires a different container to restore both the workspace and
