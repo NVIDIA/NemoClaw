@@ -933,6 +933,7 @@
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "src/lib/actions/inference-set-openclaw-native-local.test.ts",
         "src/lib/actions/inference-set-openclaw-run.test.ts",
         "test/onboarding/onboard-host-local-inference-routing.test.ts",
