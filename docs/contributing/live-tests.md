@@ -234,7 +234,7 @@ It checks that the collected architecture matches the selected Docker daemon's r
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Docker Provider Lifecycle
@@ -251,27 +251,6 @@ NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
 This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
 It checks SDK apply, export/reapply, failed readiness, a removed container recreated with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes. The `docker-ollama-proxy` integration scenario owns a replaced proxy keeping its key volume and registration.
 OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
-
-
-## Standalone Cache and Credential Resources
-
-On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing `python3` and `sha256sum`, such as an agent image.
-The fixture container runs as root, so the image's own user does not matter.
-From the repository root:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_CACHE_ENGINE=unix:///var/run/docker.sock \
-NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-  cargo test -p nemoclaw-e2e --test e2e cache_provider:: -- --ignored
-```
-
-The [hand-written HCL](../../crates/nemoclaw-e2e/tests/e2e/rust/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
-The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
-Missing or substituted credential volumes must stop apply before compute creation and preserve state.
-Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.
-The test removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
-The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
 
 
 ## Dummy Agent Lifecycle

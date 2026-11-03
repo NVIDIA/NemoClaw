@@ -114,6 +114,11 @@ async fn missing_foreign_or_substituted_storage_stops_plan_and_apply_without_cha
             &workspace,
             &["apply", "-input=false", "-auto-approve", "-no-color"],
         );
+        // Intact storage plans no changes; each fault below must stop that plan.
+        success(
+            &workspace,
+            &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
+        );
         let state = fs::read(workspace.path().join("terraform.tfstate")).unwrap();
         let retained = volumes.lock().unwrap().volumes[name].clone();
         for fault in ["missing", "foreign", "substituted"] {
