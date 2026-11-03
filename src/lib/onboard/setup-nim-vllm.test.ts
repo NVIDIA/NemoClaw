@@ -348,11 +348,11 @@ describe("setupNim vLLM route containment", () => {
     );
     await expect(handler(state(null))).rejects.toThrow("exit 1");
     expect(runCapture).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Stop the owned"));
     expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Re-run `onboard` with the same CLI, `NEMOCLAW_PROVIDER=install-vllm`",
-      ),
+      expect.stringContaining("Handle a Running vLLM Server"),
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Preserve the original model and port settings."),
     );
   });
 

@@ -144,18 +144,22 @@ describe("managed vLLM authentication", () => {
       throw new UnsafeLegacyVllmBindingsError();
     });
     const capture = vi.fn(() => JSON.stringify({ data: [{ id: "test/model" }] }));
-    expect(() => getManagedVllmProviderBinding()).toThrow("NEMOCLAW_PROVIDER=install-vllm");
+    expect(() => getManagedVllmProviderBinding()).toThrow("Handle a Running vLLM Server");
     expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
     expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
     expect(getLocalProviderHealthEndpoint("vllm-local")).toBeNull();
     expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
     expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
-    expect(probeLocalProviderHealth("vllm-local")?.detail).toContain("Stop the owned");
+    expect(probeLocalProviderHealth("vllm-local")?.detail).toContain(
+      "Handle a Running vLLM Server",
+    );
     expect(validateLocalProvider("vllm-local", capture).ok).toBe(false);
     expect(capture).not.toHaveBeenCalled();
   });
 
   it("probes bearerless managed vLLM on the OpenShell bridge instead of Docker's default gateway (#14083)", () => {
+    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("DOCKER_HOST", "ssh://remote.example.test");
     lifecycle.baseUrl.mockReturnValue(null);
     hostLocalRecovery.bridgeHost.mockReturnValue("172.18.0.1");
     const capture = vi.fn((argv: readonly string[]) =>
@@ -166,6 +170,7 @@ describe("managed vLLM authentication", () => {
 
     expect(validateLocalProvider("vllm-local", capture, vi.fn())).toEqual({ ok: true });
     const command = capture.mock.calls.find(([argv]) => argv[0] === "docker")?.[0];
+    expect(command?.slice(0, 4)).toEqual(["docker", "--context", "default", "run"]);
     expect(command).toContain("host.openshell.internal:172.18.0.1");
     expect(command).not.toContain("host.openshell.internal:host-gateway");
     expect(command).not.toContain("host.openshell.internal:172.17.0.1");

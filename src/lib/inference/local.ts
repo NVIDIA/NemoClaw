@@ -1711,7 +1711,7 @@ export function getLocalProviderContainerReachabilityCheck(
           : null;
       const hostAlias = `host.openshell.internal:${bridgeHost ?? "host-gateway"}`;
       return [
-        ...(managedBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
+        ...(managedBaseUrl || bridgeHost ? ["docker", "--context", "default"] : ["docker"]),
         "run",
         "--rm",
         "--add-host",

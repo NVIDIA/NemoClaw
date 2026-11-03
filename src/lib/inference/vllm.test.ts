@@ -264,6 +264,10 @@ describe("vLLM profile detection", () => {
       {} as NodeJS.ProcessEnv,
       "172.18.0.1",
     );
+    expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
+      "127.0.0.1:8000:8000",
+      "172.18.0.1:8000:8000",
+    ]);
     expect(args).toEqual(
       expect.arrayContaining([
         "--pull=never",
@@ -278,8 +282,6 @@ describe("vLLM profile detection", () => {
         "memlock=-1",
         "--label",
         `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
-        "-p",
-        "127.0.0.1:8000:8000",
         "--name",
         NEMOCLAW_VLLM_CONTAINER_NAME,
         "--entrypoint",
@@ -447,7 +449,10 @@ describe("vLLM run command", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--label", `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`]),
     );
-    expect(args).toContain("127.0.0.1:8000:8000");
+    expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
+      "127.0.0.1:8000:8000",
+      "172.18.0.1:8000:8000",
+    ]);
   });
 
   it("labels catalog-selected host-local containers with immutable recipe provenance (#8246)", () => {

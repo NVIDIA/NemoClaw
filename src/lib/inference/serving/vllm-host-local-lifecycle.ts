@@ -8,7 +8,7 @@ import path from "node:path";
 import { dockerCapture } from "../../adapters/docker/local-model-runtime";
 import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
-import { buildLocalManagedVllmDockerEnv, buildVllmDockerEnv } from "../vllm-docker-env";
+import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
   resolveManagedVllmBridgeHost,
@@ -271,6 +271,7 @@ function inspectHostLocalContainer(
 ): string {
   return capture(["container", "inspect", HOST_LOCAL_VLLM_CONTAINER_NAME], {
     env: dockerEnv,
+    replaceEnv: true,
     ignoreError: true,
     timeout: 10_000,
   });
@@ -279,7 +280,7 @@ function inspectHostLocalContainer(
 export class UnsafeLegacyVllmBindingsError extends Error {
   constructor() {
     super(
-      "Managed bearerless vLLM has unsafe host bindings. Stop the owned `nemoclaw-vllm` container. Re-run `onboard` with the same CLI, `NEMOCLAW_PROVIDER=install-vllm`, and the original model and port settings to recreate it with private bindings.",
+      "Managed bearerless vLLM has unsafe host bindings. Follow 'Handle a Running vLLM Server' in the vLLM setup guide before recreating the owned `nemoclaw-vllm` container. Preserve the original model and port settings.",
     );
   }
 }
@@ -289,7 +290,7 @@ export function getLegacyHostLocalManagedVllmBridgeHost(
   servingPort: number,
   capture: typeof dockerCapture = dockerCapture,
 ): string | null {
-  const dockerEnv = buildVllmDockerEnv();
+  const dockerEnv = buildLocalManagedVllmDockerEnv();
   let parsed: unknown;
   try {
     parsed = JSON.parse(inspectHostLocalContainer(capture, dockerEnv));
