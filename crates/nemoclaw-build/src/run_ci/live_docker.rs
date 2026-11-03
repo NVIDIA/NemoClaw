@@ -331,10 +331,8 @@ fn prepare(
         let template = fs::read_to_string(
             Path::new("crates/nemoclaw-e2e/cases").join(format!("{DUMMY_CASE}.yaml")),
         )?;
-        fs::write(
-            &path,
-            bind_case(&template, &uid, live::free_port()?, &subnet, &dummy)?,
-        )?;
+        let port = format!("http://127.0.0.1:{}", live::free_port()?);
+        fs::write(&path, dummy_case(&template, &uid, &port, &subnet, &dummy)?)?;
         owned.uids.push(uid);
         path
     };
@@ -384,35 +382,24 @@ fn prepare(
 /// The HCL E2E case that `hcl_live::case` runs in this suite.
 const DUMMY_CASE: &str = "docker-dummy";
 
-/// Binds an HCL E2E case's template to one run: its UID, managed gateway port
-/// and subnet, and the image that replaces its all-zero digest placeholder.
-fn bind_case(template: &str, uid: &str, port: u16, subnet: &str, image: &str) -> Result<String> {
-    let placeholder = format!("@sha256:{}", "0".repeat(64));
-    let mut bound = 0;
-    let lines: Vec<String> = template
-        .lines()
-        .map(|line| {
-            let indent = &line[..line.len() - line.trim_start().len()];
-            let field = line.trim_start();
-            let value = if indent == "  " && field.starts_with("uid: ") {
-                format!("uid: {uid}")
-            } else if indent == "    " && field.starts_with("endpoint: http://127.0.0.1:") {
-                format!("endpoint: http://127.0.0.1:{port}")
-            } else if indent == "    " && field.starts_with("networkCIDR: ") {
-                format!("networkCIDR: {subnet}")
-            } else if field.starts_with("ref: ") && field.ends_with(&placeholder) {
-                format!("ref: {image}")
-            } else {
-                return line.to_owned();
-            };
-            bound += 1;
-            format!("{indent}{value}")
-        })
-        .collect();
-    if bound != 4 {
-        return Err(format!("the case template binds {bound} of its 4 fields").into());
-    }
-    Ok(lines.join("\n") + "\n")
+/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image.
+fn dummy_case(
+    template: &str,
+    uid: &str,
+    endpoint: &str,
+    subnet: &str,
+    image: &str,
+) -> Result<String> {
+    let zero = format!("nc-live-dummy@sha256:{}", "0".repeat(64));
+    Ok(live::bind_case(
+        template,
+        &[
+            ("0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10", uid),
+            ("http://127.0.0.1:17697", endpoint),
+            ("172.30.122.0/24", subnet),
+            (&zero, image),
+        ],
+    )?)
 }
 
 /// Internal: the three gateway documents, in [`GATEWAY_TESTS`] order.
@@ -517,24 +504,22 @@ mod tests {
     #[test]
     fn the_dummy_case_binds_its_identity_gateway_and_image() {
         let template = include_str!("../../../nemoclaw-e2e/cases/docker-dummy.yaml");
-        let bound = super::bind_case(
+        let bound = super::dummy_case(
             template,
-            "fresh-uid",
-            40123,
+            "u-1",
+            "http://127.0.0.1:1",
             "172.30.9.0/24",
-            "nc-live-x@sha256:abc",
+            "i@1",
         )
         .unwrap();
         for line in [
-            "  uid: fresh-uid",
-            "    endpoint: http://127.0.0.1:40123",
+            "  uid: u-1",
             "    networkCIDR: 172.30.9.0/24",
-            "        ref: nc-live-x@sha256:abc",
+            "        ref: i@1",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }
-        assert_eq!(bound.lines().count(), template.lines().count());
-        assert!(super::bind_case("uid: x\n", "u", 1, "s", "i").is_err());
+        assert!(nemoclaw_build::ci::live::bind_case("uid: x", &[("y", "z")]).is_err());
     }
 
     use super::*;

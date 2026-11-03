@@ -36,10 +36,11 @@ live-docker:
   test_seconds: 180
 
 # Live / Kind: at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
-# runs. The slowest test, three agents on OpenShift, took 112 s on linux_amd64
-# and 123 s after refresh began checking agent runtimes (#13947); about 30 s of
-# each test's destroy waits out the sandbox pods' termination grace period
-# (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is fixed.
+# runs. The slowest test, the kind-openshift-agents HCL E2E scenario, took
+# 133 s on linux_amd64 and 138 s on linux_arm64 with three agents (#14097);
+# about 30 s of each test's destroy waits out the sandbox pods' termination
+# grace period (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is
+# fixed.
 live-kind:
   wall_seconds: 270
   test_seconds: 150
