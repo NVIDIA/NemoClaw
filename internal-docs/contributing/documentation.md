@@ -24,7 +24,7 @@ Follow [schema maintenance](configuration-schema.md) to update its sources and r
 
 The user-guide structure is scaffolded in the [documentation index](../../docs/README.md).
 When v1 lacks a feature or a procedure is untested, say so plainly and link the GitHub issue that tracks it.
-File an issue if none exists, and add the limit to [current limits](../../docs/limits.md).
+File an issue if none exists, and add the limit to [current limits](../../docs/resources/limits.md).
 Do not write **TBD**, fill the gap from main's documentation, or infer support from parser acceptance.
 Remove a limit only when the text can link to the implementation, tests, or scoped qualification that supports the new claim.
 

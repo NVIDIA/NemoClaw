@@ -11,7 +11,7 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes Gateway Without the Helm CLI
 
-On native Linux with Docker Buildx and the [containerd image store](../../docs/build.md#build-agent-images), run the live and chart-render tests with a fresh kind cluster:
+On native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images), run the live and chart-render tests with a fresh kind cluster:
 
 ```sh
 cargo ci build
@@ -24,7 +24,7 @@ The gateway test checks authentication, forged-token rejection, repeated install
 The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
 Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
 Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
-The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../../docs/kubernetes.md#use-a-model-server-in-the-cluster) describes.
+The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) describes.
 The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
 The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
 The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
@@ -75,9 +75,9 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 The render test also rejects an unavailable chart digest.
 
-To run only the gateway test, use an owned disposable cluster with the Kubernetes guide's [cluster setup](../../docs/kubernetes.md#prerequisites): Agent Sandbox and a default StorageClass.
+To run only the gateway test, use an owned disposable cluster with the Kubernetes guide's [cluster setup](../../docs/build-deploy/kubernetes.md#prerequisites): Agent Sandbox and a default StorageClass.
 The host pulls the pinned chart from ghcr.io, and the cluster pulls the gateway image from ghcr.io and the development issuer image from Docker Hub.
-Besides the [cluster access](../../docs/kubernetes.md#prerequisites) rights, the chart creates a ClusterRole and a ClusterRoleBinding, and the test deletes its namespace and can change the reclaim policy of the volumes bound to its PVCs, so use a cluster administrator's context.
+Besides the [cluster access](../../docs/build-deploy/kubernetes.md#prerequisites) rights, the chart creates a ClusterRole and a ClusterRoleBinding, and the test deletes its namespace and can change the reclaim policy of the volumes bound to its PVCs, so use a cluster administrator's context.
 Use a kubeconfig that holds its credentials, such as a client certificate or a token: the test runs OpenTofu with an empty `PATH` and an isolated home, so an exec plugin that relies on either fails.
 On OpenShift Local, write the `system:admin` kubeconfig to a private file outside the checkout with `(umask 077 && crc generate-kubeconfig > /absolute/path/to/crc-kubeconfig)` and use its `admin` context.
 Its client certificate is valid for ten years from the instance's first start, and deleting the copy does not revoke it; keep the file private and delete it once any cleanup below is done.
@@ -118,7 +118,7 @@ kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-tes
   clusterrolebinding/RELEASE-node-reader-NAMESPACE clusterrole/RELEASE-node-reader-NAMESPACE
 ```
 
-Then remove the namespace with the Kubernetes steps of [Remove Retained Resources](../../docs/usage.md#remove-retained-resources).
+Then remove the namespace with the Kubernetes steps of [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources).
 Skip that procedure's destroy check and its requirement that no pods remain: `nemoclaw` cannot use the test's state directory, and the test's gateway can still be running.
 Under `Retain`, the volumes that procedure lists remain `Released` after the namespace goes; set each one's reclaim policy to `Delete`, as the test does, so that the provisioner deletes the volume and its storage:
 
@@ -197,7 +197,7 @@ Apply must create those resources plus the provider profile, provider registrati
 A second plan and apply must report no changes.
 The test checks readiness without requesting a model response and leaves workloads running.
 It writes no separate test report.
-After failure, retain state for [explicit recovery](../../docs/usage.md#updates-and-recovery); use [destroy](../../docs/usage.md#destroy) when finished.
+After failure, retain state for [explicit recovery](../../docs/build-deploy/usage.md#updates-and-recovery); use [destroy](../../docs/build-deploy/usage.md#destroy) when finished.
 
 Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
 Change only the inference image pin in the YAML.
@@ -312,7 +312,7 @@ The live tests then check the public deployment operations:
 
 | Test | Checks |
 |---|---|
-| `authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle` | Plan creates gateway storage and the gateway with OpenShell registration deferred; apply adds the provider profile and registration, sandbox, and workspace; a second plan, and export/reapply, report no changes; destroy removes the workloads and retains the workspace and gateway storage. It requests no model response; use the [native agent procedure](../../docs/agents.md#run-one-headless-openclaw-request) to verify a reply. |
+| `authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle` | Plan creates gateway storage and the gateway with OpenShell registration deferred; apply adds the provider profile and registration, sandbox, and workspace; a second plan, and export/reapply, report no changes; destroy removes the workloads and retains the workspace and gateway storage. It requests no model response; use the [native agent procedure](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) to verify a reply. |
 | `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` | Apply reaches readiness; a real Hermes request through NVIDIA hosted inference must return `FOUR`; unchanged plan, apply, and export/reapply keep resource identities; destroy retains the workspace and gateway storage. |
 
 Use an owned native Linux Docker daemon, a fresh deployment UID, an available gateway port and subnet, and an unused state-directory path whose parent exists.
@@ -336,8 +336,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
 
 The test creates the state directory and rejects an existing path; assertion failures appear in the test output.
 Do not run live tests as an ignored-test aggregate.
-After a failed apply, keep both inputs, the bundle, and the state directory, and follow [interrupted-operation recovery](../../docs/usage.md#recover-an-interrupted-operation) with the same YAML and state; do not create another state directory for the same UID.
-Use [destroy](../../docs/usage.md#destroy) to remove a failed run's workloads; a successful run destroys them itself.
+After a failed apply, keep both inputs, the bundle, and the state directory, and follow [interrupted-operation recovery](../../docs/build-deploy/usage.md#recover-an-interrupted-operation) with the same YAML and state; do not create another state directory for the same UID.
+Use [destroy](../../docs/build-deploy/usage.md#destroy) to remove a failed run's workloads; a successful run destroys them itself.
 Retire the upstream NVIDIA key separately when it is no longer needed.
 
 ## SSH Engine Transport
@@ -403,7 +403,7 @@ The container's Python process simulates model reconstruction and a credential; 
 
 ## Dummy Agent Lifecycle
 
-nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../../docs/build.md#reference-contract-image) through a managed Docker gateway.
+nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../../docs/build-deploy/build.md#reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
 The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
 Before destroy, it restarts the gateway's container: the next plan updates only the agent because its runtime is not running, apply starts a new runtime that answers, a file written in the sandbox before the restart is still there, and a further apply changes nothing.
@@ -421,11 +421,11 @@ cargo test -p nemoclaw-e2e --test e2e \
 A successful run deletes its temporary state directory and retains the gateway's storage, initializer, and bridge.
 A failed run keeps the state directory and prints its path, because the gateway and sandbox may still be running; remove them with the bundle's `nemoclaw destroy --state-dir PATH`.
 `cargo ci live-docker` removes every resource labeled with the document's UID, and the gateway's sandbox objects, after the suite.
-To remove the retained storage after a manual run, follow [Remove Retained Resources](../../docs/usage.md#remove-retained-resources); after a successful run there is no state directory, so skip that procedure's destroy check.
+To remove the retained storage after a manual run, follow [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources); after a successful run there is no state directory, so skip that procedure's destroy check.
 
 ## Agent Interfaces
 
-nemoclaw-e2e's `interfaces_live::openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports` test deploys OpenClaw's dashboard, Hermes's API server and dashboard, and Deep Agents Code's terminal through one managed Docker gateway and reaches them as [Reach an Agent Interface](../../docs/interfaces.md#reach-an-agent-interface) describes.
+nemoclaw-e2e's `interfaces_live::openclaw_hermes_and_deep_agents_code_interfaces_work_as_apply_reports` test deploys OpenClaw's dashboard, Hermes's API server and dashboard, and Deep Agents Code's terminal through one managed Docker gateway and reaches them as [Reach an Agent Interface](../../docs/agents-inference/interfaces.md#reach-an-agent-interface) describes.
 It starts a model stand-in in the test process, which records whether each request carried the run's model key.
 It answers a chat completion whose last message is `Reply with token TOKEN` with `REPLY-` and the token in capitals, and every other one with a value unique to the run.
 It checks:
@@ -466,7 +466,7 @@ It plans and applies them through the SDK's `test-scenarios` setup, which only n
 Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
 The test does not create sandboxes or request inference.
 It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
-Remove them with [Remove Retained Resources](../../docs/usage.md#remove-retained-resources), using the test bundle's `nemoclaw` and `NEMOCLAW_TEST_GATEWAY_STATE` as the state directory.
+Remove them with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using the test bundle's `nemoclaw` and `NEMOCLAW_TEST_GATEWAY_STATE` as the state directory.
 
 From the repository root:
 
@@ -500,7 +500,7 @@ Successful completion removes both owned sandboxes and gateway processes, but re
 The test calls the provider and SDK directly and creates no OpenTofu state directory.
 Keep the input documents to identify the retained resources.
 Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
-After a successful run, remove each document's `gateway storage` objects with [Remove Retained Resources](../../docs/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
+After a successful run, remove each document's `gateway storage` objects with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with absolute document paths and the local sandbox image's actual digest:
 
@@ -532,7 +532,7 @@ A successful run deletes the sandbox, provider registrations, profiles, and gate
 Retained gateway storage contains signing and encryption keys.
 The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
 Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
-After a successful run, remove the document's `gateway storage` objects with [Remove Retained Resources](../../docs/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
+After a successful run, remove the document's `gateway storage` objects with [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with an absolute document path and the local sandbox image's actual digest:
 

@@ -3,73 +3,84 @@
 
 # Documentation
 
-These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The checked-in generated configuration reference still describes this documentation checkout, not the newer implementation revision. For the source-pinned first deployment, use the [tutorial](get-started.md).
-[Current limits](limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
+These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The checked-in generated configuration reference still describes this documentation checkout, not the newer implementation revision. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
+[Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
-## Start Here
+## About
 
-| Task | Guide |
+| Reader goal | Guide |
 |---|---|
-| Understand the product and choose an interface | [NemoClaw overview](overview.md) |
-| Understand how NemoClaw, OpenShell, Fabric, and agent harnesses fit together | [Ecosystem](ecosystem.md) |
-| Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
-| Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
+| Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
+| Follow the components and deployment flow | [Architecture overview](about/architecture-overview.md) |
+| Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
 
-## Deploy and Operate
+## Get Started
 
-| Task | Guide |
+| Reader goal | Guide |
 |---|---|
-| Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
-| Extend an agent image with your own skills and tools | [Derived agent images](derived-images.md) |
-| Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
-| Run sandboxes on an existing Kubernetes or OpenShift cluster | [Deploy to Kubernetes or OpenShift](kubernetes.md) |
-| Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
-| Locate deployment state and understand backup limits | [Deployment state](state.md) |
-| Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
-| Rotate a credential | [Rotate credentials](credential-rotation.md) |
-| Declare sandbox filesystem, process, and egress settings | [Sandbox policy](sandbox-network.md) |
+| Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
+| Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
+| Assess a move from an earlier version | [Migration](get-started/migration.md) |
 
-### Agents and Inference
+## Build and Deploy
 
-| Task | Guide |
+| Reader goal | Guide |
 |---|---|
-| Select inference APIs, OpenClaw limits, and Hermes authentication | [Inference configuration](inference.md) |
-| Configure and access native dashboards | [Agent interfaces](interfaces.md) |
-| Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
-| Register an operator-managed OAuth-refresh API credential | [OpenShell OAuth-refresh providers](oauth-refresh.md) |
-| Enable tracing or selected-agent web search | experimental [Hermes Relay](agents.md#hermes-relay-tracing) and [web search](agents.md#web-search) |
-| Choose a public model for managed vLLM | [Select a managed model](models.md) |
-| Package model-specific preparation | [Inline model recipes](recipes.md) |
-| Place inference on an SSH-selected Docker engine | [Configure an SSH model service](remote-service.md) |
+| Build a matched bundle and runtime image | [Build local artifacts](build-deploy/build.md) |
+| Extend an agent image with your own tools | [Derived agent images](build-deploy/derived-images.md) |
+| Configure, apply, export, recover, and destroy | [Use desired state](build-deploy/usage.md) |
+| Deploy on Kubernetes or OpenShift | [Cluster deployment](build-deploy/kubernetes.md) |
+| Share or inline definitions | [Definitions and references](build-deploy/configuration-references.md) |
+| Retain data and clean up safely | [Deployment state](build-deploy/state.md) |
+| Run an application-owned container on managed Docker | [Container service](build-deploy/container-services.md) |
 
-## Integrate and Reference
+## Agents and Inference
 
-| Task | Guide |
+| Reader goal | Guide |
 |---|---|
-| Call deployment operations programmatically | [Use the SDK](sdk.md) |
-| Understand the bundled OpenTofu provider | [Provider](provider.md) |
-| Check what each release guarantees | [Compatibility](compatibility.md) |
-| Configure an image-owned service | [Container service contract](container-services.md) |
-| Look up CLI commands and options | [CLI reference](reference/cli.md) |
-| Look up YAML fields, defaults, and constraints for this checkout | [Configuration reference](reference/configuration.md) |
-| Find harness examples and adapter constraints | [Fabric harnesses](reference/fabric-harnesses.md) |
-| Find documentation for coding agents, contribution guidance, and licenses | [Resources](resources.md) |
+| Select and invoke an agent | [Agent runtimes](agents-inference/agents.md) |
+| Reach a native interface | [Agent interfaces](agents-inference/interfaces.md) |
+| Configure model connections and verify a request | [Inference](agents-inference/inference.md) |
+| Select a managed model | [Models](agents-inference/models.md) |
+| Package model preparation | [Recipes](agents-inference/recipes.md) |
+| Place inference over SSH | [SSH model service](agents-inference/remote-service.md) |
+| Attach an operator-managed refresh credential | [OAuth-refresh providers](agents-inference/oauth-refresh.md) |
 
-## Releases, Security, and Limits
+## Observability
 
-| Task | Guide |
+| Reader goal | Guide |
 |---|---|
-| Assess a move from an earlier version | [Migration](migration.md) |
-| Check what a release guarantees | [Compatibility](compatibility.md) |
-| Find release information | [Release notes](release-notes.md) |
-| Check what v1 does not do yet | [Current limits](limits.md) |
-| Review credential storage, access, and isolation | [Security](security.md) |
-| Understand the security boundary | [Threat model](threat-model.md) |
+| Collect operation output, sandbox logs, native artifacts, and available traces; distinguish readiness from a reply | [Troubleshooting](observability/troubleshooting.md) |
 
-## Maintainer Guides
+## References
+
+| Reader goal | Guide |
+|---|---|
+| Look up commands and options | [CLI](references/cli.md) |
+| Look up generated YAML fields for this checkout | [Configuration reference](reference/configuration.md) |
+| Compare harness descriptors and examples | [Fabric harnesses](references/fabric-harnesses.md) |
+| Integrate with the Rust API or OpenTofu | [SDK](references/sdk.md), [provider](references/provider.md) |
+| Check release guarantees | [Compatibility](references/compatibility.md) |
+
+## Resources
+
+| Reader goal | Guide |
+|---|---|
+| Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
+| Check release status | [Release notes](resources/release-notes.md) |
+| Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
+
+## Security
+
+| Reader goal | Guide |
+|---|---|
+| Understand credential storage and trust boundaries | [Security](security/security.md), [threat model](security/threat-model.md) |
+| Configure isolation and egress | [Sandbox policy](security/sandbox-network.md) |
+| Revoke or rotate credentials | [Credential rotation](security/credential-rotation.md) |
+
+## Maintainer Guides (Repository Only)
 
 Maintainer procedures and design records live in `internal-docs/`, not in the published v1 navigation.
-
 
 | Task | Guide |
 |---|---|

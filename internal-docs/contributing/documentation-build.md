@@ -30,7 +30,7 @@ The publisher extracts main's documentation and generators at an immutable Git r
 It installs only the [locked docs dependency](../../tools/docs/main/package.json), `yaml`, in that extracted directory and runs the original generators with Node's TypeScript support.
 Main's npm application dependencies are not installed.
 The imported installation prompt and agent variants appear only in Latest.
-V1 runtime guidance remains in [agents.md](../../docs/agents.md), and [resources](../../docs/resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
+V1 runtime guidance remains in [agents.md](../../docs/agents-inference/agents.md), and [resources](../../docs/resources/resources.md#give-an-agent-the-documentation-task) provides a version-aware documentation prompt.
 The installation prompt has not been rehearsed ([#12644](https://github.com/NVIDIA/NemoClaw/issues/12644)).
 
 To refresh Latest, update `fern/main-source.json` to a reviewed main commit, reconcile that revision's theme, components, and redirects in `fern/docs.yml`, and rerun the complete build.
@@ -40,7 +40,7 @@ To recover a damaged import, stop the preview server, remove only the generated 
 
 ## Validate Locally
 
-Complete the Rust and `protoc` prerequisites in [build.md](../../docs/build.md).
+Complete the Rust and `protoc` prerequisites in [build.md](../../docs/build-deploy/build.md).
 Install Node.js 24.22.1 for the documentation tooling.
 Node runs main's imported generators and the pinned Fern CLI through `npx`; the application remains a Cargo workspace with no root npm package.
 The first Fern invocation downloads its npm dependencies.

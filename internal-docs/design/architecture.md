@@ -31,11 +31,11 @@ OpenTofu executes the graph with its default parallelism.
 The provider implements resource operations against SDK desired-state and observation contracts.
 Pure policy compilation stays in SDK configuration; OpenShell transport and mutation code belong to the provider.
 
-The [provider reference](../../docs/provider.md) owns resource-specific contracts and protocol details.
+The [provider reference](../../docs/references/provider.md) owns resource-specific contracts and protocol details.
 Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-backend/src/contract.rs).
 
 Ollama, vLLM, and explicit containers use one internal [container base](../../crates/nemoclaw-sdk/src/services/installers/container/base.rs) to assemble owned specifications, storage, process targets, and dependencies.
-The [container service contract](../../docs/container-services.md) defines the public image and input boundary; typed Ollama/vLLM are convenience frontends, not exclusive ways to run those images.
+The [container service contract](../../docs/build-deploy/container-services.md) defines the public image and input boundary; typed Ollama/vLLM are convenience frontends, not exclusive ways to run those images.
 Service callers supply resource identities, process settings, image acquisition policy, preparation resources, and storage retention requirements.
 Ollama and vLLM supply model and supervisor settings; vLLM also supplies credential storage and source declarations.
 Applications retain image-owned startup and health, literal settings, and publication, on the managed Docker gateway's engine and network.
@@ -66,7 +66,7 @@ The SDK also checkpoints an established release binding before removal because t
 Recovery validates the original bundle, intent, generations, state lineage and serial, and resource identities, then uses OpenTofu's state operations to restore only a missing Helm binding.
 It preserves the latest state of other resources; a fresh checked plan must authorize subsequent deletion.
 Confirmed authentication cleanup prevents restoration after successful release removal.
-The [Helm removal recovery procedure](../../docs/usage.md#recover-an-interrupted-helm-removal) describes the required retained evidence and retry command.
+The [Helm removal recovery procedure](../../docs/build-deploy/usage.md#recover-an-interrupted-helm-removal) describes the required retained evidence and retry command.
 Issuer private material stays outside Helm values and OpenTofu state.
 The provider receives the explicit kubeconfig and context, or, when the deployment names neither, uses the service account of the pod that runs NemoClaw; ambient Helm and Kubernetes provider settings are excluded.
 OpenTofu and its providers inherit only platform variables, so a kubeconfig exec plugin gets the caller variables listed in `gateway.kubernetes.environment` and nothing else; without a kubeconfig, they get `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` instead.
@@ -114,7 +114,7 @@ OpenTofu supplies resource operations and identities, while readiness and health
 The renderer tracks active work and elapsed time without treating animation as evidence of progress.
 It finishes before the CLI writes the final text or JSON result.
 Unsupported health, incomplete plans, and unconfirmed state after failure remain explicit in both formats.
-See [CLI output](../../docs/reference/cli.md#output-and-failure) for the user contract.
+See [CLI output](../../docs/references/cli.md#output-and-failure) for the user contract.
 
 ## Configuration
 
@@ -163,7 +163,7 @@ Onboarding does not use hardware advertisements yet.
 Gateway checks and existing-resource refresh retain their existing owners and failure rules.
 Credential availability and explicit host collectors remain direct operations; neither introduces a second provider-state owner.
 Observed model identifiers supplement suggestions without replacing accepted intent or proving inference behavior.
-See [provider discovery](../../docs/provider.md#engine-and-fabric-discovery) for observation status and planning policy.
+See [provider discovery](../../docs/references/provider.md#engine-and-fabric-discovery) for observation status and planning policy.
 
 Native interface, tool-disclosure, and reasoning settings are authored through Fabric's configuration and adapter settings.
 Managed search credentials, endpoint protocols, and network grants remain SDK deployment behavior.
@@ -175,7 +175,7 @@ Native model or agent probes with no Fabric contract remain unavailable.
 Authoring question resolution and the OpenTofu execution graph have different jobs.
 The former chooses questions and reopens dependent answers; the latter schedules provider reads and resource operations for concrete desired state.
 
-The native [bundle](../../docs/build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
+The native [bundle](../../docs/build-deploy/build.md#build-a-native-bundle) ships the matching CLI, schema, OpenTofu, and providers; source-derived provider versions prevent stale installations from being reused.
 
 ## Why Each Deployment Is One OpenTofu Root
 
@@ -211,14 +211,14 @@ The SDK checks the teardown plan before deleting anything.
 The compiler builds teardown configuration from retained intent and the established resource inventory, keeping storage and workspace declarations while removing workload and readiness declarations.
 It returns the retained addresses with that graph; plan validation and destroy reporting use the same result.
 Storage that was never established is omitted, so partial teardown does not finish creating it.
-For commands and deletion effects, see [deployment lifecycle](../../docs/usage.md).
+For commands and deletion effects, see [deployment lifecycle](../../docs/build-deploy/usage.md).
 
 ## State and Recovery
 
 Desired configuration describes what should exist; a binding identifies the object already established.
 The SDK retains deployment ownership, configuration, pending creation targets, and operation progress alongside OpenTofu's resource state.
 Matching a name alone cannot authorize adoption.
-See [deployment state](../../docs/state.md) for the retained files.
+See [deployment state](../../docs/build-deploy/state.md) for the retained files.
 
 Providers distinguish three observation outcomes:
 
@@ -241,7 +241,7 @@ Failures involving only observations, established updates or deletions, or dispo
 They cannot clear earlier unresolved OpenShell creations; those must be reconciled before teardown.
 An apply without non-disposable OpenShell creations does not start a pending-creation guard; export can verify its established bindings through OpenTofu even after that apply fails.
 Teardown recovery validates current bindings and fresh plans; the failed apply's saved plan file and hash do not authorize the next operation.
-The [recovery guide](../../docs/usage.md#recover-an-interrupted-operation) describes the caller's next steps.
+The [recovery guide](../../docs/build-deploy/usage.md#recover-an-interrupted-operation) describes the caller's next steps.
 
 ## Storage and Resource Lifetimes
 
@@ -254,7 +254,7 @@ Missing or substituted bound credentials and gateway storage stop planning; repr
 The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity from reconstructible sandboxes, registrations and configuration.
 NemoClaw runs one agent runtime per sandbox, so a changed agent replaces its sandbox, deleting its files and conversation history; data that must survive belongs on a mounted volume.
 Explicit destroy deletes those files even though the OpenShell workspace remains.
-The [retention reference](../../docs/state.md#deletion-and-retention) lists what survives.
+The [retention reference](../../docs/build-deploy/state.md#deletion-and-retention) lists what survives.
 
 ## Readiness and Export
 

@@ -7,7 +7,7 @@ The [YAML field reference](../../docs/reference/configuration.md) and [JSON Sche
 Edit their Rust sources, then regenerate both artifacts.
 CI rejects stale output.
 
-For editing a deployment, use [editor schema assistance](../../docs/usage.md#editor-schema-assistance).
+For editing a deployment, use [editor schema assistance](../../docs/build-deploy/usage.md#editor-schema-assistance).
 
 ```mermaid
 flowchart LR
@@ -23,7 +23,7 @@ flowchart LR
 
 ## Change a Field or Rule
 
-Complete the [build prerequisites](../../docs/build.md).
+Complete the [build prerequisites](../../docs/build-deploy/build.md).
 From the repository root:
 
 1. Add a parser/schema test for the accepted or rejected input in [config_schema.rs](../../crates/nemoclaw-sdk/tests/config_schema.rs).
@@ -59,7 +59,7 @@ Keep schema changes, descriptions, examples, tests, and regenerated files in the
 
 ## Preserve the Input Contract
 
-Reusable application objects follow the [definitions and references contract](../../docs/configuration-references.md).
+Reusable application objects follow the [definitions and references contract](../../docs/build-deploy/configuration-references.md).
 Keep its coverage table accurate when adding a family or changing supported scopes.
 
 Schemars derives names, types, and unknown-field rejection from Serde declarations.
@@ -98,7 +98,7 @@ The [reference's validation limits](../../docs/reference/configuration.md#valida
 
 ## Add a Reusable Configuration Family
 
-Follow the [definitions and references contract](../../docs/configuration-references.md).
+Follow the [definitions and references contract](../../docs/build-deploy/configuration-references.md).
 Specify the definition collection, consumer, cardinality, visible scopes, and runtime identity before adding fields.
 Use the same typed definition and resolved behavior for inline and reference forms.
 Test missing and conflicting selections, scope collisions, unused definitions, and export/reapply.
@@ -114,4 +114,4 @@ The schema's API version identifies the document format; accepted fields can cha
 Use a schema from the same source revision as the SDK or CLI you run.
 Native bundles carry their matching schema at `schemas/nemoclaw-v1alpha1.schema.json`, covered by the bundle manifest's hash.
 The builder generates it from the compiled SDK and checks its source fingerprint before assembling CLI and provider binaries.
-See [bundle construction](../../docs/build.md#build-a-native-bundle) for rebuild and verification behavior.
+See [bundle construction](../../docs/build-deploy/build.md#build-a-native-bundle) for rebuild and verification behavior.

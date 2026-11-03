@@ -10,7 +10,7 @@ It writes validated YAML and can read target observations through a verified nat
 Credential availability appears as information while answering and reviewing. Interactive `nemoclaw plan` prompts for missing values; set the referenced variables first for a non-interactive run. Onboarding retains no credential values.
 Onboarding does not create deployment state or apply resources.
 
-With the [build prerequisites](../../docs/build.md) available, run from the repository root in a terminal:
+With the [build prerequisites](../../docs/build-deploy/build.md) available, run from the repository root in a terminal:
 
 ```sh
 cargo run -p nemoclaw-cli -- onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
@@ -90,7 +90,7 @@ It reads target observations again each time you delegate with **Ctrl+D** or ent
 Target observations never change the questions; they only assess compatibility at delegation and review, and they need an SDK-valid document.
 Each engine, image, hardware, and catalog read has a five-second timeout; a gateway capability call has thirty seconds.
 Discovery supports cancellation and does not pull images or start containers.
-The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
+The [provider reference](../../docs/references/provider.md#engine-and-fabric-discovery) defines the observations and image metadata contract.
 
 The standalone example does not read the target, so target compatibility remains unverified.
 An unreachable engine or missing image metadata remains unverified; neither establishes that a harness is unsupported.
@@ -134,7 +134,7 @@ Saved YAML can supply settings and arbitrary harness identifiers as defaults for
 When no settings schema is advertised, existing opaque settings remain preserved but there are no schema-derived questions.
 If one harness identifier matches distinct adapter schemas, authoring reports the adapter identities instead of choosing a schema by file order.
 NemoClaw does not remove native fields from a descriptor or maintain a separate adapter manifest; native mapping and missing discovery contracts belong to Fabric.
-See [Fabric harness configuration](../../docs/sdk.md#configure-a-discovered-fabric-harness) for the runtime contract.
+See [Fabric harness configuration](../../docs/references/sdk.md#configure-a-discovered-fabric-harness) for the runtime contract.
 This does not qualify a harness image for the current host or establish deployment readiness.
 
 ## Deployment template questions
@@ -193,8 +193,8 @@ The backlog is recorded in `crates/nemoclaw-authoring/tests/unsupported_onboardi
 
 These gaps do not prevent preserving existing SDK configuration or opaque Fabric settings in a template.
 
-Plan and apply require a [verified native bundle and the CLI on PATH](../../docs/build.md#build-a-native-bundle); onboarding alone does not.
-After reviewing the generated YAML, follow the [deployment guide](../../docs/usage.md) and use the lifecycle commands when ready:
+Plan and apply require a [verified native bundle and the CLI on PATH](../../docs/build-deploy/build.md#build-a-native-bundle); onboarding alone does not.
+After reviewing the generated YAML, follow the [deployment guide](../../docs/build-deploy/usage.md) and use the lifecycle commands when ready:
 
 ```sh
 nemoclaw plan my-deployment.yaml

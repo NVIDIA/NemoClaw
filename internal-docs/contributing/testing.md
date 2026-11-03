@@ -158,7 +158,7 @@ The same selection applies when lifecycle tests run through `cargo ci` or from a
 A contract test runs the provider built from the checkout, but a system test runs the bundle's CLI and providers: rebuild the bundle after changing them.
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
-`cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../../docs/build.md).
+`cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../../docs/build-deploy/build.md).
 It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
@@ -166,7 +166,7 @@ Afterward it removes every container, volume, and network labelled with the docu
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
 It requests no inference from a model server and needs no GPU or credentials; the [agent interface test](live-tests.md#agent-interfaces) answers its agents' model requests with a stand-in in the test process.
 
-`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build.md#build-agent-images).
+`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It then runs the `live-kind` profile's four cluster tests and three chart-render tests, which need no Helm CLI, up to four at a time; the registry test runs alone, after the others.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
@@ -274,7 +274,7 @@ cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timin
 CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
 The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
 The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest, or the `v1` commit whose images it pulled, which the plan's summary names.
-Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../../docs/limits.md).
+Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../../docs/resources/limits.md).
 
 ## How CI Runs the Tests
 
@@ -403,7 +403,7 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](../../docs/build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
+Use the [agent image build prerequisites](../../docs/build-deploy/build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
@@ -441,7 +441,7 @@ In each image, offline and as the image's own user, it checks:
 
 The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
-Use the [reference image procedure](../../docs/build.md#reference-contract-image) to run these locally.
+Use the [reference image procedure](../../docs/build-deploy/build.md#reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
 On `v1` pushes that build images, it then pushes the checked agent and proxy images, and the reference image the live suites pull, by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).

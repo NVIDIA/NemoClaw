@@ -12,7 +12,7 @@ The separate release controller evaluates reviewed exceptions and controls discl
 
 ## Prepare the Inputs
 
-Use the pinned Rust toolchain from [build prerequisites](../../docs/build.md) and a verified Grype 0.121.0 binary.
+Use the pinned Rust toolchain from [build prerequisites](../../docs/build-deploy/build.md) and a verified Grype 0.121.0 binary.
 Prepare a Grype database cache before assessment using the scanner's [database commands](https://oss.anchore.com/docs/reference/grype/cli/).
 Choose the maximum database age explicitly for the assessment; that local choice does not establish a release policy.
 

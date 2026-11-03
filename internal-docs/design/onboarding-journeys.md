@@ -137,7 +137,7 @@ A supplied identifier stays the suggested menu choice, including when it is not 
 Model choices remain suggestions rather than a schema enum, and the symbolic tree keeps this free-input frontier instead of printing supplied model identifiers as finite branches.
 Endpoint observations can add suggestions without duplicating curated entries.
 Neither source establishes inference support or replaces Fabric validation, target compatibility, or the endpoint evidence required for bulk acceptance.
-See [onboarding model catalogs](../../docs/inference.md#onboarding-model-catalogs).
+See [onboarding model catalogs](../../docs/agents-inference/inference.md#onboarding-model-catalogs).
 
 ## Alignment to the Intended Model
 

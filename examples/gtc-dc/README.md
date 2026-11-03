@@ -33,7 +33,7 @@ KV and SSM cache dtypes use runtime defaults; model output accuracy and tool cal
 ## Prepare the Target Host
 
 Ubuntu 24.04 is the assumed Linux environment, including the WSL2 distribution.
-Use [the build prerequisites](../../docs/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
+Use [the build prerequisites](../../docs/build-deploy/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
 Each target requires exactly one visible NVIDIA GPU; these configurations provide neither CPU offloading nor multi-GPU serving.
 
 | Target | Hardware requirement | Memory accounting |
@@ -51,7 +51,7 @@ The 88 GiB budget and 28 GiB reserve require at least 116 GiB total memory obser
 A WSL2 memory limit that passes these checks leaves at most 12 GiB of the 128 GB configuration for firmware, Windows, and other applications.
 Whether memory observed inside WSL2 accounts for GPU allocations made through the Windows driver is untested; measure both inside WSL2 and in Windows while the model loads.
 Model loading and GPU access through WSL2 still require validation on the selected machine.
-See [hardware admission and memory checks](../../docs/models.md#choose-a-hardware-profile) and [platform limits](../../docs/limits.md#platforms-models-and-placement).
+See [hardware admission and memory checks](../../docs/agents-inference/models.md#choose-a-hardware-profile) and [platform limits](../../docs/resources/limits.md#platforms-models-and-placement).
 
 On the Station, DGX Spark, or inside the RTX Spark's ARM64 WSL2 distribution, run from the repository root:
 
@@ -87,7 +87,7 @@ dist/linux_arm64/bin/nemoclaw plan --state-dir .local/gtc-dc/state .local/gtc-dc
 For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` file instead and run the same Linux ARM64 command inside WSL2.
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
-Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
+Follow [the deployment workflow](../../docs/build-deploy/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/agents-inference/inference.md#verify-the-result) separately.
 
 ## Sources and Adaptation
 

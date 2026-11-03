@@ -31,7 +31,7 @@ Hardware requirements come from the recipe or an explicit service hardware contr
 Named profiles check GPU family and compute capability separately from memory capacity; failed or incomplete observations stop the operation.
 Collectors preserve unsupported framebuffer counters without inferring a memory architecture.
 Hardware identity does not select device placement or parallelism.
-See [hardware profiles](../../docs/models.md#choose-a-hardware-profile) for memory accounting, supported configurations, and qualification limits.
+See [hardware profiles](../../docs/agents-inference/models.md#choose-a-hardware-profile) for memory accounting, supported configurations, and qualification limits.
 
 A new backend or hardware profile normally adds a module and tests for its configuration.
 A new crate requires a dependency or deployment boundary and a consumer.
@@ -55,7 +55,7 @@ The loading deadline is separate from download and preparation limits.
 The [supervisor](../../crates/nemoclaw-runtime/src/execution/supervisor.rs) distinguishes pressure, observation failures, closed sample streams, and operator trips so recovery addresses the cause.
 A protective stop retains data and bindings and must not trigger an automatic restart loop that repeats the same memory demand.
 Explicit apply may restart or replace disposable compute; the runtime rechecks capacity before serving.
-See [runtime recovery](../../docs/models.md#diagnose-and-recover-a-stopped-runtime) for operator steps.
+See [runtime recovery](../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) for operator steps.
 
 ## Why Fabric Owns the Agent Process
 
@@ -63,7 +63,7 @@ Fabric owns the agent runtime inside the OpenShell sandbox; OpenShell supplies i
 Managed and external dependencies use the same Fabric launch path.
 NemoClaw supplies deployment settings such as model IDs and endpoints, while native agent configuration remains the agent's responsibility where no deployment invariant applies.
 This avoids maintaining a second agent schema or launcher.
-See [agent runtimes](../../docs/agents.md) for harness configuration and native access.
+See [agent runtimes](../../docs/agents-inference/agents.md) for harness configuration and native access.
 
 Missing or unsupported runtime labels are failed observations, never absence.
 Changing a harness does not migrate sandbox identity or agent data.
@@ -81,7 +81,7 @@ The image's own [`hf download`](../../crates/nemoclaw-runtime/src/vllm/runtime/d
 The runtime then records a manifest of each file's size and modification time, so later starts detect changed files without downloading again.
 Orchestration consumes runtime status instead of repeating artifact verification.
 Authentication or transport failures, incomplete inventories, and changed artifacts are errors, never absence.
-See [retained model files](../../docs/models.md#retained-model-files) for format compatibility.
+See [retained model files](../../docs/agents-inference/models.md#retained-model-files) for format compatibility.
 
 Managed Ollama downloads and stores models itself.
 At startup, the runtime asks the pinned Ollama to [pull](../../crates/nemoclaw-runtime/src/ollama/runtime/pull.rs) the authored model into its own storage on the retained volume, unless Ollama already reports it with the authored digest.

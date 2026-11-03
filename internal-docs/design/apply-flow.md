@@ -17,7 +17,7 @@ Running `nemoclaw plan deployment.yaml` first is optional.
 That command previews changes without changing runtime resources, although it can write local intent and plan files.
 On a fresh managed deployment, the plan includes the gateway and every object it will serve; gateway checks that need the running gateway move to apply.
 `nemoclaw apply` generates and checks a fresh plan itself.
-See the [CLI reference](../../docs/reference/cli.md) for command options.
+See the [CLI reference](../../docs/references/cli.md) for command options.
 
 ## Component Flow
 
@@ -81,21 +81,21 @@ OpenShell owns sandbox creation and policy enforcement.
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
 The OpenShell provider owns OpenShell operations and gateway installation: Podman gateway processes, gateway initialization and retained bridges, and Kubernetes gateway storage and authentication.
 The Fabric provider owns starting and stopping agent runtimes; the vLLM and Ollama providers own model-server contracts, readiness, capacity, and credential storage.
-The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../../docs/prerequisites.md).
+The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../../docs/get-started/prerequisites.md).
 
 ## Conditions Summarized by the Diagram
 
 - The graph has no runtime resources when neither a managed gateway nor managed inference services are declared.
   An external gateway must already be reachable for planning.
-- The deployment graph can also contain an [Ollama proxy](../../docs/inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
+- The deployment graph can also contain an [Ollama proxy](../../docs/agents-inference/inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
 - Each adapter uses `fabric_agent` after sandbox creation and route setup.
   NemoClaw runs one agent runtime per sandbox, so a new agent always gets a new sandbox.
 - Refresh asks Fabric whether each agent's runtime still runs; apply starts a stopped runtime again in its sandbox.
-  See [agent runtimes during apply](../../docs/usage.md#agent-runtimes-during-apply).
+  See [agent runtimes during apply](../../docs/build-deploy/usage.md#agent-runtimes-during-apply).
 
-For native configuration and optional tracing, see [agent runtimes](../../docs/agents.md).
-For listener setup and forwarding, see [agent interfaces](../../docs/interfaces.md).
-For partial failure and retry rules, see [deployment recovery](../../docs/usage.md#recover-an-interrupted-operation).
+For native configuration and optional tracing, see [agent runtimes](../../docs/agents-inference/agents.md).
+For listener setup and forwarding, see [agent interfaces](../../docs/agents-inference/interfaces.md).
+For partial failure and retry rules, see [deployment recovery](../../docs/build-deploy/usage.md#recover-an-interrupted-operation).
 
 ## Implementation
 

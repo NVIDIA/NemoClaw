@@ -2,141 +2,146 @@
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "sections": [
     {
-      "title": "Start here",
+      "title": "About",
       "pages": [
-        {
-          "title": "Understand NemoClaw",
-          "source": "docs/overview.md",
-          "slug": "overview"
-        },
         {
           "title": "Documentation index",
           "source": "docs/README.md",
           "slug": "index"
         },
         {
-          "title": "Check prerequisites",
-          "source": "docs/prerequisites.md",
-          "slug": "prerequisites"
-        },
-        {
-          "title": "Deploy your first OpenClaw agent",
-          "source": "docs/get-started.md",
-          "slug": "get-started"
+          "title": "Understand NemoClaw",
+          "source": "docs/about/overview.md",
+          "slug": "overview"
         },
         {
           "title": "Explore the ecosystem",
-          "source": "docs/ecosystem.md",
+          "source": "docs/about/ecosystem.md",
           "slug": "ecosystem"
+        },
+        {
+          "title": "Architecture overview",
+          "source": "docs/about/architecture-overview.md",
+          "slug": "architecture-overview"
         }
       ]
     },
     {
-      "title": "Deploy and operate",
+      "title": "Get Started",
+      "pages": [
+        {
+          "title": "Check prerequisites",
+          "source": "docs/get-started/prerequisites.md",
+          "slug": "prerequisites"
+        },
+        {
+          "title": "Deploy your first OpenClaw agent",
+          "source": "docs/get-started/first-deployment.md",
+          "slug": "get-started"
+        },
+        {
+          "title": "Assess migration",
+          "source": "docs/get-started/migration.md",
+          "slug": "migration"
+        }
+      ]
+    },
+    {
+      "title": "Build and Deploy",
       "pages": [
         {
           "title": "Build local artifacts",
-          "source": "docs/build.md",
+          "source": "docs/build-deploy/build.md",
           "slug": "build"
         },
         {
           "title": "Build a derived agent image",
-          "source": "docs/derived-images.md",
+          "source": "docs/build-deploy/derived-images.md",
           "slug": "derived-images"
         },
         {
           "title": "Use desired state",
-          "source": "docs/usage.md",
+          "source": "docs/build-deploy/usage.md",
           "slug": "usage"
         },
         {
           "title": "Deploy to Kubernetes or OpenShift",
-          "source": "docs/kubernetes.md",
+          "source": "docs/build-deploy/kubernetes.md",
           "slug": "kubernetes"
         },
         {
           "title": "Definitions and references",
-          "source": "docs/configuration-references.md",
+          "source": "docs/build-deploy/configuration-references.md",
           "slug": "configuration-references"
         },
         {
           "title": "Locate and preserve state",
-          "source": "docs/state.md",
+          "source": "docs/build-deploy/state.md",
           "slug": "state"
         },
         {
-          "title": "Configure inference",
-          "source": "docs/inference.md",
-          "slug": "inference"
-        },
-        {
-          "title": "Access agent interfaces",
-          "source": "docs/interfaces.md",
-          "slug": "interfaces"
-        },
+          "title": "Configure a container service",
+          "source": "docs/build-deploy/container-services.md",
+          "slug": "container-contract"
+        }
+      ]
+    },
+    {
+      "title": "Agents and Inference",
+      "pages": [
         {
           "title": "Agent runtimes",
-          "source": "docs/agents.md",
+          "source": "docs/agents-inference/agents.md",
           "slug": "agents"
         },
         {
-          "title": "Use OAuth-refresh providers",
-          "source": "docs/oauth-refresh.md",
-          "slug": "oauth-refresh"
+          "title": "Access agent interfaces",
+          "source": "docs/agents-inference/interfaces.md",
+          "slug": "interfaces"
+        },
+        {
+          "title": "Configure inference",
+          "source": "docs/agents-inference/inference.md",
+          "slug": "inference"
         },
         {
           "title": "Select a managed model",
-          "source": "docs/models.md",
+          "source": "docs/agents-inference/models.md",
           "slug": "models"
         },
         {
           "title": "Inline model recipes",
-          "source": "docs/recipes.md",
+          "source": "docs/agents-inference/recipes.md",
           "slug": "recipes"
         },
         {
           "title": "Configure an SSH model service",
-          "source": "docs/remote-service.md",
+          "source": "docs/agents-inference/remote-service.md",
           "slug": "remote-service"
         },
         {
-          "title": "Sandbox policy",
-          "source": "docs/sandbox-network.md",
-          "slug": "sandbox-network"
-        },
-        {
-          "title": "Rotate credentials",
-          "source": "docs/credential-rotation.md",
-          "slug": "credential-rotation"
-        },
+          "title": "Use OAuth-refresh providers",
+          "source": "docs/agents-inference/oauth-refresh.md",
+          "slug": "oauth-refresh"
+        }
+      ]
+    },
+    {
+      "title": "Observability",
+      "pages": [
         {
           "title": "Troubleshoot deployment operations",
-          "source": "docs/troubleshooting.md",
+          "source": "docs/observability/troubleshooting.md",
           "slug": "troubleshooting"
         }
       ]
     },
     {
-      "title": "Integrate and reference",
+      "title": "References",
       "pages": [
         {
-          "title": "Use the Rust SDK",
-          "source": "docs/sdk.md",
-          "slug": "sdk"
-        },
-        {
-          "title": "OpenTofu provider",
-          "source": "docs/provider.md",
-          "slug": "provider"
-        },
-        {
-          "title": "Configure a container service",
-          "source": "docs/container-services.md",
-          "slug": "container-contract"
-        },
-        {
           "title": "CLI reference",
-          "source": "docs/reference/cli.md",
+          "source": "docs/references/cli.md",
           "slug": "reference/cli"
         },
         {
@@ -146,48 +151,68 @@
         },
         {
           "title": "Fabric harnesses",
-          "source": "docs/reference/fabric-harnesses.md",
+          "source": "docs/references/fabric-harnesses.md",
           "slug": "reference/fabric-harnesses"
         },
         {
-          "title": "Project resources",
-          "source": "docs/resources.md",
-          "slug": "resources"
+          "title": "Use the Rust SDK",
+          "source": "docs/references/sdk.md",
+          "slug": "sdk"
+        },
+        {
+          "title": "OpenTofu provider",
+          "source": "docs/references/provider.md",
+          "slug": "provider"
+        },
+        {
+          "title": "Compatibility across releases",
+          "source": "docs/references/compatibility.md",
+          "slug": "compatibility"
         }
       ]
     },
     {
-      "title": "Releases, security, and limits",
+      "title": "Resources",
       "pages": [
         {
-          "title": "Assess migration",
-          "source": "docs/migration.md",
-          "slug": "migration"
-        },
-        {
-          "title": "Compatibility across releases",
-          "source": "docs/compatibility.md",
-          "slug": "compatibility"
+          "title": "Project resources",
+          "source": "docs/resources/resources.md",
+          "slug": "resources"
         },
         {
           "title": "Release notes",
-          "source": "docs/release-notes.md",
+          "source": "docs/resources/release-notes.md",
           "slug": "release-notes"
         },
         {
           "title": "Check current limits",
-          "source": "docs/limits.md",
+          "source": "docs/resources/limits.md",
           "slug": "limits"
-        },
+        }
+      ]
+    },
+    {
+      "title": "Security",
+      "pages": [
         {
           "title": "Security and credential ownership",
-          "source": "docs/security.md",
+          "source": "docs/security/security.md",
           "slug": "security"
         },
         {
           "title": "Threat model",
-          "source": "docs/threat-model.md",
+          "source": "docs/security/threat-model.md",
           "slug": "threat-model"
+        },
+        {
+          "title": "Sandbox policy",
+          "source": "docs/security/sandbox-network.md",
+          "slug": "sandbox-network"
+        },
+        {
+          "title": "Rotate credentials",
+          "source": "docs/security/credential-rotation.md",
+          "slug": "credential-rotation"
         }
       ]
     }

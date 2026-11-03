@@ -4,7 +4,7 @@
 # Inline Recipe Design
 
 An inline recipe declares model-specific preparation and serving requirements without adding a backend to the SDK.
-The [accepted scope](scope.md) defines requirements; the [recipe guide](../../docs/recipes.md) owns declaration fields and the executable protocol.
+The [accepted scope](scope.md) defines requirements; the [recipe guide](../../docs/agents-inference/recipes.md) owns declaration fields and the executable protocol.
 
 ## Why the Contract Is Data
 

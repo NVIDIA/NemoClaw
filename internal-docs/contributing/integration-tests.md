@@ -5,7 +5,7 @@
 
 This page covers the [contract and system layers](testing.md#test-layers): tests that run pinned OpenTofu from a bundle against local fixtures and temporary state.
 They create no Docker, OpenShell, Kubernetes, or inference resources; tests that use a real Docker engine are [live tests](live-tests.md#docker-live-suite).
-Complete the [build prerequisites](../../docs/build.md) first.
+Complete the [build prerequisites](../../docs/build-deploy/build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
 
