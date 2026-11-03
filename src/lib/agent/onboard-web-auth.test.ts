@@ -49,8 +49,22 @@ describe("printDashboardUi bearer-token agents", () => {
     const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
     expect(output).toContain("Hermes Agent Dashboard");
     expect(output).toContain("OpenAI-compatible API (bearer auth)");
-    expect(output).toContain("Port 8642 must be forwarded");
+    expect(output).toContain("Port 8642 must be forwarded; clients send an Authorization header:");
     expect(output).toContain("Get the key: nemoclaw hermes gateway-token --quiet");
     expect(output).not.toMatch(/Bearer [0-9a-f]{16,}/);
+  });
+
+  it("surfaces the per-sandbox API port when an allocated port is supplied (#14077)", () => {
+    printDashboardUi("hermes-second", null, makeBearerAgent(), {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+      effectiveApiPort: 8643,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent Dashboard");
+    expect(output).toContain("OpenAI-compatible API (bearer auth)");
+    expect(output).toContain("Port 8643 must be forwarded; clients send an Authorization header:");
+    expect(output).not.toContain("Port 8642 must be forwarded");
   });
 });
