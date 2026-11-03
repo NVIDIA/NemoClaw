@@ -117,7 +117,7 @@ Each check gets one of three outcomes:
 - A later diagnostic, recovery, or retry never turns an earlier failure into a pass.
 - YAML acceptance, apply success, and files on disk prove no capability. Retained files prove neither native discovery, registration, fresh execution, nor conversation resume.
 - An expected command failure or policy rejection passes when the native evidence shows the asserted behavior.
-- A proof through one entry point doesn't cover the others a feature lists; a result for one agent or model doesn't cover another.
+- A proof through one entry point doesn't cover the others a feature lists; a result for one agent, target, or model doesn't cover another.
 
 ## Lifecycle Phases
 
