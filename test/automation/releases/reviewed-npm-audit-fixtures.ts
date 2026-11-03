@@ -5,12 +5,14 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
+import { OPENCLAW_LEGACY_SECURITY_WORKSPACES } from "../../fixtures/openclaw-legacy-security-workspaces.ts";
 import type { parseAuditConfig } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 export type LockedGraphFixture<T> = Readonly<{
   graph: T;
   lock: Buffer;
   manifest: Buffer;
+  workspace?: string;
 }>;
 
 type ReviewedLockedGraph = ReturnType<typeof parseAuditConfig>["lockedGraphs"][number];
@@ -53,6 +55,7 @@ export function openClawReplacementGraphFixture(
   return {
     graph,
     lock,
+    workspace: OPENCLAW_LEGACY_SECURITY_WORKSPACES["2026.9.5"],
     manifest: Buffer.from(`${JSON.stringify(parsedLock.packages[""], null, 2)}\n`),
   };
 }

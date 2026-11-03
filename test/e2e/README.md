@@ -80,8 +80,10 @@ for both onboarding calls, rebuild, restart, consumer, credential scan and sibli
 denial. Its catalogue job adds both DCode scenario budgets to the existing
 75-minute routing allowance, for a total of 243 minutes. This preserves the
 inherited suite's overall limit instead of summing every per-test failure guard.
-Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+Manual PR runs use the catalogue and job timeout from the trusted workflow commit on `main`, so
 a candidate's job-timeout change applies only after it reaches that commit.
+The protected managed-image GPU job allows 90 minutes, with 60 minutes for setup and providers,
+15 minutes for rollback, and 15 minutes reserved for cleanup, evidence, and runner headroom.
 
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
@@ -1047,6 +1049,25 @@ The execution profile owns the credentials available to its target step:
   The reusable workflow enforces this boundary; an authenticated same-repository PR caller sets `trusted_main` to `true`.
 
 `common-egress-agent` runs 4 isolated scenario shards.
+The balanced OpenClaw shard also checks the installed no-search configuration and sends a fresh documentation-search request.
+Its structured reply must report unavailable search and contain no installation-documentation result; reduced tool evidence must show no successful fetch or search-provider call, execution, or result.
+This fresh turn must disclose the known disabled-search state without tool activity. Its payload and final visible answer must both satisfy the unavailable-search reply contract. C1 opts into `finalReplyContract: "unavailable-search"`; missing or fabricated `meta.finalAssistantVisibleText` rejects an otherwise successful CLI turn deterministically. Final text cannot override a failed or replay-risk CLI response. C1 rejects every tool call, execution, and result, including generic search, file reads, shell commands, memory access, and unknown tools. This restriction belongs to the unavailable-search evidence check. The Personal fetch scenario retains its progressive tool disclosure support.
+The plugin, agent manifest, and blueprint require OpenClaw 2026.9.2 or newer. Image builds enforce the blueprint minimum and include only the current reviewed runtime pins. Rebuild coverage uses the exact managed image. Historical gateway-upgrade coverage injects a reviewed archive into the frozen old installer; it does not use the current Dockerfiles. Generated configuration grants conversation-hook access only to the NemoClaw plugin. Before gateway startup, the entrypoint also reconciles that grant in restored native configuration, preserving unrelated plugin settings. Both root and non-root startup apply it after offline restoration. Direct OpenClaw commands reconcile the grant without rotating an existing valid gateway token. OpenClaw requires this opt-in for the prompt, turn-admission and completion hooks; without it, prompt filtering and lifecycle cleanup cannot run. The real-distribution proof checks the generated grant against the pinned loader policy before exercising those hooks. The real-distribution proof exercises the OpenClaw 2026.9.2 compatibility minimum, including propagation of the prompt hook’s tool allowlist. The source hook tests own prompt construction and tool denial.
+
+When search is disabled, requests for web research receive an empty per-turn tool allowlist before inference. This keeps discovery and substitute tools out of those requests. Search, research, look-up, find and related discovery requests without a supplied source identify external research, as do provider requests such as “Google” and requests for official installation documentation. A local task or supplied URL does not exempt a separate request for web research. Questions about local work, such as “What files are in the current directory?”, keep their tools without naming a local path. Searches targeting the project, current directory, logs, memory or a supplied URL retain their tools. A local term in the research topic does not identify a local source. Direct URL retrieval also keeps its tools. Words inside a supplied URL do not establish intent to search the web. The real distribution harness verifies prompt-hook propagation and the runtime prompt-policy and filtering contract. The execution hook also blocks search-provider calls and discovery immediately.
+
+Identified substitute probes are blocked after a denied search, using run or session identity. Each active turn retains at most three aliases: run ID, session key, and session ID. A matching `agent_end` releases that turn through any unique associated alias. A known run ID takes precedence over shared session aliases; ambiguous session-only cleanup cannot release either active run. The state table reserves ownership for at most 1,024 concurrent turns while search is disabled, including ordinary turns. Completed ordinary turns release their slots immediately.
+Before inference, `before_agent_run` reserves turn ownership and initializes supplied-source scope from its prompt. Prompt construction is read-only, and a tool denial cannot reserve an unadmitted identity. Abandoned prompt builds therefore do not consume turn capacity. At capacity, new turns are refused. Untracked substitute calls remain blocked even after another turn completes, while a new admitted turn can use the freed slot. No global overflow deadline prevents recovery after completion.
+
+Repeated admission does not erase a retained denial. One unreferenced timer expires abandoned turn ownership after OpenClaw's maximum timer-safe turn window plus one minute for cleanup. Matching completion releases a retained identity immediately. A static warning reports refused admission at capacity. Configuration recovery and gateway shutdown clear turn ownership and its timer.
+
+Required prompt, admission, tool-safety, and lifecycle hooks must register successfully; an error aborts plugin registration even if search is currently enabled. Calls without identity fail closed for substitute tools; lifecycle events cannot make them safe to correlate. Ordinary local work and direct fetches remain available in admitted runs that have not attempted search, including when other turns fill the remaining slots. A turn explicitly scoped to user-supplied sources can continue that work after a denied search-provider call. A separate web-research request removes that exception; completion clears it with the owning turn. The real OpenClaw distribution harness exercises the installed tool wrapper and hook runner with controlled search and substitute calls, proving denial before tool execution. This agent turn owns model compliance after unavailable search.
+The parsed JSON must contain only the two requested fields. Surrounding prose must consist only of recognized unavailable-search disclosures or a search-provider setup instruction. A paired Markdown JSON code fence is allowed. Other prose, unsupported search or documentation claims, extra JSON objects, and extra fields fail validation.
+Changes to `agents/openclaw/manifest.yaml`, `nemoclaw-blueprint/blueprint.yaml`, `nemoclaw/package.json`, `nemoclaw/src/index.ts`, `nemoclaw/src/denied-search-state.ts`, `nemoclaw/src/runtime-context.ts`, `nemoclaw/src/search-config.ts`, `scripts/generate-openclaw-config.mts`, `scripts/nemoclaw-start.sh`, or `src/lib/openclaw/agent-json-provenance.ts` select this balanced OpenClaw shard.
+Each attempt records bounded reply diagnostics before validation, including parse and surrounding-prose status, expected field names, extra-field count, search-status category, and documentation value type.
+Artifacts retain no raw reply, arbitrary field names, queries, URLs, or retrieved content.
+The negative-path reducer uses no expected fetch URL; its validator checks the unavailable-search behavior directly.
+Each scenario supplies its validator and diagnostic projector together. Unavailable-search artifacts contain only fixed counts for tool activity, discovery, successful fetches, provider mentions, and completion, plus the same acceptance result. Both rejected completed turns and failed-turn collection use that projector. Personal fetch retains its own evidence projector and expected-content diagnostics.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
 The Personal and C2 OpenClaw public-reference agent assertions disable ordinary agent-attempt shell artifacts because OpenClaw stdout can contain fetched content and complete URLs.
@@ -1054,6 +1075,9 @@ OpenShell SSH configuration stays in a private temporary file outside the artifa
 The assertion attempts removal after it finishes and fails if the directory remains.
 A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
 Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
+When a redacted agent turn fails with tool-evidence validation enabled, the helper also attempts a read-only session reduction before cleanup.
+The failure artifact records fixed collection status and the existing aggregate tool-evidence projection, without raw session data or command errors.
+This diagnostic read cannot accept the failed turn or change its retry classification.
 Both scenarios collect bounded session tool-result diagnostics even when the agent reply fails its assertion.
 At most 64 tool-result records retain numeric HTTP status, a tool-error flag, and a call-pairing flag.
 HTTP status comes from a numeric tool-result field or the fixed `Web fetch failed (NNN):` prefix in an OpenClaw `web_fetch` error result.
@@ -2498,8 +2522,8 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
-The 75-minute job records its start before checkout. Setup and provider qualification share the first
-45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
+The 90-minute job records its start before checkout. Setup and provider qualification share the first
+60 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
 limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
 and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
 and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase

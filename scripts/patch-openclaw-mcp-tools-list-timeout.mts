@@ -13,7 +13,6 @@ export const TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
 export const TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
 export const TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
 export const SUPPORTED_OPENCLAW_VERSION = "2026.9.2";
-const LEGACY_FIXTURE_OPENCLAW_VERSIONS = new Set(["2026.3.11", "2026.4.24"]);
 
 /** Client identity that only the compiled bundle-mcp session runtime carries. */
 const TARGET_SIGNATURE = '"openclaw-bundle-mcp"';
@@ -72,9 +71,7 @@ type PatchTextResult = {
   text: string;
 };
 
-type PatchRunResult =
-  | { status: AppliedPatchStatus; file: string; version: string }
-  | { status: "skipped-unsupported-version"; version: string };
+type PatchRunResult = { status: AppliedPatchStatus; file: string; version: string };
 
 function usage(): string {
   return "Usage: patch-openclaw-mcp-tools-list-timeout.mts [--audit] <openclaw-dist-dir>";
@@ -104,6 +101,11 @@ function readOpenClawVersion(distDir: string): string {
   }
   if (typeof payload.version !== "string") {
     throw new Error(`OpenClaw package metadata missing string version at ${packageJsonPath}`);
+  }
+  if (payload.version !== SUPPORTED_OPENCLAW_VERSION) {
+    throw new Error(
+      `OpenClaw ${payload.version} is not reviewed for the MCP tools/list timeout compatibility patch`,
+    );
   }
   return payload.version;
 }
@@ -194,14 +196,6 @@ function resolveBundleMcpRuntimeFile(distDir: string): string {
 export function patchOpenClawMcpToolsListTimeout(distDir: string): PatchRunResult {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
-  if (version !== SUPPORTED_OPENCLAW_VERSION && version !== "2026.9.1") {
-    if (LEGACY_FIXTURE_OPENCLAW_VERSIONS.has(version)) {
-      return { status: "skipped-unsupported-version", version };
-    }
-    throw new Error(
-      `OpenClaw ${version} is not reviewed for the MCP tools/list timeout compatibility patch`,
-    );
-  }
   const target = resolveBundleMcpRuntimeFile(resolvedDist);
   const result = patchMcpToolsListTimeoutText(fs.readFileSync(target, "utf-8"), target);
   if (result.patched) fs.writeFileSync(target, result.text);
@@ -245,15 +239,9 @@ function main(argv: readonly string[]): number {
       return 0;
     }
     const result = patchOpenClawMcpToolsListTimeout(distDir);
-    if (result.status === "skipped-unsupported-version") {
-      console.log(
-        `INFO: OpenClaw MCP tools/list timeout skipped for unsupported legacy fixture version ${result.version}`,
-      );
-    } else {
-      console.log(
-        `INFO: OpenClaw MCP tools/list timeout ${result.status}: ${result.file} (openclaw ${result.version})`,
-      );
-    }
+    console.log(
+      `INFO: OpenClaw MCP tools/list timeout ${result.status}: ${result.file} (openclaw ${result.version})`,
+    );
     return 0;
   } catch (err) {
     console.error(`ERROR: ${err instanceof Error ? err.message : String(err)}`);
