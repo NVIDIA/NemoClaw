@@ -37,6 +37,50 @@ jobs:
           rustup component add llvm-tools-preview
           cargo install cargo-llvm-cov --version 0.9.1 --locked
           cargo llvm-cov show-env --export-prefix --no-cfg-coverage > "$RUNNER_TEMP/coverage.env"
+          cat >> "$RUNNER_TEMP/coverage.env" <<'SH'
+          compact_profiles() {
+            local profile_directory="$PWD/.build/coverage/raw/$1"
+            local profile_tool="$(rustc --print target-libdir)/../bin/llvm-profdata"
+            if compgen -G "$profile_directory/*.profraw" > /dev/null; then
+              "$profile_tool" merge -sparse --failure-mode=any "$profile_directory"/*.profraw \
+                -o "$profile_directory/merged.profdata"
+              rm "$profile_directory"/*.profraw
+              # cargo-llvm-cov discovers this suffix. LLVM merge accepts indexed
+              # profiles too, so later reports retain the same counter union.
+              mv "$profile_directory/merged.profdata" "$profile_directory/$1-merged.profraw"
+            fi
+          }
+          report_coverage() {
+            local layer="$1"
+            rm -f target/*.profraw
+            if [ "$layer" = overall ]; then
+              if [ "${COMPLETE:-false}" != true ]; then
+                echo 'Overall coverage unavailable: at least one test layer did not pass.' >> "$GITHUB_STEP_SUMMARY"
+                return
+              fi
+              for measured_layer in unit contract integration e2e; do
+                compgen -G ".build/coverage/raw/$measured_layer/*.profraw" > /dev/null || return 1
+              done
+              cp .build/coverage/raw/*/*.profraw target/
+            else
+              if ! compgen -G ".build/coverage/raw/$layer/*.profraw" > /dev/null; then
+                echo "| $layer (no profiles) | — | — | — |" >> "$GITHUB_STEP_SUMMARY"
+                return
+              fi
+              cp .build/coverage/raw/"$layer"/*.profraw target/
+            fi
+            # Include the same linked debug and release objects in every layer.
+            local LLVM_COV_FLAGS="-object=$PWD/target/x86_64-unknown-linux-gnu/release/nemoclaw"
+            for provider in openshell fabric vllm ollama host; do
+              LLVM_COV_FLAGS+=" -object=$PWD/target/x86_64-unknown-linux-gnu/release/terraform-provider-$provider"
+            done
+            export LLVM_COV_FLAGS
+            cargo llvm-cov report --json --summary-only --ignore-filename-regex 'crates/(nemoclaw-e2e|vendor)/' \
+              --output-path ".build/coverage/$layer.json"
+            jq -r --arg layer "$layer" '.data[0].totals | "| \($layer) | \(.lines.covered)/\(.lines.count) (\(.lines.percent)%) | \(.functions.percent)% | \(.regions.percent)% |"' \
+              ".build/coverage/$layer.json" >> "$GITHUB_STEP_SUMMARY"
+          }
+          SH
       - name: Build instrumented tests and bundle
         id: build
         run: |
@@ -52,6 +96,7 @@ jobs:
         run: |
           source "$RUNNER_TEMP/coverage.env"
           export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/unit/unit-%m-%p.profraw"
+          trap 'compact_profiles unit' EXIT
           cargo nextest run --locked --workspace --all-targets --profile ci
           cargo test --locked --workspace --doc
       - name: Provider contracts
@@ -60,6 +105,7 @@ jobs:
         run: |
           source "$RUNNER_TEMP/coverage.env"
           export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/contract/contract-%m-%p.profraw"
+          trap 'compact_profiles contract' EXIT
           export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
           cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only \
             -E '(package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract)'
@@ -69,21 +115,57 @@ jobs:
         run: |
           source "$RUNNER_TEMP/coverage.env"
           export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/integration/integration-%m-%p.profraw"
+          trap 'compact_profiles integration' EXIT
           export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
           cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only \
             -E 'package(nemoclaw-e2e) & binary(=integration)'
-      - name: Docker and Kind E2E
-        id: e2e
+      - name: Report unit, contract, and integration coverage
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           source "$RUNNER_TEMP/coverage.env"
+          echo '| Layer | Lines | Functions | Regions |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---|---:|---:|---:|' >> "$GITHUB_STEP_SUMMARY"
+          for layer in unit contract integration; do report_coverage "$layer"; done
+      - name: Preserve measured coverage before live setup
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-before-live-${{ github.sha }}-${{ github.run_attempt }}
+          path: .build/coverage
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Archive live tests and discard compiler intermediates
+        id: live_inputs
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          cargo ci archive
+          rm -f target/*.profraw
+          # Live tests run from the archive. Keep linked executables for LLVM
+          # reporting, and free compiler outputs before Docker builds images.
+          rm -rf target/ci-runner target/debug/build target/debug/incremental target/debug/.fingerprint \
+            target/x86_64-unknown-linux-gnu/release/build \
+            target/x86_64-unknown-linux-gnu/release/incremental \
+            target/x86_64-unknown-linux-gnu/release/.fingerprint
+          find target -type f \( -name '*.rlib' -o -name '*.rmeta' -o -name '*.o' -o -name '*.d' \) -delete
+          df -h .
+      - name: Docker and Kind E2E
+        id: e2e
+        if: ${{ !cancelled() && steps.live_inputs.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
           export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/e2e/e2e-%m-%p.profraw"
+          trap 'compact_profiles e2e' EXIT
           # The driver owns cleanup of its uniquely named images and resources.
-          cargo ci live-images
+          target/debug/nemoclaw-build ci live-images
           docker_result=0
-          cargo ci live-docker --images .build/ci/live-images.tar.zst || docker_result=$?
+          target/debug/nemoclaw-build ci live-docker --archive-file .build/ci/lifecycle.tar.zst \
+            --images .build/ci/live-images.tar.zst || docker_result=$?
+          compact_profiles e2e
           kind_result=0
-          cargo ci live-kind --images .build/ci/live-images.tar.zst || kind_result=$?
+          target/debug/nemoclaw-build ci live-kind --archive-file .build/ci/lifecycle.tar.zst \
+            --images .build/ci/live-images.tar.zst || kind_result=$?
           test "$docker_result" = 0 && test "$kind_result" = 0
       - name: Report each layer and their union
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -91,35 +173,9 @@ jobs:
           COMPLETE: ${{ steps.unit.outcome == 'success' && steps.contract.outcome == 'success' && steps.integration.outcome == 'success' && steps.e2e.outcome == 'success' }}
         run: |
           source "$RUNNER_TEMP/coverage.env"
-          # Keep the same debug and release objects in every report, including
-          # objects whose counters a layer never executed.
-          export LLVM_COV_FLAGS="-object=$PWD/target/x86_64-unknown-linux-gnu/release/nemoclaw"
-          for provider in openshell fabric vllm ollama host; do
-            LLVM_COV_FLAGS+=" -object=$PWD/target/x86_64-unknown-linux-gnu/release/terraform-provider-$provider"
-          done
-          echo '| Layer | Lines | Functions | Regions |' >> "$GITHUB_STEP_SUMMARY"
-          echo '|---|---:|---:|---:|' >> "$GITHUB_STEP_SUMMARY"
-          for layer in unit contract integration e2e overall; do
-            rm -f target/*.profraw
-            if [ "$layer" = overall ]; then
-              if [ "$COMPLETE" != true ]; then
-                echo 'Overall coverage unavailable: at least one test layer did not pass.' >> "$GITHUB_STEP_SUMMARY"
-                continue
-              fi
-              cp .build/coverage/raw/*/*.profraw target/
-            else
-              if ! compgen -G ".build/coverage/raw/$layer/*.profraw" > /dev/null; then
-                echo "| $layer (no profiles) | — | — | — |" >> "$GITHUB_STEP_SUMMARY"
-                continue
-              fi
-              cp .build/coverage/raw/"$layer"/*.profraw target/
-            fi
-            cargo llvm-cov report --json --summary-only --ignore-filename-regex 'crates/(nemoclaw-e2e|vendor)/' \
-              --output-path ".build/coverage/$layer.json"
-            jq -r --arg layer "$layer" '.data[0].totals | "| \($layer) | \(.lines.covered)/\(.lines.count) (\(.lines.percent)%) | \(.functions.percent)% | \(.regions.percent)% |"' \
-              ".build/coverage/$layer.json" >> "$GITHUB_STEP_SUMMARY"
-          done
-          echo 'Scope: host Rust code on linux_amd64; excludes test fixtures, vendored code, workload-image processes, and hosted/cloud E2E. Reports from failed layers are partial. Overall merges raw counters; it does not average percentages.' >> "$GITHUB_STEP_SUMMARY"
+          report_coverage e2e
+          report_coverage overall
+          echo 'Scope: host Rust code on linux_amd64; excludes private E2E fixtures, vendored code, workload-image processes, and hosted/cloud E2E. Reports from failed layers are partial. Overall merges profile counters; it does not average percentages.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
