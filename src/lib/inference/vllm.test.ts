@@ -51,8 +51,7 @@ vi.mock("../adapters/http/probe", () => ({
   runCurlProbe: mocks.runCurlProbe,
 }));
 
-vi.mock("./nim", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./nim")>()),
+vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
 

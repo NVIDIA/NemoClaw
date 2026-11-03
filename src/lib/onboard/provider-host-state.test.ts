@@ -170,6 +170,20 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaHost).toBe("127.0.0.1");
     expect(state.isWindowsHostOllama).toBe(false);
     expect(state.vllmRunning).toBe(true);
+    expect(deps.runCapture).toHaveBeenCalledWith(
+      [
+        "curl",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        "--write-out",
+        "\\n%{http_code}",
+        "http://127.0.0.1:8000/v1/models",
+      ],
+      { ignoreError: true },
+    );
     expect(state.hasVllmImage).toBe(true);
     expect(state.vllmEntries.map((entry) => entry.key)).toEqual(["vllm"]);
     expect(deps.hostCommandExists).toHaveBeenCalledWith("docker");

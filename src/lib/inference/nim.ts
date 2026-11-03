@@ -24,6 +24,7 @@ import { sleepSeconds } from "../core/wait";
 import { isWsl as detectWsl } from "../platform";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
+import { buildModelListProbeCommand, isOpenAiModelListResponse } from "./serving/model-inventory";
 import {
   classifyNvidiaFirmwareProducts,
   hasDgxStationGb300PciGpu,
@@ -436,35 +437,6 @@ export function nimModelSelectionError(
 
 export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
-}
-
-// True when a `/v1/models` body is an OpenAI-style list: JSON with a `data` array.
-export function isOpenAiModelListBody(body: string): boolean {
-  try {
-    return Array.isArray(JSON.parse(body)?.data);
-  } catch {
-    return false;
-  }
-}
-
-// curl output suffix that prints the HTTP status on a final line after the body.
-export const MODEL_LIST_STATUS_WRITE_OUT = ["--write-out", "\\n%{http_code}"] as const;
-
-// True when probe output is a model list followed by HTTP status 200. `curl -f`
-// still exits 0 for a 3xx, which can carry a model list body.
-export function isOpenAiModelListResponse(output: string): boolean {
-  const text = output.trimEnd();
-  const split = text.lastIndexOf("\n");
-  return (
-    split >= 0 && text.slice(split + 1) === "200" && isOpenAiModelListBody(text.slice(0, split))
-  );
-}
-
-// curl argv that probes a `/v1/models` URL and prints the HTTP status after the body.
-export function buildModelListProbeCommand(args: string[], url: string): string[] {
-  const validated = buildValidatedCurlCommandArgs(["-sf", ...args, url]);
-  const target = validated.pop() ?? url;
-  return ["curl", ...validated, ...MODEL_LIST_STATUS_WRITE_OUT, target];
 }
 
 // First model id from a NIM `/v1/models` body, or null if absent/unparseable.

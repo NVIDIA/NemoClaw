@@ -6,7 +6,7 @@ import type { runCapture } from "../../runner";
 import { runCurlProbe } from "../../adapters/http/probe";
 import { VLLM_PORT } from "../../core/vllm-port";
 import { BoundedLineDecoder } from "../../core/bounded-line-transcript";
-import { buildModelListProbeCommand, isOpenAiModelListResponse } from "../nim";
+import { buildModelListProbeCommand, isOpenAiModelListResponse } from "../serving/model-inventory";
 
 const LOG_LINES = 80;
 const LOG_TIMEOUT_MS = 5_000;

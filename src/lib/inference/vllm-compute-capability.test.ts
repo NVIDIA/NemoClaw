@@ -35,8 +35,7 @@ vi.mock("../adapters/docker", () => ({
   dockerStop: mocks.dockerStop,
 }));
 
-vi.mock("./nim", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./nim")>()),
+vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
 

@@ -19,9 +19,8 @@ import {
   buildModelListProbeCommand,
   isOpenAiModelListBody,
   isOpenAiModelListResponse,
-  nimStatusByName,
-  waitForNimHealth,
-} from "./nim";
+} from "./serving/model-inventory";
+import { nimStatusByName, waitForNimHealth } from "./nim";
 
 const MODELS_ENDPOINT = "http://127.0.0.1:8000/v1/models";
 
@@ -87,7 +86,7 @@ describe("model list health checks", () => {
     expect(
       waitForNimHealth(9000, 60, {
         container: "nemoclaw-nim-test",
-        runCaptureImpl: () => "<html>dev server</html>",
+        runCaptureImpl: () => "<html>dev server</html>\n200",
         inspectContainerState: () => "running",
         readContainerLogs: () =>
           "WARNING: Estimated memory (2 GB) exceeds usable GPU memory (1 GB).",
@@ -133,8 +132,8 @@ describe("model list health checks", () => {
   });
 
   it.each([
-    ["an HTML page", "<html>dev server</html>", false],
-    ["a JSON error", '{"error":"nope"}', false],
+    ["an HTML page", "<html>dev server</html>\n200", false],
+    ["a JSON error", '{"error":"nope"}\n200', false],
     ["a model list", '{"data":[]}\n200', true],
     ["a model list answered with a redirect", '{"data":[]}\n302', false],
   ])(
