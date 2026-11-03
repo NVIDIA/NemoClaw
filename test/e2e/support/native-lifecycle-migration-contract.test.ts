@@ -118,6 +118,171 @@ describe("native scheduled inference target", () => {
 
 const LIVE_ROOT = path.join(import.meta.dirname, "..", "live");
 
+describe("OpenShell stop/start sandbox cleanup", () => {
+  let directory: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "survival-cleanup-"));
+    vi.stubEnv("HOME", directory);
+    vi.stubEnv("XDG_CONFIG_HOME", path.join(directory, "config"));
+    vi.stubEnv("OPENSHELL_GATEWAY", "unrelated-gateway");
+    vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "e2e-survival-cleanup");
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-reach-cleanup");
+    vi.stubEnv("COMPATIBLE_API_KEY", "also-must-not-reach-cleanup");
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  async function runSurvival(
+    options: {
+      install?: () => Promise<never>;
+      cleanup?: () => Promise<void>;
+      cliAvailable?: boolean;
+      listFails?: boolean;
+    } = {},
+  ) {
+    vi.resetModules();
+    captured.test.mockClear();
+    await import("../live/sandbox-survival.test.ts");
+    const run = captured.test.mock.calls[0]![2] as (fixtures: object) => Promise<void>;
+    const success = { exitCode: 0, stdout: "", stderr: "", signal: null, timedOut: false };
+    const cleanupSandbox = vi.fn(async (_name: string, _options: { env?: NodeJS.ProcessEnv }) =>
+      options.cleanup?.(),
+    );
+    const list = vi.fn(async (_options: { env?: NodeJS.ProcessEnv }) => ({
+      ...success,
+      exitCode: options.listFails ? 1 : 0,
+    }));
+    const trackDisposable = vi.fn((_name: string, _cleanup: () => Promise<void>) => undefined);
+    const complete = vi.fn();
+    const isCommandAvailable = vi.fn(async () => options.cliAvailable ?? true);
+    const waitForSandboxReadyAfterGatewayRestart = vi.fn();
+    const exec = vi.fn(
+      async (_name: string, args: string[], _options: { env?: NodeJS.ProcessEnv }) => ({
+        ...success,
+        stdout:
+          args[2] === "echo alive"
+            ? "alive"
+            : args[2].includes("/health")
+              ? "ready"
+              : JSON.stringify({ ok: true, result: { details: { survived: true } } }),
+      }),
+    );
+    const finished = run({
+      artifacts: { target: { declare: vi.fn(), complete } },
+      cleanup: { trackGateway: vi.fn(), trackDisposable },
+      host: {
+        openshellCommandPath: "openshell",
+        isCommandAvailable,
+        command: vi.fn(
+          async (_command: string, _args: string[], commandOptions: { artifactName: string }) => {
+            return commandOptions.artifactName === "install-sh-sandbox-survival"
+              ? ((await options.install?.()) ?? success)
+              : success;
+          },
+        ),
+      },
+      lifecycle: {
+        trackInstallerGatewayUserService: vi.fn(),
+        stopGatewayRuntime: vi.fn(),
+        waitForSandboxReadyAfterGatewayRestart,
+      },
+      progress: { phase: vi.fn() },
+      runtimeProvider: { requireAvailable: vi.fn() },
+      sandbox: {
+        cleanupSandbox,
+        list,
+        openshell: vi.fn(async () => success),
+        exec,
+      },
+      secrets: { required: () => "test-hosted-key" },
+      stateValidation: {
+        expectLocalRegistryContains: vi.fn(),
+        writeSandboxMarkers: vi.fn(),
+        expectSandboxMarkers: vi.fn(),
+      },
+    });
+    return {
+      finished,
+      cleanupSandbox,
+      list,
+      trackDisposable,
+      complete,
+      isCommandAvailable,
+      exec,
+      waitForSandboxReadyAfterGatewayRestart,
+    };
+  }
+
+  function expectGatewayContext(env: NodeJS.ProcessEnv | undefined) {
+    expect(env).toMatchObject({
+      HOME: directory,
+      XDG_CONFIG_HOME: path.join(directory, "config"),
+      OPENSHELL_GATEWAY: "nemoclaw",
+    });
+    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(env).not.toHaveProperty("COMPATIBLE_API_KEY");
+  }
+
+  it("deletes only from the owned gateway after installation fails despite an ambient override", async () => {
+    const fixture = await runSurvival({
+      install: vi.fn().mockRejectedValue(new Error("install failed")),
+    });
+    await expect(fixture.finished).rejects.toThrow("install failed");
+    await fixture.trackDisposable.mock.calls[0]![1]();
+    expect(fixture.cleanupSandbox).toHaveBeenCalledTimes(1);
+    expect(fixture.cleanupSandbox.mock.calls[0]![0]).toBe("e2e-survival-cleanup");
+    expectGatewayContext(fixture.cleanupSandbox.mock.calls[0]![1].env);
+    expect(fixture.complete).not.toHaveBeenCalled();
+  });
+
+  it("propagates deferred deletion failure", async () => {
+    const fixture = await runSurvival({
+      install: vi.fn().mockRejectedValue(new Error("install failed")),
+      cleanup: vi.fn().mockRejectedValue(new Error("sandbox deletion failed")),
+    });
+    await expect(fixture.finished).rejects.toThrow("install failed");
+    await expect(fixture.trackDisposable.mock.calls[0]![1]()).rejects.toThrow(
+      "sandbox deletion failed",
+    );
+    expect(fixture.complete).not.toHaveBeenCalled();
+  });
+
+  it("does not delete when the OpenShell executable is unavailable", async () => {
+    const fixture = await runSurvival({
+      install: vi.fn().mockRejectedValue(new Error("install failed")),
+      cliAvailable: false,
+    });
+    await expect(fixture.finished).rejects.toThrow("install failed");
+    await fixture.trackDisposable.mock.calls[0]![1]();
+    expect(fixture.cleanupSandbox).not.toHaveBeenCalled();
+    expect(fixture.complete).not.toHaveBeenCalled();
+  });
+
+  it("uses gateway context for final deletion and absence verification without duplicate deletion", async () => {
+    const fixture = await runSurvival();
+    await fixture.finished;
+    expectGatewayContext(fixture.cleanupSandbox.mock.calls[0]![1].env);
+    expectGatewayContext(fixture.list.mock.calls[0]![0].env);
+    expectGatewayContext(fixture.waitForSandboxReadyAfterGatewayRestart.mock.calls[0]![1].env);
+    expect(fixture.exec.mock.calls.map((call) => call[2].env)).toEqual(
+      Array(fixture.exec.mock.calls.length).fill(fixture.cleanupSandbox.mock.calls[0]![1].env),
+    );
+    await fixture.trackDisposable.mock.calls[0]![1]();
+    expect(fixture.cleanupSandbox).toHaveBeenCalledTimes(1);
+    expect(fixture.isCommandAvailable).not.toHaveBeenCalled();
+    expect(fixture.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unsuccessful absence check even when deletion succeeds", async () => {
+    const fixture = await runSurvival({ listFails: true });
+    await expect(fixture.finished).rejects.toThrow("sandbox destroy verification failed");
+    expect(fixture.complete).not.toHaveBeenCalled();
+  });
+});
+
 function liveSource(name: string): string {
   return fs.readFileSync(path.join(LIVE_ROOT, name), "utf8");
 }

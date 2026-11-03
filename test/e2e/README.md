@@ -515,7 +515,12 @@ approve arbitrary pending devices or silently skip the main-session cases.
 The feature tests exercise the CLI instead of separately asserting that its source and compiled files exist.
 The full onboarding test relies on its existing status poll, which fails when status never succeeds.
 MCP tests retain live allow/deny enforcement and credential-rotation checks without asserting policy
-serialization or the provider-update success message. Approval phase labels live with the existing
+serialization or the provider-update success message.
+MCP credential scans check each supplied host credential against every selected sandbox state path.
+A credential match or scan error fails the check.
+An absent path is accepted only when its parent directory is readable and searchable.
+The scan treats credentials as literal strings and suppresses scan output before artifact capture.
+Approval phase labels live with the existing
 fixture evidence helpers; moving these labels does not move live assertions.
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report the exact portable
@@ -1106,7 +1111,10 @@ This diagnostic read cannot accept the failed turn or change its retry classific
 Both scenarios collect bounded session tool-result diagnostics even when the agent reply fails its assertion.
 At most 64 tool-result records retain numeric HTTP status, a tool-error flag, and a call-pairing flag.
 HTTP status comes from a numeric tool-result field or the fixed `Web fetch failed (NNN):` prefix in an OpenClaw `web_fetch` error result.
-These records exclude raw content, URLs, and credentials.
+Failed tool results also retain an allowlisted `errorCategory`: `http`, `invalid-url`, `invalid-max-chars`, `disabled`, `extraction`, `fetch-failed`, `other`, or `unknown`.
+Results without a tool error record `null`; unrecognized or missing categories become `unknown`.
+`fetch-failed` identifies only the generic `fetch failed` message; it does not establish a network cause.
+These records exclude raw error messages, nested causes, tool parameters, content, URLs, and credentials.
 An agent's final text alone does not establish the HTTP result.
 Missing tool-result evidence remains unavailable; collection does not add retries or change the fetch and reply assertions.
 After an unsuccessful agent assertion, both scenarios make one separate sandbox curl request to the same expected HTTPS URL.
@@ -1156,6 +1164,8 @@ On an exact-revision manual PR run, `NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA` carr
 The standard layout writes product evidence and `evidence-manifest.json` under `e2e-artifacts/live/<target-id>`.
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
+Its native OpenClaw configuration probe requires loading the proxy environment, validating the configuration, and reading `gateway.mode` to succeed in sequence.
+The returned mode must be `local`; a failure in any step fails the probe.
 For OpenShell 0.1.5, its process report identifies the non-root workload boundary at PID 1 separately from the `nemoclaw-start` children.
 The probe runs as the managed image's declared sandbox owner and requires zero capabilities and `NoNewPrivs=1`.
 It records denied PID-1 executable-link access as `null`; it does not infer an executable path from the command line.
@@ -1230,7 +1240,9 @@ The common-egress targets retain their live network policy and agent-fetch bound
 They disable optional search explicitly and use the `nvidia-inference` profile.
 The weather case checks five initial presets, then adds the weather preset and runs an agent curl to Open-Meteo.
 The agent saves the JSON response.
-The host independently checks its location, temperature, time, and Celsius unit, then records its SHA-256 hash.
+The weather turn requires both the parsed payload and final visible answer to contain only `WEATHER_AGENT_OK`, apart from surrounding whitespace.
+Printed commands or tool-call markup containing that token fail this check and use the existing failed-turn diagnostic collection.
+The host independently checks the saved response's location, temperature, time, and Celsius unit, then records its SHA-256 hash.
 When session reduction succeeds, a failed weather agent assertion records aggregate session error, final-status, tool-call, execution, and result counts, including exec call and result counts.
 The artifact excludes raw session content and credentials; these counts do not establish why the command failed.
 Brave preset inclusion belongs to the existing onboarding policy tests, independent of weather coverage.
@@ -1384,6 +1396,9 @@ existing final provider marker authorizes a retry after successful cleanup.
 Baseline and PTY cleanup calls run independently so a fatal shell error in one
 cannot skip the other. Failed calls retain their last 2 KiB of error output through
 the fixture's normal redaction boundary, and any cleanup failure prevents retry.
+The PTY cleanup wait checks the monitor socket inside the sandbox with a five-second deadline.
+It rejects a persistent socket or an entry with invalid type, ownership, permissions, or link count without removing it.
+The separate removal step still requires socket absence, an unchanged directory identity during removal, and no unknown entries.
 The host launch harness uses a non-login Bash shell with its supplied environment.
 It does not source user login or logout files. A failing logout file can disrupt Bash 5.1 exit-trap cleanup.
 Deterministic unit tests separately prove selection of the complete preflight

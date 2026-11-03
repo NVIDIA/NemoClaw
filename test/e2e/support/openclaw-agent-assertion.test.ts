@@ -506,6 +506,83 @@ function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
   };
 }
 
+describe("weather reply assertion", () => {
+  it.each(["WEATHER_AGENT_OK", "\nWEATHER_AGENT_OK\n"])(
+    "accepts the exact weather reply with surrounding whitespace: %j",
+    async (reply) => {
+      const f = replyFixture(reply);
+      try {
+        await expect(
+          runOpenClawAgentAssertion(
+            f.host as unknown as HostCliClient,
+            f.sandbox as unknown as SandboxClient,
+            f.artifacts,
+            {
+              ...f.options,
+              expected: "WEATHER_AGENT_OK",
+              label: "weather",
+              finalReplyContract: "exact-token",
+              collectToolEvidenceOnFailure: true,
+            },
+          ),
+        ).resolves.toMatchObject({ reply: reply.trim() });
+        expect(f.host.command).toHaveBeenCalledTimes(1);
+        expect(f.sandbox.exec).not.toHaveBeenCalled();
+      } finally {
+        rmSync(f.root, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    {
+      caseName: "tool-call markup instead of execution",
+      reply: '<<<tool_call tool="exec" args={"command":"printf WEATHER_AGENT_OK"}>>>',
+      visible: '<<<tool_call tool="exec" args={"command":"printf WEATHER_AGENT_OK"}>>>',
+    },
+    {
+      caseName: "a printed command with a fabricated final token",
+      reply: "printf WEATHER_AGENT_OK",
+      visible: "WEATHER_AGENT_OK",
+    },
+    {
+      caseName: "a missing final visible reply",
+      reply: "WEATHER_AGENT_OK",
+      visible: undefined,
+    },
+  ])("rejects $caseName and retains tool counts without retrying", async ({ reply, visible }) => {
+    const f = replyFixture(reply, { finalAssistantVisibleText: visible });
+    try {
+      await expect(
+        runOpenClawAgentAssertion(
+          f.host as unknown as HostCliClient,
+          f.sandbox as unknown as SandboxClient,
+          f.artifacts,
+          {
+            ...f.options,
+            expected: "WEATHER_AGENT_OK",
+            label: "weather",
+            finalReplyContract: "exact-token",
+            collectToolEvidenceOnFailure: true,
+          },
+        ),
+      ).rejects.toThrow("payload and final visible reply must contain only the expected token");
+      expect(f.host.command).toHaveBeenCalledTimes(1);
+      expect(f.sandbox.exec).toHaveBeenCalledTimes(1);
+      const reduced = JSON.parse(
+        readFileSync(
+          join(f.root, "artifacts", "actions", "weather-attempt-1-reduced.json"),
+          "utf8",
+        ),
+      );
+      expect(reduced).toMatchObject({ execCalls: 0, execResults: 0, toolCallCount: 0 });
+      expect(JSON.stringify(reduced)).not.toContain(SECRET_SENTINEL);
+    } finally {
+      rmSync(f.root, { force: true, recursive: true });
+    }
+  });
+});
+
 describe("unavailable-search assertion wiring", () => {
   it.each([
     {

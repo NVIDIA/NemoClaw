@@ -19,6 +19,35 @@ import {
 
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
+export function buildMcpSecretAbsenceScript(
+  paths: readonly string[],
+  secrets: readonly string[],
+): string {
+  if (paths.length === 0 || secrets.length === 0 || secrets.some((secret) => secret.length === 0)) {
+    throw new Error("MCP secret scan requires paths and nonempty credentials");
+  }
+  return [
+    "set -eu",
+    `for scan_path in ${paths.map(shellQuote).join(" ")}; do`,
+    '  if [ ! -e "$scan_path" ] && [ ! -L "$scan_path" ]; then',
+    '    scan_parent=$(dirname -- "$scan_path")',
+    '    [ -d "$scan_parent" ] && [ -r "$scan_parent" ] && [ -x "$scan_parent" ] || exit 2',
+    "    continue",
+    "  fi",
+    '  [ -e "$scan_path" ] || exit 2',
+    `  for scan_secret in ${secrets.map(shellQuote).join(" ")}; do`,
+    // Do not use grep -q: a match must not suppress a read error elsewhere in the tree.
+    '    if grep -RF -- "$scan_secret" "$scan_path" >/dev/null 2>&1; then',
+    "      exit 1",
+    "    else",
+    "      scan_status=$?",
+    '      [ "$scan_status" -eq 1 ] || exit 2',
+    "    fi",
+    "  done",
+    "done",
+  ].join("\n");
+}
+
 export type McpDnsRebindingAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
 
 export type CapturedManagedMcpPolicy = {

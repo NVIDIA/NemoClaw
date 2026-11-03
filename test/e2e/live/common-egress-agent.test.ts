@@ -718,10 +718,12 @@ describe.sequential("common-egress agent live targets", () => {
         apiKey,
         collectToolEvidenceOnFailure: true,
         expected: "WEATHER_AGENT_OK",
+        finalReplyContract: "exact-token",
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
-        prompt: `Run exactly this shell command to verify the weather host curl path:
+        prompt: `Call the exec tool with exactly this shell command to verify the weather host curl path:
 ${weatherProofCommand}
+Use a structured tool call. Do not print the command or tool-call markup as your answer.
 Do not use web_fetch, web_search, or any other weather provider.
 After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`,
       });

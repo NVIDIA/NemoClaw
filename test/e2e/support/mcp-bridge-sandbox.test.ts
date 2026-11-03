@@ -25,6 +25,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertManagedMcpPolicySurvivedRemoval,
   buildMcpDnsRebindingProbeScript,
+  buildMcpSecretAbsenceScript,
   captureManagedMcpPolicy,
   hostAddressForSandbox,
   hostPrivateAddressForSandbox,
@@ -48,6 +49,86 @@ const SUITE_OPTIONS = { timeout: testTimeout(15_000) };
 const tempDirs: string[] = [];
 const WORKLOAD_ID = "a".repeat(64);
 const SUPERVISOR_ID = "b".repeat(64);
+
+describe.each(["/bin/sh", "/bin/bash"])("MCP secret absence scan with %s", (shell) => {
+  function fixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-secret-scan-"));
+    tempDirs.push(root);
+    const state = path.join(root, "agent state");
+    fs.mkdirSync(state);
+    return { root, state, file: path.join(state, "config") };
+  }
+
+  function scan(paths: string[], secrets: string[], env: NodeJS.ProcessEnv = process.env) {
+    const result = spawnSync(shell, ["-c", buildMcpSecretAbsenceScript(paths, secrets)], {
+      encoding: "utf8",
+      env,
+      timeout: 5_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    return result.status;
+  }
+
+  it.each([0, 1])("rejects credential %s without printing its contents", (index) => {
+    const { state, file } = fixture();
+    const secrets = ["fixture-first-secret", "fixture-rotated-secret"];
+    fs.writeFileSync(file, secrets[index]);
+    expect(scan([state], secrets)).toBe(1);
+  });
+
+  it("rejects a match in a later path", () => {
+    const { root, state, file } = fixture();
+    fs.writeFileSync(file, "clean");
+    const log = path.join(root, "log");
+    fs.writeFileSync(log, "fixture-secret");
+    expect(scan([state, log], ["fixture-secret"])).toBe(1);
+  });
+
+  it("accepts a clean tree and a confirmed absent optional file", () => {
+    const { root, state, file } = fixture();
+    fs.writeFileSync(file, "clean");
+    expect(scan([state, path.join(root, "optional")], ["fixture-secret"])).toBe(0);
+  });
+
+  it("rejects a scan error without printing the diagnostic", () => {
+    const { root, state } = fixture();
+    fs.writeFileSync(path.join(root, "grep"), "#!/bin/sh\necho sensitive >&2\nexit 2\n", {
+      mode: 0o700,
+    });
+    expect(
+      scan([state], ["fixture-secret"], { ...process.env, PATH: `${root}:${process.env.PATH}` }),
+    ).toBe(2);
+  });
+
+  it("rejects a dangling path supplied to the scan", () => {
+    const { root } = fixture();
+    const link = path.join(root, "dangling");
+    fs.symlinkSync(path.join(root, "missing"), link);
+    expect(scan([link], ["fixture-secret"])).toBe(2);
+  });
+
+  it("rejects absence when the parent cannot be inspected", () => {
+    const { root } = fixture();
+    expect(scan([path.join(root, "missing-parent", "state")], ["fixture-secret"])).toBe(2);
+  });
+
+  it("treats credential metacharacters as literal text", () => {
+    const { state, file } = fixture();
+    const secret = "fixture.*'$(printf injected)";
+    fs.writeFileSync(file, secret);
+    expect(scan([state], [secret])).toBe(1);
+    fs.writeFileSync(file, "fixtureXXX");
+    expect(scan([state], [secret])).toBe(0);
+  });
+
+  it("rejects a scan without paths or credentials", () => {
+    expect(() => buildMcpSecretAbsenceScript([], ["fixture-secret"])).toThrow();
+    expect(() => buildMcpSecretAbsenceScript(["/sandbox"], [])).toThrow();
+    expect(() => buildMcpSecretAbsenceScript(["/sandbox"], [""])).toThrow();
+  });
+});
 
 function resolverRecord(id: string, role: string | null, name = "test-sandbox") {
   return {

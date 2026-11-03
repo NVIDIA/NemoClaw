@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial no-growth baseline for issue #10934 and Epic #10920. The epic reference remains fixed at fe18b2f004e2304c52db33cf7bb5895828197f9a. Current main is lower because #10722 removed the live Shields assertion suites before this ratchet landed. PR #10341 adds the accepted public deferred-install and same-home credential continuation boundary for Hermes and Deep Agents Code; existing per-file budgets remain unchanged. PR #13055 adds five explicitly approved assertions for the native Deep Agents Code OpenRouter request in the existing hosted OpenRouter target. PR #13293 consolidates native-local cases into the existing OpenClaw switching owner. Removing duplicated deterministic metadata and direct mock requests lowers suite totals while retaining real authenticated and sentinel agent turns, lifecycle, model switching, credential isolation and sibling denial. Per-file transitive counts include existing imported helpers; no live files or suite assertion points are added.\n\nPR #13596 adds four assertions to the existing double-onboard target for #13595: the managed OpenClaw state volume exists before `nemoclaw uninstall`, uninstall succeeds, the volume is gone afterwards, and same-name onboarding succeeds.\n\nPR #14000 adds one approved assertion point for owning-gateway connect session detection in concurrent-gateway-ports. The list command exit check replaces the redundant CLI build-file check; the existing --version prerequisite verifies that the compiled CLI runs. Approval: https://github.com/NVIDIA/NemoClaw/pull/14000#issuecomment-6506269922.\n\nPR #13607 adds two live assertions and one read-only configuration probe to the existing balanced OpenClaw egress case for unavailable-search replies. The refreshed delta removes the unrelated public-fetch precondition guard while retaining both live assertions and the probe. Approved delta: https://github.com/NVIDIA/NemoClaw/pull/13607#issuecomment-6327887365.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial no-growth baseline for issue #10934 and Epic #10920. The epic reference remains fixed at fe18b2f004e2304c52db33cf7bb5895828197f9a. Current main is lower because #10722 removed the live Shields assertion suites before this ratchet landed. PR #10341 adds the accepted public deferred-install and same-home credential continuation boundary for Hermes and Deep Agents Code; existing per-file budgets remain unchanged. PR #13055 adds five explicitly approved assertions for the native Deep Agents Code OpenRouter request in the existing hosted OpenRouter target. PR #13293 consolidates native-local cases into the existing OpenClaw switching owner. Removing duplicated deterministic metadata and direct mock requests lowers suite totals while retaining real authenticated and sentinel agent turns, lifecycle, model switching, credential isolation and sibling denial. Per-file transitive counts include existing imported helpers; no live files or suite assertion points are added.\n\nPR #13596 adds four assertions to the existing double-onboard target for #13595: the managed OpenClaw state volume exists before `nemoclaw uninstall`, uninstall succeeds, the volume is gone afterwards, and same-name onboarding succeeds.\n\nPR #14000 adds one approved assertion point for owning-gateway connect session detection in concurrent-gateway-ports. The list command exit check replaces the redundant CLI build-file check; the existing --version prerequisite verifies that the compiled CLI runs. Approval: https://github.com/NVIDIA/NemoClaw/pull/14000#issuecomment-6506269922.\n\nPR #13607 adds two live assertions and one read-only configuration probe to the existing balanced OpenClaw egress case for unavailable-search replies. The refreshed delta removes the unrelated public-fetch precondition guard while retaining both live assertions and the probe. Approved delta: https://github.com/NVIDIA/NemoClaw/pull/13607#issuecomment-6327887365.\n\nUser-approved exception on 2026-11-03: PR #12603 repairs the existing MCP credential absence scan. One input guard and five generated probe blocks with eight conditions reject empty credentials, early credential matches, unreadable paths and grep errors. Existing scan call sites and timeouts remain unchanged.",
   "schemaVersion": 1,
   "issue": 10934,
   "epic": 10920,
@@ -32,11 +32,11 @@
       "nodeAssertions": 131,
       "namedAssertionHelpers": 663,
       "failCalls": 1,
-      "throwGuards": 519,
+      "throwGuards": 520,
       "objectFieldAssertions": 257,
-      "assertionPoints": 3235,
-      "generatedProbeBlocks": 194,
-      "generatedProbeConditions": 702
+      "assertionPoints": 3236,
+      "generatedProbeBlocks": 199,
+      "generatedProbeConditions": 710
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -84,7 +84,7 @@
       "test/e2e/live/managed-image-activation-e2e.test.ts": [0,0,12,24,0],
       "test/e2e/live/managed-image-multiarch-startup.test.ts": [1,3,1,9,0],
       "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,39,76,15],
-      "test/e2e/live/mcp-bridge.test.ts": [39,137,190,513,27],
+      "test/e2e/live/mcp-bridge.test.ts": [39,137,190,514,32],
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [12,18,12,27,2],
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,48,11],
       "test/e2e/live/model-router-provider-routed-inference.test.ts": [1,2,1,2,0],

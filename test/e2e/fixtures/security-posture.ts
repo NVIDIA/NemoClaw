@@ -1097,9 +1097,10 @@ grep -q 'cannot modify config inside the sandbox' /tmp/nemoclaw-security-guard-p
       : await sandbox.execShell(
           sandboxName,
           trustedSandboxShellScript(String.raw`
-. /tmp/nemoclaw-proxy-env.sh
-openclaw config validate
-test "$(openclaw config get gateway.mode)" = local
+. /tmp/nemoclaw-proxy-env.sh &&
+openclaw config validate &&
+gateway_mode="$(openclaw config get gateway.mode)" &&
+test "$gateway_mode" = local
 `),
           {
             artifactName: "security-posture-native-config",

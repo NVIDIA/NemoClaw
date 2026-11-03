@@ -44,7 +44,7 @@ export interface OpenClawAgentAssertionOptions {
   apiKey: string;
   collectToolEvidenceOnFailure?: boolean;
   expected: string;
-  finalReplyContract?: "unavailable-search";
+  finalReplyContract?: "unavailable-search" | "exact-token";
   label: string;
   prompt: string;
   persistCommandArtifacts?: boolean;
@@ -147,6 +147,14 @@ export async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
+      if (
+        classification.passed &&
+        args.finalReplyContract === "exact-token" &&
+        (reply.trim() !== args.expected || finalVisibleReply.trim() !== args.expected)
+      ) {
+        classification = { passed: false, failureClass: "deterministic" };
+        lastFailure = "payload and final visible reply must contain only the expected token";
+      }
       if (
         classification.passed &&
         args.finalReplyContract === "unavailable-search" &&

@@ -58,7 +58,18 @@ export interface OpenClawToolRecord {
   target?: OpenClawToolTarget;
 }
 
+type WebFetchErrorCategory =
+  | "http"
+  | "invalid-url"
+  | "invalid-max-chars"
+  | "disabled"
+  | "extraction"
+  | "fetch-failed"
+  | "other"
+  | "unknown";
+
 export interface OpenClawWebFetchResultEvidence {
+  errorCategory?: WebFetchErrorCategory;
   httpStatus?: number;
   toolError?: boolean;
   expectedContentMatches: boolean;
@@ -134,7 +145,12 @@ export interface PersonalPublicFetchToolEvidenceArtifact {
     total: number;
   };
   webFetchResultsWithinMaxChars: number;
-  webFetchDiagnostics: { httpStatus: number | null; toolError: boolean; paired: boolean }[];
+  webFetchDiagnostics: {
+    httpStatus: number | null;
+    toolError: boolean;
+    paired: boolean;
+    errorCategory: WebFetchErrorCategory | null;
+  }[];
 }
 
 export interface OpenClawToolEvidenceReductionFailureArtifact {
@@ -522,6 +538,35 @@ export function reduceOpenClawToolEvidence(
         : undefined;
     return typeof status === "number" ? status : errorStatus ? Number(errorStatus) : undefined;
   };
+  const errorCategoryFrom = (
+    payload: Record<string, unknown> | null,
+    status: number | undefined,
+  ): WebFetchErrorCategory => {
+    if (typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599) {
+      return "http";
+    }
+    // The pinned tool adapter serializes Error.message in this envelope.
+    // Project fixed categories only; arbitrary messages and nested causes stay in the sandbox.
+    if (
+      payload?.status !== "error" ||
+      payload.tool !== "web_fetch" ||
+      typeof payload.error !== "string"
+    ) {
+      return "unknown";
+    }
+    switch (payload.error) {
+      case "Invalid URL: must be http or https":
+        return "invalid-url";
+      case "maxChars must be a positive integer":
+        return "invalid-max-chars";
+      case "web_fetch is disabled.":
+        return "disabled";
+      case "fetch failed":
+        return "fetch-failed";
+      default:
+        return payload.error.startsWith("Web fetch extraction failed: ") ? "extraction" : "other";
+    }
+  };
   const expectedUrl = normalizedUrl(expectedFetch?.url);
   const expectedContent =
     typeof expectedFetch?.content === "string" &&
@@ -760,6 +805,7 @@ export function reduceOpenClawToolEvidence(
       typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
     const status = payload?.status;
     const diagnosticStatus = diagnosticStatusFrom(payload);
+    const toolError = message.isError === true || payload?.status === "error";
     const paired = call?.name === "web_fetch" && resultName === "web_fetch";
     if (paired && callId && projectedTargetCallIds.has(callId)) {
       pairedProjectedTargetCallIds.add(callId);
@@ -777,7 +823,8 @@ export function reduceOpenClawToolEvidence(
       diagnosticStatus <= 599
         ? { httpStatus: diagnosticStatus }
         : {}),
-      toolError: message.isError === true || payload?.status === "error",
+      toolError,
+      ...(toolError ? { errorCategory: errorCategoryFrom(payload, diagnosticStatus) } : {}),
       expectedContentMatches:
         expectedContent !== null && boundedPayloadText.includes(expectedContent),
       expectedUrlMatches:
@@ -1055,6 +1102,20 @@ export function projectPersonalPublicFetchToolEvidenceArtifact(
           : null,
       toolError: result.toolError === true,
       paired: result.paired === true,
+      errorCategory:
+        result.toolError !== true
+          ? null
+          : [
+                "http",
+                "invalid-url",
+                "invalid-max-chars",
+                "disabled",
+                "extraction",
+                "fetch-failed",
+                "other",
+              ].includes(result.errorCategory ?? "")
+            ? (result.errorCategory as WebFetchErrorCategory)
+            : "unknown",
     })),
   };
 }

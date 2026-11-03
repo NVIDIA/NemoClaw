@@ -1146,11 +1146,19 @@ describe("security posture fixture", () => {
   });
 
   it.each([
-    { providerId: "docker", executable: BOUNDARY_EXECUTABLE },
-    { providerId: "podman", executable: "/opt/openshell/bin/openshell-sandbox" },
-  ])(
-    "checks the split-process report through the selected $providerId provider",
-    async ({ executable, providerId }) => {
+    ["docker", 0, 0, "local", 0],
+    ["docker", 7, 0, "local", 7],
+    ["docker", 0, 9, "local", 9],
+    ["docker", 0, 0, "remote", 1],
+    ["podman", 0, 0, "local", 0],
+    ["podman", 7, 0, "local", 7],
+    ["podman", 0, 9, "local", 9],
+    ["podman", 0, 0, "remote", 1],
+  ] as const)(
+    "checks %s security with validation status %s, read status %s and mode %s",
+    async (providerId, validateStatus, readStatus, mode, expectedStatus) => {
+      const executable =
+        providerId === "docker" ? BOUNDARY_EXECUTABLE : "/opt/openshell/bin/openshell-sandbox";
       vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
       vi.stubEnv("NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS", "1");
       const report = validReport();
@@ -1292,6 +1300,34 @@ describe("security posture fixture", () => {
       expect(
         sandboxScripts.some((script) => script.includes("cannot modify config inside the sandbox")),
       ).toBe(false);
+
+      const configurationScript = sandboxScripts.find((script) =>
+        script.includes("openclaw config validate"),
+      )!;
+      const fixtureDirectory = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-proof-"));
+      try {
+        const proxyFile = path.join(fixtureDirectory, "proxy-env.sh");
+        writeFileSync(
+          proxyFile,
+          `openclaw() {\nif [ "$2" = validate ]; then return ${validateStatus}; fi\nprintf '%s\\n' '${mode}'\nreturn ${readStatus}\n}\n`,
+        );
+        const result = spawnSync(
+          "sh",
+          [
+            "-c",
+            configurationScript.replace("/tmp/nemoclaw-proxy-env.sh", '"$1"'),
+            "security-posture-config-proof",
+            proxyFile,
+          ],
+          { encoding: "utf8", timeout: 5_000 },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status, `validate=${validateStatus} read=${readStatus} mode=${mode}`).toBe(
+          expectedStatus,
+        );
+      } finally {
+        rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
 
       command
         .mockReset()

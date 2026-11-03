@@ -78,6 +78,7 @@ import {
 } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
+  buildMcpSecretAbsenceScript,
   expectExitNonZero,
   hostAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
@@ -182,12 +183,7 @@ async function assertSecretAbsentFromSandbox(
   secrets: string[] = [HOST_SECRET],
   artifactName = "assert-secret-absent-from-sandbox",
 ): Promise<void> {
-  const script = [
-    "set -eu",
-    ...secrets.map(
-      (secret) => `! grep -R ${JSON.stringify(secret)} ${paths.join(" ")} 2>/dev/null`,
-    ),
-  ].join("\n");
+  const script = buildMcpSecretAbsenceScript(paths, secrets);
   const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
     artifactName,
     env: buildAvailabilityProbeEnv(),
