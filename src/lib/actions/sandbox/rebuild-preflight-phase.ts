@@ -41,6 +41,7 @@ import {
   resolveRebuildLiveState,
   prepareRebuildStoppedAgentState,
   restoreRecordedRebuildGatewayStateDir,
+  resolveSandboxGatewayName,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -233,7 +234,10 @@ export async function runRebuildPreflightPhase(
   if (mcpRuntimeSelection) {
     pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
   }
-  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(
+    sandboxName,
+    resolveSandboxGatewayName(sandboxEntry),
+  );
   const versionCheck = await runRebuildGatewayIntentPreflight({
     checkGatewaySchema: async () =>
       isDcodeRebuildAgent(rebuildAgent) ||

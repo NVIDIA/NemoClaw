@@ -432,7 +432,7 @@ Use the stable `id` value with `$$nemoclaw onboard --profile <name>`. Display na
 Run the interactive setup wizard (recommended for new installs). The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox. Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--switchyard-config <file>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile> | --from-image <repository>@sha256:<digest>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -457,6 +457,22 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 </AgentOnly>
 
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases. For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
+
+#### `--switchyard-config <file>`
+
+For managed Hermes onboarding, load adaptive Switchyard routing from a JSON file containing only the efficient and capable provider/model selections. Both targets must name approved fixed hosted provider profiles and must use different model IDs, even when they use different providers. NemoClaw reuses the capable target as the routing judge and derives the internal Relay and Switchyard configuration; the file must not contain credentials, endpoints, or internal routing fragments. This option requires the managed Hermes image. Portable and custom images are not supported.
+
+```json
+{
+  "schemaVersion": 1,
+  "efficient": { "provider": "nvidia-prod", "model": "nvidia/nemotron-nano" },
+  "capable": { "provider": "openai-api", "model": "gpt-5.2" }
+}
+```
+
+```bash
+$$nemoclaw onboard --agent hermes --switchyard-config ./switchyard.json
+```
 
 #### External Component Onboarding
 
@@ -1196,7 +1212,9 @@ The flag wins over `NEMOCLAW_SANDBOX_NAME`. When prompting is possible, `NEMOCLA
 
 ### `$$nemoclaw onboard --from`
 
-Use a custom Dockerfile for the sandbox image. This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image. NemoClaw builds the staged context in the selected local Docker engine and checks the image before sandbox creation.
+Use a custom Dockerfile for the sandbox image.
+This variant of `$$nemoclaw onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image.
+NemoClaw builds the staged context in the selected local Docker engine and checks the image before sandbox creation.
 
 ```bash
 $$nemoclaw onboard --from ./Dockerfile.custom
@@ -1231,13 +1249,15 @@ When the latest resumable onboarding session owns the matching inference-route r
 JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox.
 When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
 NemoClaw does not expose stale reservations that belong to another onboarding session.
-Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+When session detection is available, each sandbox row reports `activeSessionCount` as a nonnegative integer; otherwise, it reports `null`.
+The count includes detected SSH sessions and interactive OpenShell `connect` sessions.
+Noninteractive exec commands and dashboard forwards are not counted.
 Each sandbox row reports `agent` as a string in both text and JSON output, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway.
 The gateway sandbox list does not expose the agent.
 The row does not include the former derived `connected` boolean.
-Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
+A sandbox with an active SSH or interactive OpenShell `connect` session has a `●` marker.
 
 <AgentOnly variant="openclaw,hermes">
   When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text output shows that URL.
@@ -1652,13 +1672,26 @@ For a stopped standard sandbox, `recover` asks OpenShell to start that exact san
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
-After the sandbox is available, `recover` sends authenticated requests only to verify supported in-sandbox agent processes and repair supported state for a running gateway and host forwards.
+After the sandbox is available, `recover` verifies supported in-sandbox agent processes and repairs supported state for a running gateway and host forwards.
 Standard sandbox start and stop remain OpenShell-owned.
 The host selects the controller from the live container topology.
 In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec`, manual in-sandbox relaunch, or container replacement as a fallback.
-When `recover` finds a stopped built-in OpenClaw or Hermes agent gateway, it reports the stopped gateway and does not relaunch it.
+
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+If the OpenClaw gateway is stopped, `recover` reports it without relaunching it.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+If the existing Hermes supervisor is waiting for authenticated gated recovery after a clean exit or exit status `79`, `recover` requests a supervised gateway relaunch before verification.
+Otherwise, `recover` reports a stopped gateway without relaunching it.
+
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 If the gateway is healthy, `recover` checks or repairs host-side forwards.
 It exits zero only when the required forward checks succeed.
@@ -1782,7 +1815,8 @@ mutation. Portable remains a separate receipt-bound lifecycle path.
 
 ### `$$nemoclaw <name> start`
 
-Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot.
+Then verify agent runtime readiness.
 
 ```bash
 $$nemoclaw my-assistant start
@@ -1791,9 +1825,10 @@ $$nemoclaw my-assistant start
 `start` submits the lifecycle mutation through the owning OpenShell gateway, validates the returned immutable sandbox identity, and waits for that same sandbox to become ready. If the registered identity is missing or changed, or OpenShell no longer has the sandbox, the command fails without direct Docker or Podman fallback and points you to the appropriate recovery or rebuild action.
 
 <AgentOnly variant="openclaw,hermes">
-  Before it repairs the gateway and host forwards, `start` waits for OpenShell to report the sandbox
-  in the `Ready` or `Running` state, using the same `300`-second budget and
-  `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+Before gateway-health verification and host-forward restoration, `start` waits for OpenShell to report the sandbox in the `Ready` or `Running` state.
+This wait uses the same `300`-second budget and `NEMOCLAW_CONNECT_TIMEOUT` override as `connect --probe-only`.
+Gateway startup observation does not relaunch the agent.
+If the gateway remains stopped, follow the [native gateway restart procedure](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-the-agent-runtime) before retrying `start`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
   Before it verifies the managed terminal runtime, `start` waits for OpenShell to report the sandbox
@@ -1803,7 +1838,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. After an OpenClaw sandbox and gateway become Ready, a verified native NVIDIA attachment can start with degraded inference when the request returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout. The command clears the stop record and exits `0`, but the failed request leaves model availability unverified. A terminal credential, route, policy, or malformed-response failure still exits non-zero. Other providers also exit non-zero when the inference request fails. For terminal failures, the command prints the probe result, including any HTTP status, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After runtime verification and any required host-forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible selections outside the Personal tier, and qualified new local selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, fresh Personal-tier hosted compatible selections, custom endpoints without an attachment, and retained shared routes use `inference.local`. After an OpenClaw sandbox and gateway become Ready, a verified native NVIDIA attachment can start with degraded inference when the request returns HTTP `429`, `500`, `502`, `503`, or `504`, or a confirmed timeout. The command clears the stop record and exits `0`, but the failed request leaves model availability unverified. A terminal credential, route, policy, or malformed-response failure still exits non-zero. Other providers also exit non-zero when the inference request fails. For terminal failures, the command prints the probe result, including any HTTP status, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 
@@ -1926,7 +1961,8 @@ If the sandbox or gateway cannot be verified, the command exits non-zero instead
 
 When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the last CUDA usability proof state. It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access. Failed proofs include remediation guidance for the detected platform.
 
-An `SSH sessions` line reports how many active SSH sessions the sandbox has, or `none`; the line is omitted when the session probe is unavailable.
+An `Active sessions:` line reports the number of active SSH and interactive OpenShell `connect` sessions, or `none` when there are none.
+The line is omitted when the session probe is unavailable.
 
 <AgentOnly variant="openclaw,hermes">
   The sandbox list in the status output includes the dashboard port suffix for sandboxes with a
@@ -2312,7 +2348,10 @@ Download any files you need before destroying the sandbox; do not rely on retain
 If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name> rebuild` instead.
 </Warning>
 
-If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds. Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows. These controls do not suppress the active-session warning. The warning lists the detected process IDs, and destroy still terminates those sessions with a `Broken pipe` error.
+If NemoClaw detects active SSH or interactive OpenShell `connect` sessions, `destroy` prints a warning before the confirmation prompt.
+The warning lists detected process IDs and states that destroy terminates the sessions and interrupts running commands.
+Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to delete without prompting in scripted workflows.
+These controls do not suppress the warning.
 
 For eligible recovery without a sandbox identity on native Linux with default Docker, `--force` archives and removes local tracking after the owning gateway and current Docker daemon confirm absence.
 It preserves runtime resources and shared providers; cleanup on the original runtime remains unverified.
@@ -2373,8 +2412,6 @@ After that message, confirm that `openshell sandbox list -g <gateway-name>` repo
 Then run `openshell gateway remove <gateway-name>` to remove the gateway.
 
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
-If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a `Broken pipe` error and lists their process IDs.
-This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt.
 
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits nonzero after sandbox and registry deletion and skips gateway and volume removal.
 NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
@@ -3463,7 +3500,7 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation.                                                                                                                                                                                   |
 | `--observability`, `--no-observability`           | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state.                                                                                                                                                                                                                                                                             |
 
-If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox. Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+When NemoClaw detects active SSH or interactive OpenShell `connect` sessions, `rebuild` warns that it will terminate those sessions and interrupt running commands. The `--yes`, `-y`, and `--force` flags skip the confirmation prompt but do not suppress this warning.
 
 For other eligible sources, the backup step normally reaches the sandbox over its live transport. When that first attempt fails because the transport is unreachable, and the sandbox has exactly one eligible stopped container, `rebuild` starts that container, retries the backup, and returns the container to its stopped state before continuing. `rebuild` aborts before deleting the original sandbox when it finds no eligible stopped container, when the retried backup also fails, or when it cannot return the started container to its stopped state; in that last case it names the container so you can stop it yourself before retrying.
 If the complete native home/workspace cannot be archived, `rebuild` stops before deleting the original sandbox. This fail-closed behavior also applies to `--force`.
@@ -3779,9 +3816,11 @@ It is not counted as a registered sandbox and does not trigger sandbox or gatewa
 Each JSON sandbox row reports `agent` as a string, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 This command reads the registry without gateway recovery, so it never reports `unknown`.
-For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
+For each listed sandbox, text output includes the configured inference provider and model.
 That route line is labeled `Inference (configured):`.
 An unavailable recorded provider or model appears as `unknown`.
+When session detection is available, an `Active sessions:` line reports the number of SSH and interactive OpenShell `connect` sessions, or `none`.
+The `Active sessions:` line is omitted when the session probe is unavailable.
 When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text output adds a `Dashboard URL:` line for that sandbox.
 The port suffix beside the sandbox name remains the recorded local forwarding port.
 For the default sandbox, an `Inference (live):` line also appears when the shared gateway route differs from the recorded route.
@@ -3974,7 +4013,7 @@ For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name>
 
 <Warning>The `$$nemoclaw setup` command is deprecated. Use `$$nemoclaw onboard` instead.</Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--switchyard-config <file>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -3987,7 +4026,7 @@ $$nemoclaw setup
   onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--switchyard-config <file>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--from-image`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--dcode-auto-approval <disabled|thread-opt-in>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
@@ -4949,7 +4988,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`            | `180`                                                 | Timeout in seconds for the inference-server validation probe and each native-local or provider-neutral in-sandbox inference request during onboarding and rebuild. The in-sandbox check uses a 60-second minimum. Raise it for a slow model or network.                                                                                                                                                                                                                                                                                                                                         |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT`              | `180`                                                 | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Onboarding preserves a partially created sandbox when the deadline expires. Follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery); do not delete the sandbox by mutable name.                                                                                   |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE`       | `30`                                                  | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`      | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, gateway startup after an intentional OpenClaw stop, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase.                                                                                                                                                                                                                                                                             |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`      | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, OpenClaw gateway startup after runtime start, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase.                                                                                                                                                                                                                                                                             |
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -4962,9 +5001,14 @@ Post-recovery OpenShell readiness uses 120 seconds when the recovery path does n
 
 <AgentOnly variant="openclaw">
 
-After an intentional stop, `$$nemoclaw <sandbox-name> start` uses the 30-second OpenClaw gateway-health budget, including probe execution and delays.
-`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides this startup budget and preserves finite, nonnegative fractional seconds.
-If the budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+After OpenShell reports the sandbox ready, `$$nemoclaw <sandbox-name> start` waits up to 120 seconds for the OpenClaw gateway process.
+This startup wait applies after both an intentional stop and an external Docker restart, regardless of the recorded stop intent.
+The budget includes probe execution and delays; it is separate from the preceding 300-second OpenShell readiness wait.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides the startup budget and preserves finite, nonnegative fractional seconds.
+If the startup budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+With a value of `0`, a sandbox not recorded as intentionally stopped skips process observation but still runs normal gateway and inference verification.
+An intentionally stopped sandbox with a zero budget exits nonzero before those checks.
+These startup settings do not change the 30-second default for OpenClaw gateway-health recovery or onboarding process observation.
 
 </AgentOnly>
 

@@ -40,7 +40,8 @@ For NVIDIA Endpoints, the `Inference` row verifies the recorded sandbox attachme
 It then sends a native Chat Completions request to `https://integrate.api.nvidia.com/v1`.
 It does not probe `https://inference.local/v1/models` for this provider.
 
-For fixed hosted providers, the `Inference` row verifies the recorded attachment and sends a model request to the native endpoint. A healthy shared route cannot satisfy this check.
+For fixed hosted providers, the `Inference` row verifies the recorded attachment and sends a model request to the native endpoint.
+A healthy shared route cannot satisfy this check.
 
 For shared-route providers, the `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends an inference request through the same path.

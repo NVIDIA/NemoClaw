@@ -25,7 +25,7 @@
       "src/lib/credentials/store.ts": 44,
       "src/lib/inference/config.ts": 27,
       "src/lib/messaging/channels/index.ts": 23,
-      "src/lib/onboard/gateway-binding.ts": 49,
+      "src/lib/onboard/gateway-binding.ts": 48,
       "src/lib/platform.ts": 20,
       "src/lib/runner.ts": 73,
       "src/lib/sandbox-name-contract.ts": 21,
@@ -57,7 +57,8 @@
       "src/lib/onboard/sandbox-gpu-create-run-attempt.ts": 18,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 23,
-      "src/lib/sandbox/config.ts": 17,
+      "src/lib/sandbox/config.ts": 16,
+      "src/lib/state/sandbox.ts": 21,
       "scripts/checks/run-managed-image-openshell-e2e.ts": 18
     }
   },
