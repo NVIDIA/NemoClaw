@@ -993,7 +993,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
-    // OpenClaw 2026.9.5 requires explicit permission for the existing context hook.
+    // OpenClaw requires this opt-in for non-bundled prompt and lifecycle hooks.
     nemoclaw: { enabled: true, hooks: { allowConversationAccess: true } },
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(

@@ -1,7 +1,7 @@
 {
   "name": "nemoclaw",
-  "version": "0.1.0",
-  "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
+  "version": "0.0.0",
+  "description": "NemoClaw \u2014 run OpenClaw inside OpenShell with NVIDIA inference",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

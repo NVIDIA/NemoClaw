@@ -70,9 +70,7 @@ type PatchTextResult = {
   text: string;
 };
 
-type PatchRunResult =
-  | { status: "patched" | "already-patched"; files: string[]; version: string }
-  | { status: "skipped-unsupported-version"; version: string };
+type PatchRunResult = { status: "patched" | "already-patched"; files: string[]; version: string };
 
 function countOccurrences(source: string, pattern: string): number {
   return source.split(pattern).length - 1;
@@ -163,10 +161,7 @@ function resolveTargets(distDir: string, archived: boolean): [string, string] {
 export function patchOpenClawSecondaryAgentMainSessionDelete(distDir: string): PatchRunResult {
   const resolvedDist = path.resolve(distDir);
   const version = readVersion(resolvedDist);
-  if (version !== SUPPORTED_OPENCLAW_VERSION && version !== "2026.9.1" && version !== "2026.10.5") {
-    if (["2026.3.11", "2026.4.24"].includes(version)) {
-      return { status: "skipped-unsupported-version", version };
-    }
+  if (version !== SUPPORTED_OPENCLAW_VERSION && version !== "2026.9.2" && version !== "2026.10.5") {
     throw new Error(
       `OpenClaw ${version} is not reviewed for the secondary-agent main-session delete compatibility patch`,
     );

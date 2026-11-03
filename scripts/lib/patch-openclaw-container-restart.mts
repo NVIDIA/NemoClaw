@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// OpenClaw 2026.9.1 retains native ESM modules during in-process restarts.
+// OpenClaw 2026.9.2 retains native ESM modules during in-process restarts.
 // Keep native restart admission and shutdown, then refresh the process image
 // inside the same OpenShell sandbox. Remove when upstream container restart
 // reliably reloads changed plugin modules and their dependencies.
@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSIONS = ["2026.9.1", "2026.9.5", "2026.10.5"];
+const VERSIONS = ["2026.9.2", "2026.9.5", "2026.10.5"];
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 const ORIGINAL = `\treturn {
 \t\tmode: "disabled",
@@ -163,8 +163,6 @@ export function patchGatewayProxyShutdown(source: string, version = "2026.9.5"):
 
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
-  // The Dockerfile restricts these pins to explicitly selected legacy E2E fixtures.
-  if (["2026.3.11", "2026.4.24"].includes(metadata.version)) return;
   if (!VERSIONS.includes(metadata.version)) {
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   }
@@ -182,7 +180,7 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
       patch: (source: string) => patchContainerRestart(source, metadata.version),
     },
     { target: safeRestartFiles[0]!, patch: patchHostSafeRestart },
-    ...(metadata.version !== "2026.9.1"
+    ...(metadata.version !== "2026.9.2"
       ? [
           {
             target: path.join(distDir, "cli", "run-main.js"),

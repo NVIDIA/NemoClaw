@@ -152,7 +152,6 @@ export function patchAgentMessageInput(source: string): string {
 
 export function patchOpenClawAgentMessageInput(distDir: string, audit = false): void {
   const { version } = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
-  if (["2026.3.11", "2026.4.24"].includes(version)) return;
   if (!["2026.9.2", "2026.9.5", "2026.10.5"].includes(version))
     throw new Error(`Unsupported OpenClaw version: ${version}`);
   const targets = fs

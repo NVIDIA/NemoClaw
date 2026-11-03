@@ -213,6 +213,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
+      "test/runtime/messaging/messaging-build-applier-integrity.test.ts",
       "test/generation/providerless-agent-config.test.ts",
       "test/networking/dashboard-remote-bind-lifecycle.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
@@ -441,6 +442,16 @@ describe("Vitest opaque-input watch triggers", () => {
 
       expect(trigger.pattern.global).toBe(false);
       expect(trigger.pattern.sticky).toBe(false);
+    },
+  );
+
+  it.each(["Dockerfile", "Dockerfile.base"])(
+    "selects the build-module dependency proof for %s",
+    (file) => {
+      const proof = "test/runtime/messaging/messaging-build-applier-integrity.test.ts";
+      expect(resolveVitestWatchTests(file)).toContain(proof);
+      expect(resolveVitestWatchTests(path.resolve(file))).toContain(proof);
+      expect(resolveVitestWatchTests(`agents/hermes/${file}`)).not.toContain(proof);
     },
   );
 

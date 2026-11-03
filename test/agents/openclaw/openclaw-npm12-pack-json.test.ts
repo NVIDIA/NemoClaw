@@ -227,7 +227,7 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     }
   });
 
-  it("patches both OpenClaw image paths before plugin installation", () => {
+  it("patches the runtime parser and verifies the base lock before plugin installation", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const baseDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const script = "patch-openclaw-npm12-pack-json.mts";
@@ -243,14 +243,14 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     expect(
       dockerfile.slice(dockerfile.indexOf(invocation), dockerfile.indexOf(invocation) + 250),
     ).toContain('"$OPENCLAW_VERSION"');
-    expect(baseDockerfile).toContain(`COPY scripts/lib/${script} /scripts/lib/${script}`);
-    const baseInvocationIndex = baseDockerfile.indexOf(`node /scripts/lib/${script}`);
-    expect(baseInvocationIndex).toBeGreaterThanOrEqual(0);
-    expect(baseDockerfile.slice(baseInvocationIndex, baseInvocationIndex + 300)).toContain(
-      "/usr/local/lib/node_modules/openclaw/dist",
+    const baseVerificationIndex = baseDockerfile.indexOf("--verify-installed-lock");
+    const baseLifecycleIndex = baseDockerfile.indexOf(
+      "node /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
     );
-    expect(baseDockerfile.slice(baseInvocationIndex, baseInvocationIndex + 300)).toContain(
-      '"$OPENCLAW_VERSION"',
+    expect(baseVerificationIndex).toBeGreaterThanOrEqual(0);
+    expect(baseLifecycleIndex).toBeGreaterThan(baseVerificationIndex);
+    expect(baseDockerfile.slice(baseVerificationIndex, baseLifecycleIndex)).toContain(
+      "--install-root /usr/local/lib/nemoclaw/openclaw-runtime",
     );
   });
 });

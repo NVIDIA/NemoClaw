@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..").replaceAll("\\", "/");
+
 export type VitestWatchTriggerPattern = {
   pattern: RegExp;
   testsToRun: (file: string, match: RegExpMatchArray) => string[];
@@ -66,6 +70,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/runtime/sandbox/sandbox-provisioning-helper-permissions.test.ts",
       "test/security/admin-approval-helper.test.ts",
     ),
+  },
+  {
+    pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,
+    testsToRun: (file) => {
+      const relative = file.startsWith(`${REPO_ROOT}/`) ? file.slice(REPO_ROOT.length + 1) : file;
+      return /^Dockerfile(?:\.base)?$/.test(relative)
+        ? ["test/runtime/messaging/messaging-build-applier-integrity.test.ts"]
+        : [];
+    },
   },
   {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,

@@ -21,6 +21,7 @@ import {
 } from "../../../scripts/generate-openclaw-config.mts";
 import { baseOpenClawGenerationEnv } from "../../helpers/openclaw-env-fixture";
 import { proveRealOpenClawAgentOwnership } from "../../helpers/openclaw-real-agent-ownership-proof";
+import { runRealOpenClawDisabledSearchProof } from "../../helpers/openclaw-real-disabled-search-proof";
 import { runRealOpenClawAgentReloadProof } from "../../helpers/openclaw-real-agent-reload-proof";
 import { runRealOpenClawCompactionRetryProof } from "../../helpers/openclaw-real-compaction-retry-proof";
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
@@ -579,6 +580,16 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     }
   });
 });
+
+it.skipIf(!process.env.NEMOCLAW_REAL_OPENCLAW_PROOF_DIST)(
+  "the minimum supported OpenClaw caller blocks disabled search and substitute execution",
+  async () => {
+    await runRealOpenClawDisabledSearchProof({
+      dist: process.env.NEMOCLAW_REAL_OPENCLAW_PROOF_DIST!,
+      compatibilityMinimum: true,
+    });
+  },
+);
 
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
@@ -1276,6 +1287,8 @@ try {
             patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
             timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
           });
+
+          await runRealOpenClawDisabledSearchProof({ dist });
 
           runRealOpenClawCompactionRetryProof({
             dist,
