@@ -10,11 +10,11 @@ case "${1:-}" in
       migration_root="/usr/local/lib/nemoclaw/openclaw-migrations/$migration_version"
       case "$migration_version" in
         2026.9.5)
-          migration_lock=25a0e1b2128555dcac25c859e09069c34c99b9a0ab8a8ea950620bca24bf376b
+          migration_lock=b2864b729531e606de939b50d6b64001b1e97e0b17acf1e2f69c0a5792aa9c93
           migration_integrity='sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w=='
           ;;
         2026.9.7)
-          migration_lock=b284dfe7296b48bf3dbae4593d8e9932182557df31123168e1922230e86cd073
+          migration_lock=35020ee3d2638c8b5f784387085836c0d7fb62dfe1309097d53da235247197a5
           migration_integrity='sha512-/8N2LnfTFQPvnZizi8qKSFfnLQaPvSG3Cb4xo1YV7b4JhYiUc43ZNRpXJ01bWghLK0Ezk3HVeo/DGHcIRQwRWA=='
           ;;
       esac
@@ -34,8 +34,8 @@ case "${1:-}" in
     for migration_version in 2026.9.5 2026.9.7; do
       migration_root="/usr/local/lib/nemoclaw/openclaw-migrations/$migration_version"
       case "$migration_version" in
-        2026.9.5) migration_lock=25a0e1b2128555dcac25c859e09069c34c99b9a0ab8a8ea950620bca24bf376b ;;
-        2026.9.7) migration_lock=b284dfe7296b48bf3dbae4593d8e9932182557df31123168e1922230e86cd073 ;;
+        2026.9.5) migration_lock=b2864b729531e606de939b50d6b64001b1e97e0b17acf1e2f69c0a5792aa9c93 ;;
+        2026.9.7) migration_lock=35020ee3d2638c8b5f784387085836c0d7fb62dfe1309097d53da235247197a5 ;;
       esac
       NPM_CONFIG_OFFLINE=true npm_config_offline=true \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
