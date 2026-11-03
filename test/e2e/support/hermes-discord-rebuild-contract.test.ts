@@ -32,6 +32,7 @@ async function runPhase(
     lostDiscord?: boolean;
     statusHealth?: { ok: boolean; probed: boolean } | null;
     statusProvider?: string;
+    damageFailure?: "seed" | "readback" | "partial" | "route drift" | "user state" | "inference";
   } = {},
 ) {
   const command = vi.fn<HostCliClient["command"]>(async (_binary, args = []) =>
@@ -49,21 +50,37 @@ async function runPhase(
         : "",
     ),
   );
-  const exec = vi.fn<SandboxClient["exec"]>(async (_name, args) => {
-    switch (args.includes("-z")) {
-      case true:
-        return result(0, "PROBE_OK");
-    }
-    return result(
-      0,
-      JSON.stringify({
-        enabled: !options.lostDiscord,
-        requireMention: true,
-        guildIds: "1491590992753590594",
-        allowedUsers: "1005536447329222676",
-      }),
+  const discordState = result(
+    0,
+    JSON.stringify({
+      enabled: !options.lostDiscord,
+      requireMention: true,
+      guildIds: "1491590992753590594",
+      allowedUsers: "1005536447329222676",
+    }),
+  );
+  const seeded = result(
+    options.damageFailure === "seed" ? 1 : 0,
+    JSON.stringify({ configFingerprint: "a".repeat(64) }),
+  );
+  // The actual Python fixture refuses partial references and missing user state
+  // with a nonzero exit; its filesystem tests own those validation details.
+  const recovered = result(
+    ["readback", "partial", "user state"].includes(options.damageFailure ?? "") ? 1 : 0,
+    JSON.stringify({
+      configFingerprint: (options.damageFailure === "route drift" ? "b" : "a").repeat(64),
+    }),
+  );
+  const exec = vi
+    .fn<SandboxClient["exec"]>()
+    .mockResolvedValueOnce(discordState)
+    .mockResolvedValueOnce(result(0, "PROBE_OK"))
+    .mockResolvedValueOnce(seeded)
+    .mockResolvedValueOnce(discordState)
+    .mockResolvedValueOnce(recovered)
+    .mockResolvedValueOnce(
+      result(0, options.damageFailure === "inference" ? "no response" : "PROBE_OK"),
     );
-  });
   await runHermesNvidiaDiscordRebuild({
     publicApiKey: options.publicKey === undefined ? "synthetic-public-key" : options.publicKey,
     redactionValues: [],
@@ -96,10 +113,16 @@ describe("Hermes Discord rebuild evidence", () => {
     expect(command.mock.calls[0]![2]!.env!.NVIDIA_INFERENCE_API_KEY).toBe("synthetic-public-key");
     expect(command.mock.calls[1]![2]!.env!).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(command.mock.calls[1]![2]!.env!).not.toHaveProperty("DISCORD_BOT_TOKEN");
-    expect(command).toHaveBeenCalledTimes(3);
+    expect(command).toHaveBeenCalledTimes(5);
+    expect(command.mock.calls[3]![1]).toEqual([CLI, SANDBOX_NAME, "rebuild", "--yes"]);
+    expect(command.mock.calls[3]![2]!.env!).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(command.mock.calls[3]![2]!.env!).not.toHaveProperty("DISCORD_BOT_TOKEN");
+    expect(exec.mock.invocationCallOrder[2]).toBeLessThan(command.mock.invocationCallOrder[3]!);
+    expect(exec.mock.calls[2]![1]).toContain("seed");
+    expect(exec.mock.calls[4]![1]).toContain("verify");
     expect(command.mock.calls[2]![1]).toEqual([CLI, SANDBOX_NAME, "status", "--json"]);
     expect(command.mock.calls[2]![2]!.env!).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(6);
     expect(exec.mock.calls[0]![1]).toEqual([
       "/opt/hermes/.venv/bin/python3",
       "-c",
@@ -111,6 +134,13 @@ describe("Hermes Discord rebuild evidence", () => {
   it.each(["discord", "rebuild", "status"])("stops when %s fails", async (failedCommand) => {
     await expect(runPhase({ failedCommand })).rejects.toThrow();
   });
+
+  it.each(["seed", "readback", "partial", "route drift", "user state", "inference"] as const)(
+    "rejects damaged-state recovery with failed %s evidence (#14094)",
+    async (damageFailure) => {
+      await expect(runPhase({ damageFailure })).rejects.toThrow();
+    },
+  );
 
   it("rejects a rebuild that loses Discord configuration", async () => {
     await expect(runPhase({ lostDiscord: true })).rejects.toThrow();
