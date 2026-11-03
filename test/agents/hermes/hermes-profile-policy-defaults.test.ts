@@ -22,6 +22,7 @@ const POLICY_SETTINGS: HermesBuildSettings = {
   contextWindow: null,
   toolDisclosure: "progressive",
   webSearchProvider: null,
+  switchyardRouting: null,
   messagingCredentialPlaceholders: [],
   managedToolGateways: { brokerEnabled: false, presets: [] },
   managedImageCapabilityUnion: false,

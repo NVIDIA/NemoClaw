@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync as defaultExistsSync } from "node:fs";
+import { existsSync as defaultExistsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -31,6 +31,8 @@ export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDe
   existsSync?: (filePath: string) => boolean;
   probeDockerHost?: DockerHostProbe;
   resolveDockerContextHost?: DockerContextHostResolver;
+  inspectCurrentDockerContext?: () => { name: string; dockerHost: string } | null;
+  resolveSocketRealPath?: (socketPath: string) => string | null;
 }
 
 export interface DockerHostDetection {
@@ -222,6 +224,69 @@ function resolveDockerContextHost(context: string, source: NodeJS.ProcessEnv): s
   const host = String(result.stdout ?? "").trim();
   if (!host || /[\0\r\n]/u.test(host)) return null;
   return host;
+}
+
+function inspectCurrentDockerContext(
+  source: NodeJS.ProcessEnv,
+  resolveContextHost: DockerContextHostResolver,
+): { name: string; dockerHost: string } | null {
+  // Docker CLI 24.0.7, 2026-10-28: `docker context show` returned `default`.
+  // The existing inspect formatter returned `unix:///var/run/docker.sock`.
+  const result = dockerSpawnSync(["context", "show"], {
+    encoding: "utf-8",
+    env: buildDockerProbeEnv(source, undefined),
+    timeout: DOCKER_PROBE_TIMEOUT_MS,
+    maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
+  });
+  if (!result || result.error || result.status !== 0) return null;
+  const name = String(result.stdout ?? "").trim();
+  if (name === "default" || !isSupportedDockerContextName(name)) return null;
+  const dockerHost = resolveContextHost(name);
+  return dockerHost ? { name, dockerHost } : null;
+}
+
+function resolveSocketRealPath(socketPath: string): string | null {
+  try {
+    return realpathSync(socketPath);
+  } catch {
+    return null;
+  }
+}
+
+/** Export the CLI's current local endpoint for consumers that do not read Docker contexts. */
+function selectCurrentDockerContext(
+  opts: DockerHostDetectionOptions,
+  env: NodeJS.ProcessEnv,
+): DockerHostDetection | null {
+  try {
+    const current = (
+      opts.inspectCurrentDockerContext ??
+      (() =>
+        inspectCurrentDockerContext(
+          env,
+          opts.resolveDockerContextHost ?? ((name) => resolveDockerContextHost(name, env)),
+        ))
+    )();
+    if (
+      !current ||
+      current.name === "default" ||
+      !isSupportedDockerContextName(current.name) ||
+      !current.dockerHost ||
+      !isSupportedGatewayDockerHost(current.dockerHost)
+    ) {
+      return null;
+    }
+    const dockerHost = current.dockerHost.trim();
+    const socketPath = dockerHost.slice("unix://".length);
+    if (socketPath === "/var/run/docker.sock") return null;
+    const resolvePath = opts.resolveSocketRealPath ?? resolveSocketRealPath;
+    const selectedPath = resolvePath(socketPath);
+    if (!selectedPath || selectedPath === resolvePath("/var/run/docker.sock")) return null;
+    return { dockerHost, source: "context", socketPath: null };
+  } catch {
+    // Context inspection cannot displace a working authority when it fails.
+    return null;
+  }
 }
 
 function probeDockerHost(
@@ -422,10 +487,13 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
 
   const probe = opts.probeDockerHost ?? ((dockerHost) => probeDockerHost(dockerHost, env));
   const ambient = probe(undefined);
-  // Redirect the CLI away from the host's own default authority only after
-  // observing that the default refuses to answer. A probe that timed out or
-  // never ran is no evidence at all (#10367).
-  if (ambient.reachable || ambient.inconclusive) return { selection: null, conflict: null };
+  if (ambient.inconclusive) return { selection: null, conflict: null };
+  if (ambient.reachable) {
+    // Pin the same daemon for OpenShell, which does not read Docker contexts.
+    return { selection: selectCurrentDockerContext(opts, env), conflict: null };
+  }
+
+  // A failed default probe permits fallback discovery; an inconclusive probe does not.
 
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;

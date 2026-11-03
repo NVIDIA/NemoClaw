@@ -992,7 +992,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
-    nemoclaw: { enabled: true },
+    // OpenClaw requires this opt-in for non-bundled prompt and lifecycle hooks.
+    nemoclaw: { enabled: true, hooks: { allowConversationAccess: true } },
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,
