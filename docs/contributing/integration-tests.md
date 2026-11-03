@@ -77,7 +77,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 | `provider_protocol` | The fixture provider from `nemoclaw-fixture-provider`, and on Unix the provider against a fake Docker API: network and image planning, including prerequisite changes before saved-plan application |
 | `failures/service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
 | `failures/service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
-| `failures/service_storage` | Checks an invalid owner, missing, foreign, or substituted storage, and a lost creation reply |
+| `failures/service_storage` | Checks an invalid owner, an unchanged plan of intact storage, missing, foreign, or substituted storage, and a lost creation reply |
 | `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |
 | `replacement_cleanup` | On Unix, the plans and state the SDK reads after a container replacement whose cleanup is unfinished |
 
