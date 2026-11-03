@@ -17,7 +17,7 @@ Running `nemoclaw plan deployment.yaml` first is optional.
 That command previews changes without changing runtime resources, although it can write local intent and plan files.
 On a fresh managed deployment, the plan includes the gateway and every object it will serve; gateway checks that need the running gateway move to apply.
 `nemoclaw apply` generates and checks a fresh plan itself.
-See the [CLI reference](../reference/cli.md) for command options.
+See the [CLI reference](../../docs/reference/cli.md) for command options.
 
 ## Component Flow
 
@@ -75,27 +75,27 @@ OpenShell owns sandbox creation and policy enforcement.
 | **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
 | **Optional Relay** | Explicitly enabled Hermes Relay tracing runs in process and writes artifacts inside the sandbox. It is an experimental integration. |
-| **Agent start and result** | `fabric_agent` starts each new agent through Fabric's `fabric-agent-ctl` once its sandbox is ready. Fabric reports no runtime status or health, so a successful apply does not establish that agents answer. The SDK retains operation state, and the CLI reports the outcome. |
+| **Agent start and result** | `fabric_agent` starts each new agent through Fabric's `fabric-agent-ctl` once its sandbox is ready. Refresh asks Fabric whether each started runtime still runs, without a prompt, so a successful apply does not establish that agents answer. The SDK retains operation state, and the CLI reports the outcome. |
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
 The OpenShell provider owns OpenShell operations and gateway installation: Podman gateway processes, gateway initialization and retained bridges, and Kubernetes gateway storage and authentication.
 The Fabric provider owns starting and stopping agent runtimes; the vLLM and Ollama providers own model-server contracts, readiness, capacity, and credential storage.
-The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../prerequisites.md).
+The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../../docs/prerequisites.md).
 
 ## Conditions Summarized by the Diagram
 
 - The graph has no runtime resources when neither a managed gateway nor managed inference services are declared.
   An external gateway must already be reachable for planning.
-- The deployment graph can also contain an [Ollama proxy](../inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
+- The deployment graph can also contain an [Ollama proxy](../../docs/inference.md#use-external-ollama-through-a-managed-proxy), its credential storage, model observation, and readiness dependencies.
 - Each adapter uses `fabric_agent` after sandbox creation and route setup.
-  A sandbox runs one agent runtime, so a new agent always gets a new sandbox.
-- Fabric reports no runtime status ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); a runtime that stops is found at its next invocation.
-  See [agent runtimes during apply](../usage.md#agent-runtimes-during-apply).
+  NemoClaw runs one agent runtime per sandbox, so a new agent always gets a new sandbox.
+- Refresh asks Fabric whether each agent's runtime still runs; apply starts a stopped runtime again in its sandbox.
+  See [agent runtimes during apply](../../docs/usage.md#agent-runtimes-during-apply).
 
-For native configuration and optional tracing, see [agent runtimes](../agents.md).
-For listener setup and forwarding, see [agent interfaces](../interfaces.md).
-For partial failure and retry rules, see [deployment recovery](../usage.md#recover-an-interrupted-operation).
+For native configuration and optional tracing, see [agent runtimes](../../docs/agents.md).
+For listener setup and forwarding, see [agent interfaces](../../docs/interfaces.md).
+For partial failure and retry rules, see [deployment recovery](../../docs/usage.md#recover-an-interrupted-operation).
 
 ## Implementation
 

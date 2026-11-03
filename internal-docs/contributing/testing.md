@@ -31,9 +31,9 @@ cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
-It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.150 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and system tests, stopping at the first failure.
-To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
+To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
 ## Select Expensive Local Checks
 
@@ -88,13 +88,14 @@ Put each test in the cheapest layer that can check its behavior, and assert only
 |---|---|---|---|
 | Unit | One crate's rules, with in-process fakes | Each crate's library tests and `integration` binary, and every other test not marked `#[ignore]` | `test` |
 | Contract | Each provider type through pinned OpenTofu | The ignored tests in `nemoclaw-provider::contract`, `openshell-provider::contract`, and `fabric-provider::contract` | `lifecycle` |
-| System | SDK and CLI orchestration over a bundle | The ignored `nemoclaw-e2e::integration` modules that the `lifecycle` profile selects | `lifecycle` |
-| Live | Real Docker engines, kind clusters, and owned remote hosts | Ignored tests that the `live-docker` and `live-kind` profiles select, and the opt-in tests in [live tests](live-tests.md) | `live-docker`, `live-kind`, or none |
+| System | SDK and CLI orchestration over a bundle | The ignored tests in `nemoclaw-e2e::integration`, which the `lifecycle` profile selects | `lifecycle` |
+| Live | Real Docker engines, kind clusters, and owned remote hosts | Ignored tests that the `live-docker` and `live-kind` profiles select, and the other opt-in tests in `nemoclaw-e2e::e2e` and [live tests](live-tests.md) | `live-docker`, `live-kind`, or none |
 
 ### Unit
 
 Unit tests check one crate's rules: configuration parsing and validation, compilation, planning, provider backends, CLI argument and output handling, and the build tool.
 They live in each crate's `src` modules and in its `integration` test binary, `tests/main.rs`; the providers' `schema` binaries also belong here.
+In `nemoclaw-e2e` alone, `integration` names the system-test binary instead; the tests it and the `e2e` binary don't ignore still run here.
 They use in-process fakes and temporary files and need no bundle; `openshell-provider` and `fabric-provider`, for example, test their backends against the fake OpenShell gateway in `src/fake_gateway_tests.rs` without OpenTofu.
 On Unix, the SDK's `integration` binary also runs `Deployment` over a [scripted OpenTofu](../../crates/nemoclaw-sdk/tests/support/scripted_tofu.rs): a shell script in a temporary directory with a bundle's layout and manifest, which logs its calls and replays canned plans and states.
 The SDK alone decides the stage order and the unfinished-apply and unfinished-destroy state it saves when an operation stops, so those tests need neither OpenTofu nor `NEMOCLAW_TEST_BUNDLE`.
@@ -111,13 +112,15 @@ A test that needs OpenTofu, a bundle, Docker, or a cluster must be marked `#[ign
 A contract test applies one provider type through the OpenTofu that `NEMOCLAW_TEST_BUNDLE` supplies, against fake engines, gateways, model servers, or Kubernetes APIs, and checks what OpenTofu plans, applies, refreshes, and tears down, including after failures.
 Each production provider has one `contract` binary under `tests/contract`.
 It runs the provider Cargo built from the checkout, so it tests the change without a new bundle; OpenTofu and the other providers it needs come from the bundle.
+Write a scenario that passes as a native `tofu test` file in `tests/contract/hcl/`; put a test of a command that must fail in `tests/contract/failures/`, and keep other Rust tests only for what `tofu test` cannot check, such as a saved plan or the state file.
 A coverage test in each binary requires a contract test for every type the provider serves.
 [Run integration tests](integration-tests.md#contract-tests) describes each binary.
 
 ### System
 
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
-System tests live in `nemoclaw-e2e`'s `integration` binary; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `travel_example`, and `travel_team_example` modules.
+System tests live in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which holds only tests against local fixtures.
+The `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects the whole binary: its `deployment`, `export_observations`, `fabric_deployment`, `kubernetes_agents`, `multi_agent`, `multiple_providers`, `remote_service`, `helm_recovery`, `hcl_integration`, `travel_example`, and `travel_team_example` modules.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.
@@ -125,7 +128,8 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 ### Live
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
-The `live-docker` profile selects the Docker tests in `nemoclaw-build`, `nemoclaw-e2e`, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects `nemoclaw-e2e`'s `kubernetes_live` and `kubernetes_chart` tests.
+`nemoclaw-e2e`'s live tests live in its `e2e` binary, `crates/nemoclaw-e2e/tests/e2e`.
+The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` and `kubernetes_chart` tests.
 The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
@@ -154,26 +158,29 @@ The same selection applies when lifecycle tests run through `cargo ci` or from a
 A contract test runs the provider built from the checkout, but a system test runs the bundle's CLI and providers: rebuild the bundle after changing them.
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
-`cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
-It pulls the pinned OpenShell and Ollama images; builds the Pi agent image, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+`cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../../docs/build.md).
+It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
-It requests no inference and needs no GPU or credentials.
+It requests no inference from a model server and needs no GPU or credentials; the [agent interface test](live-tests.md#agent-interfaces) answers its agents' model requests with a stand-in in the test process.
 
-`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images).
+`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
-It then runs the `live-kind` profile's four cluster tests and three chart-render tests, which need no Helm CLI, up to four at a time; the registry test runs alone.
+It then runs the `live-kind` profile's four cluster tests and three chart-render tests, which need no Helm CLI, up to four at a time; the registry test runs alone, after the others.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
 To build the live images once for both suites, run `cargo ci live-images`.
-It builds the agent image, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+It builds the OpenClaw, Hermes, and Deep Agents Code agent images, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
+
+Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Agents Code, reference, and proxy images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`, and derives the two proxy images from the pushed proxy with one label each.
+`cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all five images for both architectures, provided the image rules find no change between it and `HEAD`.
 
 ## Budgets and Per-Test Limits
 
@@ -266,8 +273,8 @@ cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timin
 
 CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
 The live reports hold outcomes and times only, so they can be shared as a run's result; failing tests' output stays in the job log.
-The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest.
-Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../limits.md).
+The rest of what a live run used is on its GitHub run: the commit and runner, and the `bundle-PLATFORM-COMMIT-ATTEMPT` and `live-images-PLATFORM-COMMIT-ATTEMPT` artifacts it downloaded, each with its digest, or the `v1` commit whose images it pulled, which the plan's summary names.
+Versions it pinned are in the repository at that commit, and known gaps are in [current limits](../../docs/limits.md).
 
 ## How CI Runs the Tests
 
@@ -294,6 +301,13 @@ Bundle push and manual runs select all checks; PRs use impact analysis.
 Image pushes retain impact analysis, and manual image runs select all checks.
 A failed analysis selects all expensive checks; a failed planning job prevents the required checks from passing.
 
+### Workflow Rules
+
+Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run would only reveal when it is skipped or refused:
+
+- A job that needs a job with an `if:` must check that job's `needs.JOB.result` or use a status function such as `!cancelled()` in its own `if:`. GitHub otherwise skips it whenever the needed job is skipped, and counts the skipped job as passing.
+- Every action from outside GitHub and NVIDIA must come from a verified creator or be a commit listed in [`.github/allowed-actions.yml`](../../.github/allowed-actions.yml). The organization allows other actions only at the commits it lists, and a workflow that names any other action fails to start. List a commit only after an organization admin allows it.
+
 ### Jobs of One Platform
 
 Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners:
@@ -301,7 +315,8 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when lifecycle or live jobs need the executables.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When the plan selects live checks, Linux runs `Build live images` with `cargo ci live-images`, alongside the first two jobs.
-4. When selected and the build and bundle jobs finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, when the live images are also built, `Live / Docker` and `Live / Kind` start.
+   On a pull request that changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
+4. When selected and the build and bundle jobs finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, when the live images are also built or named, `Live / Docker` and `Live / Kind` start.
 5. When the partitions finish, `Lifecycle timing` reports the whole lifecycle suite and checks the binary budgets.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
@@ -344,7 +359,7 @@ tar -xf .build/ci/lifecycle-inputs.tar
 ```
 
 The worker compiles nothing and writes JUnit timings under `target/nextest/lifecycle`; repeating the command overwrites the extracted files.
-`--partition` requires the `lifecycle` step, `--archive-file` requires `lifecycle`, `live-docker`, or `live-kind`, and `--images` requires `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
+`--partition` requires the `lifecycle` step, `--archive-file` requires `lifecycle`, `live-docker`, or `live-kind`, and `--images` and `--images-commit` require `live-docker` or `live-kind`, so none of them narrows plain `cargo ci`.
 
 ### Windows
 
@@ -388,7 +403,7 @@ A denied license or source requires reviewing the dependency and policy; do not 
 
 ## Image Source Checks
 
-Use the [agent image build prerequisites](../build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
+Use the [agent image build prerequisites](../../docs/build.md#build-agent-images); the target-selection test needs Docker Buildx but no host Python.
 For the full Linux ARM64 checks, run from the repository root:
 
 ```sh
@@ -421,14 +436,15 @@ In each image, offline and as the image's own user, it checks:
 - the runtime command is `fabric-agent-ctl`, and it is executable;
 - the retained sources match the image's provenance;
 - the image runs as 10001:10001, and `/sandbox` and `TMPDIR` are laid out as OpenShell needs on Kubernetes and OpenShift;
-- the image carries no package installer and no build toolchain.
+- the image carries no package installer and no build toolchain;
+- a Hermes image carries `aiohttp`, Hermes's built dashboard, and its built TUI bundle, which Hermes's API server, dashboard, and browser chat need.
 
 The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.
-Use the [reference image procedure](../build.md#reference-contract-image) to run these locally.
+Use the [reference image procedure](../../docs/build.md#reference-contract-image) to run these locally.
 
 The image workflow obtains its image decision from the shared validation plan and skips image steps when their inputs are unaffected; the `Build` checks still report.
-On `v1` pushes that build images, it then pushes the checked agent and proxy images by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
+On `v1` pushes that build images, it then pushes the checked agent and proxy images, and the reference image the live suites pull, by digest to `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`, an internal package that releases promote from ([#13516](https://github.com/NVIDIA/NemoClaw/issues/13516)).
 It pushes only to packages that already exist and aren't public, and otherwise skips with a warning; see [provisioning the packages](releases.md#provision-the-packages).
 The job summary lists each digest and how long its push took.
 A following job keeps the images of the latest ten commits and deletes older ones; releases keep their own copies of the images they promote.

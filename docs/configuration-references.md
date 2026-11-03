@@ -34,17 +34,17 @@ Moving a definition does not authorize replacing an existing resource; normal id
 
 ## Supported Families
 
-Paths below are relative to `spec`; `agent` is inside `sandboxes[]` and `routes[]` is inside an inline or shared inference configuration.
+Paths below are relative to `spec`; `agent` is inside `sandboxes.<sandbox>` and `routes[]` is inside an inline or shared inference configuration.
 
 | Family | Enclosing definitions | Consumer selection | Current runtime limit |
 |---|---|---|---|
-| Inference provider | `inferenceProviders[]` or `sandboxes[].inferenceProviders[]`, each with a `name` | Route `provider` or `providerRef` | Up to 32 selected providers; each uses an external endpoint or references a named service |
-| Inference | `inferences.<name>` or `sandboxes[].inferences.<name>` | Agent `inference` or `inferenceRef` | An explicit default selects a Fabric model role; Fabric validates the adapter's supported roles |
-| Harness | `harnesses.<name>` or `sandboxes[].harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
-| Integration | `integrations.<name>` or `sandboxes[].integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Brave or Tavily `webSearch` credentials and grants; one attached search definition per sandbox |
+| Inference provider | `inferenceProviders.<name>` or `sandboxes.<sandbox>.inferenceProviders.<name>` | Route `provider` or `providerRef` | Up to 32 selected providers; each uses an external endpoint or references a named service |
+| Inference | `inferences.<name>` or `sandboxes.<sandbox>.inferences.<name>` | Agent `inference` or `inferenceRef` | An explicit default selects a Fabric model role; Fabric validates the adapter's supported roles |
+| Harness | `harnesses.<name>` or `sandboxes.<sandbox>.harnesses.<name>` | Sandbox `harness` or `harnessRef` | Exactly one configuration and one agent per sandbox |
+| Integration | `integrations.<name>` or `sandboxes.<sandbox>.integrations.<name>` | Agent `integrations.<name>` and/or `integrationRefs` | Brave or Tavily `webSearch` credentials and grants; one attached search definition per sandbox |
 
-Inference providers are list entries with a `name`; inferences, harnesses, and integrations are maps keyed by name.
-Inline providers also require `name`.
+Sandboxes, inference providers, inferences, harnesses, and integrations are maps keyed by name.
+An inline provider has no key, so it requires `name`.
 Deployment-level provider names identify their OpenShell registrations; sandbox-local providers receive stable identities derived from the sandbox and provider names.
 Different sandboxes can reuse a local definition name without sharing its registration.
 A document supports one to 32 named sandboxes; OpenClaw agents can select models from different providers.
@@ -68,12 +68,12 @@ spec:
       settings:
         startup_timeout_seconds: 60
   sandboxes:
-    - name: researcher
+    researcher:
       harnessRef: assistant
       agent:
         name: researcher
         inferenceRef: chat
-    - name: writer
+    writer:
       harnessRef: assistant
       agent:
         name: writer
@@ -95,7 +95,7 @@ Use `inferenceRef` to reuse the complete inference configuration, including its 
 ```yaml
 spec:
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   inferences:
@@ -106,12 +106,12 @@ spec:
           overrides:
             model: qwen3:4b
   sandboxes:
-    - name: researcher
+    researcher:
       harness: {kind: nvidia.fabric.openclaw}
       agent:
         name: researcher
         inferenceRef: chat
-    - name: writer
+    writer:
       harness: {kind: nvidia.fabric.openclaw}
       agent:
         name: writer
@@ -131,11 +131,11 @@ This fragment omits the deployment's other required fields:
 ```yaml
 spec:
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
+    assistant:
       harness: {kind: nvidia.fabric.openclaw}
       agent:
         name: researcher

@@ -3,27 +3,19 @@
 
 # Documentation
 
-These guides describe the v1 development branch.
+These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The checked-in generated configuration reference still describes this documentation checkout, not the newer implementation revision. For the source-pinned first deployment, use the [tutorial](get-started.md).
 [Current limits](limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
-## About NemoClaw
+## Start Here
 
 | Task | Guide |
 |---|---|
 | Understand the product and choose an interface | [NemoClaw overview](overview.md) |
 | Understand how NemoClaw, OpenShell, Fabric, and agent harnesses fit together | [Ecosystem](ecosystem.md) |
-
-## Get Started
-
-| Task | Guide |
-|---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
 | Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
-| Assess a move from an earlier version | [Migration](migration.md) |
-| Find release information | [Release notes](release-notes.md) |
-| Check what v1 does not do yet | [Current limits](limits.md) |
 
-## Build and Deploy
+## Deploy and Operate
 
 | Task | Guide |
 |---|---|
@@ -34,12 +26,10 @@ These guides describe the v1 development branch.
 | Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
 | Locate deployment state and understand backup limits | [Deployment state](state.md) |
 | Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
-| Review trust, credential storage and access, and isolation | [Security](security.md) |
-| Understand what a deployment protects, and from whom | [Threat model](threat-model.md) |
 | Rotate a credential | [Rotate credentials](credential-rotation.md) |
 | Declare sandbox filesystem, process, and egress settings | [Sandbox policy](sandbox-network.md) |
 
-## Agents and Inference
+### Agents and Inference
 
 | Task | Guide |
 |---|---|
@@ -52,31 +42,46 @@ These guides describe the v1 development branch.
 | Package model-specific preparation | [Inline model recipes](recipes.md) |
 | Place inference on an SSH-selected Docker engine | [Configure an SSH model service](remote-service.md) |
 
-## Integrate and Look Up Behavior
+## Integrate and Reference
 
 | Task | Guide |
 |---|---|
 | Call deployment operations programmatically | [Use the SDK](sdk.md) |
 | Understand the bundled OpenTofu provider | [Provider](provider.md) |
 | Check what each release guarantees | [Compatibility](compatibility.md) |
-| Integrate an image-owned service or adapt VoiceClaw | [Container service contract](design/container-contract.md) |
+| Configure an image-owned service | [Container service contract](container-services.md) |
 | Look up CLI commands and options | [CLI reference](reference/cli.md) |
-| Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |
+| Look up YAML fields, defaults, and constraints for this checkout | [Configuration reference](reference/configuration.md) |
+| Find harness examples and adapter constraints | [Fabric harnesses](reference/fabric-harnesses.md) |
 | Find documentation for coding agents, contribution guidance, and licenses | [Resources](resources.md) |
 
-## Develop and Validate
+## Releases, Security, and Limits
 
 | Task | Guide |
 |---|---|
-| Run workspace checks and collect coverage | [Tests](contributing/testing.md) |
-| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](contributing/integration-tests.md) |
-| Test explicitly owned live resources | [Run live tests](contributing/live-tests.md) |
-| Stage a private v1 release | [Stage a v1 release](contributing/releases.md) |
-| Write or reorganize documentation | [Contribute documentation](contributing/documentation.md) |
-| Validate, preview, or publish the v1 site | [Documentation build](contributing/documentation-build.md) |
-| Update the generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
+| Assess a move from an earlier version | [Migration](migration.md) |
+| Check what a release guarantees | [Compatibility](compatibility.md) |
+| Find release information | [Release notes](release-notes.md) |
+| Check what v1 does not do yet | [Current limits](limits.md) |
+| Review credential storage, access, and isolation | [Security](security.md) |
+| Understand the security boundary | [Threat model](threat-model.md) |
 
-## Understand the Design
+## Maintainer Guides
+
+Maintainer procedures and design records live in `internal-docs/`, not in the published v1 navigation.
+
+
+| Task | Guide |
+|---|---|
+| Run workspace checks and collect coverage | [Tests](../internal-docs/contributing/testing.md) |
+| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](../internal-docs/contributing/integration-tests.md) |
+| Test explicitly owned live resources | [Run live tests](../internal-docs/contributing/live-tests.md) |
+| Stage a private v1 release | [Stage a v1 release](../internal-docs/contributing/releases.md) |
+| Write or reorganize documentation | [Contribute documentation](../internal-docs/contributing/documentation.md) |
+| Validate, preview, or publish the v1 site | [Documentation build](../internal-docs/contributing/documentation-build.md) |
+| Update the generated schema and field reference | [Schema maintenance](../internal-docs/contributing/configuration-schema.md) |
+
+### Design Rationale
 
 Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
 Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
@@ -84,17 +89,17 @@ The design decision defines current invariants.
 
 | Topic | Owner |
 |---|---|
-| Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
-| Authoring concepts, ownership, and validation gates | [Authoring domain model](design/authoring-domain.md) |
-| Partial-document onboarding coverage and open design questions | [Onboarding journey prototype](design/onboarding-journeys.md) |
-| SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
-| Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
-| Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
-| Fabric runtime ownership and observation limits | [Fabric management](design/fabric-management.md) |
-| Connections, engine identity, inference traffic, host capacity, and their implementation constraints | [Execution targets](design/execution-targets.md) |
-| Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
+| Accepted scope, implementation boundaries, and invariants | [Design decision](../internal-docs/design/scope.md) |
+| Authoring concepts, ownership, and validation gates | [Authoring domain model](../internal-docs/design/authoring-domain.md) |
+| Partial-document onboarding coverage and open design questions | [Onboarding journey prototype](../internal-docs/design/onboarding-journeys.md) |
+| SDK ownership, durable state, staged apply, and retained storage | [Architecture](../internal-docs/design/architecture.md) |
+| Apply stages, component handoffs, and agent harness startup | [Apply flow](../internal-docs/design/apply-flow.md) |
+| Process lifetime, watchdog recovery, and agent ownership | [Runtime design](../internal-docs/design/runtime.md) |
+| Fabric runtime ownership and observation limits | [Fabric management](../internal-docs/design/fabric-management.md) |
+| Connections, engine identity, inference traffic, host capacity, and their implementation constraints | [Execution targets](../internal-docs/design/execution-targets.md) |
+| Artifact ownership, preparation verification, and output manifests | [Recipe design](../internal-docs/design/recipes.md) |
 
-## Sources and Fixtures
+### Sources and Fixtures
 
 - [Agent runtime source notices](../image/NOTICE.md).
 - [Generic vLLM source notices](../image/vllm/NOTICE.md).

@@ -54,17 +54,20 @@ Before adding behavior, answer these questions in its issue or pull request:
 5. Which NemoClaw promise does it serve?
 
 When an upstream gap blocks a feature, leave the feature unavailable instead of working around it.
-File a `v1` issue, add the limit to [current limits](../limits.md), and ask upstream only when the gap is theirs to fix.
+File a `v1` issue, add the limit to [current limits](../../docs/limits.md), and ask upstream only when the gap is theirs to fix.
 Setting configuration that an upstream component documents is not a workaround.
 An exception needs its reason recorded here and an issue that tracks its removal.
 
 NemoClaw keeps these by decision, as its own promises:
 
 - Managed Docker and Podman gateways, so that one file can create a working local deployment ([#13474](https://github.com/NVIDIA/NemoClaw/issues/13474)). An OpenShell-installed gateway with `gateway.management: external` remains the alternative.
-  NemoClaw writes only the keys it owns into the gateway's configuration and passes the rest through from [`spec.gateway.config`](../usage.md#configure-a-managed-gateway), in OpenShell's format ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)).
+  NemoClaw writes only the keys it owns into the gateway's configuration and passes the rest through from [`spec.gateway.config`](../../docs/usage.md#configure-a-managed-gateway), in OpenShell's format ([#13473](https://github.com/NVIDIA/NemoClaw/issues/13473)).
+- Managed vLLM and Ollama services on a local Docker engine, because nothing else on a single host decides whether a model fits the GPU and memory, when the server is ready, or where its key and model cache live ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
+  On Kubernetes and OpenShift the platform does all of that, so NemoClaw places no model servers there: sandboxes use a server the platform runs, through an inference provider at its Service address ([Use a Model Server in the Cluster](../../docs/kubernetes.md#use-a-model-server-in-the-cluster)).
+  Both paths start from the same runtime images and the same `vllm_runtime` and `ollama_runtime` descriptions; only who applies them differs.
 - The vLLM supervisor's route allowlist, which is the reverse proxy that vLLM's [security guide](https://github.com/vllm-project/vllm/blob/v0.32.0/docs/usage/security.md) asks deployers to provide ([#13471](https://github.com/NVIDIA/NemoClaw/issues/13471)).
-- The OpenClaw image pin: OpenClaw's npm package has no lockfile, so the agent image copies OpenClaw's published image by digest, and Fabric's adapter refuses versions it doesn't support ([#13476](https://github.com/NVIDIA/NemoClaw/issues/13476)). See [updating the pin](../build.md#update-the-openclaw-pin).
-- No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
+- The OpenClaw image pin: OpenClaw's npm package has no lockfile, so the agent image copies OpenClaw's published image by digest, and Fabric's adapter refuses versions it doesn't support ([#13476](https://github.com/NVIDIA/NemoClaw/issues/13476)). See [updating the pin](../../docs/build.md#update-the-openclaw-pin).
+- No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../../docs/recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
 - Agent image assembly, for now: NemoClaw builds and publishes the images that hold Fabric and each harness's native agent, so it installs and pins those agents in the [agent Dockerfile](../../image/fabric/Dockerfile). Image building moves to the Fabric repository later; Fabric owns each adapter's behavior and its tests.
 
 ## Ownership and Recovery
@@ -74,7 +77,7 @@ NemoClaw keeps these by decision, as its own promises:
 - Verify ownership, generation, and durable identity before modifying gateway storage, credentials, Podman gateway processes, or OpenShell resources.
 - Let the Docker provider reconcile disposable containers, service networks, and reproducible caches during explicit apply without requiring stable physical IDs.
 - Let OpenTofu reconcile reconstructible OpenShell profiles, registrations, and Fabric configuration through provider lifecycle contracts.
-- Replace a sandbox with its agent, because Fabric starts one agent runtime per sandbox; the plan shows the replacement, and durable data belongs on mounted volumes.
+- Replace a sandbox with its agent, so each sandbox runs one agent runtime; the plan shows the replacement, and durable data belongs on mounted volumes.
 - Only confirmed absence may remove a resource from state; authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve bindings.
 - Retain storage on destroy by default, and persistent data and provider state after readiness failure; recovery need not reuse the same container.
 - Missing or substituted bound credential storage must stop planning before compute changes; keep credentials in separate durable volumes.

@@ -43,8 +43,8 @@ Use the owning guide for the selected credential type:
 
 | Credential or connection | Storage, access, and retirement | Owning procedure |
 |---|---|---|
-| Gateway bearer credential and mTLS files | Caller supplies environment values and local files; SDK/provider need access; gateway operator owns revocation, while the caller removes local values/files when no longer needed | [Configuration and credentials](usage.md#configuration-and-credentials) |
-| Literal application-container environment key | Caller places the value in private YAML; it enters plans/state, exports, and Docker configuration; the application and engine administrators can read it; caller owns artifact cleanup and upstream revocation | [Application environment](design/container-contract.md#application-environment) |
+| Gateway bearer credential and TLS files | Caller supplies environment values and local files; SDK/provider need access; gateway operator owns revocation, while the caller removes local values/files when no longer needed | [Configuration and credentials](usage.md#configuration-and-credentials) |
+| Literal application-container environment key | Caller places the value in private YAML; it enters plans/state, exports, and Docker configuration; the application and engine administrators can read it; caller owns artifact cleanup and upstream revocation | [Application environment](container-services.md#protect-application-credentials) |
 | External inference key, including Hermes provider authentication | Caller resolves the reference; OpenShell retains the installed value for routing; destroy removes the provider registration, not the upstream account/key | [Inference authentication](inference.md#authenticate-hermes-through-the-provider) |
 | Key for a model server you run in a Kubernetes or OpenShift cluster | Caller supplies the value where `nemoclaw` runs, and a Kubernetes Secret supplies it to the server; principals who can read Secrets or create Pods in the server's namespace, or exec into the server's Pod, and node administrators can read it; OpenShell retains the installed value for routing; destroy removes the provider registration, not the Secret or the server's key | [In-cluster model server](kubernetes.md#use-a-model-server-in-the-cluster) |
 | Generated managed vLLM key | Private file in a separate retained credential volume, available to runtime root and engine administrators; recreation reuses it; retiring the container does not erase the key | [Managed service authentication](inference.md#authenticate-a-managed-vllm-service) |
@@ -85,13 +85,13 @@ SDK stage progress, operation results, and known remaining-state guidance remain
 Protected values include resolved environment references passed to the child, including gateway TLS file paths, and nonempty values in the SDK process environment whose names contain `KEY`, `TOKEN`, `SECRET`, or `PASSWORD`, ignoring case.
 The environment scan includes values subsequently excluded from the child environment or overridden.
 If withholding is unexpected, check those references and remove unrelated credential-like environment variables from the invocation.
-The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](../crates/nemoclaw-e2e/tests/deployment.rs) exercise these boundaries.
+The [subprocess tests](../crates/nemoclaw-sdk/src/process.rs) and [bundled CLI fixture](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/deployment.rs) exercise these boundaries.
 
 ### Separate the TLS Connections
 
 | Connection | Current configuration boundary |
 |---|---|
-| Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` selects CA, client certificate, and key through environment references to file paths |
+| Client to OpenShell gateway | HTTPS uses trust verification; optional `gateway.tls` names a CA that replaces the system roots, and a client certificate and key for mutual TLS, through environment references to file paths |
 | Client to inference catalog during onboarding | Uses the client machine's trust store or `SSL_CERT_FILE`; this trust does not configure the inference path |
 | OpenShell to external inference | NemoClaw accepts HTTP and HTTPS URLs, with or without a credential; OpenShell checks destinations when a sandbox connects. Prefer HTTPS for credentialed endpoints: over plain HTTP, the key crosses the network unencrypted |
 | Managed vLLM or Ollama proxy private endpoint | Optional/generated bearer authentication does not add TLS to the private HTTP transport |
@@ -107,6 +107,7 @@ Each layer that makes outbound TLS connections has its own trust store:
 | The engine pulling images | The Docker or Podman daemon's own registry trust, configured on the engine host |
 | The OIDC issuer of a managed Kubernetes gateway | `caConfigMap` in the [OIDC profile](kubernetes.md) |
 | OpenShell's gateway and sandbox egress | OpenShell's images' trust store. NemoClaw can't configure it; OpenShell support is in progress ([NVIDIA/OpenShell#3292](https://github.com/NVIDIA/OpenShell/pull/3292)) |
+| A corporate proxy that OpenShell chains egress through | OpenShell's `proxy_ca_bundle` driver setting, a file on the gateway; no managed gateway can receive it ([current limits](limits.md#security)) |
 | Model downloads inside managed vLLM and Ollama | The runtime image's trust store; not configurable |
 | Image builds (`docker buildx bake`) | Not supported behind TLS-intercepting proxies; build on a network that doesn't intercept TLS |
 

@@ -18,7 +18,7 @@ You use NemoClaw to configure and operate the deployment, then send requests to 
 
 NemoClaw's CLI and Rust SDK use [OpenTofu](provider.md) to order resource operations and record resource state.
 OpenShell enforces the sandbox's access controls while Fabric runs the selected harness inside it.
-The [accepted scope](design/scope.md#upstream-boundaries) defines these ownership boundaries.
+The [accepted scope](../internal-docs/design/scope.md#upstream-boundaries) defines these ownership boundaries.
 
 ```mermaid
 flowchart TD

@@ -23,4 +23,4 @@ The runtime contains their packed code and npm's locked dependencies, including 
 Fabric owns those source tests.
 
 
-The [image metadata contract](../docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.
+The [image metadata contract](../internal-docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.

@@ -27,9 +27,11 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | A model service on a separate physical SSH host | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| OpenShift admitting the gateway and sandbox pods; kind runs the OpenShift profile but does not enforce its security constraints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| OpenShift beyond [one OpenShift Local node qualified by hand](kubernetes.md); no automated run enforces OpenShift's security constraints, since kind runs the OpenShift profile without them | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| Changing a managed Kubernetes or OpenShift gateway's CPU and memory: NemoClaw sets the chart's `resources` to requests of 250m CPU and 256Mi and limits of 1 CPU and 1Gi | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
+| Choosing the StorageClass of a managed Kubernetes or OpenShift gateway's own volume: it uses the cluster's default, because NemoClaw doesn't pass the chart's `server.dataStorageClass` | [#13829](https://github.com/NVIDIA/NemoClaw/issues/13829) |
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried only with NemoClaw's vLLM and Ollama runtimes on one kind cluster; OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| [A model server you run in the cluster](kubernetes.md#use-a-model-server-in-the-cluster) has been tried on one kind cluster with NemoClaw's vLLM runtime behind a key ([#13546](https://github.com/NVIDIA/NemoClaw/issues/13546)) and its Ollama runtime, and with Ollama on one OpenShift Local node; vLLM on OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -38,8 +40,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 | Limit | Issue |
 |---|---|
-| Fabric reports no runtime status, so a stopped agent runtime is found only at its [next invocation](usage.md#agent-runtimes-during-apply) | [NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420) |
-| Fabric agents don't start again in a restarted sandbox, so after a gateway restart, including a host reboot or a [gateway configuration](usage.md#configure-a-managed-gateway) change, the next plan [replaces the sandboxes](usage.md#replace-workloads-after-an-unusable-runtime), deleting their files and conversation history | [NVIDIA/NeMo-Fabric#437](https://github.com/NVIDIA/NeMo-Fabric/issues/437) |
+| Fabric reports a harness process that exited as unknown rather than stopped, so plan doesn't [start it again](usage.md#agent-runtimes-during-apply); the runtime is found at its next invocation | [NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298) |
 | Hermes doesn't reject a managed Ollama window below its 64,000-token minimum, because Ollama reports the model's native window; see [sizing the context for Hermes](inference.md#size-the-context-for-hermes) | [NousResearch/hermes-agent#141641](https://github.com/NousResearch/hermes-agent/issues/141641) |
 | Managed llama.cpp, Model Router and Gemini | [#12035](https://github.com/NVIDIA/NemoClaw/issues/12035) |
 | Guides for named hosted providers such as NVIDIA, OpenAI, Anthropic, OpenRouter and Nous | [#12038](https://github.com/NVIDIA/NemoClaw/issues/12038) |
@@ -52,9 +53,9 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Messaging channels | [#12037](https://github.com/NVIDIA/NemoClaw/issues/12037) |
 | Managed MCP servers | [#12137](https://github.com/NVIDIA/NemoClaw/issues/12137) |
 | Hermes OAuth and managed tools | [#12042](https://github.com/NVIDIA/NemoClaw/issues/12042) |
-| Hermes's native API server, dashboard and browser TUI | [#13321](https://github.com/NVIDIA/NemoClaw/issues/13321) |
-| OpenClaw agents don't start in OpenShell sandboxes with the pinned Fabric | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
-| OpenClaw's dashboard | [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360) |
+| Agent interfaces are reached by Fabric's P0 conventions; runtime handles don't report them yet | [NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565) |
+| Deep Agents Code's [terminal](interfaces.md#open-deep-agents-codes-terminal) can list the runtime's thread but can't open it, because the runtime holds it while it runs | [NVIDIA/NeMo-Fabric#567](https://github.com/NVIDIA/NeMo-Fabric/issues/567) |
+| Interface tokens that the agent's own tools can't read, an interface health check, and exposed service URLs for Hermes's dashboard | [NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566) |
 | OpenClaw's Brave and Tavily web search plugins | [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361) |
 | Collector provisioning, production collector troubleshooting and Deep Agents trace export | [#12144](https://github.com/NVIDIA/NemoClaw/issues/12144) |
 | Tavily and Brave search have not been tested live through OpenShell | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -65,6 +66,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 |---|---|
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
 
 ## Data and Cleanup
 
@@ -80,9 +82,13 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Limit | Issue |
 |---|---|
 | Host-specific security qualification | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| An inference endpoint whose certificate comes from a CA that OpenShell's supervisor image doesn't trust; OpenShell's provider registrations take no CA ([custom CA trust](inference.md#trust-a-custom-certificate-authority)) | [#13834](https://github.com/NVIDIA/NemoClaw/issues/13834), [NVIDIA/OpenShell#3295](https://github.com/NVIDIA/OpenShell/issues/3295) |
 | A corporate CA for OpenShell's gateway and sandbox egress, managed model downloads, and image builds | [Corporate CA](security.md#trust-a-corporate-certificate-authority) |
+| [Proxy](sandbox-network.md#use-an-upstream-proxy) credentials for a managed Docker or Podman gateway: OpenShell reads them only from a file on the gateway (`proxy_auth_file`), which NemoClaw doesn't mount | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
+| A proxy CA (`proxy_ca_bundle`) for any managed gateway: Docker and Podman read it from a file on the gateway, and the chart mounts it only from its `upstreamProxy.caBundle.configMapName` value, which NemoClaw doesn't set | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
 | OAuth-refresh credentials have no NemoClaw YAML wrapper; use [operator-managed OpenShell providers](oauth-refresh.md), with separate sandbox attachments | [#12652](https://github.com/NVIDIA/NemoClaw/issues/12652) |
 | Interactive network-request approval, named policy presets, and explaining policy to an agent | [#12651](https://github.com/NVIDIA/NemoClaw/issues/12651) |
+| Deep Agents Code's terminal UI starts an agent server on the sandbox's loopback without authentication, which any process in the sandbox can use while it runs; its launcher is writable by the agent ([terminal](interfaces.md#open-deep-agents-codes-terminal)) | [NVIDIA/NeMo-Fabric#546](https://github.com/NVIDIA/NeMo-Fabric/issues/546) |
 
 ## SDK and Provider
 

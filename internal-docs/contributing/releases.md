@@ -8,7 +8,7 @@ Staging assembles a release privately, so publishing it later is a final switch.
 
 ## Per-Commit Images
 
-On each `v1` push that builds images, the [image workflow](testing.md#image-source-checks) pushes the agent and proxy images it checked to one package, as `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`.
+On each `v1` push that builds images, the [image workflow](testing.md#image-source-checks) pushes the agent and proxy images it checked, and the reference image the live suites use, to one package, as `ghcr.io/nvidia/nemoclaw/v1-ci:<image>-<commit>-<arch>`.
 The package is internal: only members of NVIDIA's enterprise can pull it.
 
 ## Provision the Packages
@@ -17,7 +17,7 @@ A package that a workflow's token creates inherits this public repository's visi
 Before the first push, a maintainer creates each package as internal, which makes them its administrator, and grants this repository's Actions write access:
 
 - `v1-ci`, which holds every per-commit image. Grant it the **Admin** role instead, so the image workflow can delete per-commit images older than the latest ten commits.
-- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
+- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `deepagents-code`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
 - Create a package by pushing any image to it with a personal token that has `write:packages`; it starts internal.
 - Then, in the package's settings under **Manage Actions access**, add `NVIDIA/NemoClaw` with the **Write** role.
 
@@ -45,21 +45,29 @@ Only users with push access see a draft release, and the `v1` packages stay inte
 
 ## Test a Staged Release
 
+Use [image assessment](image-assessment.md) to evaluate the saved SPDX inventories.
+Local assessment does not authorize publication.
+
 Deploy with the digests the draft lists.
 Docker deployments pull private images through `spec.registries`; Kubernetes deployments use `imagePullSecrets`.
 
 ## Publish
 
-Publishing is manual: publish the draft, then make each `v1` package public in its package settings.
-Making a package public can't be undone, and the organization's package policy may need an administrator.
-Before publishing, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
+Push a final tag only from a commit whose release candidate has completed installer, onboarding, QA, and product sign-off; until then, the draft and packages stay private.
+The workflow publishes a final release's draft without an approval step, once a release candidate of the same version staged the same images, the [security assessment](image-assessment.md#hosted-enforcement) passes, and the registry digests are unchanged.
+Release candidates run the same assessment report-only and attach it to the private draft, so blocking findings surface before the final tag.
+Publishing a draft by hand and package-administrator privileges bypass the workflow.
+An administrator handles package visibility changes; making a package public cannot be undone.
+Before pushing a final tag, complete the provenance, SBOM, scanning, and license work ([#13521](https://github.com/NVIDIA/NemoClaw/issues/13521), [#13522](https://github.com/NVIDIA/NemoClaw/issues/13522), [#13523](https://github.com/NVIDIA/NemoClaw/issues/13523), [#13524](https://github.com/NVIDIA/NemoClaw/issues/13524)).
 
 ## SBOM Assets
 
-Each image is scanned where it is built, with Syft 1.55.0: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM and Ollama images they build.
-The SPDX document is kept in `v1-ci` as `sbom-DIGEST`, named by the platform manifest it describes, so an unchanged image is never scanned again.
-Staging copies each release platform's document from there, and scans from the registry only an image that has none.
+Each image is scanned by the job that pushes it, with Syft 1.55.0: the image workflow scans each agent and proxy image it pushes on `v1`, and staging's runtime jobs scan the vLLM and Ollama images they build.
+Each scan reads the pushed platform manifest from the registry, so the SPDX document's subject is that manifest's digest; `v1-ci` keeps the document as `sbom-DIGEST`, and an unchanged image is never scanned again.
+Staging copies each release platform's document from there.
+It scans an image only when no recorded document names its digest, and records the result.
 Each platform gets a digest-named SPDX 2.3 JSON asset; `sboms.json` maps each asset to its image reference, platform, and SHA-256 checksum.
+Staging also retains `inventory.json` with each image's index digest and platform descriptors so assessment and publication can verify the same subjects.
 The existing Kubernetes metadata bundles remain separate assets.
 The scanner catalogs OS packages and installed Python and Node packages.
 Runtime images retain the supervisor's `Cargo.lock` beside its source archive, and the proxy retains its package-specific `Cargo.lock`, so their Rust dependency inventories are discoverable without relying on binary metadata.

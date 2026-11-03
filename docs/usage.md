@@ -7,7 +7,7 @@ Use a [verified native bundle](build.md) with its `bin` directory on `PATH`.
 For a first deployment, follow [get started](get-started.md).
 When copying an [example](../examples/), assign a fresh UUID and replace endpoints and image pins with values for your resources.
 Keep the matching bundle and the same state directory throughout the deployment.
-Deployment planning currently requires a Unix client; see [engine connection limits](design/execution-targets.md#connections-and-identity).
+Deployment planning currently requires a Unix client; see [engine connection limits](../internal-docs/design/execution-targets.md#connections-and-identity).
 
 From the directory containing your YAML, preview the changes.
 Plan observes resources without creating containers, pulling images, downloading models, preparing data, or invoking inference.
@@ -44,11 +44,11 @@ See [CLI options and output](reference/cli.md) for bundle selection, formats, an
 
 ## Configure Sandboxes and Inference
 
-A document contains one to 32 named sandboxes, each with one harness and one agent.
+A document contains one to 32 sandboxes keyed by name, each with one harness and one agent.
 Use the [multiple-sandbox example](../examples/multiple-sandboxes.yaml) to share inference across different harnesses.
 [OpenClaw and Pi](agents.md) can select multiple models; each Deep Agents instance selects one.
 
-Declare managed services under `spec.services` and select their connections with `inferenceProviders[].serviceRef`.
+Declare managed services under `spec.services` and select their connections with `inferenceProviders.<name>.serviceRef`.
 Every declared service is installed and checked, even without an inference consumer.
 Services run on the gateway's Docker engine by default, or on another host through [SSH placement](remote-service.md).
 See [service constraints](inference.md#combine-local-and-hosted-providers) for multiple Ollama/vLLM services and [models](models.md) for hardware contracts and optional [recipes](recipes.md).
@@ -75,13 +75,15 @@ Podman's changing compatibility `/info.ID` is not a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
 A missing or replaced bound network is a conflict, not permission to recreate it.
 Destroy retains that network and gateway storage.
-Removing them from Podman is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+To remove them, follow [Remove Retained Resources](#remove-retained-resources) for Podman.
 
 ## Agent Runtimes During Apply
 
 Apply starts each new agent through Fabric's `fabric-agent-ctl` in its sandbox, and completes once the runtime has started.
 It does not invoke agents, send generation requests, or replay work.
-Fabric reports no runtime status or health, so neither a plan nor an unchanged apply checks that a started runtime is still running; a runtime that stops is found at its next invocation ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
+Plan and apply ask Fabric whether each agent's runtime still runs, with `fabric-agent-ctl check`, which sends no prompt and makes no model request.
+When Fabric reports the runtime stopped, the plan updates the agent and says `agent runtime is not running`; apply stops that runtime in Fabric and starts another in the same sandbox, which keeps its files and conversation history.
+Fabric reports a harness process that exited as unknown rather than stopped, and an unknown result counts as running, so such a runtime is found at its next invocation ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)).
 
 Use an [agent image built from this revision](build.md#build-agent-images).
 Image changes require the [separate-deployment path](#choose-the-change-path); keep existing deployments' original bundles and state.
@@ -98,7 +100,7 @@ Declare a `kind: container` service with an immutable image and literal environm
 The image owns its entrypoint; optional `command` overrides its arguments, and `files` supplies nonsecret configuration with mode 0444.
 Environment values enter configuration, plans/state, exports, and Docker inspection; they are not protected credential references.
 Generic credential-file delivery is deferred.
-If an application needs a key through `environment`, follow the [temporary plaintext environment approach](design/container-contract.md#application-environment) and protect every resulting artifact.
+If an application needs a key through `environment`, follow the [temporary plaintext environment approach](container-services.md#protect-application-credentials) and protect every resulting artifact.
 NemoClaw does not expand host environment variables in this map.
 `container` sets GPU access, CPU/memory limits, shared memory, IPC, and ulimits; omission does not expose GPUs.
 The default user is 65532:65532; images that require root must explicitly request `user: "0:0"`.
@@ -111,13 +113,13 @@ HTTP probes must reach the published or container address from the provider proc
 A private publication allows an OpenAI-compatible container to be selected by `serviceRef`; registration waits for its readiness and uses /v1.
 Application data defaults to /data, or `data.mountPath` selects a directory below /var/lib.
 This data is disposable: destroy removes the owned volume.
-See the [container contract](design/container-contract.md) for the explicit managed-model form and the manual VoiceClaw interface.
+See the [container contract](container-services.md) for the generic service boundary; VoiceClaw still needs separate qualification.
 The typed `ollama` and `vllm` kinds retain their current policies and use this same assembly base.
 
 ### Configure a Managed Gateway
 
 `spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
-Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
+Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
 
 ```yaml
 gateway:
@@ -132,11 +134,12 @@ gateway:
 ```
 
 Docker and Podman gateways write these tables into their configuration file beside the keys NemoClaw sets.
-Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/kubernetes/migrate-gateway-config.mdx).
+Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/kubernetes/migrate-gateway-config.mdx).
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
-The restarted gateway restarts its sandboxes, and Fabric agents don't start again in a restarted sandbox, so the next plan replaces them, deleting their files and conversation history; see [replacing workloads](#replace-workloads-after-an-unusable-runtime).
+The restarted gateway restarts its sandboxes but not their Fabric agents; the next plan finds each agent's runtime stopped, and apply starts it again in its sandbox, which keeps its files.
+A sandbox that exits instead of restarting is replaced, which deletes its files and conversation history.
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
@@ -153,7 +156,8 @@ See [managed models](models.md), [Ollama](inference.md#run-managed-ollama), or [
 
 Use `credential: {env: INFERENCE_API_KEY}` for an inference provider or gateway.
 The caller supplies the referenced environment value.
-For gateway mTLS, `tls.ca.env`, `tls.certificate.env`, and `tls.key.env` reference environment variables whose values are local file paths.
+For an external HTTPS gateway, `tls.ca.env` references an environment variable whose value is the path of a local CA certificate file; NemoClaw then verifies the gateway with that CA instead of the system roots.
+When the gateway also requires a client certificate, add `tls.certificate.env` and `tls.key.env` together, referencing the certificate and key files the same way.
 
 Values resolved through credential references stay out of configuration, plans, state, and export.
 This guarantee does not apply to literal container environment settings.
@@ -164,7 +168,7 @@ The SDK and provider child process need access to referenced credentials during 
 Remove caller-owned environment values and TLS files when no longer needed.
 Destroy removes the owned provider registration, but retained gateway storage remains; revoke upstream credentials separately when retiring them.
 
-Caller-supplied inference credentials require HTTPS.
+Prefer HTTPS for a caller-supplied inference credential: over plain HTTP, the key crosses the network unencrypted.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
 OpenShell decides which inference destinations a sandbox can reach; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.
@@ -289,7 +293,7 @@ Apply recomputes its plan; a successful earlier plan does not reserve resources 
 
 ### Multiple Sandboxes
 
-Sandbox names must be unique within a deployment; each sandbox declares one named agent.
+Sandbox names, the keys of `spec.sandboxes`, are unique within a deployment; each sandbox declares one named agent.
 Agent names may repeat across sandboxes.
 Adding a named sandbox preserves existing sandbox and provider identities.
 Reordering declarations is not an update.
@@ -304,7 +308,7 @@ Removing or replacing a sandbox deletes its writable layer and in-memory convers
 |---|---|
 | Models, settings, or public Fabric configuration within the selected adapter | Replaces the agent and its sandbox, deleting the sandbox's files and conversations; review the plan |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; a change to a sandbox's launch specification replaces the sandbox |
-| Harness adapter, sandbox image, driver configuration, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
+| Harness adapter, sandbox image, driver configuration, service exposures, agent identity, or provider attachments | Replaces the sandbox, deleting its files and conversations |
 | Sandbox network policy | Follow [policy change constraints](sandbox-network.md); a change that needs a new sandbox replaces it |
 | Managed vLLM or Ollama image, container limits, or serving specification | Replaces the Docker container. Service-level `updatePolicy: Preserve` blocks replacement of a running Docker container; set `Recreate` only when accepting sequential replacement and downtime. Review the plan, [container limits and update policy](inference.md#set-container-limits-and-update-policy), and [model constraints](models.md) |
 | Ollama proxy image or serving specification | Docker-provider reconciliation may replace the proxy container while retaining its independently bound credential storage |
@@ -315,7 +319,8 @@ Removing or replacing a sandbox deletes its writable layer and in-memory convers
 | Remove retained storage or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
-A runtime that stopped or became unusable recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replace-workloads-after-an-unusable-runtime).
+Apply starts a stopped runtime again in its sandbox; see [agent runtimes during apply](#agent-runtimes-during-apply).
+A runtime that Fabric reports running but that doesn't answer recovers only in a new sandbox: changing the agent's configuration replaces it, or see [replacement after an unusable runtime](#replace-workloads-after-an-unusable-runtime).
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image replaces the sandbox.
@@ -357,6 +362,9 @@ Keep the original YAML until verification succeeds.
 ### Recover an Interrupted Operation
 
 Changing an established gateway endpoint is rejected.
+Two deployments on one engine need different endpoint ports and non-overlapping subnets.
+A plan that fails binds nothing, so when a deployment's first plan reports that `spec.gateway.endpoint`'s port or `spec.gateway.networkCIDR` is taken, change that field and plan again.
+Once a plan has succeeded, the endpoint is bound: free the port instead.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
@@ -364,9 +372,9 @@ For records with per-resource recovery evidence, plan, apply, and destroy compar
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent start keeps its sandbox binding.
 Start failures report a fixed stage, failure code, and agent runtime state without forwarding native error text.
-A sandbox runs one agent runtime, and a failed start may have used it, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
+A failed start may have left a runtime running, so the next apply creates the agent in a new sandbox and deletes the old sandbox's files.
 When Fabric rejected the configuration, correct the settings before reapplying.
-An invocation failure can also leave a runtime unusable; NemoClaw cannot detect that, and an unchanged apply leaves it alone.
+An invocation failure can also leave a runtime unusable; unless Fabric's check reports it stopped, an unchanged apply leaves it alone.
 To recover from that, or from a sandbox that exited, see [workload replacement](#replace-workloads-after-an-unusable-runtime).
 A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
@@ -407,11 +415,11 @@ Destroy uses native provider compute/cache state and separately verified credent
 
 ### Replace Workloads After an Unusable Runtime
 
-When OpenShell reports that a sandbox exited, for example after its gateway restarted, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
+When OpenShell reports that a sandbox exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
 Read why it exited with `openshell logs SANDBOX --source sandbox` before applying; see [native logs](troubleshooting.md#read-native-service-logs).
 **The replacement deletes that sandbox's files and conversation history.**
 
-Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, and you choose to replace it.
+Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, as after a gateway restart, and you choose to replace it.
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 
@@ -549,7 +557,7 @@ If no engine had objects for an entry, check the engines and the UID, and keep t
 When every entry's objects are gone, remove the `.local/deployment` directory.
 To deploy again, use a fresh `metadata.uid` and a new state directory; apply refuses a state directory whose gateway storage or credentials were removed.
 
-The [live Docker suite](contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
+The [live Docker suite](../internal-docs/contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
 
 #### On Podman
 
@@ -560,7 +568,8 @@ It has been run against a managed rootless Podman 5.8.8 gateway.
 #### On Kubernetes or OpenShift
 
 Destroy keeps the deployment's namespace, the gateway's key Secret and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
-Deleting the namespace removes them all.
+It deletes each sandbox's workspace claim, but under the `Retain` reclaim policy the claim's volume stays `Released` with the workspace files on it.
+Deleting the namespace removes the objects in it; volumes are cluster-wide, so you check them separately.
 Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to its `gateway.kubernetes.namespace`:
 
 ```sh
@@ -568,20 +577,50 @@ deployment_context=my-cluster
 deployment_namespace=nemoclaw-development
 kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
   get pods,secrets,persistentvolumeclaims
-kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
-  get persistentvolumeclaims -o jsonpath='{range .items[*]}{.spec.volumeName}{"\n"}{end}'
+kubectl --context "$deployment_context" get persistentvolumes \
+  -o custom-columns=NAME:.metadata.name,NAMESPACE:.spec.claimRef.namespace,STATUS:.status.phase,RECLAIM:.spec.persistentVolumeReclaimPolicy \
+  | awk -v ns="$deployment_namespace" 'NR == 1 || $2 == ns'
 ```
 
 Continue only if no pods remain, and nothing other than this deployment uses the namespace.
-Note the volume names the second command prints, then delete the namespace and wait for it to go:
+The second command lists the volumes whose claims are or were in the namespace: the gateway's, `Bound`, and any `Released` workspace volumes of destroyed sandboxes.
+Listing volumes needs read access to PersistentVolumes across the cluster; without it, ask the cluster operator to run that command.
+An earlier deployment that used the same namespace name can have left `Released` volumes that match too; remove only the ones you mean to.
+
+A volume with the `Delete` reclaim policy goes with its claim, and the cluster deletes its data.
+For each listed volume with `Retain` that a provisioner created, set its reclaim policy to `Delete`, so the provisioner deletes the volume and its storage:
+
+```sh
+deployment_volume=REPLACE_WITH_VOLUME_NAME
+kubectl --context "$deployment_context" patch persistentvolume "$deployment_volume" \
+  --patch '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+```
+
+Remove a volume that no provisioner manages, and its storage, with your platform's tools.
+If the namespace existed before the first apply, keep it: it lacks the `nemoclaw.nvidia.com/uid` label that a namespace NemoClaw created carries.
+Delete what the deployment left in it instead: the key Secret, the chart's certificate and signing-key Secrets, the chart's certificate hook account and role, which Helm doesn't remove, and the gateway's volume claim.
+Set `deployment_release` to the gateway's release name, the prefix of the Secret ending in `-kek`, then skip to the volume list below:
+
+```sh
+deployment_release=REPLACE_WITH_RELEASE_NAME
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" delete secret \
+  "$deployment_release-kek" "$deployment_release-server-tls" \
+  "$deployment_release-client-tls" "$deployment_release-jwt-keys"
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  delete serviceaccount,role,rolebinding "$deployment_release-certgen"
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  delete persistentvolumeclaim "openshell-data-$deployment_release-0"
+```
+
+Otherwise, delete the namespace and wait for it to go:
 
 ```sh
 kubectl --context "$deployment_context" delete namespace "$deployment_namespace" --wait=true
 ```
 
-If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
-Whether the noted volumes go too depends on their StorageClass: with the `Delete` reclaim policy, the cluster removes them and their data; with `Retain`, they remain `Released`, and you delete them and their storage with your platform's tools.
 On OpenShift, `oc delete project` does the same as deleting the namespace.
-When the namespace and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
+If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
+Run the volume list again; once the volumes are gone, it prints only its header.
+When the namespace, or in a kept namespace those objects, and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
 
-The [live Kubernetes suite](contributing/live-tests.md) deletes a retained namespace this way and checks that the namespace and its volumes are gone.
+The [live Kubernetes gateway test](../internal-docs/contributing/live-tests.md#kubernetes-gateway-without-the-helm-cli) deletes its namespace this way, after switching any volume whose reclaim policy is not `Delete` to `Delete`, and checks that the namespace and its volumes are gone.

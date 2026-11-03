@@ -4,27 +4,27 @@
 # Contribute Documentation
 
 Follow [WRITING.md](../../WRITING.md) for prose and [the design decision](../design/scope.md) for accepted scope.
-Documentation lives in repository Markdown files.
+User-facing guidance lives in `docs/`; design rationale, release procedures, and maintainer validation live in `internal-docs/`.
 The [documentation build](documentation-build.md) renders selected pages for Fern; edit the Markdown sources and [page manifest](../../fern/pages.json), not generated MDX.
 
 ## Choose the Page
 
-Use the [documentation index](../README.md) to find the reader's task.
+Use the [documentation index](../../docs/README.md) to find the reader's task.
 Read the complete owning page and check its inbound links before editing.
 Keep each procedure or reference fact in one place and link to it elsewhere.
 
-The [YAML field reference](../reference/configuration.md) is generated from Rust types and constraints.
+The [YAML field reference](../../docs/reference/configuration.md) is generated from Rust types and constraints.
 Follow [schema maintenance](configuration-schema.md) to update its sources and regenerate it.
 
 - Build, deployment, model, recipe, agent, SDK, and SSH instructions belong in their task guides.
-- Test commands belong in [testing.md](testing.md) and its fixture or live guides.
-- Architecture rationale belongs in [design/](../design/architecture.md).
+- Maintainer test commands belong in [testing.md](testing.md) and its fixture or live guides.
+- Architecture rationale belongs in [design/](../design/architecture.md), not the published user guide.
 - Test results belong in CI results and the commit bodies that rely on them, not in documentation pages.
 - Source notices and fixture provenance stay beside their artifacts.
 
-The user-guide structure is scaffolded in the [documentation index](../README.md).
+The user-guide structure is scaffolded in the [documentation index](../../docs/README.md).
 When v1 lacks a feature or a procedure is untested, say so plainly and link the GitHub issue that tracks it.
-File an issue if none exists, and add the limit to [current limits](../limits.md).
+File an issue if none exists, and add the limit to [current limits](../../docs/limits.md).
 Do not write **TBD**, fill the gap from main's documentation, or infer support from parser acceptance.
 Remove a limit only when the text can link to the implementation, tests, or scoped qualification that supports the new claim.
 

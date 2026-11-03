@@ -19,7 +19,7 @@ Neither a connection name nor a failed connection establishes resource identity.
 For bindings that require durable identity, missing or mismatched observations stop the operation; matching resource names cannot authorize adoption or cleanup.
 Credential rotation does not migrate resources, and rootless and rootful engines are different targets.
 Bound gateway and credential endpoint changes remain rejected; target migration is not implemented.
-Disposable Docker compute and model caches follow their [provider reconciliation contracts](../provider.md).
+Disposable Docker compute and model caches follow their [provider reconciliation contracts](../../docs/provider.md).
 
 One gateway selects one sandbox execution target.
 Inference can run on an independent Docker daemon with its own model storage and network, without depending on gateway storage or a gateway container.
@@ -38,7 +38,7 @@ SSH carries engine operations; the sandbox-local proxy sends inference traffic d
 The gateway supplies policy and provider attachments, but inference requests do not pass through its API server.
 A request from the CLI host cannot prove sandbox reachability.
 Local bridge publication is not a general cross-host address; SSH services declare a private routable publication URL.
-See [SSH service setup](../remote-service.md) and [explicit inference verification](../inference.md#verify-the-result).
+See [SSH service setup](../../docs/remote-service.md) and [explicit inference verification](../../docs/inference.md#verify-the-result).
 
 ## Why Capacity Must Follow the Engine
 

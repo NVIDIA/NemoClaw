@@ -77,7 +77,7 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 | Method | Input and result | Effect |
 |---|---|---|
 | `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, and unverified checks | Observes and previews the desired deployment |
-| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
+| `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness, with the URLs the gateway reports for sandbox service exposures in `service_urls`; a failed read leaves it empty and emits `Progress::Warning` | Can create/change resources, download models, and check readiness without generation |
 | `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up agent data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox writable layers and in-memory conversations under the [retention rules](state.md) |
@@ -205,7 +205,7 @@ Keep each selected bundle immutable while operations use it.
 Use a separate bundle copy for a deployment operation when rebuilding development artifacts.
 There is no SDK auto-retry of ambiguous mutations and no background reconciliation loop.
 
-See [lifecycle behavior](usage.md) and [tests](contributing/testing.md).
+See [lifecycle behavior](usage.md) and [tests](../internal-docs/contributing/testing.md).
 If an unfinished apply reports different intent, retry the original document with retained state before requesting another change.
 If destroy is unfinished, resume destroy; cancellation is not a rollback or a lost-state recovery mechanism.
 

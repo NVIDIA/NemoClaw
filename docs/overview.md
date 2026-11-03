@@ -6,7 +6,6 @@
 NemoClaw manages agent deployments from desired-state YAML.
 You declare the gateway, inference providers, sandbox, and agents, then use the CLI or Rust SDK to plan, apply, export, and destroy that deployment.
 Start with [prerequisites](prerequisites.md) and [deploy OpenClaw with existing services](get-started.md).
-See the [ecosystem](ecosystem.md) to understand how NemoClaw, OpenShell, Fabric, and agent harnesses fit together.
 
 ## Choose an Interface
 
@@ -41,7 +40,7 @@ flowchart TD
 
 Gateway and inference services can be managed or external independently.
 Managed resources follow NemoClaw's [ownership and retention rules](usage.md#resource-ownership); external servers remain under their operators' control.
-See [agents](agents.md) for harness choices, [inference](inference.md) for API and service constraints, and [architecture](design/architecture.md) for implementation boundaries.
+See [agents](agents.md) for harness choices, [inference](inference.md) for API and service constraints, and [architecture](../internal-docs/design/architecture.md) for implementation boundaries.
 
 ## Plan for Change and Recovery
 
@@ -55,7 +54,7 @@ Use the [documentation index](README.md) to find other tasks.
 
 ## Tested Configurations and Limits
 
-The [accepted scope](design/scope.md) defines the product contract; the [test guides](contributing/testing.md) describe what each test covers.
+The [accepted scope](../internal-docs/design/scope.md) defines the product contract; the [test guides](../internal-docs/contributing/testing.md) describe what each test covers.
 Parser acceptance or a reachable endpoint does not establish working inference.
 
 v1 has no support policy or enterprise deployment qualification yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).

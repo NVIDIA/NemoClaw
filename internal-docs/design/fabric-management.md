@@ -18,7 +18,7 @@ Agent images run Fabric's own sandbox bridge, `fabric-agent-ctl`; NemoClaw adds 
 | Authoring | Generic questions from owner schemas, accepted intent and unresolved work |
 
 `fabric_agent` starts the public Fabric document its typed inputs compose, after sandbox creation and route setup.
-A sandbox runs one runtime in its lifetime, so any configuration change replaces the sandbox; see [Fabric agents](../provider.md#fabric-agents).
+NemoClaw runs one runtime per sandbox, so any configuration change replaces the sandbox; see [Fabric agents](../../docs/provider.md#fabric-agents).
 The resource is reconstructible and separate from immutable sandbox identity and retained deployment bindings.
 It does not promise conversation continuity across a sandbox replacement.
 
@@ -33,18 +33,20 @@ It sends configuration and invocation input on stdin in the same execution as th
 |---|---|
 | `start --agent NAME --config -` | Create a `fabric_agent`: Fabric validates the configuration and starts the sandbox's one runtime, returning its `runtime_id`. |
 | `invoke --agent NAME --runtime-id ID --input -` | Send one explicit request; Fabric's run result is returned unchanged. |
-| `stop --agent NAME --runtime-id ID` | Remove a `fabric_agent`. |
+| `stop --agent NAME --runtime-id ID` | Remove a `fabric_agent`, or stop a runtime that stopped running before another starts. |
+| `check --agent NAME --runtime-id ID` | Refresh a `fabric_agent`: whether its runtime still runs. |
 
 Each command emits one JSON response with `operation`, `status`, `changed`, `result`, and `error`.
 Success exits 0; failure and unsupported operations exit 1.
 Requests are limited to 512 KiB and responses to 4 MiB.
 Diagnostics carry only Fabric's fixed stages and codes, never its messages.
 A timeout, malformed response, or disconnection leaves the outcome unconfirmed; callers do not replay starts or invocations.
-Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
+Fabric's [runtime server documentation](https://github.com/NVIDIA/NeMo-Fabric/blob/ddf59e875d50d925991cd40c44dc63facf391bac/sdk/python/nemo-fabric-runtime/src/nemo_fabric/runtime_server/README.md) defines the commands.
 
-A sandbox runs one runtime lifecycle.
-After a stop, or after a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`.
-The provider reports it with guidance to replace the sandbox, and the SDK replaces the sandbox itself when a plan would create an agent in an existing one.
+Fabric can start another runtime in a sandbox after a stop.
+After a start whose effects Fabric reports as uncertain, another start returns `runtime_exists`, which the provider reports with guidance to replace the sandbox.
+A start whose reply was lost can't be retried safely, because Fabric would start a second runtime beside one the lost start may have left ([NVIDIA/NeMo-Fabric#487](https://github.com/NVIDIA/NeMo-Fabric/issues/487)).
+The SDK replaces the sandbox itself whenever a plan would create an agent in an existing one.
 `fabric-agent-ctl` does not confirm that an agent's descendant processes stopped; deleting the sandbox does.
 
 ## Image Contract and Reference Implementation
@@ -56,7 +58,7 @@ The dummy reference image installs NemoClaw's [test-only adapter](../../image/fa
 The adapter is packaged like Fabric's own adapters, with its [descriptor](../../image/fabric/test-adapter/dummy.fabric-adapter.json) where Fabric finds installed adapters.
 It is installed only in the separate `dummy` target; it is never a fallback for a real adapter.
 A deployment runs it with `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the bundled catalog does not list it.
-See [building the reference image](../build.md#reference-contract-image).
+See [building the reference image](../../docs/build.md#reference-contract-image).
 
 The dummy configuration uses `metadata.name` and `harness.adapter_id: org.nemoclaw.dummy`.
 Its optional `harness.settings` fields are `reply` (string), `fail_start` (boolean), and `fail_stop` (boolean).
@@ -68,7 +70,8 @@ These controls belong only to the reference fixture.
 
 `cargo images build` ([source](../../crates/nemoclaw-build/src/images.rs)) builds each image's `catalog` stage, which runs [`catalog.py`](../../image/fabric/catalog.py) without starting an adapter, then its `labeled` stage with the result as `io.nemoclaw.fabric.catalog`.
 A Dockerfile can't set a label from something its own build computes, so the catalog passes between the two builds as a build argument, and the `labeled` stage fails unless it matches the installed catalog.
-Each harness stage declares its adapters, their files, and their executables in `/opt/nemoclaw/adapters.json`.
+Each harness stage declares its adapters, their files, their executables, and any paths their harness writes beyond the image's default policy in `/opt/nemoclaw/adapters.json`.
+The catalog adds those paths, such as the terminal devices the Hermes image declares for browser chat, to that image's `runtime.policy.filesystem_policy.read_write`; other images' default policies are unchanged.
 The descriptors come unmodified from Fabric's `nemo-fabric-adapter-catalog` package; an adapter Fabric does not publish, such as the test adapter, declares the descriptor file its package installed.
 Direct Docker Bake builds attach no metadata.
 
@@ -89,7 +92,7 @@ An explicit sandbox policy replaces the image's filesystem and process defaults 
 
 The bundled [`catalog.json`](../../image/fabric/catalog.json) is the descriptors of the adapters NemoClaw builds images for, from Fabric's catalog package at the revision and checksum pinned in the Dockerfile.
 It supports offline authoring; it says nothing about an installed runtime, credentials, or inference readiness.
-[Regenerate it](../build.md#regenerate-the-bundled-catalog) when the Fabric pin changes.
+[Regenerate it](../../docs/build.md#regenerate-the-bundled-catalog) when the Fabric pin changes.
 
 ## Upstream Ownership
 
@@ -97,14 +100,15 @@ The following boundaries need coordination; these notes do not claim upstream ac
 
 | Owner | Work or agreement |
 |---|---|
-| NeMo-Fabric | A read-only runtime status command, so refresh can find a stopped runtime ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)). |
-| NeMo-Fabric | OpenClaw's adapter starting in OpenShell sandboxes, and configuring its dashboard and web search ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372), [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360), [#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Report a harness process that exited as failed rather than unknown, so refresh can start it again ([NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298)). |
+| NeMo-Fabric | Configuring OpenClaw's web search ([#13361](https://github.com/NVIDIA/NemoClaw/issues/13361)). |
+| NeMo-Fabric | Reporting each runtime's interfaces from its handle, instead of the P0 conventions NemoClaw follows ([NVIDIA/NeMo-Fabric#565](https://github.com/NVIDIA/NeMo-Fabric/issues/565)), and interface tokens the agent's own tools can't read, an interface check, and exposed service URLs ([NVIDIA/NeMo-Fabric#566](https://github.com/NVIDIA/NeMo-Fabric/issues/566)). |
 | OpenShell | Qualify completed sandbox stop as the boundary that terminates all old workload processes before start, while retaining required data; request implementation changes only for demonstrated gaps. |
 
 ## Observation Limits
 
-Fabric reports neither the configuration a runtime applied nor whether it is still running.
-Refresh therefore checks only the sandbox: a runtime that stops is found at its next invocation, and NemoClaw reports no agent health.
+Refresh asks Fabric's `check` whether the recorded runtime still runs, and apply starts a stopped runtime again in its sandbox.
+Fabric doesn't report the configuration a runtime applied, and reports a harness process that exited as unknown, which counts as running; such a runtime is found at its next invocation.
 The SDK does not substitute adapter-specific filesystem checks or model prompts.
 Deployment ownership, missing bindings, route drift and observation failures continue to use the SDK's existing resource contracts.
 
@@ -113,5 +117,5 @@ Deployment ownership, missing bindings, route drift and observation failures con
 [Reference tests](../../image/fabric/test_reference.py) run the dummy agent through a real `fabric-agent-ctl` in the reference image.
 [`cargo images qualify`](../../crates/nemoclaw-build/src/images.rs) starts, invokes, and stops a runtime through `fabric-agent-ctl` in the dummy image; production images get only its assembly checks, since Fabric tests its own adapters.
 [Catalog tests](../../image/fabric/test_catalog_contract.py) cover image catalogs and runtime metadata.
-The provider's [bridge client tests](../../crates/nemoclaw-e2e/tests/fabric_bridge.rs) and the [Fabric contract tests](../../crates/fabric-provider/tests/contract) cover starts, invocations, stops, and lost replies against the fake gateway.
+The provider's [bridge client tests](../../crates/nemoclaw-e2e/tests/integration/fabric_bridge.rs) and the [Fabric contract tests](../../crates/fabric-provider/tests/contract) cover starts, invocations, stops, and lost replies against the fake gateway.
 [Bundle fixtures](../contributing/integration-tests.md#opentofu-and-bundle-lifecycle) separately exercise deployment recovery, export and reapply, and ownership.

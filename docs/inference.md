@@ -141,11 +141,11 @@ NemoClaw uses it to read the endpoint's model catalog.
 The harness name does not change these defaults.
 
 Agents use the protocol their harness's adapter selects for the provider transport.
-Fabric v0.5.0 has no per-model API setting, so an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent ([#13320](https://github.com/NVIDIA/NemoClaw/issues/13320)).
+An agent uses another protocol only when its adapter's Fabric descriptor declares a model `api`, as [Pi model selection](agents.md#pi-model-selection) shows; otherwise an endpoint that accepts only a protocol the adapter doesn't select can't serve that agent.
 Fabric validates the rest of its configuration when the agent is configured.
 
 Use `provider: anthropic` with `anthropic-messages` and `provider: openai` with either OpenAI API.
-The provider name is the local reference used by routes; it does not select a vendor.
+The provider's key under `inferenceProviders` is the local name routes reference; it does not select a vendor.
 For example, a Nous endpoint using the OpenAI protocol still uses `provider: openai`.
 
 ### Prepare an External Endpoint
@@ -172,14 +172,14 @@ An endpoint whose certificate comes from an internal certificate authority, such
 
 - **The machine running NemoClaw** reads the endpoint's model catalog during onboarding, using its system trust store.
   Add the CA there, or set `SSL_CERT_FILE` to a PEM bundle that includes it in the environment that runs `nemoclaw`.
-- **The OpenShell gateway and sandboxes** carry the inference traffic, so their images must trust the CA too.
-  NemoClaw does not configure that trust; OpenShell uses its images' own trust stores.
+- **OpenShell's sandbox supervisor** makes the TLS connection to the endpoint, so the supervisor image must trust the CA; a CA added to an agent image isn't used.
+  NemoClaw can't add the CA: OpenShell's provider registrations take none, and NemoClaw pins the supervisor image on managed gateways; see [current limits](limits.md#security).
 
 If the machine running NemoClaw does not trust the certificate, onboarding reports that the server's certificate is not trusted rather than that the endpoint is unreachable.
 
 ## Use an Image Built from This Revision
 
-Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes[].image.ref`.
+Explicit API selection, tuning, and authentication require an agent image built from this revision; [build it](build.md#build-agent-images) and use its immutable digest in `sandboxes.<name>.image.ref`.
 The [tuning example](../examples/inference-tuning.yaml) and [Hermes authentication example](../examples/hermes-auth.yaml) contain zero-digest placeholders that must be replaced before deployment.
 Set their gateway and inference endpoints and model IDs for your services, and assign a fresh deployment UID.
 Model and native settings changes restart the runtime inside the existing sandbox; changing its image requires a separate deployment, as described in [the change path](usage.md#choose-the-change-path).
@@ -228,7 +228,7 @@ services:
     memory:
       gpuMemoryGiB: 16
 inferenceProviders:
-  - name: qwen
+  qwen:
     provider: openai
     api: openai-completions
     serviceRef: qwen
@@ -279,7 +279,7 @@ Set `authentication: bearer` under `spec.services.<name>` to generate a private 
 Omission preserves the existing unauthenticated serving behavior.
 Build the [runtime image](build.md#build-a-runtime-image) from this revision and use its immutable digest.
 Authenticated services require both `org.nemoclaw.inference.authentication=bearer-v1` and `org.nemoclaw.inference.routes=openai-v2`; image validation rejects other images before creating the runtime, including `openai-v1` images from earlier revisions, whose middleware passed every `/v1` path.
-Do not supply `inferenceProviders[].credential` for a managed service.
+Do not supply `inferenceProviders.<name>.credential` for a managed service.
 
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` through the route filter below, using bearer authentication, before reporting readiness.
@@ -381,7 +381,7 @@ services:
         name: qwen3:4b
         digest: REPLACE_WITH_MODEL_DIGEST
 inferenceProviders:
-  - name: local
+  local:
     provider: openai
     serviceRef: local
 ```
@@ -457,7 +457,7 @@ Declare an external HTTPS provider with a credential reference, then select it f
 
 ```yaml
 # Under spec.inferenceProviders:
-- name: nous
+nous:
   provider: openai
   api: openai-completions
   endpoint: https://inference-api.nousresearch.com/v1
@@ -548,14 +548,14 @@ An unchanged exported document can be reapplied without restarting the sandbox.
 | A reply through your chosen native interface | That interface, agent, route, and model completed the tested turn | Support for untested providers, models, tools, or long conversations |
 
 An empty `changes` list on apply does not skip configuration or readiness checks.
-After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](contributing/live-tests.md).
+After apply, send a short prompt through the [native agent interface](agents.md#choose-native-access), or explicitly select an [owned live smoke test](../internal-docs/contributing/live-tests.md).
 Those checks can incur inference charges and may affect agent history; failure does not undo a successful deployment.
 Use the selected adapter's public input and output contract for an explicit invocation; the CLI has no separate verification command.
 Changing a model can expose API, context, or tool-format incompatibility even when the endpoint is reachable.
 Use [change constraints](usage.md#choose-the-change-path) before changing the API or agent launch settings.
 
 The lifecycle fixture exercises apply, CLI export, unchanged reapply, drift rejection, and destroy.
-The [offline harness fixture](contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
+The [offline harness fixture](../internal-docs/contributing/integration-tests.md#inference-api-fixtures) checks actual request paths with local protocol servers; it does not qualify a public endpoint, model quality, or live Nous authentication.
 
 ## Onboarding Model Catalogs
 

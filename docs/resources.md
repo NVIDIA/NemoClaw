@@ -59,7 +59,7 @@ Automatic discovery, packaged installation across assistant clients and a rehear
 
 ## Contribute
 
-Follow [repository instructions](../AGENTS.md), [the writing guide](../WRITING.md), and [documentation contribution guidance](contributing/documentation.md).
+Follow [repository instructions](../AGENTS.md), [the writing guide](../WRITING.md), and [documentation contribution guidance](../internal-docs/contributing/documentation.md).
 
 Use [NemoClaw issues](https://github.com/NVIDIA/NemoClaw/issues) for reproducible implementation/documentation problems and [discussions](https://github.com/NVIDIA/NemoClaw/discussions) for product questions or proposed capabilities.
 Identify the v1 revision, bundle, relevant configuration, expected behavior, and the failure observed; follow [diagnostic collection](troubleshooting.md#capture-the-failing-operation) before sharing output.

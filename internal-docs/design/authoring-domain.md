@@ -55,12 +55,12 @@ Journey position is authoring progress; selecting a route chooses which existing
 
 ## Configuration and Rules
 
-The definition controls deliberate review: ask for a deployment name even if the template supplies one, review a schema-discovered family, or leave an absent optional value omitted.
+The definition controls deliberate review: ask for a deployment name even if the template supplies one, review a schema-discovered family, or omit a field without a prompt.
 `JourneySelector::Field` identifies an exact question; `JourneySelector::Scope` selects a supported family through `JourneyScope`.
 A scope discovers its applicable fields from the current document and schemas.
 The SDK and Fabric determine applicability, valid values, and requiredness.
 Guidance can retain a selector for another reachable branch; the resolver warns while it is inactive.
-A required or supplied value cannot be omitted through definition guidance.
+Omission guidance keeps a valid supplied value and leaves an absent optional value unset; an absent required value and an invalid supplied value are still asked.
 An optional supplied value can be removed through an interactive omit answer.
 
 [Capabilities](../../crates/nemoclaw-authoring/src/capabilities.rs) represents a Fabric descriptor catalog: advertised harnesses, settings and model schemas, and workflow targets.
@@ -92,6 +92,7 @@ A valid supplied value outside deliberate review can satisfy the journey without
 
 Missing and invalid values are assessment results, not additional `DecisionStatus` variants.
 `DecisionStatus` reports unreviewed, accepted, omitted, or reopened for the current run and route.
+`JourneyResolution::kept` lists supplied values that omission guidance kept without asking.
 
 ## A Question Can Represent an Operation
 
@@ -156,9 +157,9 @@ A runtime no engine answered for gets no engine, and the target assessment's fir
 Hosts are built from the engines they named and what each answered, and one recorded host in `tests/fixtures/observations` pins the replay format.
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
-An empty `DiscoveryObservations` leaves compatibility unverified; referenced credentials appear in informational guidance.
+An empty `DiscoveryObservations` leaves compatibility unverified.
 Observations do not silently replace authored values.
-`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, and an advertised model. Missing or unverified local credential references appear in `JourneyResolution::information()` and do not block delegation. A reachable catalog that requires an absent key supplies an informational note, clears model suggestions, and defers the catalog gate under the `inference:catalog:credential` diagnostic field. The TUI renders that note separately from errors and leaves individual model entry available; it does not bypass the bulk model check. Denied authentication, missing observations, and other catalog failures remain blocking.
+`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, and an advertised model. `JourneyResolution::credentials()` states whether each checked credential reference is set, not set, or unreadable; a reference never checked has no entry, and none blocks delegation. A reachable catalog that requires an absent key supplies an informational note, clears model suggestions, and defers the catalog gate under the `inference:catalog:credential` diagnostic field. Individual model entry stays available, and the note does not bypass the bulk model check. Denied authentication, missing observations, and other catalog failures remain blocking.
 
 The [TUI](../../crates/nemoclaw-onboarding/README.md) owns keys, rendering, state snapshots for Back, discovery calls, cancellation, and saving the returned document.
 Authoring owns question resolution and answer transitions; the SDK owns discovery operations and subsequent plan/apply behavior.

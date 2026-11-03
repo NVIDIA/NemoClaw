@@ -47,7 +47,7 @@ The generated graphs manage these objects and observations:
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
 
-Every provider type has a [lifecycle test](contributing/integration-tests.md) that plans hand-written HCL through pinned OpenTofu without SDK orchestration.
+Every provider type has a [lifecycle test](../internal-docs/contributing/integration-tests.md) that plans hand-written HCL through pinned OpenTofu without SDK orchestration.
 These tests do not qualify a complete standalone deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
 
@@ -87,9 +87,9 @@ None of them exposes ephemeral resources or provider functions.
 
 The `openshell` provider takes only `destroy`, which permits deleting sandboxes and workspaces during explicit teardown.
 Each object names the gateway that holds it with `gateway`, the `ref` of `data.openshell_gateway`.
-That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, and the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files; its `ref` carries those names, never their values.
+That data source takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env` variable naming the CA file that verifies the gateway, and, set together, the `tls_certificate_env` and `tls_key_env` variables naming a client certificate and key for mutual TLS; its `ref` carries those names, never their values.
 For a managed Kubernetes gateway, it takes `kubernetes`, the gateway's specification, instead of the credential and TLS variables.
-Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
+Each provider that reaches such a gateway opens its own port forward on a free loopback port, with the kubeconfig the specification names, or the service account of the pod it runs in when the specification names none, and the development credentials in the SDK's state directory, and keeps it open while OpenTofu runs.
 A literal object of the same shape, with `type = "openshell_gateway"`, also works where no data source is read, such as an SDK teardown graph.
 Objects keep their gateway connection in state, so refresh and removal reach the same gateway without provider configuration.
 Credential and TLS references update in place; a different endpoint is a different gateway, so it replaces reconstructible objects, sandboxes included, and the retained workspace refuses it.
@@ -118,7 +118,7 @@ Other inputs are typed too:
   OpenShell merges that policy with the authored `policy` block and managed grants, and records the launch with the sandbox; it does not depend on the agent runtime that produced the launch.
   `fabric_harnesses` returns `launch_json` for its configured agent, and Fabric reads its agent name and runtime binding back from the launch metadata.
 - `openshell_sandbox`'s optional `driver_config` is OpenShell's per-driver sandbox configuration (`SandboxTemplate.driver_config`) as JSON text, usually from `jsonencode()`, keyed by driver, such as volume mounts.
-  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/sandboxes/runtimes.mdx).
+  It is passed through unchanged, so OpenShell's defaults apply; see OpenShell's [driver configuration and mounts](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/runtimes.mdx).
   The gateway accepts it only when its driver allows driver configuration, which OpenShell disables by default, NemoClaw-installed gateways included.
   It is part of the sandbox's immutable specification: changing it, or a different configuration observed on the gateway, replaces the sandbox, as for the image; see [change paths](usage.md#choose-the-change-path).
 - `openshell_sandbox`'s optional `service` blocks are OpenShell's sandbox service exposures: `name`, `target_port`, and optional `authorization_mode` (`STRIP` or `BEARER_PASSTHROUGH`).
@@ -287,6 +287,7 @@ These types name the engine or cluster they use instead of taking a gateway `ref
 `openshell_podman_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
 `openshell_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
 The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+Planning new storage, or a new Podman gateway, fails when another network on the engine overlaps `network_cidr`; the deployment's own network, found by name and owner, doesn't count.
 
 ### Fabric Resource and Data Source
 
@@ -359,8 +360,9 @@ Triggering on the `fabric_agent` itself would be a cycle, because the agent refe
 Keep the input to values known while planning: a value known only during apply, such as a read postponed to apply, replaces the sandbox on every apply.
 Replacing a sandbox deletes its files and conversation history; keep data that must survive on a [mounted volume](agents.md#skills-on-a-mounted-volume).
 
-A Fabric sandbox runs one agent runtime in its lifetime.
-Once its agent stops, or a start fails or loses its reply, the sandbox cannot start another, and creating the agent there again fails with guidance to replace the sandbox: `tofu apply -replace=openshell_sandbox.<name>`.
+After a start fails with uncertain effects, creating the agent in that sandbox again fails with guidance to replace the sandbox: `tofu apply -replace=openshell_sandbox.<name>`.
+After a start loses its reply, replace the sandbox the same way before creating the agent again: Fabric would start a second runtime beside one the lost start may have left ([NVIDIA/NeMo-Fabric#487](https://github.com/NVIDIA/NeMo-Fabric/issues/487)).
+Creating an agent again after removing it starts a new runtime in the same sandbox.
 Generated graphs need no such step: when a plan would create an agent in a sandbox that already exists, the SDK plans again with that sandbox replaced, and the plan shows it.
 
 Starting an agent waits for its sandbox to be ready and for `fabric-agent-ctl serve` to answer.
@@ -368,12 +370,16 @@ An explicit `Rejected` OpenShell configuration admission stops the wait even whi
 The diagnostic names the sandbox and includes only recognized gateway reasons; unknown backend text becomes a fixed repair message.
 See [runtime policy rejection recovery](sandbox-network.md#recover-from-runtime-policy-rejection).
 
-Fabric reports neither the configuration a runtime applied nor whether it is still running ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)).
-So refresh checks only the sandbox: a configuration changed inside the sandbox outside OpenTofu is not reported as drift, and a runtime that stops is found when it is next invoked.
+Refresh runs `fabric-agent-ctl check` for the recorded runtime and records the result in the computed `running`.
+A runtime Fabric no longer has, one that fails its check, and one whose sandbox isn't ready or doesn't serve its bridge count as stopped; an adapter without health checks, or a probe that can't finish, counts as running.
+A check whose reply is cut off fails refresh as an incomplete observation.
+A stopped runtime plans an update: apply stops it in Fabric and starts another in the same sandbox, with a new `runtime_id`.
+An update that keeps a running runtime, such as for a newer image catalog, leaves it alone.
+Fabric doesn't report the configuration a runtime applied, so a configuration changed inside the sandbox outside OpenTofu is not reported as drift.
 Removing the resource stops the agent through `fabric-agent-ctl stop`, as removing an attachment does, and the sandbox stays.
 A runtime that already stopped, or a sandbox already gone, counts as removed; if stopping fails, the binding is kept so the next apply or destroy retries.
 
-`fabric_agent` exports `runtime_id`, the ID Fabric gave the runtime, for invoking it with `fabric-agent-ctl invoke --runtime-id`.
+`fabric_agent` exports `runtime_id`, the ID Fabric gave the runtime, for invoking it with `fabric-agent-ctl invoke --runtime-id`, and `running`, whether refresh found it running.
 It also exports a `ref` with its sandbox's `workspace`, `sandbox` name, `sandbox_id`, `owner`, and `generation`, its own `name`, and `config_sha256`.
 `config_sha256` is `sha256:<hex>` over the composed document's JSON with object keys sorted; it is known while planning once the agent's inputs are.
 
@@ -518,6 +524,7 @@ One read of the engine's `/info` answers both of `host_engine`'s observations; i
 The engine observation reports available server version, architecture, operating system, CPU count, and memory fields.
 The prerequisite observation is `unavailable`, with its reason, when the engine cannot host a managed gateway with that driver: the Podman driver needs a Podman engine socket, and rootless Podman needs pasta networking.
 The gateway installation types check the same prerequisites when they plan and apply.
+The prerequisite source also takes the gateway's optional `endpoint`, `name`, and `owner`. With them, it is also `unavailable` when anything other than that gateway holds the endpoint's port: another running container that publishes it, or, for Podman, whose gateway listens on the host's loopback, any listener on the CLI host. A host process that holds a Docker engine's port is reported when the gateway starts.
 Plans for a managed gateway read both and report them as one engine observation, whose status is the less available of the two.
 These describe the selected engine, which may differ from the CLI host.
 The image observation retains its configuration ID, repository manifest digests, platform, and size even when it lacks Fabric metadata.
@@ -550,7 +557,7 @@ It selects installed-package records using Fabric's provenance, without editing 
 Harness image stages declare the directories where their layout installs each adapter; the builder records them as `runtime_files`, keyed by adapter ID, beside the descriptors.
 With deployment filesystem grants, every path in the adapter descriptor's `requirements.files`, its `runtime_files` entry, and the image runtime's `required_paths` must fall under a grant.
 The bundled snapshot supports offline authoring and carries the same pinned Fabric revision and source checksum.
-See the [image metadata contract](design/fabric-management.md#image-metadata) and [catalog regeneration](build.md#regenerate-the-bundled-catalog).
+See the [image metadata contract](../internal-docs/design/fabric-management.md#image-metadata) and [catalog regeneration](build.md#regenerate-the-bundled-catalog).
 Direct Bake builds without labels remain unverified.
 Catalog identifiers are not restricted to a compiled SDK list.
 The runtime consumes the same canonical public configuration through Fabric; see [discovered harness configuration](sdk.md#configure-a-discovered-fabric-harness).
@@ -641,7 +648,7 @@ After correcting compatibility or access, reapply the same configuration with it
 Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
 
 [OpenShell contract tests](../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
-[Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
+[Deployment fixtures](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/deployment.rs) and [Fabric lifecycle fixtures](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-e2e/tests/integration/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
 Starting and stopping agent runtimes is owned by `fabric_agent`; an unchanged apply leaves the running runtime alone.
 Its inputs compose the canonical public Fabric configuration, separate from immutable sandbox identity.
 
@@ -826,9 +833,9 @@ For a proxy contract, the observation verifies the recorded container ID and nam
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK runs no readiness loop of its own.
 
-The [standalone readiness fixture](contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
+The [standalone readiness fixture](../internal-docs/contributing/integration-tests.md#standalone-service-readiness) exercises this contract without SDK deployment orchestration.
 A failed read retains managed bindings, and SDK teardown omits readiness gates.
-See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
+See [runtime ownership](../internal-docs/design/runtime.md) and [recovery](models.md#diagnose-and-recover-a-stopped-runtime).
 
 ## Service Capacity
 
@@ -866,7 +873,7 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
-1. `openshell_kubernetes_storage.runtime` creates and retains the namespace and encryption key, with `prevent_destroy`.
+1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.
    For OpenShift, its computed `gateway_values` carries the namespace's UID and group ranges as chart overrides.
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
@@ -877,10 +884,11 @@ The three NemoClaw resources take the same cluster target and identity:
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
 - `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
-- `kubeconfig_env`: the environment variable whose value is the kubeconfig file path.
-- `context` and `namespace`: the exact kubeconfig context and the namespace for the gateway.
+- Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu; the provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
+- Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
+- `namespace`: the namespace for the gateway.
 - `authentication_profile`: `development`.
-- Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs.
+- Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs; it requires `kubeconfig_env`.
 - Optional `owner` and `generation`, generated on create when omitted.
 
 The three resources share one private receipt, keyed by `owner` and `name`, so give `openshell_kubernetes_auth` and `openshell_kubernetes_gateway` the storage's `owner`, for example `owner = openshell_kubernetes_storage.platform.owner`.
@@ -889,12 +897,13 @@ Changing any of these settings after creation fails planning and leaves the reso
 
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
-The Helm provider receives only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
+The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither, and its client uses the pod's service account.
+Ambient Helm and Kubernetes settings are excluded.
 
 Teardown removes the release before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
 The namespace, encryption key, and persistent volumes remain.
-[Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploy to Kubernetes or OpenShift](kubernetes.md) gives the procedure.
+[Managed Kubernetes ownership](../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploy to Kubernetes or OpenShift](kubernetes.md) gives the procedure.
 
 ## Packaging and Qualification
 
@@ -902,8 +911,8 @@ Follow [bundle building](build.md) for matched CLI, SDK contract, provider, sche
 The NemoClaw, OpenShell, and Fabric providers use the same source-derived version to prevent stale reuse.
 The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
-[Schema snapshots](contributing/testing.md#provider-schema-snapshots) of the NemoClaw, OpenShell, and Fabric providers, [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
-[Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
+[Schema snapshots](../internal-docs/contributing/testing.md#provider-schema-snapshots) of the NemoClaw, OpenShell, and Fabric providers, [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
+[Fixture qualification](../internal-docs/contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
 
 ## Direct OpenTofu Usage
 

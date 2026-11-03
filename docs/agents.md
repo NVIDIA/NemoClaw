@@ -43,7 +43,7 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `ID` is the agent's `runtime_id`, recorded in the deployment's OpenTofu state; the [OpenClaw example](#run-one-headless-openclaw-request) reads it.
-Use `--input -` to read the value from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
+Use `--input -` to read the value from stdin instead; see the [bridge commands](../internal-docs/design/fabric-management.md#bridge-commands).
 Fabric receives the value unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 A request can incur inference charges and affect retained agent history.
 Do not assume a universal result shape.
@@ -53,7 +53,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/5574117feb4be948c1b03f4c36a2fe9a11af910d/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/ddf59e875d50d925991cd40c44dc63facf391bac/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
@@ -67,8 +67,15 @@ JSON
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
 On success, inspect `result.status` and `result.output.response`; a successful command does not establish general model compatibility.
-If later invocations fail with `runtime_unavailable`, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
+If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
+
+## Native Interfaces
+
+OpenClaw's Control UI and Hermes's API server and dashboard are native interfaces that the agent's Fabric runtime serves inside its sandbox.
+Enable them under `harness.settings.interfaces` with an exact `port`, then reach them as [Reach an Agent Interface](interfaces.md#reach-an-agent-interface) describes.
+Fabric's adapter starts each interface, generates its token, and stops it with the runtime; NemoClaw checks each interface against its schema in the image's adapter descriptor while planning, and after apply prints the commands that forward each interface and read its token.
+The agent's own tools can read those tokens and reach the interfaces, so the agent can sign in to its own interfaces; Hermes's dashboard has no sign-in, and its browser chat runs the agent without approvals.
 
 ## Native Controls at Initialization
 
@@ -104,8 +111,9 @@ Review [trace data exposure](security.md) before enabling collection for another
 
 Relay configuration belongs to Fabric's public configuration and the exact Hermes adapter contract.
 It does not trigger adapter selection in NemoClaw.
-The Hermes image installs the released Hermes Agent v2026.9.24, which Fabric supports for ordinary runs only: Relay telemetry needs an unreleased Hermes revision on Python 3.14.
-With this image, a Relay configuration fails when the agent starts, reported by Fabric's Hermes adapter.
+The Hermes image installs Hermes Agent v0.22.5 on Python 3.14 with its Relay 0.10 dependency and the Switchyard Relay plugin 0.3.1.
+Under `harness.config`, enable `telemetry.providers.relay` and add Switchyard under `relay.plugins.dynamic`; NemoClaw passes the configuration to Fabric without interpreting it, and Relay owns validation and activation.
+Set `manifest` to `/opt/nemo-relay/plugins/switchyard/relay-plugin.toml` and provide either `config.switchyard_config` or `config.switchyard_config_path`.
 Do not infer native API availability from a tracing setting.
 
 ## Define and Attach Integrations
@@ -153,18 +161,18 @@ In YAML, set the sandbox's `driverConfig` and list the mount in the harness conf
 
 ```yaml
 sandboxes:
-  - name: assistant
+  assistant:
     driverConfig:
       docker:
         mounts:
           - type: volume
             source: assistant-skills
             target: /sandbox/skills
-    agent:
-      harness:
-        config:
-          skills:
-            paths: [/sandbox/skills]
+    harness:
+      kind: nvidia.fabric.openclaw
+      config:
+        skills:
+          paths: [/sandbox/skills]
 ```
 
 In HCL, use `openshell_sandbox`'s [`driver_config`](provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:
@@ -265,7 +273,7 @@ Deployment identity and ownership checks protect provider registrations and reta
 
 Fabric validates public Fabric configuration when the runtime starts.
 Apply starts the agent after OpenTofu establishes the required dependencies.
-A configuration change replaces the agent's sandbox, because a sandbox runs one runtime; removing `fabric_agent` stops the runtime.
+A configuration change replaces the agent's sandbox rather than starting another runtime inside it; removing `fabric_agent` stops the runtime.
 Unchanged configuration does not request inference or restart the runtime.
 The host reports its active runtime identity and remembered public configuration.
 This observation is not a native filesystem audit or proof of successful inference.

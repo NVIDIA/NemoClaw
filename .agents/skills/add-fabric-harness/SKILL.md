@@ -9,7 +9,7 @@ description: Add a NeMo Fabric agent harness to NemoClaw when Fabric ships a new
 # Add a Fabric Harness
 
 Fabric owns each adapter: its descriptor, its behavior, and its tests.
-NemoClaw, for now, builds and publishes the agent images ([scope](../../../docs/design/scope.md#upstream-boundaries)), so adding a harness means installing Fabric's adapter in an image, labeling the image with its catalog, and showing how to deploy it.
+NemoClaw, for now, builds and publishes the agent images ([scope](../../../internal-internal-docs/design/scope.md#upstream-boundaries)), so adding a harness means installing Fabric's adapter in an image, labeling the image with its catalog, and showing how to deploy it.
 Don't add tests of the adapter's behavior; Fabric tests its own adapters.
 
 Deliver one pull request.
@@ -50,7 +50,7 @@ The stage:
 - A row in [the harness reference](../../../docs/reference/fabric-harnesses.md).
 - A row in [the agent state table](../../../docs/state.md) for what the adapter keeps in `/sandbox/artifacts`, from the adapter's source at the pinned revision.
 - The adapter's display name in [the onboarding text](../../../crates/nemoclaw-onboarding/src/tui/text.json), if it isn't there.
-- The image in [the release package list](../../../docs/contributing/releases.md#provision-the-packages).
+- The image in [the release package list](../../../internal-internal-docs/contributing/releases.md#provision-the-packages).
 
 ## 5. Validate
 
@@ -61,5 +61,5 @@ The stage:
 
 ## 6. Hand Over Release Packaging
 
-Before the next release candidate, a maintainer must create `ghcr.io/nvidia/nemoclaw/v1/<name>` as an internal package and grant this repository's Actions write access, as [releases](../../../docs/contributing/releases.md#provision-the-packages) describes.
+Before the next release candidate, a maintainer must create `ghcr.io/nvidia/nemoclaw/v1/<name>` as an internal package and grant this repository's Actions write access, as [releases](../../../internal-internal-docs/contributing/releases.md#provision-the-packages) describes.
 The staging workflow refuses to run until every release package exists, so say so in the pull request.

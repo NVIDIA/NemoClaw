@@ -19,7 +19,7 @@ This decision does not authorize image publication, live deployment, or a claim 
 
 [PR #13093](https://github.com/NVIDIA/NemoClaw/pull/13093) implements the container base without a protected-input dependency.
 [PR #12619](https://github.com/NVIDIA/NemoClaw/pull/12619) is closed; generic credential-file delivery is deferred.
-Use the generated [field reference](../reference/configuration.md) for YAML fields and defaults.
+Use the generated [field reference](../../docs/reference/configuration.md) for YAML fields and defaults.
 Compiler tests compare explicit `kind: container` configurations with the existing managed Ollama and vLLM launch settings.
 These tests are not Linux GPU or VoiceClaw qualification.
 The manual environment contract below replaces the earlier generated agent descriptor.

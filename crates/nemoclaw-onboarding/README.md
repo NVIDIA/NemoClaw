@@ -5,7 +5,7 @@
 
 This crate provides the terminal questionnaire used by `nemoclaw onboard` and the standalone example.
 It is a trial authoring flow over `nemoclaw-authoring`.
-The [authoring domain model](../../docs/design/authoring-domain.md) explains the shared resolver and the state this frontend consumes.
+The [authoring domain model](../../internal-docs/design/authoring-domain.md) explains the shared resolver and the state this frontend consumes.
 It writes validated YAML and can read target observations through a verified native bundle.
 Credential availability appears as information while answering and reviewing. Interactive `nemoclaw plan` prompts for missing values; set the referenced variables first for a non-interactive run. Onboarding retains no credential values.
 Onboarding does not create deployment state or apply resources.
@@ -148,7 +148,7 @@ The questionnaire does not invent missing service definitions or discover a qual
 
 Each answer must satisfy its active field schema before changing journey state.
 For deployment-scope edits to an already SDK-valid document, authoring also rejects changes that invalidate the complete SDK document.
-Sparse authoring can continue while unrelated required values are still missing; review and saving use the consolidated [authoring gates](../../docs/design/authoring-domain.md#resolution-and-validation-gates).
+Sparse authoring can continue while unrelated required values are still missing; review and saving use the consolidated [authoring gates](../../internal-docs/design/authoring-domain.md#resolution-and-validation-gates).
 Invalid answers leave the document unchanged.
 Unedited fields and reference scopes remain intact, including inline providers, named inference definitions, and public Fabric configuration.
 For multiple routes, choose the route to edit.
