@@ -3192,7 +3192,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
       );
       if (publication.diagnostic) {
         console.error(
-          `  Readiness evidence: stage=${publication.diagnostic.stage} reason=${publication.diagnostic.reason}`,
+          `  Readiness evidence: stage=${publication.diagnostic.stage} reason=${publication.diagnostic.reason}` +
+            (publication.diagnostic.pairingFailureCategory
+              ? ` pairing=${publication.diagnostic.pairingFailureCategory}`
+              : ""),
         );
       }
       process.exit(1);

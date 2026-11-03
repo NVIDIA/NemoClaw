@@ -229,6 +229,10 @@ A failed request rejects launch readiness and identifies the inference request a
 
 For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease. The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration. Its pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch. Before lease acceptance, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway. It skips the complete pairing approval pass only when the qualification still matches exactly and no relevant allowlisted request is pending. Any missing, unreadable, malformed, ambiguous, or changed observation runs the complete pairing approval pass. A relevant allowlisted pending request also runs that complete path.
 
+If publication fails with `reason=pairing-observation-failed`, preserve the `pairing=` category from the `Readiness evidence:` line when reporting the failure.
+The category distinguishes failures such as an observation deadline, changing state, or incompatible state without exposing pairing records or credentials.
+The probe still exits nonzero because it could not publish readiness evidence.
+
 </AgentOnly>
 Hermes and LangChain Deep Agents Code retain their existing session setup on the lease-accepted path.
 When those checks pass, it can skip duplicate recovery, readiness polling, and inference-route repair.

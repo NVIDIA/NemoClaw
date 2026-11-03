@@ -42,6 +42,7 @@ export interface OpenClawAgentAssertionEvidence {
 
 export interface OpenClawAgentAssertionOptions {
   apiKey: string;
+  collectToolEvidenceOnFailure?: boolean;
   expected: string;
   finalReplyContract?: "unavailable-search";
   label: string;
@@ -212,7 +213,10 @@ export async function runOpenClawAgentAssertion(
       }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
-        collectToolEvidence: args.publicFetchExpectation !== undefined && !classification.passed,
+        collectToolEvidence:
+          (args.publicFetchExpectation !== undefined ||
+            args.collectToolEvidenceOnFailure === true) &&
+          !classification.passed,
         label: args.label,
         recordToolEvidenceReductionFailure: async (failure) => {
           await recordAttemptEvidence(
@@ -223,9 +227,20 @@ export async function runOpenClawAgentAssertion(
         recordToolEvidence: async (toolEvidence) => {
           await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
-            (args.toolEvidence?.project ?? projectPersonalPublicFetchToolEvidenceArtifact)(
-              toolEvidence,
-            ),
+            args.toolEvidence?.project(toolEvidence) ??
+              (args.publicFetchExpectation
+                ? projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence)
+                : {
+                    schemaVersion: 1,
+                    errorCount: toolEvidence.errors.length,
+                    finalStatusCount: toolEvidence.finalStatuses.length,
+                    toolCallCount: toolEvidence.toolCalls.length,
+                    toolExecutionCount: toolEvidence.toolExecutions.length,
+                    toolResultCount: toolEvidence.toolResults.length,
+                    execCalls: toolEvidence.toolCalls.filter(({ name }) => name === "exec").length,
+                    execResults: toolEvidence.toolResults.filter(({ name }) => name === "exec")
+                      .length,
+                  }),
           );
         },
         reduceToolEvidence,

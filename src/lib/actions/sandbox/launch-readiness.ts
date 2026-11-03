@@ -76,6 +76,7 @@ import {
   observeOpenClawPairingSettlement,
   OpenClawPairingObservationRetryableError,
   OpenClawPairingQualificationError,
+  type OpenClawPairingObservationFailureCategory,
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
@@ -183,6 +184,7 @@ export type LaunchReadinessPublicationResult =
           | "missing-authority"
           | "pairing-observation-failed"
           | "runtime-observation-failed";
+        pairingFailureCategory?: OpenClawPairingObservationFailureCategory;
       };
     };
 
@@ -920,7 +922,8 @@ async function captureLaunchIdentity(
         openclawVersion,
         stateDirectory,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof OpenClawPairingQualificationError) throw error;
       throw new OpenClawPairingQualificationError();
     }
   }
@@ -1503,6 +1506,9 @@ export async function publishLaunchReadiness(
                 kind: "evidence-failed",
                 diagnostic: {
                   stage: "publication-validation",
+                  ...(error instanceof OpenClawPairingQualificationError
+                    ? { pairingFailureCategory: error.failureCategory }
+                    : {}),
                   reason:
                     error instanceof OpenClawPairingQualificationError
                       ? "pairing-observation-failed"

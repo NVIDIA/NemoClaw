@@ -43,13 +43,7 @@ import {
   withLegacyMessagingPlanEnvDirect,
 } from "../messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(
-  import.meta.dirname,
-  "../..",
-  "agents",
-  "hermes",
-  "generate-config.ts",
-);
+const SCRIPT_PATH = path.resolve(import.meta.dirname, "../../agents/hermes/generate-config.ts");
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "../..", "agents", "hermes", "config");
 

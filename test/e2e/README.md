@@ -1223,7 +1223,11 @@ The coverage disposition is:
 
 The common-egress targets retain their live network policy and agent-fetch boundaries.
 They disable optional search explicitly and use the `nvidia-inference` profile.
-The weather case checks five initial presets, then the added weather preset and its verified agent fetch.
+The weather case checks five initial presets, then adds the weather preset and runs an agent curl to Open-Meteo.
+The agent saves the JSON response.
+The host independently checks its location, temperature, time, and Celsius unit, then records its SHA-256 hash.
+When session reduction succeeds, a failed weather agent assertion records aggregate session error, final-status, tool-call, execution, and result counts, including exec call and result counts.
+The artifact excludes raw session content and credentials; these counts do not establish why the command failed.
 Brave preset inclusion belongs to the existing onboarding policy tests, independent of weather coverage.
 
 ### Catalogue Execution Evidence

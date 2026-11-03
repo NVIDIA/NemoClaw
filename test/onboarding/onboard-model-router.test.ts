@@ -669,8 +669,9 @@ describe("onboard Model Router setup", () => {
     assert.equal(poolTargetsOnlyNvidiaEndpoints(shippedPool), true);
   });
 
-  it("appends the last router health error and log path to the startup timeout error (#8962)", async () => {
+  it("retains the last completed health error when the final router request times out (#8962)", async () => {
     const pid = 12_345;
+    let healthCalls = 0;
     const unhealthyBody = JSON.stringify({
       healthy_endpoints: [],
       unhealthy_endpoints: [
@@ -696,7 +697,10 @@ describe("onboard Model Router setup", () => {
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
           isRouterResponsive: async () => false,
-          getRouterHealthSnapshot: async () => healthSnapshot(false, unhealthyBody),
+          getRouterHealthSnapshot: async () =>
+            ++healthCalls === 1
+              ? healthSnapshot(true, unhealthyBody)
+              : healthSnapshot(false, null, { outcome: "timeout" }),
           openRouterLog: () => ({ fd: 99, startOffset: 0 }),
           closeRouterLog: () => undefined,
           readRouterLogTail: () => "",

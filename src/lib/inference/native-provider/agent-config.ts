@@ -9,7 +9,7 @@ import {
   isCustomHostedProvider,
 } from "./catalog.ts";
 
-export { hostedNativeProvider, HOSTED_NATIVE_PROVIDERS };
+export { fixedHostedNativeProvider, HOSTED_NATIVE_PROVIDERS };
 
 /** Public configuration only; this grants neither egress nor a provider attachment.
  * Host admission validates destinations before OpenShell receives the real credential.

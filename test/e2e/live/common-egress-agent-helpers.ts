@@ -27,6 +27,17 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 
 export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;
 
+export const WEATHER_RESPONSE_VALIDATION_PYTHON = [
+  "import json,sys,math",
+  "d=json.load(open(sys.argv[1]))",
+  'c=d["current"]',
+  't=c["temperature_2m"]',
+  "assert type(t) in (int,float) and math.isfinite(t)",
+  'assert abs(d["latitude"]-37.7749)<0.1 and abs(d["longitude"]+122.4194)<0.1',
+  'assert isinstance(c["time"],str) and len(c["time"])>=16',
+  'assert d["current_units"]["temperature_2m"]=="°C"',
+].join("; ");
+
 interface ChatCompletionLike {
   choices?: Array<{
     message?: {
