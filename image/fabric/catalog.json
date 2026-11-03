@@ -953,9 +953,7 @@
           "cancellation": false,
           "metadata": {
             "health_checks": [
-              "live",
-              "active",
-              "ready"
+              "live"
             ]
           },
           "service": false,
@@ -2337,8 +2335,8 @@
       ]
     }
   ],
-  "fabric_revision": "ddf59e875d50d925991cd40c44dc63facf391bac",
+  "fabric_revision": "e5b5ebf2b81cc3c6325301ea419ebf2453dab12e",
   "schema_version": 2,
-  "source_sha256": "cb9c16677323a087ff1e69fc848188792c953d3f3145e6b0d81533a0d40ad1d0",
+  "source_sha256": "3c20aed57985f4d19fa0a30204448a7989761991757317ec67ba8c187ba577d5",
   "targets": []
 }
