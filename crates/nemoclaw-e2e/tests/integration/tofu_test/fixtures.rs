@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The fixtures every scenario runs against, reset between scenarios: the
 //! OpenShell gRPC fixture, a fake Docker engine, an inference upstream that
-//! answers nothing, and the control endpoint of the `fixture` provider. A
-//! scenario declares what the engine and gateway report, and reads what they
-//! recorded.
+//! lists only the models a scenario declares, and the control endpoint of the
+//! `fixture` provider. A scenario declares what the engine, gateway, and
+//! upstream report, may change what the gateway holds between runs, and reads
+//! what they recorded.
 
 use crate::docker_engine::{self, DATA_ROOT};
+
+/// The fixed engine socket on Unix, which managed Docker gateways name.
+const MANAGED_ENGINE: &str = "unix:///tmp/nemoclaw-integration/engine.sock";
 use nemoclaw_e2e::{http_fixture, openshell};
 use nemoclaw_sdk::config::{Document, Gateway};
 use serde_json::{Value, json};
@@ -28,6 +32,8 @@ pub struct Shared {
     containers: Mutex<Vec<Value>>,
     upstream_endpoint: OnceLock<String>,
     upstream_requests: Mutex<Vec<String>>,
+    /// The model IDs the upstream lists.
+    models: Mutex<Vec<String>>,
     /// Fixture credential values by environment variable.
     credentials: Mutex<BTreeMap<String, String>>,
 }
@@ -156,7 +162,11 @@ impl Shared {
         }
     }
 
-    /// Apply a case's declaration, if any, and return the observations.
+    /// Apply a case's declaration, if any, and return the observations. A
+    /// declaration replaces the declared images, containers, models, driver,
+    /// and sandbox creation delay. Its optional `change` alters what the
+    /// gateway holds once, as an outage between runs would: it stops one
+    /// sandbox's Fabric runtime, or forgets every provider registration.
     fn control_reply(&self, request: &http_fixture::Request) -> (u16, Vec<u8>) {
         let Ok(declared) = serde_json::from_slice::<Value>(&request.body) else {
             return (400, b"declare must be JSON".to_vec());
@@ -165,6 +175,10 @@ impl Shared {
             let list = |key: &str| declared[key].as_array().cloned().unwrap_or_default();
             *self.images.lock().unwrap() = list("images");
             *self.containers.lock().unwrap() = list("containers");
+            *self.models.lock().unwrap() = list("models")
+                .iter()
+                .filter_map(|model| model.as_str().map(str::to_owned))
+                .collect();
             self.gateway.lock().unwrap().declare(&declared);
         }
         (
@@ -254,42 +268,76 @@ pub struct Fixtures {
         http_fixture::Fixture,
         http_fixture::Fixture,
     ),
-    socket: PathBuf,
+    /// The fixed engine socket this run owns, on Unix.
+    socket: Option<PathBuf>,
 }
 
 impl Drop for Fixtures {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.socket);
+        if let Some(socket) = &self.socket {
+            let _ = std::fs::remove_file(socket);
+        }
     }
 }
 
 impl Fixtures {
-    /// One fixed engine socket gives every scenario the same Docker provider
-    /// alias and image addresses, which test files name.
+    /// On Unix, one fixed engine socket gives every scenario the same Docker
+    /// provider alias and image addresses, which test files name. Elsewhere
+    /// the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh`
+    /// relay that the lifecycle step puts on `PATH` as `ssh` forwards; only
+    /// image reads use it there, because managed Docker gateway storage needs
+    /// a local engine socket.
     pub async fn start() -> Self {
-        let socket = PathBuf::from("/tmp/nemoclaw-integration/engine.sock");
-        std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
-        assert!(
-            std::os::unix::net::UnixStream::connect(&socket).is_err(),
-            "another integration run is active"
-        );
-        let _ = std::fs::remove_file(&socket);
         let gateway = openshell::Fixture::start().await;
-        let shared = Arc::new(Shared {
+        let mut shared = Shared {
             gateway: gateway.state.clone(),
             gateway_endpoint: gateway.endpoint.clone(),
-            engine_endpoint: format!("unix://{}", socket.display()),
             ..Default::default()
-        });
-        let serving = shared.clone();
-        let engine = http_fixture::Fixture::start_at_with_headers(&socket, move |request| {
-            Some(serving.engine_reply(&request))
-        })
-        .await;
+        };
+        // The engine serves through `shared`, which holds the engine's endpoint.
+        let cell = Arc::new(OnceLock::<Arc<Shared>>::new());
+        let serving = cell.clone();
+        #[cfg(unix)]
+        let (engine, socket) = {
+            let socket = PathBuf::from(MANAGED_ENGINE.trim_start_matches("unix://"));
+            std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+            assert!(
+                std::os::unix::net::UnixStream::connect(&socket).is_err(),
+                "another integration run is active"
+            );
+            let _ = std::fs::remove_file(&socket);
+            let engine = http_fixture::Fixture::start_at_with_headers(&socket, move |request| {
+                Some(serving.get()?.engine_reply(&request))
+            })
+            .await;
+            (engine, Some(socket))
+        };
+        #[cfg(not(unix))]
+        let (engine, socket) = {
+            let mut engine = http_fixture::Fixture::start_tcp(move |request| {
+                let (status, _, body) = serving.get()?.engine_reply(&request);
+                Some((status, body))
+            })
+            .await;
+            engine.endpoint = engine.endpoint.replacen("http://", "ssh://", 1);
+            (engine, None)
+        };
+        shared.engine_endpoint = engine.endpoint.clone();
+        let shared = Arc::new(shared);
+        let _ = cell.set(shared.clone());
         let serving = shared.clone();
         let upstream = http_fixture::Fixture::start_tcp(move |request| {
             let target = format!("{} {}", request.method, request.path);
             serving.upstream_requests.lock().unwrap().push(target);
+            let models = serving.models.lock().unwrap();
+            if request.method == "GET" && request.path.ends_with("/models") && !models.is_empty() {
+                let data: Vec<Value> = models
+                    .iter()
+                    .map(|id| json!({"id": id, "object": "model"}))
+                    .collect();
+                let list = json!({"object": "list", "data": data});
+                return Some((200, list.to_string().into_bytes()));
+            }
             Some((404, Vec::new()))
         })
         .await;
@@ -315,16 +363,22 @@ impl Fixtures {
     pub fn redirect(&self, document: &mut Document) {
         let shared = &self.shared;
         *document.spec.gateway.endpoint_mut() = shared.gateway_endpoint.clone();
-        let engine = match &mut document.spec.gateway {
+        let (engine, endpoint) = match &mut document.spec.gateway {
             Gateway::External(gateway) => {
                 gateway.credential = None;
                 gateway.tls = None;
-                Some(&mut gateway.engine)
+                (Some(&mut gateway.engine), shared.engine_endpoint.as_str())
             }
-            gateway => gateway.as_managed_mut().map(|managed| &mut managed.engine),
+            // Managed gateway storage takes only a local engine socket. Every
+            // platform compiles the Unix socket, so the Docker alias a test
+            // file names stays the same; these scenarios run only on Unix.
+            gateway => (
+                gateway.as_managed_mut().map(|managed| &mut managed.engine),
+                MANAGED_ENGINE,
+            ),
         };
         if let Some(engine) = engine.filter(|engine| !engine.is_empty()) {
-            engine.clone_from(&shared.engine_endpoint);
+            *engine = endpoint.to_owned();
         }
         let upstream = shared.upstream_endpoint.get().unwrap();
         for provider in document.spec.inference_providers.values_mut() {
@@ -348,6 +402,7 @@ impl Fixtures {
         shared.images.lock().unwrap().clear();
         shared.containers.lock().unwrap().clear();
         shared.upstream_requests.lock().unwrap().clear();
+        shared.models.lock().unwrap().clear();
         *shared.credentials.lock().unwrap() = credentials;
     }
 
@@ -355,13 +410,18 @@ impl Fixtures {
     /// Fabric runtimes, deleted engine storage, or unrecognized engine requests.
     pub fn teardown_problem(&self) -> Option<String> {
         let state = self.shared.gateway.lock().unwrap();
-        if !(state.sandboxes.is_empty()
-            && state.providers.is_empty()
-            && state.profiles.is_empty()
-            && state.workspaces.is_empty()
-            && state.fabric_runtimes.is_empty())
-        {
-            return Some("teardown left gateway objects or Fabric runtimes".into());
+        let left: Vec<String> = [
+            ("sandbox", state.sandboxes.keys().collect::<Vec<_>>()),
+            ("provider", state.providers.keys().collect()),
+            ("profile", state.profiles.keys().collect()),
+            ("workspace", state.workspaces.keys().collect()),
+            ("Fabric runtime", state.fabric_runtimes.keys().collect()),
+        ]
+        .into_iter()
+        .flat_map(|(kind, keys)| keys.into_iter().map(move |key| format!("{kind} {key}")))
+        .collect();
+        if !left.is_empty() {
+            return Some(format!("teardown left gateway objects: {left:?}"));
         }
         let mutations = &self.shared.engine.lock().unwrap().mutations;
         mutations

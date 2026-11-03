@@ -95,7 +95,7 @@ Researchers cited real search results, but the small local model still filled in
 
 ## Tested
 
-`crates/nemoclaw-e2e/tests/integration/travel_team_example.rs` applies this directory unchanged against the bundle's providers, with fakes for the engines, gateway, and model server.
+`crates/nemoclaw-e2e/tests/integration/hcl/tests/travel-team.tftest.hcl` applies this directory unchanged under `tofu test` against the bundle's providers, with the Docker provider mocked and fakes for the image engine, gateway, and model server.
 It checks each sandbox's providers, grants, and agent configuration, and that a plan after applying shows no changes.
 It also checks that changing the hosted model replaces only the scheduler's and buyer's sandboxes, and that destroying removes everything.
 It reports how long each OpenTofu command takes, as a benchmark of a realistic team.

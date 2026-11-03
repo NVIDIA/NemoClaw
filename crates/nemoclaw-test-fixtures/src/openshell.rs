@@ -254,16 +254,30 @@ impl State {
         self.sandbox_create_delay = std::time::Duration::from_millis(
             declared["sandbox_create_delay_ms"].as_u64().unwrap_or(0),
         );
+        self.delete_delay = std::time::Duration::from_millis(
+            declared["sandbox_delete_delay_ms"].as_u64().unwrap_or(0),
+        );
         let change = &declared["change"];
-        if let Some(name) = change["stop_agent_runtime"].as_str() {
-            let id = self
+        let sandbox_id = |state: &Self, name: &str| {
+            state
                 .sandboxes
                 .values()
                 .filter_map(|sandbox| sandbox.metadata.as_ref())
                 .find(|metadata| metadata.name == name)
-                .map(|metadata| metadata.id.clone());
+                .map(|metadata| metadata.id.clone())
+        };
+        if let Some(name) = change["stop_agent_runtime"].as_str() {
+            let id = sandbox_id(self, name);
             self.fabric_runtimes
                 .retain(|_, sandbox| Some(&*sandbox) != id.as_ref());
+        }
+        // Someone changes the agent's model inside its sandbox, outside OpenTofu.
+        if let Some(name) = change["change_agent_model"].as_str()
+            && let Some(id) = sandbox_id(self, name)
+            && let Some(configuration) = self.fabric_configurations.get_mut(&id)
+        {
+            configuration["models"]["default"]["model"] =
+                serde_json::json!("changed-inside-the-sandbox");
         }
         if change["forget_registrations"] == true {
             self.providers.clear();
@@ -387,6 +401,7 @@ impl State {
             // Gateway mutations so far, which an unchanged apply leaves as they were.
             "effects": self.effects,
             "peak_sandbox_creates": self.peak_sandbox_creates,
+            "sandbox_deletes": self.delete_calls,
             // What the gateway holds now: sandbox IDs by name, registration
             // names and their credentials' sources, and provider profiles by ID.
             "sandboxes": live, "registrations": registrations,

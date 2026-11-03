@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Runs each scenario in `tests/integration/hcl/tests` under `tofu test`. A
-//! scenario is `cases/<scenario>.yaml`, shared with the live E2E suites, and
-//! `tests/integration/hcl/tests/<scenario>.tftest.hcl`. The runner compiles
-//! the YAML with the SDK against the fixtures into `cases/<scenario>` of a work
-//! copy of the integration root, beside a copy of `harness/main.tf`, then runs
-//! each test file with fixtures reset and checks what teardown leaves, which no
-//! run block sees.
+//! scenario is a test file whose runs name the modules they apply:
+//! `./cases/<name>`, a document in the crate's `cases`, shared with the live
+//! E2E suites; `./examples/<path>`, a NemoClaw document `examples/<path>.yaml`;
+//! or `./examples/<path>`, an authored HCL directory `examples/<path>`. The
+//! runner compiles each document with the SDK against the fixtures into that
+//! module path of a work copy of the integration root, beside a copy of
+//! `harness/main.tf`, and copies each authored directory there with the
+//! bundle's NVIDIA provider versions pinned. It then runs each test file with
+//! fixtures reset and checks what teardown leaves, which no run block sees.
 
 mod fixtures;
 
@@ -25,6 +28,9 @@ use std::{
 const CASES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/cases");
 /// The integration `tofu test` root.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/integration/hcl");
+/// The live E2E test files, which name their documents by file name.
+const LIVE_TESTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/hcl/tests");
+const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
 const GENERATIONS: [&str; 7] = [
     "workspace",
     "provider",
@@ -39,6 +45,16 @@ struct Scenario {
     name: String,
     environment: BTreeMap<String, String>,
     credentials: BTreeMap<String, String>,
+    /// Whether a document it applies has a managed gateway on the fixture
+    /// engine, whose storage only a local engine socket reaches.
+    engine_socket: bool,
+}
+
+/// What a prepared module needs from the scenarios that apply it.
+struct Prepared {
+    credentials: Vec<String>,
+    image_metadata: Vec<String>,
+    engine_socket: bool,
 }
 
 /// Scenarios are dealt round-robin across shards, so each test stays within
@@ -70,102 +86,253 @@ async fn scenarios_in_shard_4() {
     run_shard(3).await;
 }
 
-/// Every live E2E and integration test file names a document in `cases`,
-/// so a renamed or removed case fails with the unit tests, before a bundle
-/// is built.
+/// Every live E2E test file names a document in `cases`, and every
+/// integration test file applies at least one document or authored example
+/// that exists, so a renamed or removed input fails with the unit tests,
+/// before a bundle is built.
 #[test]
-fn every_scenario_test_names_a_case() {
-    let missing: Vec<String> = ["tests/e2e/hcl/tests", "tests/integration/hcl/tests"]
-        .into_iter()
-        .flat_map(|directory| {
-            fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(directory))
-                .unwrap()
-                .map(move |entry| {
-                    (
-                        directory,
-                        entry.unwrap().file_name().to_string_lossy().into_owned(),
-                    )
-                })
-        })
-        .filter_map(|(directory, name)| {
-            let scenario = name.strip_suffix(".tftest.hcl")?;
+fn every_scenario_test_names_its_inputs() {
+    let mut missing: Vec<String> = fs::read_dir(LIVE_TESTS)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            let scenario = name.strip_suffix(".tftest.hcl")?.to_owned();
             let case = Path::new(CASES).join(format!("{scenario}.yaml"));
-            (!case.is_file()).then(|| format!("{directory}/{name}"))
+            (!case.is_file()).then(|| format!("e2e/hcl/tests/{name}"))
         })
         .collect();
-    assert!(
-        missing.is_empty(),
-        "hcl test files without cases/<name>.yaml: {missing:?}"
-    );
+    for (name, text) in test_files() {
+        let modules = references(&text);
+        if modules.is_empty() {
+            missing.push(format!("hcl/tests/{name}.tftest.hcl applies nothing"));
+        }
+        for module in modules {
+            if input(&module).is_none() {
+                missing.push(format!("hcl/tests/{name}.tftest.hcl: {module}"));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "missing scenario inputs: {missing:?}");
+}
+
+/// Each integration test file's name and text, sorted by name.
+fn test_files() -> Vec<(String, String)> {
+    let mut tests: Vec<(String, String)> = fs::read_dir(Path::new(ROOT).join("tests"))
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            let name = path
+                .file_name()?
+                .to_str()?
+                .strip_suffix(".tftest.hcl")?
+                .to_owned();
+            Some((name, fs::read_to_string(&path).unwrap()))
+        })
+        .collect();
+    tests.sort();
+    tests
+}
+
+/// The quoted values assigned to `key` at the start of a test file's lines.
+fn quoted<'a>(text: &'a str, key: &'a str) -> impl Iterator<Item = &'a str> {
+    text.lines().filter_map(move |line| {
+        let value = line
+            .trim()
+            .strip_prefix(key)?
+            .trim_start()
+            .strip_prefix('=')?;
+        value.trim_start().strip_prefix('"')?.split('"').next()
+    })
+}
+
+/// The deployment modules a test file's runs apply, as work-directory paths
+/// such as `cases/NAME` or `examples/PATH`; helper modules are not listed.
+fn references(text: &str) -> Vec<String> {
+    let mut modules: Vec<String> = quoted(text, "source")
+        .filter_map(|source| source.strip_prefix("./"))
+        .filter(|source| source.starts_with("cases/") || source.starts_with("examples/"))
+        .map(str::to_owned)
+        .collect();
+    modules.sort();
+    modules.dedup();
+    modules
+}
+
+/// The environment variables a test file names as an authored example's
+/// `credential_env`, for which the runner supplies fixture credentials.
+fn credential_environment(text: &str) -> Vec<String> {
+    quoted(text, "credential_env").map(str::to_owned).collect()
+}
+
+fn fixture_credential(name: &str) -> String {
+    format!("fixture-credential-{}", name.to_lowercase())
+}
+
+/// Where a module's input is: a NemoClaw document, or an authored HCL directory.
+enum Input {
+    Document(PathBuf),
+    Authored(PathBuf),
+}
+
+fn input(module: &str) -> Option<Input> {
+    if let Some(name) = module.strip_prefix("cases/") {
+        let path = Path::new(CASES).join(format!("{name}.yaml"));
+        return path.is_file().then_some(Input::Document(path));
+    }
+    let path = Path::new(EXAMPLES).join(module.strip_prefix("examples/")?);
+    let document = path.with_extension("yaml");
+    if document.is_file() {
+        Some(Input::Document(document))
+    } else if path.join("main.tf").is_file() || path.join("versions.tf").is_file() {
+        Some(Input::Authored(path))
+    } else {
+        None
+    }
+}
+
+/// Write `module` into `work`: a document compiled beside the harness, or an
+/// authored example with the bundle's NVIDIA provider versions pinned, which
+/// OpenTofu requires to select a development bundle's pre-release providers.
+fn prepare(
+    module: &str,
+    work: &Path,
+    fixtures: &Fixtures,
+    fixture_image: &str,
+    version: &str,
+) -> Prepared {
+    let target = work.join(module);
+    let source = match input(module).unwrap_or_else(|| panic!("{module} has no input")) {
+        Input::Authored(path) => {
+            copy(&path, &target);
+            for entry in fs::read_dir(&target).unwrap().flatten() {
+                if entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "tf")
+                {
+                    let text = fs::read_to_string(entry.path()).unwrap();
+                    fs::write(entry.path(), pin_versions(&text, version)).unwrap();
+                }
+            }
+            return Prepared {
+                credentials: Vec::new(),
+                image_metadata: Vec::new(),
+                engine_socket: false,
+            };
+        }
+        Input::Document(path) => fs::read(&path).unwrap(),
+    };
+    let mut document = Document::parse(source.as_slice()).unwrap();
+    // A sandbox described by image metadata runs the fixture image.
+    let mut image_metadata = Vec::new();
+    for sandbox in document.spec.sandboxes.values_mut() {
+        if let Some(variable) = &sandbox.image.metadata {
+            image_metadata.push(variable.env.clone());
+            sandbox.image.ref_ = fixture_image.to_owned();
+        }
+    }
+    let credentials = document
+        .credential_names()
+        .into_iter()
+        .filter(|credential| !image_metadata.iter().any(|variable| variable == credential))
+        .map(str::to_owned)
+        .collect();
+    let engine_socket = document
+        .spec
+        .gateway
+        .as_managed()
+        .is_some_and(|managed| !managed.engine.is_empty());
+    fixtures.redirect(&mut document);
+    let generations: compile::Generations =
+        GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();
+    let mut graph = compile::compile(&document, &generations, version).unwrap();
+    for_tofu_test(&mut graph);
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("nemoclaw.tf.json"), graph.to_string()).unwrap();
+    fs::write(target.join("nemoclaw.yaml"), &source).unwrap();
+    // The harness names the shared modules relative to the integration root.
+    let depth = module.split('/').count();
+    let harness = fs::read_to_string(Path::new(ROOT).join("harness/main.tf"))
+        .unwrap()
+        .replace(
+            "\"../../modules/",
+            &format!("\"{}modules/", "../".repeat(depth)),
+        );
+    fs::write(target.join("harness.tf"), harness).unwrap();
+    Prepared {
+        credentials,
+        image_metadata,
+        engine_socket,
+    }
+}
+
+/// Add `version` to each NVIDIA provider requirement in `text`.
+fn pin_versions(text: &str, version: &str) -> String {
+    const SOURCE: &str = "source = \"registry.opentofu.org/nvidia/";
+    let mut pinned = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(SOURCE) {
+        let after = start + SOURCE.len();
+        let end = after + rest[after..].find('"').unwrap() + 1;
+        pinned.push_str(&rest[..end]);
+        pinned.push_str(&format!(", version = \"{version}\""));
+        rest = &rest[end..];
+    }
+    pinned.push_str(rest);
+    pinned
 }
 
 async fn run_shard(shard: usize) {
     let bundle = Bundle::from_env();
-    let root = Path::new(ROOT);
-    let mut tests: Vec<String> = fs::read_dir(root.join("tests"))
-        .unwrap()
-        .filter_map(|entry| {
-            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            name.strip_suffix(".tftest.hcl").map(str::to_owned)
-        })
-        .collect();
-    tests.sort();
+    let root = Path::new(ROOT).to_path_buf();
+    let tests = test_files();
     assert!(tests.len() >= SHARDS, "every shard needs a scenario");
 
     let fixtures = Fixtures::start().await;
     let directory = tempfile::tempdir().unwrap();
     let work = directory.path().join("integration");
-    copy(root, &work);
+    copy(&root, &work);
     let manifest: Value =
         serde_json::from_slice(&fs::read(bundle.root().join("manifest.json")).unwrap()).unwrap();
     let version = manifest["Version"].as_str().unwrap();
-    let generations: compile::Generations =
-        GENERATIONS.map(|kind| (kind.into(), "a".repeat(32))).into();
     // Without an engine to inspect, image metadata names the fixture image's bundle.
     let (fixture_image, metadata) = nemoclaw_e2e::image_runtime::metadata_bundle(directory.path());
+    // OpenTofu loads every test file, so every module they name is prepared,
+    // once, although this shard runs only its own scenarios.
+    let mut prepared: BTreeMap<String, Prepared> = BTreeMap::new();
     let scenarios: Vec<Scenario> = tests
         .into_iter()
-        .map(|name| {
-            let yaml = Path::new(CASES).join(format!("{name}.yaml"));
-            let source =
-                fs::read(&yaml).unwrap_or_else(|_| panic!("{} is missing", yaml.display()));
-            let mut document = Document::parse(source.as_slice()).unwrap();
-            // A sandbox described by image metadata runs the fixture image.
-            let mut image_metadata = Vec::new();
-            for sandbox in document.spec.sandboxes.values_mut() {
-                if let Some(variable) = &sandbox.image.metadata {
-                    image_metadata.push(variable.env.clone());
-                    sandbox.image.ref_.clone_from(&fixture_image);
+        .map(|(name, text)| {
+            let mut scenario = Scenario {
+                name,
+                environment: BTreeMap::new(),
+                credentials: BTreeMap::new(),
+                engine_socket: false,
+            };
+            for module in references(&text) {
+                let prepared = prepared
+                    .entry(module.clone())
+                    .or_insert_with(|| prepare(&module, &work, &fixtures, &fixture_image, version));
+                scenario.engine_socket |= prepared.engine_socket;
+                for credential in &prepared.credentials {
+                    scenario
+                        .credentials
+                        .insert(credential.clone(), fixture_credential(credential));
+                }
+                for variable in &prepared.image_metadata {
+                    scenario
+                        .environment
+                        .insert(variable.clone(), metadata.display().to_string());
                 }
             }
-            let credentials: BTreeMap<String, String> = document
-                .credential_names()
-                .into_iter()
-                .filter(|credential| !image_metadata.iter().any(|variable| variable == credential))
-                .map(|credential| {
-                    (
-                        credential.to_owned(),
-                        format!("fixture-credential-{}", credential.to_lowercase()),
-                    )
-                })
-                .collect();
-            fixtures.redirect(&mut document);
-            let mut graph = compile::compile(&document, &generations, version).unwrap();
-            for_tofu_test(&mut graph);
-            let case = work.join("cases").join(&name);
-            fs::create_dir_all(&case).unwrap();
-            fs::write(case.join("nemoclaw.tf.json"), graph.to_string()).unwrap();
-            fs::write(case.join("nemoclaw.yaml"), &source).unwrap();
-            fs::copy(root.join("harness/main.tf"), case.join("harness.tf")).unwrap();
-            let mut environment = credentials.clone();
-            for variable in image_metadata {
-                environment.insert(variable, metadata.display().to_string());
+            // An authored example reads the credentials its test file names.
+            for credential in credential_environment(&text) {
+                scenario
+                    .credentials
+                    .insert(credential.clone(), fixture_credential(&credential));
             }
-            Scenario {
-                name,
-                environment,
-                credentials,
-            }
+            scenario.environment.extend(scenario.credentials.clone());
+            scenario
         })
         .collect();
 
@@ -174,9 +341,11 @@ async fn run_shard(shard: usize) {
         .join("registry.opentofu.org/nvidia/fixture/1.0.0")
         .join(bundle.root().file_name().unwrap());
     fs::create_dir_all(&platform).unwrap();
-    std::os::unix::fs::symlink(
+    fs::copy(
         nemoclaw_test_fixtures::fixture_executable("nemoclaw-fixture-control"),
-        platform.join("terraform-provider-fixture"),
+        platform.join(nemoclaw_test_fixtures::executable(
+            "terraform-provider-fixture",
+        )),
     )
     .unwrap();
     let configuration = directory.path().join("providers.tfrc");
@@ -203,6 +372,26 @@ async fn run_shard(shard: usize) {
     ]
     .map(|(name, value)| (name.to_owned(), value))
     .into();
+    // Windows programs need these to find system libraries, temporary
+    // directories, and executables.
+    if cfg!(windows) {
+        for name in [
+            "SystemRoot",
+            "SystemDrive",
+            "windir",
+            "ComSpec",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ] {
+            if let Ok(value) = std::env::var(name) {
+                base.insert(name.into(), value);
+            }
+        }
+    }
     // Coverage-instrumented providers write their profiles where the caller asks.
     if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
         base.insert("LLVM_PROFILE_FILE".into(), profile);
@@ -219,10 +408,26 @@ async fn run_shard(shard: usize) {
     let mut failed = Vec::new();
     // OpenTofu loads every test file, so every scenario is compiled; this shard runs its own.
     for scenario in scenarios.iter().skip(shard).step_by(SHARDS) {
+        // The skip shows in the output and the CI summary, not only as an absence.
+        if cfg!(not(unix)) && scenario.engine_socket {
+            println!(
+                "scenario {}: skipped; managed Docker gateway storage needs a Unix engine socket",
+                scenario.name
+            );
+            record(&scenario.name, "skipped on this platform");
+            continue;
+        }
         fixtures.reset(scenario.credentials.clone());
         let mut environment = base.clone();
         environment.extend(scenario.environment.clone());
-        let filter = format!("-filter=tests/{}.tftest.hcl", scenario.name);
+        // OpenTofu matches the filter against its own platform path, which
+        // uses backslashes on Windows.
+        let filter = format!(
+            "-filter={}",
+            Path::new("tests")
+                .join(format!("{}.tftest.hcl", scenario.name))
+                .display()
+        );
         let (_, output) = tofu(&bundle, &work, &environment, ["test", "-no-color", &filter]).await;
         let problem = check(&output, &scenario.credentials, &diagnostics)
             .or_else(|| fixtures.teardown_problem());
@@ -235,22 +440,14 @@ async fn run_shard(shard: usize) {
                 "failed"
             }
         );
-        // CI summarizes every shard's results from the evidence directory.
-        if let Some(root) = std::env::var_os("NEMOCLAW_INTEGRATION_EVIDENCE") {
-            use std::io::Write as _;
-            fs::create_dir_all(&root).unwrap();
-            let result = if problem.is_none() {
+        record(
+            &scenario.name,
+            if problem.is_none() {
                 "passed"
             } else {
                 "failed"
-            };
-            fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(Path::new(&root).join("results.tsv"))
-                .and_then(|mut file| writeln!(file, "{}\t{result}", scenario.name))
-                .unwrap();
-        }
+            },
+        );
         if let Some(problem) = problem {
             let evidence = evidence_root.join(&scenario.name);
             fs::create_dir_all(&evidence).unwrap();
@@ -273,6 +470,21 @@ async fn run_shard(shard: usize) {
             evidence_root.display(),
             kept.display()
         );
+    }
+}
+
+/// Append a scenario's result to the evidence directory CI names, from which
+/// it summarizes every shard's results.
+fn record(scenario: &str, result: &str) {
+    use std::io::Write as _;
+    if let Some(root) = std::env::var_os("NEMOCLAW_INTEGRATION_EVIDENCE") {
+        fs::create_dir_all(&root).unwrap();
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(Path::new(&root).join("results.tsv"))
+            .and_then(|mut file| writeln!(file, "{scenario}\t{result}"))
+            .unwrap();
     }
 }
 

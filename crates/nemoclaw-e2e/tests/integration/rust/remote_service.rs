@@ -100,13 +100,13 @@ impl Scenario {
         gateway.state.lock().unwrap().driver = Some("podman".into());
         gateway.state.lock().unwrap().inference_exit = 1;
         let document = Document::parse(
-            include_bytes!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
+            include_bytes!("../../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
         )
         .unwrap();
         let mut value = serde_json::to_value(document).unwrap();
         if kind == "ollama" {
             let source: Value = serde_saphyr::from_str(include_str!(
-                "../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"
+                "../../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml"
             ))
             .unwrap();
             value["spec"]["services"]["qwen"] = source["spec"]["services"]["ollama-server"].clone();
@@ -318,14 +318,6 @@ async fn partial_runtime_destroy_retains_storage_without_creating_network() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated partial deployment fixtures"]
-async fn partial_ollama_destroy_retains_storage_without_creating_network() {
-    let s = Scenario::new("nvidia.fabric.openclaw", false, "ollama").await;
-    plan_collects_no_host_capacity(&s).await;
-    partial_destroy_retains_storage(&s).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
 async fn unverified_vllm_images_are_checked_after_pull_before_storage() {
     pulled_incompatible_image_fails_before_storage(
@@ -333,15 +325,6 @@ async fn unverified_vllm_images_are_checked_after_pull_before_storage() {
     )
     .await;
 }
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
-async fn unverified_ollama_images_are_checked_after_pull_before_storage() {
-    pulled_incompatible_image_fails_before_storage(
-        &Scenario::new("nvidia.fabric.openclaw", false, "ollama").await,
-    )
-    .await;
-}
-
 async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
     let root = s.root.as_path();
     let mut stale = read(root, "fixture.json");
