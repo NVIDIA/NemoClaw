@@ -6,6 +6,8 @@ use super::*;
 use nemoclaw_build::ci::{self, Step};
 use std::{ffi::OsString, time::Instant};
 
+#[path = "run_ci/kind_registry.rs"]
+mod kind_registry;
 #[path = "run_ci/live_docker.rs"]
 mod live_docker;
 #[path = "run_ci/live_images.rs"]

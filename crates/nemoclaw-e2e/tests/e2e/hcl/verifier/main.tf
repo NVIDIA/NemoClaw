@@ -29,7 +29,14 @@ resource "terraform_data" "probe" {
   # Every test apply recollects observations, including repeated identical scenarios.
   triggers_replace = uuid()
   provisioner "local-exec" {
-    command = "\"$NEMOCLAW_HCL_PROBE\" hcl_live::probe --exact --ignored --quiet"
+    # Each file in the private credentials directory, such as a kind case's
+    # OIDC token, becomes the variable it names, as for the cli module.
+    command = <<-EOT
+      for credential in "$CREDENTIALS"/*; do
+        [ -f "$credential" ] && export "$(basename "$credential")=$(cat "$credential")"
+      done
+      exec "$NEMOCLAW_HCL_PROBE" hcl_live::probe --exact --ignored --quiet
+    EOT
     environment = {
       NEMOCLAW_HCL_PROBE            = var.context.probe_executable
       NEMOCLAW_HCL_CONFIG           = var.context.config
@@ -39,6 +46,7 @@ resource "terraform_data" "probe" {
       NEMOCLAW_HCL_RESPONSE_POINTER = each.value.response_pointer
       NEMOCLAW_HCL_REPORT           = "${var.context.evidence_dir}/${each.key}-${self.id}.json"
       NEMOCLAW_HCL_REPLY            = "${var.context.work_dir}/${self.id}.reply"
+      CREDENTIALS                   = "${var.context.work_dir}/credentials"
     }
   }
 }
