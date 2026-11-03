@@ -274,11 +274,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && ["/v1/models", "/models"].includes(path)) {
+  if (["GET", "HEAD"].includes(req.method ?? "") && ["/v1/models", "/models"].includes(path)) {
     const modelsAuthOk = !requireAuthModels || req.headers.authorization === `Bearer ${apiKey}`;
-    log(`GET ${path} auth=${modelsAuthOk ? "ok" : "missing"}`);
+    log(`${req.method} ${path} auth=${modelsAuthOk ? "ok" : "missing"}`);
     recordRequest({
-      method: "GET",
+      method: req.method!,
       path,
       hostHeader: req.headers.host,
       bodyBytes: 0,

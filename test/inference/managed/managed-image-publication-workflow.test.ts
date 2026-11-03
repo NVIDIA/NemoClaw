@@ -53,8 +53,6 @@ function isStrictChildPath(root: string, candidate: string): boolean {
   );
 }
 
-const managedBuilder = managedPublisher;
-
 function managedPrBuilder(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-build-and-entrypoint"],
@@ -727,6 +725,7 @@ describe("complete managed-image publication workflow", () => {
     const login = step(prBuilder, "Log in to GHCR for exact same-repository PR digest");
     const publish = step(prBuilder, "Publish exact same-repository PR managed image by digest");
     const logout = step(prBuilder, "Remove PR publication credentials");
+    const pull = step(prBuilder, "Pull exact published PR managed image");
     const exportContract = step(prBuilder, "Export exact published PR managed-image contract");
     const uploadContract = step(prBuilder, "Upload exact published PR managed-image contract");
     const sameRepository = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -750,14 +749,18 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(publish.with?.tags).toBeUndefined();
     expect(logout.if).toContain(sameRepository);
+    expect(pull.if).toBe(sameRepository);
+    expect(pull.env?.IMAGE_REFERENCE).toBe(
+      "${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}",
+    );
+    expect(pull.run).toContain(
+      'scripts/checks/pull-public-exact-digest.sh "$IMAGE_REFERENCE" "$PLATFORM"',
+    );
     expect(exportContract.if).toBe(sameRepository);
     expect(uploadContract.if).toBe(sameRepository);
-    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
+    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(pull));
+    expect(steps.indexOf(pull)).toBeLessThan(steps.indexOf(exportContract));
     const exportContractRun = exportContract.run ?? "";
-    expect(exportContractRun).toContain("scripts/checks/pull-public-exact-digest.sh");
-    expect(exportContractRun.indexOf("scripts/checks/pull-public-exact-digest.sh")).toBeLessThan(
-      exportContractRun.indexOf('docker buildx imagetools inspect "$reference" --raw'),
-    );
     expect(exportContract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
     expect(exportContractRun).toContain("org.opencontainers.image.version");
     expect(exportContractRun).toContain('--arg release "$RELEASE"');
@@ -948,7 +951,7 @@ ${required(qualification.run, "missing qualification command")}`,
 
   it("publishes an exact native amd64 and arm64 lane for every shipped agent (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
-    const builder = managedBuilder(workflow);
+    const builder = managedPublisher(workflow);
 
     expect(Object.keys(workflow.on ?? {}).sort()).toEqual(["pull_request", "workflow_call"]);
     expect(workflow.permissions).toEqual({

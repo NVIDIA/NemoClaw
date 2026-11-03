@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// OpenClaw 2026.9.1 retains native ESM modules during in-process restarts.
+// OpenClaw 2026.9.2 retains native ESM modules during in-process restarts.
 // Keep native restart admission and shutdown, then refresh the process image
 // inside the same OpenShell sandbox. Remove when upstream container restart
 // reliably reloads changed plugin modules and their dependencies.
@@ -87,9 +87,7 @@ export function patchHostSafeRestart(source: string): string {
 
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
-  // The Dockerfile restricts these pins to explicitly selected legacy E2E fixtures.
-  if (["2026.3.11", "2026.4.24"].includes(metadata.version)) return;
-  if (metadata.version !== VERSION && metadata.version !== "2026.9.1") {
+  if (metadata.version !== VERSION) {
     throw new Error(`Unsupported OpenClaw version: ${metadata.version}`);
   }
   const safeRestartFiles = fs

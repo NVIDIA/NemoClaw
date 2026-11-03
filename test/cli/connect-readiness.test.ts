@@ -115,7 +115,7 @@ describe("CLI connect readiness", () => {
     expect(
       calls.filter((call) => call === "sandbox list -g nemoclaw").length,
     ).toBeGreaterThanOrEqual(2);
-    expect(calls).toContain("sandbox exec --name alpha --tty -- /bin/bash -i");
+    expect(calls).toContain("sandbox exec --name alpha -g nemoclaw --tty -- /bin/bash -i");
   });
 
   it(

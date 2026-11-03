@@ -75,6 +75,29 @@ image it builds, on CPU. Other jobs skip it when the image or model variable is 
 A passing manual run proves the bridge cancellation path with the approved CPU image; it does not prove OpenShell
 onboarding, production CUDA image qualification, or the complete supported E2E fanout.
 
+### Native Hermes Discord status
+
+Managed-image PR builds run the native Hermes Discord contract on the local image on AMD64 and ARM64.
+For same-repository PRs, they also qualify the published immutable digest before exporting its contract.
+Release builds qualify the published digest before promotion.
+Protected multiarch qualification runs the contract before recording evidence.
+All three paths run the existing package-contract test with the selected immutable image.
+It mounts the compiled CLI and checkout read-only in the image under test, disables networking,
+and provides an empty Hermes home and temporary caches.
+
+To run it on Linux, build the CLI and select a cached immutable Hermes image for the native platform.
+Use Linux dependencies that match the image's architecture:
+
+```bash
+npm run build:cli
+npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts --image '<image@sha256:digest>' --platform linux/amd64
+```
+
+The test uses Hermes's installed runtime writer and the compiled channel status action. It checks
+authentication rejection, connected recovery, dead-writer uncertainty and native-error redaction.
+It does not contact Discord or prove message delivery. Ordinary package-contract runs skip the test;
+the qualification command supplies `NEMOCLAW_HERMES_RUNTIME_TEST=1` inside the image.
+
 ## Test contracts
 
 Do not read shipped YAML, JSON, manifests, workflows, or E2E runtime files only to assert literal

@@ -32,6 +32,7 @@ import {
   fingerprintSandboxRecreateValue,
   ownSandboxRecreateTransaction,
   type SandboxRecreateSourcePresence,
+  type SandboxRecreateObservation,
   sandboxRecreatePhaseReached,
 } from "../../onboard/sandbox-recreate-transaction";
 import { isValidName } from "../../sandbox-name-contract";
@@ -639,6 +640,45 @@ export function fingerprintRebuildRecreateTargetIntent(
 
 export const observeRebuildSandbox = observeSandboxOnGateway;
 
+/** A retained archive cannot prove that the surviving source has no newer writes. */
+function assertRetainedRebuildObservation(
+  transaction: CheckpointSandboxRecreateTransaction,
+  observation: SandboxRecreateObservation,
+  backupPath: string,
+): void {
+  if (observation.state === "missing") return;
+  if (
+    transaction.targetLiveIdentityFingerprint &&
+    observation.liveIdentityFingerprint === transaction.targetLiveIdentityFingerprint &&
+    observation.liveIdentityFingerprint !== transaction.sourceLiveIdentityFingerprint
+  )
+    return;
+  const detail =
+    observation.liveIdentityFingerprint === transaction.sourceLiveIdentityFingerprint
+      ? "The original sandbox still exists. The retained backup may exclude newer conversations or MCP changes."
+      : "The live same-name sandbox is not the journaled source or replacement.";
+  throw new Error(
+    `Cannot resume interrupted rebuild '${transaction.id}' for sandbox '${transaction.sandboxName}': ${detail} ` +
+      "No sandbox deletion was attempted. Preserve the sandbox, backup, and recovery files. " +
+      "Ask a NemoClaw maintainer to reconcile this interrupted rebuild before retrying. " +
+      `Backup: ${backupPath}`,
+  );
+}
+
+export function assertRetainedRebuildSourceAbsent(
+  sandboxName: string,
+  backupPath: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  const transaction = onboardSession.loadRebuildSession(sandboxName)?.checkpoint?.sandboxRecreate;
+  if (transaction?.sandboxName !== sandboxName) return;
+  assertRetainedRebuildObservation(
+    transaction,
+    observeRebuildSandbox(transaction, undefined, runtimeSelection),
+    backupPath,
+  );
+}
+
 export function assertRebuildRecoverySource(
   transaction: CheckpointSandboxRecreateTransaction,
   target: SandboxRecreateTarget,
@@ -653,6 +693,7 @@ export function assertRebuildRecoverySource(
 }
 
 export interface OpenRebuildRecreateJournalInput {
+  readonly retainedBackupPath?: string;
   readonly target: RebuildRecreateJournalTarget;
   readonly expectedGatewayAuthority: CheckpointGatewayAuthority;
   readonly agentName: string;
@@ -672,12 +713,20 @@ export function openRebuildRecreateJournal(
   input: OpenRebuildRecreateJournalInput,
 ): RebuildRecreateJournal {
   const { target, agentName, targetIntentFingerprint, log } = input;
+  const retainedTransaction = input.retainedBackupPath
+    ? onboardSession.loadSession()?.checkpoint?.sandboxRecreate
+    : null;
   const observeTarget = (
     runtimeSelection = input.runtimeSelection,
-  ): ReturnType<RebuildSandboxObserver> =>
-    input.observe
+  ): ReturnType<RebuildSandboxObserver> => {
+    const observation = input.observe
       ? input.observe(target)
       : observeRebuildSandbox(target, undefined, runtimeSelection);
+    if (retainedTransaction?.sandboxName === target.sandboxName && input.retainedBackupPath) {
+      assertRetainedRebuildObservation(retainedTransaction, observation, input.retainedBackupPath);
+    }
+    return observation;
+  };
   // Authority revalidation runs before the destroy phase. Handing the refusal
   // to the caller lets rebuild report the migration and its remedy instead of
   // crashing with a Node stack trace (#8103). The dedicated rebuild resolver

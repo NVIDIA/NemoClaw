@@ -1740,7 +1740,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         : -1;
     const sharedBoundaryBuildIndex =
       jobName === "managed-image-multiarch-startup"
-        ? workflowSteps.findIndex((step) => step.name === "Build shared policy boundary")
+        ? workflowSteps.findIndex(
+            (step) => step.name === "Build candidate CLI and shared policy boundary",
+          )
         : -1;
     const pinnedV1ToolchainIndex =
       jobName === "live" || jobName === "hermes-e2e"
@@ -3490,6 +3492,17 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
     errors.push(
       "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch",
+    );
+  }
+  if (
+    [asRecord(workflow.env), jobEnv, runVitestEnv].some((env) =>
+      ["TAVILY_API_KEY", "NEMOCLAW_E2E_TAVILY_AUTHENTICATED"].some((key) =>
+        Object.hasOwn(env, key),
+      ),
+    )
+  ) {
+    errors.push(
+      "hosted live E2E must not define TAVILY_API_KEY or NEMOCLAW_E2E_TAVILY_AUTHENTICATED",
     );
   }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");

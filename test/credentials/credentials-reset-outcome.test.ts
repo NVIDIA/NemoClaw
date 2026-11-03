@@ -35,13 +35,35 @@ describe("formatResetOutcome (#5560)", () => {
   it("reports every sandbox detached during a successful removal (#9806)", () => {
     const outcome = formatResetOutcome(
       "my-assistant-brave-search",
-      result({ ok: true, detachedSandboxes: ["alpha", "beta", "alpha"] }),
+      result({ ok: true, providerType: "brave", detachedSandboxes: ["alpha", "beta", "alpha"] }),
       "nemoclaw",
     );
 
     expect(outcome.ok).toBe(true);
     expect(outcome.lines).toContain(
       "  Provider 'my-assistant-brave-search' was detached from sandbox(es): alpha, beta during removal.",
+    );
+    expect(outcome.lines).toContain("    nemoclaw alpha rebuild");
+    expect(outcome.lines).toContain("    nemoclaw beta rebuild");
+  });
+
+  it("gives a restore path when the removed provider's type could not be read", () => {
+    const outcome = formatResetOutcome(
+      "tavily-search",
+      result({ ok: true, detachedSandboxes: ["alpha", "beta"] }),
+      "nemoclaw",
+    );
+
+    expect(outcome.ok).toBe(true);
+    const text = outcome.lines.join("\n");
+    expect(text).toContain("the removed provider cannot be inspected");
+    expect(text).not.toContain("credentials list");
+    expect(outcome.lines).toContain("    openshell provider get -g nemoclaw tavily-search");
+    expect(outcome.lines).toContain(
+      "    openshell sandbox provider attach -g nemoclaw alpha tavily-search",
+    );
+    expect(outcome.lines).toContain(
+      "    openshell sandbox provider attach -g nemoclaw beta tavily-search",
     );
     expect(outcome.lines).toContain("    nemoclaw alpha rebuild");
     expect(outcome.lines).toContain("    nemoclaw beta rebuild");

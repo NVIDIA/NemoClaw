@@ -223,6 +223,7 @@ export type SandboxInferenceRouteProbe = {
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+  gatewayName?: string;
 };
 
 type SandboxInferenceRouteEnsureResult = {
@@ -457,6 +458,7 @@ async function runSandboxConnectProbe(
         agentName,
         commandExecutor: sandboxCommandExecutor,
         ensureInferenceRoute: () => routeResult,
+        gatewayName: getSandboxTargetGatewayName(sandboxName),
         sandboxName,
       }),
     );
@@ -631,7 +633,11 @@ function describeHermesPortableForwardRecoveryFailure(
   context?: HermesPortableForwardRecoveryContext,
 ): string {
   if (failure === "restoration-unproved" && context) {
-    return `${describeHermesPortableForwardRecoveryFailure(failure)} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
+    const restorationDetail =
+      context.restorationPort === undefined
+        ? ""
+        : ` NemoClaw could not prove that the migrated API forward on host port ${String(context.restorationPort)} was retained.`;
+    return `${describeHermesPortableForwardRecoveryFailure(failure)}${restorationDetail} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
   }
   switch (context?.cause) {
     case "port-occupied":
@@ -639,7 +645,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-list-failed":
       return "The OpenShell `forward list` command failed, so NemoClaw could not prove the recorded forward state. Restore OpenShell access and retry.";
     case "forward-list-invalid":
-      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the complete forward list before retrying.";
+      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the forward list and the sandbox's recorded forward state before retrying.";
     case "forward-port-resolution-failed":
       return "NemoClaw could not resolve the required recorded host ports. It made no forward changes. Inspect the sandbox registry and launch-forward configuration before retrying.";
     case "forward-reachability-failed":
@@ -653,7 +659,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-occupied":
       return "A required recorded host port is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.";
     case "forward-state-unavailable":
-      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect `openshell forward list` before retrying.";
+      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect the sandbox's status and recorded forward state before retrying. `openshell forward list` can omit receipt-owned forwards.";
     case "recovery-failed":
       return "NemoClaw could not establish the required recorded host forwards within the recovery bound. Inspect the recorded forward state before retrying.";
     case "restoration-unproved":
@@ -1316,22 +1322,30 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
   process.exit(1);
 }
 
+// Prints refused container identities (#10869, #12799). False if none.
+function printUnmatchedContainerIdentity(
+  sandboxName: string,
+  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+): boolean {
+  const identityLines = inspectDockerIdentity
+    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
+    : null;
+  if (!identityLines) return false;
+  for (const line of identityLines) console.error(`  ${line}`);
+  return true;
+}
+
 // A terminal phase can follow from a container identity that NemoClaw refused
 // to match rather than from a crashed sandbox. Name that boundary instead of
 // steering the user to runtime logs and status (#10869).
 function failConnectReadinessTerminalPhase(
   sandboxName: string,
   transition: string,
-  { inspectDockerIdentity, retryCommand }: { inspectDockerIdentity: boolean; retryCommand: string },
+  identity: { inspectDockerIdentity: boolean; retryCommand: string },
 ): never {
   console.error("");
   console.error(`  Sandbox '${sandboxName}' ${transition} state.`);
-  const identityLines = inspectDockerIdentity
-    ? unmatchedSandboxContainerLines(sandboxName, `${CLI_NAME} ${sandboxName} ${retryCommand}`)
-    : null;
-  if (identityLines) {
-    for (const line of identityLines) console.error(`  ${line}`);
-  } else {
+  if (!printUnmatchedContainerIdentity(sandboxName, identity)) {
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
   }
@@ -1353,12 +1367,13 @@ async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise
 async function runSandboxInferenceRouteProbe(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
+  gatewayName?: string,
 ): Promise<SandboxInferenceRouteProbe> {
   const completion = await sandboxCommandExecutor.runBuffered(
     buildSandboxInferenceRouteProbeRequest(
       sandboxName,
       agent,
-      undefined,
+      gatewayName,
       OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
     ),
   );
@@ -1378,10 +1393,10 @@ async function runSandboxInferenceRouteProbe(
 export async function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
-  { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
+  { attempts = 1, delayMs = 0, gatewayName }: InferenceRouteProbeOptions = {},
 ): Promise<SandboxInferenceRouteProbe> {
   const attemptCount = Math.max(1, Math.floor(attempts));
-  return retryUntilAsync(() => runSandboxInferenceRouteProbe(sandboxName, agent), {
+  return retryUntilAsync(() => runSandboxInferenceRouteProbe(sandboxName, agent, gatewayName), {
     accept: (result) => result.healthy,
     retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
     sleep: (milliseconds) =>
@@ -1413,7 +1428,7 @@ async function reapplyVmInferenceRoute(
     connectInferenceRouteMutationRequest(gatewayName, inference.provider, inference.model),
   );
   if (!applyResult.ok && applyResult.ambiguous) throw new Error(applyResult.error.message);
-  return probeSandboxInferenceRoute(sandboxName, agent);
+  return probeSandboxInferenceRoute(sandboxName, agent, { gatewayName });
 }
 
 export async function repairSandboxInferenceRouteWithDeps(
@@ -1561,7 +1576,8 @@ async function repairSandboxInferenceRouteIfNeeded(
     { quiet },
     {
       isRepairDisabled: () => process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1",
-      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      probe: (name, options) =>
+        probeSandboxInferenceRoute(name, agent, { ...(options ?? {}), gatewayName }),
       shouldApplyVmDnsMonkeypatch,
       applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
       reapplyVmInferenceRoute: (name, sandbox) =>
@@ -1711,7 +1727,8 @@ async function resetManagedInferenceRoute(
         inferenceRouteMutator.setInferenceRoute(
           connectInferenceRouteMutationRequest(gatewayName, provider, model),
         ),
-      probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      probe: (name, options) =>
+        probeSandboxInferenceRoute(name, agent, { ...(options ?? {}), gatewayName }),
       printUnrecoverableInferenceRoute,
     },
   );
@@ -1833,7 +1850,7 @@ async function ensureSandboxInferenceRouteUnlocked(
       if (!verifyLocalInferenceRouteDependencies(provider, { quiet })) {
         return { sandbox: sb, routeHealthy: false };
       }
-      const finalProbe = await probeSandboxInferenceRoute(sandboxName, agent);
+      const finalProbe = await probeSandboxInferenceRoute(sandboxName, agent, { gatewayName });
       const strictRouteHealthy =
         finalProbe.healthy &&
         finalProbe.httpStatus !== undefined &&
@@ -2133,10 +2150,17 @@ export async function waitForSandboxReadyOrExit(
     const suggestedTimeout = Math.max(300, timeout * 2);
     console.error("");
     console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
-    console.error("  Check: openshell sandbox list");
-    console.error(
-      `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
-    );
+    if (
+      !printUnmatchedContainerIdentity(sandboxName, {
+        inspectDockerIdentity: allowDockerRuntimeInspection,
+        retryCommand,
+      })
+    ) {
+      console.error("  Check: openshell sandbox list");
+      console.error(
+        `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
+      );
+    }
     process.exit(1);
   }
   console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
@@ -2417,11 +2441,15 @@ export async function printInteractiveSessionHints(sandboxName: string): Promise
 
   // Active session hint — inform if already connected in another terminal
   try {
-    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps());
+    const sessionResult = getActiveSandboxSessions(
+      sandboxName,
+      createSessionDeps(),
+      getSandboxTargetGatewayName(sandboxName),
+    );
     if (sessionResult.detected && sessionResult.sessions.length > 0) {
       const count = sessionResult.sessions.length;
       console.log(
-        `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+        `  ${D}Note: ${count} existing active session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
       );
     }
   } catch {
@@ -3250,7 +3278,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
     return { ...buildHermesPortableCommandAuthority(sandboxName), gatewayName };
   };
   requalifyPortableDisposition();
-  if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  if (!hermesPortable) {
+    prepareHermesLightTerminalSkin(
+      sandboxName,
+      agent,
+      process.env,
+      sb ? getPersistedSandboxTargetGatewayName(sb) : undefined,
+    );
+  }
   requalifyPortableDisposition();
   const portableAuthority = hermesPortable ? await requalifyHermesPortableForConnect() : null;
   return {
@@ -3266,9 +3301,13 @@ async function prepareConnectSandboxWithinLifecycleFence(
     request: {
       kind: "connect",
       sandboxName,
-      target: portableAuthority
-        ? { kind: "named", gatewayName: portableAuthority.gatewayName }
-        : { kind: "selected" },
+      target: namedOpenShellGateway(
+        portableAuthority
+          ? portableAuthority.gatewayName
+          : sb
+            ? getPersistedSandboxTargetGatewayName(sb)
+            : getSandboxTargetGatewayName(sandboxName),
+      ),
     },
   };
 }

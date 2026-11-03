@@ -86,8 +86,15 @@ describe("credential rotation documentation", () => {
     expect(guide).toContain("A channel stopped with `channels stop` remains inactive");
     expect(guide).toContain("The sandbox registry stores the credential hash");
     expect(guide).toContain("OpenShell retains the registered credential");
+    expect(guide).toContain("Discord verifies the replacement token before recreation.");
     expect(guide).toContain(
-      "Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation.",
+      "Rejected, rate-limited, unreachable, or timed-out verification stops rotation and leaves the existing sandbox unchanged.",
+    );
+    expect(guide).toContain(
+      "Correct the token or host access, wait before retrying a rate-limited request, then rerun onboarding with the replacement.",
+    );
+    expect(guide).toContain(
+      "Microsoft Teams requires non-empty replacement input but cannot prove upstream credential validity before recreation.",
     );
     expect(guide).toContain("verify a live messaging request after onboarding finishes");
     expect(guide).not.toContain("validates each changed value");

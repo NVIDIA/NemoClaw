@@ -71,6 +71,7 @@ describe("checks runner", () => {
     ["nemoclaw/src/example.spec.ts", "test-title-style"],
     ["test/e2e/fixtures/example.ts", "e2e-assertion-census"],
     [".github/actions/ci-static-checks/action.yaml", "growth-guardrails-workflow-boundary"],
+    [".github/workflows/managed-images.yaml", "managed-image-discord-workflow-boundary"],
   ])("selects the owning check for %s", (file, name) => {
     expect(selectChecks(CHECKS, [file]).map((check) => check.name)).toContain(name);
   });
