@@ -31,6 +31,13 @@ class MappedTelemetryCommand extends NemoClawCommand {
   }
 }
 
+class DebugTelemetryCommand extends MappedTelemetryCommand {
+  public override async run(): Promise<void> {
+    await this.parse(DebugTelemetryCommand);
+    await super.run();
+  }
+}
+
 class UnmappedTelemetryCommand extends NemoClawCommand {
   static id = "status";
   public async run(): Promise<void> {
@@ -202,3 +209,64 @@ it("records a mapped command that fails during init (#12859)", async () => {
   expect(operationOf(requests[0])).toBe("update");
   expect(JSON.parse(requests[0].body).events[0].parameters.outcome).toBe("failed");
 });
+
+it.each(["environment", "flag"])(
+  "returns safe local counts from the packaged delivery child with debug enabled by %s",
+  async (mode) => {
+    const { log } =
+      require("../../dist/lib/cli/logger.js") as typeof import("../../src/lib/cli/logger");
+    const output: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      output.push(String(chunk));
+      return true;
+    });
+    try {
+      const requests = await captureRequests(async () => {
+        const home = process.env.HOME!;
+        expect(home).toBeTruthy();
+        const config =
+          "{ // native OpenClaw config\n agents: { defaults: { model: 'openai/gpt-4o' }, entries: { main: {} } } }";
+        const binary = path.join(home, "fake-openshell");
+        fs.writeFileSync(
+          binary,
+          `#!${process.execPath}\nconst args = process.argv.slice(2); const command = args.slice(args.indexOf('--') + 1);\nif (command[0] === 'cat') process.stdout.write(${JSON.stringify(config)});\nelse if (command[0] === 'uname') process.stdout.write('Linux');\nelse { process.stderr.write('private-native-token'); process.exitCode = 1; }\n`,
+          { mode: 0o700 },
+        );
+        vi.stubEnv("NEMOCLAW_LOG_LEVEL", mode === "environment" ? "debug" : undefined);
+        vi.stubEnv("NEMOCLAW_DEBUG", undefined);
+        vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", binary);
+        vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", undefined);
+        fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+        fs.writeFileSync(
+          path.join(home, ".nemoclaw", "sandboxes.json"),
+          JSON.stringify({
+            sandboxes: { selected: { name: "selected", agent: "openclaw", gatewayPort: 8080 } },
+          }),
+        );
+        await DebugTelemetryCommand.run(mode === "flag" ? ["--debug"] : [], sourceRoot);
+      });
+      expect(requests).toHaveLength(1);
+      const parameters = JSON.parse(requests[0].body).events[0].parameters;
+      expect(parameters.configurations).toMatchObject([
+        {
+          agentsStatus: "reported",
+          agents: [{ models: [{ modelId: "gpt-4o", providerProfile: "openai" }] }],
+        },
+      ]);
+      const summary = output.find((line) => line.includes("Telemetry collection counts:"));
+      expect(summary).toBeDefined();
+      expect(summary).toContain('"roster_read.nonzero_exit":1');
+      expect(summary).toContain('"roster.config_recovered":1');
+      expect(summary).not.toContain("selected");
+      expect(summary).not.toContain("gpt-4o");
+      expect(output.join("")).not.toContain("private-native-token");
+      expect(requests[0].body).not.toContain("debugCollection");
+      expect(requests[0].body).not.toContain("roster_read.nonzero_exit");
+      expect(requests[0].body).not.toContain("nemoclaw_collection_diagnostics_v1");
+    } finally {
+      stderr.mockRestore();
+      log.configure();
+    }
+  },
+  20_000,
+);

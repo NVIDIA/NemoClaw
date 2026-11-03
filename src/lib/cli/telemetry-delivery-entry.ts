@@ -7,6 +7,7 @@ import {
   telemetryRuntime,
 } from "../actions/telemetry/send";
 import { allowedTelemetryEndpoint } from "../adapters/telemetry/http";
+import { CollectionDiagnostics } from "../actions/telemetry/diagnostics";
 
 // Internal exit-path delivery only; private context is stdin, never argv or logs.
 async function main(): Promise<void> {
@@ -29,10 +30,19 @@ async function main(): Promise<void> {
   if (!allowedTelemetryEndpoint(config)) return;
   telemetryRuntime.config = config;
   if (!Number.isFinite(request.deadlineAt) || !Number.isFinite(request.remainingMs)) return;
-  await sendOperationTelemetry(
-    request.context,
-    Math.min(request.remainingMs, request.deadlineAt - Date.now()),
-  );
+  const diagnostics = request.debugCollection === true ? new CollectionDiagnostics() : undefined;
+  try {
+    await sendOperationTelemetry(
+      request.context,
+      Math.min(request.remainingMs, request.deadlineAt - Date.now()),
+      diagnostics,
+    );
+  } finally {
+    if (diagnostics && !shouldSuppressTelemetry(process.env))
+      await new Promise<void>((resolve) =>
+        process.stdout.write(diagnostics.serialize(), () => resolve()),
+      );
+  }
 }
 if (require.main === module)
   void main()

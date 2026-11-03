@@ -274,3 +274,30 @@ it("stops collection at the delivery deadline when a reader ignores cancellation
   expect(performance.now() - startedAt).toBeLessThan(1_000);
   expect(fetchMock).not.toHaveBeenCalled();
 });
+
+it("records a bounded snapshot failure without sending private failure details", async () => {
+  allowLocalTelemetry();
+  localReceiver();
+  const { CollectionDiagnostics, parseCollectionDiagnostics } = await import("./diagnostics");
+  const diagnostics = new CollectionDiagnostics();
+  collectOperationSnapshot.mockRejectedValueOnce(new Error("private snapshot detail"));
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  expect(await sendOperationTelemetry(context, 100, diagnostics)).toBe("failed");
+  expect(parseCollectionDiagnostics(diagnostics.serialize())).toEqual({ "snapshot.failed": 1 });
+  expect(diagnostics.serialize()).not.toContain("private snapshot detail");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("records an expired snapshot budget without attempting delivery", async () => {
+  allowLocalTelemetry();
+  localReceiver();
+  const { CollectionDiagnostics, parseCollectionDiagnostics } = await import("./diagnostics");
+  const diagnostics = new CollectionDiagnostics();
+  collectOperationSnapshot.mockImplementationOnce(() => new Promise(() => {}));
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  expect(await sendOperationTelemetry(context, 50, diagnostics)).toBe("failed");
+  expect(parseCollectionDiagnostics(diagnostics.serialize())).toEqual({ "snapshot.deadline": 1 });
+  expect(fetchMock).not.toHaveBeenCalled();
+});

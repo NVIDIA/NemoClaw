@@ -11,6 +11,7 @@ import type {
 } from "../../domain/telemetry/event";
 import { readTelemetryTestLabel } from "../../domain/telemetry/event";
 import { observedString } from "../../domain/telemetry/dimensions";
+import type { CollectionDiagnostics } from "./diagnostics";
 import { operationEnvelope } from "../../adapters/telemetry/gxt";
 import {
   allowedTelemetryCollection,
@@ -59,7 +60,7 @@ function missingObservation(value: unknown): boolean {
 
 export async function collectOperationEvent(
   context: TelemetryOperationContext,
-  options: { signal: AbortSignal; deadlineAt: number },
+  options: { signal: AbortSignal; deadlineAt: number; diagnostics?: CollectionDiagnostics },
 ): Promise<TelemetryOperationEvent> {
   const { collectOperationSnapshot } = await import("./snapshot");
   const snapshot = await collectOperationSnapshot({ ...options, targets: context.targets });
@@ -170,6 +171,7 @@ export async function collectOperationEvent(
 export async function sendOperationTelemetry(
   context: TelemetryOperationContext,
   budgetMs: number,
+  diagnostics?: CollectionDiagnostics,
 ): Promise<"disabled" | "accepted" | "failed"> {
   const config = telemetryRuntime.config;
   if (
@@ -191,9 +193,14 @@ export async function sendOperationTelemetry(
       collectOperationEvent(context, {
         signal: controller.signal,
         deadlineAt: deadlineAt - Math.min(1_000, budgetMs / 2),
+        diagnostics,
+      }).catch((error: unknown) => {
+        diagnostics?.record("snapshot.failed");
+        throw error;
       }),
       deadline,
     ]);
+    if (event === null) diagnostics?.record("snapshot.deadline");
     if (event === null || controller.signal.aborted) return "failed";
     if (
       telemetryRuntime.config !== config ||

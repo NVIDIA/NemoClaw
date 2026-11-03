@@ -6,7 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const spawnSync = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ status: 0, pid: undefined })));
+const spawnSync = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => ({
+    status: 0,
+    pid: undefined,
+    stdout: "" as string | Buffer,
+    error: undefined as Error | undefined,
+  })),
+);
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawnSync,
@@ -24,9 +31,14 @@ import {
   withTelemetryOperation,
 } from "./operation";
 import { recordRebuildCompletion } from "./upgrade";
+import { log } from "../../cli/logger";
+import { CollectionDiagnostics, MAX_COLLECTION_DIAGNOSTIC_BYTES } from "./diagnostics";
 
 beforeEach(() => {
   spawnSync.mockClear();
+  vi.stubEnv("NEMOCLAW_DEBUG", undefined);
+  vi.stubEnv("NEMOCLAW_LOG_LEVEL", undefined);
+  log.configure();
   telemetryRuntime.config = null;
   for (const key of ["CI", "GITHUB_ACTIONS", "VITEST", "NODE_ENV", "NEMOCLAW_DISABLE_TELEMETRY"])
     vi.stubEnv(key, undefined);
@@ -36,6 +48,7 @@ beforeEach(() => {
 afterEach(() => {
   telemetryRuntime.config = null;
   vi.unstubAllEnvs();
+  log.configure();
   vi.restoreAllMocks();
 });
 
@@ -257,4 +270,118 @@ it("does not hand malformed receipts to the delivery child (#12859)", async () =
 
   expect(spawnSync).not.toHaveBeenCalled();
   expect(fs.existsSync(directory)).toBe(false);
+});
+
+it("logs only validated local counts after a debug delivery child exits", async () => {
+  log.setDebug(true);
+  const diagnostics = new CollectionDiagnostics();
+  diagnostics.record("roster_read.timeout");
+  spawnSync.mockReturnValueOnce({
+    status: 0,
+    pid: undefined,
+    stdout: Buffer.from(diagnostics.serialize()),
+    error: undefined,
+  });
+  const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+  await withTelemetryOperation("sandbox_rebuild", async () => {
+    setTelemetryOutcome("completed", "applied", "sandbox");
+  });
+  expect(spawnSync).toHaveBeenCalledOnce();
+  const options = spawnSync.mock.calls[0][2] as {
+    input: string;
+    stdio: unknown;
+    maxBuffer: number;
+    timeout: number;
+  };
+  expect(JSON.parse(options.input).debugCollection).toBe(true);
+  expect(options.stdio).toEqual(["pipe", "pipe", "ignore"]);
+  expect(options.maxBuffer).toBe(MAX_COLLECTION_DIAGNOSTIC_BYTES);
+  expect(options.timeout).toBeLessThanOrEqual(5000);
+  expect(debug).toHaveBeenCalledExactlyOnceWith(
+    'Telemetry collection counts: {"roster_read.timeout":1}',
+  );
+});
+
+it.each(["default", "quiet"])(
+  "keeps the delivery child silent in %s logging mode",
+  async (mode) => {
+    log.setLevel(mode === "quiet" ? "debug" : "info");
+    log.setQuiet(mode === "quiet");
+    const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+    await withTelemetryOperation("sandbox_rebuild", async () => {});
+    const options = spawnSync.mock.calls[0][2] as {
+      input: string;
+      stdio: unknown;
+      maxBuffer?: number;
+    };
+    expect(JSON.parse(options.input).debugCollection).toBeUndefined();
+    expect(options.stdio).toEqual(["pipe", "ignore", "ignore"]);
+    expect(options.maxBuffer).toBeUndefined();
+    expect(debug).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  "private stdout and config content",
+  '{"kind":"nemoclaw_collection_diagnostics_v1","counts":{"private-name":1}}',
+  '{"kind":"nemoclaw_collection_diagnostics_v1","counts":{},"stderr":"private-error"}',
+  "x".repeat(MAX_COLLECTION_DIAGNOSTIC_BYTES + 1),
+])("discards an invalid diagnostic response without logging its contents: %j", async (stdout) => {
+  log.setDebug(true);
+  const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+  spawnSync.mockReturnValueOnce({ status: 0, pid: undefined, stdout, error: undefined });
+  await withTelemetryOperation("sandbox_rebuild", async () => {});
+  expect(debug).not.toHaveBeenCalled();
+});
+
+it("does not log child diagnostics after telemetry becomes suppressed", async () => {
+  log.setDebug(true);
+  const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+  spawnSync.mockImplementationOnce(() => {
+    vi.stubEnv("NEMOCLAW_DISABLE_TELEMETRY", "1");
+    return {
+      status: 0,
+      pid: undefined,
+      stdout: new CollectionDiagnostics().serialize(),
+      error: undefined,
+    };
+  });
+  await withTelemetryOperation("sandbox_rebuild", async () => {});
+  expect(debug).not.toHaveBeenCalled();
+});
+
+it("discards a failed child response without changing the operation result", async () => {
+  log.setDebug(true);
+  const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+  spawnSync.mockReturnValueOnce({
+    status: 0,
+    pid: undefined,
+    stdout: new CollectionDiagnostics().serialize(),
+    error: new Error("private process failure"),
+  });
+  const result = await withTelemetryOperation("sandbox_rebuild", async () => 42);
+  expect(result).toBe(42);
+  expect(debug).not.toHaveBeenCalled();
+});
+
+it("does not start a diagnostic child after telemetry is opted out", async () => {
+  log.setDebug(true);
+  vi.stubEnv("NEMOCLAW_DISABLE_TELEMETRY", "1");
+  const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+  await withTelemetryOperation("sandbox_rebuild", async () => {});
+  expect(spawnSync).not.toHaveBeenCalled();
+  expect(debug).not.toHaveBeenCalled();
+});
+
+it("discards diagnostic output from an unsuccessful child exit", async () => {
+  log.setDebug(true);
+  const debug = vi.spyOn(log, "debug").mockImplementation(() => {});
+  spawnSync.mockReturnValueOnce({
+    status: 1,
+    pid: undefined,
+    stdout: new CollectionDiagnostics().serialize(),
+    error: undefined,
+  });
+  await withTelemetryOperation("sandbox_rebuild", async () => {});
+  expect(debug).not.toHaveBeenCalled();
 });

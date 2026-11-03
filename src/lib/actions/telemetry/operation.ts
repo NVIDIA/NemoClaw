@@ -10,6 +10,8 @@ import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding/identity";
 import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import { isPublishedSandboxRegistration } from "../../state/registry/route-reservation";
+import { log } from "../../cli/logger";
+import { MAX_COLLECTION_DIAGNOSTIC_BYTES, parseCollectionDiagnostics } from "./diagnostics";
 import type {
   TelemetryOperation,
   TelemetryOperationContext,
@@ -406,18 +408,21 @@ function finishOnExit(current: Context, exitCode: number): void {
     const remainingMs = TELEMETRY_DEADLINE_MS - usedEvidenceMs(current);
     if (remainingMs <= 100) return;
     const deadlineAt = Date.now() + remainingMs - Math.ceil(performance.now() - preparationStarted);
+    const debugCollection = log.isDebug();
     const input = JSON.stringify({
       context: terminalContext(current, exitCode),
       remainingMs: remainingMs - 100,
       deadlineAt: deadlineAt - 100,
       config: { endpoint: config.endpoint.href, localReceiver: config.localReceiver === true },
+      ...(debugCollection ? { debugCollection: true } : {}),
     });
     const timeout = remainingMs - Math.ceil(performance.now() - preparationStarted);
     if (timeout <= 100) return;
     // Node normalizes this process-group option for spawnSync; its typings omit it.
     const options: SpawnSyncOptions & { detached: boolean } = {
       input,
-      stdio: ["pipe", "ignore", "ignore"],
+      stdio: ["pipe", debugCollection ? "pipe" : "ignore", "ignore"],
+      ...(debugCollection ? { maxBuffer: MAX_COLLECTION_DIAGNOSTIC_BYTES } : {}),
       timeout,
       killSignal: "SIGKILL",
       detached: process.platform !== "win32",
@@ -434,6 +439,17 @@ function finishOnExit(current: Context, exitCode: number): void {
       } catch {
         /* The sender's owned process group has already exited. */
       }
+    }
+    if (
+      debugCollection &&
+      !result.error &&
+      result.status === 0 &&
+      telemetryRuntime.config === config &&
+      !shouldSuppressTelemetry(process.env) &&
+      allowedTelemetryCollection(config, readTelemetryTestLabel(process.env))
+    ) {
+      const counts = parseCollectionDiagnostics(result.stdout);
+      if (counts) log.debug(`Telemetry collection counts: ${JSON.stringify(counts)}`);
     }
   } catch {
     /* An explicit process exit still preserves its original status. */
