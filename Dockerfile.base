@@ -414,6 +414,7 @@ COPY agents/openclaw/mcporter-runtime/package.json \
 COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/bundled-npm-package.mts \
+    scripts/lib/openclaw-npm-remediation.mts \
     scripts/lib/reviewed-npm-audit.mts \
     /scripts/lib/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
@@ -477,6 +478,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false \
+    set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.10.5)."; exit 1; }; \
     OPENCLAW_MIN_VERSION=$(grep -m 1 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
