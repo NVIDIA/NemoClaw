@@ -168,7 +168,11 @@ describe("host-local managed vLLM container probe", () => {
     expect(getLocalProviderValidationBaseUrl("vllm-local")).toBeNull();
     expect(getLocalProviderAvailabilityEndpoint("vllm-local")).toBeNull();
     expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
-    expect(probeLocalProviderHealth("vllm-local", { runCurlProbeImpl: probe })?.ok).toBe(false);
+    expect(probeLocalProviderHealth("vllm-local", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      detail:
+        "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+    });
     expect(validateLocalProvider("vllm-local", probe).ok).toBe(false);
     expect(probe).not.toHaveBeenCalled();
   });

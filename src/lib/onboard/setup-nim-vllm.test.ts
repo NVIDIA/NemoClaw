@@ -332,7 +332,8 @@ describe("setupNim vLLM route containment", () => {
       state: "unavailable inspection",
       status: 1,
       stdout: "",
-      message: "Managed vLLM authentication state is unsafe or unreadable.",
+      message:
+        "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
     },
   ])("stops onboarding before probing with $state", async ({ status, stdout, message }) => {
     vi.spyOn(localModelDocker, "dockerRun").mockReturnValue({

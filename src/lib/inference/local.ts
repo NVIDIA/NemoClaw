@@ -82,6 +82,7 @@ import {
 } from "./serving/managed-cluster-runtime-receipt";
 import {
   getLegacyHostLocalManagedVllmBridgeHost,
+  ManagedVllmInspectionError,
   recoverHostLocalManagedVllmEndpoint,
   resolveManagedVllmBridgeHost,
   UnsafeLegacyVllmBindingsError,
@@ -1546,7 +1547,8 @@ export function probeLocalProviderHealth(
         failureLabel: "unhealthy",
         probeLabel: "vllm backend",
         detail:
-          error instanceof UnsafeLegacyVllmBindingsError
+          error instanceof UnsafeLegacyVllmBindingsError ||
+          error instanceof ManagedVllmInspectionError
             ? error.message
             : "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
       };
