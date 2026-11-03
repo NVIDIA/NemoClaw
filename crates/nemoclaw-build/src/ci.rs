@@ -12,10 +12,11 @@ use std::{
 };
 
 /// Release builds normally hide the checkout path. Coverage needs the original
-/// source paths to join debug-test and release-bundle counters.
+/// source paths to join debug-test and release-bundle counters, and relocation
+/// lets Linux continuous profiles retain counters from killed providers.
 pub fn bundle_rustflags(root: &Path, coverage: bool) -> String {
     if coverage {
-        "-C instrument-coverage".to_owned()
+        "-C instrument-coverage -C llvm-args=-runtime-counter-relocation".to_owned()
     } else {
         format!("--remap-path-prefix={}=/workspace", root.display())
     }

@@ -37,6 +37,9 @@ jobs:
           rustup component add llvm-tools-preview
           cargo install cargo-llvm-cov --version 0.9.1 --locked
           cargo llvm-cov show-env --export-prefix --no-cfg-coverage > "$RUNNER_TEMP/coverage.env"
+          # Linux continuous profiles keep counters when lifecycle tests kill
+          # a provider. Online merging bounds storage by binary, not process.
+          echo 'export RUSTFLAGS="$RUSTFLAGS -C llvm-args=-runtime-counter-relocation"' >> "$RUNNER_TEMP/coverage.env"
           cat >> "$RUNNER_TEMP/coverage.env" <<'SH'
           compact_profiles() {
             local profile_directory="$PWD/.build/coverage/raw/$1"
@@ -81,6 +84,41 @@ jobs:
               ".build/coverage/$layer.json" >> "$GITHUB_STEP_SUMMARY"
           }
           SH
+      - name: Verify continuous profile collection
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          probe="$RUNNER_TEMP/coverage-probe"
+          mkdir -p "$probe/profiles"
+          cat > "$probe/main.rs" <<'RS'
+          #[inline(never)]
+          fn killed_coverage_path(ready: &str) {
+              std::fs::write(ready, "ready").unwrap();
+              loop { std::thread::park(); }
+          }
+          fn main() {
+              if let Some(ready) = std::env::args().nth(1) { killed_coverage_path(&ready); }
+          }
+          RS
+          rustc -C instrument-coverage -C llvm-args=-runtime-counter-relocation \
+            "$probe/main.rs" -o "$probe/probe"
+          export LLVM_PROFILE_FILE="$probe/profiles/%c%m.profraw"
+          for invocation in {1..16}; do "$probe/probe"; done
+          "$probe/probe" "$probe/ready" &
+          child=$!
+          trap 'kill -KILL "$child" 2>/dev/null || true' EXIT
+          for poll in {1..100}; do
+            if [ -f "$probe/ready" ]; then break; fi
+            sleep 0.1
+          done
+          test -f "$probe/ready"
+          kill -KILL "$child"
+          wait "$child" || true
+          trap - EXIT
+          test "$(find "$probe/profiles" -name '*.profraw' | wc -l)" = 1
+          profile_tool="$(rustc --print target-libdir)/../bin/llvm-profdata"
+          "$profile_tool" merge --failure-mode=any "$probe"/profiles/*.profraw -o "$probe/merged.profdata"
+          "$profile_tool" show --counts --function=killed_coverage_path "$probe/merged.profdata" \
+            | awk '/Function count:/ { if ($3 > 0) found=1 } END { exit !found }'
       - name: Build instrumented tests and bundle
         id: build
         run: |
@@ -95,7 +133,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           source "$RUNNER_TEMP/coverage.env"
-          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/unit/unit-%m-%p.profraw"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/unit/unit-%c%m.profraw"
           trap 'compact_profiles unit' EXIT
           cargo nextest run --locked --workspace --all-targets --profile ci
           cargo test --locked --workspace --doc
@@ -104,7 +142,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           source "$RUNNER_TEMP/coverage.env"
-          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/contract/contract-%m-%p.profraw"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/contract/contract-%c%m.profraw"
           trap 'compact_profiles contract' EXIT
           export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
           cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only \
@@ -114,7 +152,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           source "$RUNNER_TEMP/coverage.env"
-          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/integration/integration-%m-%p.profraw"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/integration/integration-%c%m.profraw"
           trap 'compact_profiles integration' EXIT
           export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
           cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only \
@@ -131,7 +169,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-before-live-${{ github.sha }}-${{ github.run_attempt }}
-          path: .build/coverage
+          path: |
+            .build/coverage/*.json
+            .build/coverage/raw/*/*-merged.profraw
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
@@ -155,7 +195,7 @@ jobs:
         if: ${{ !cancelled() && steps.live_inputs.outcome == 'success' }}
         run: |
           source "$RUNNER_TEMP/coverage.env"
-          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/e2e/e2e-%m-%p.profraw"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/e2e/e2e-%c%m.profraw"
           trap 'compact_profiles e2e' EXIT
           # The driver owns cleanup of its uniquely named images and resources.
           target/debug/nemoclaw-build ci live-images
@@ -182,7 +222,8 @@ jobs:
         with:
           name: coverage-${{ github.sha }}-${{ github.run_attempt }}
           path: |
-            .build/coverage
+            .build/coverage/*.json
+            .build/coverage/raw/*/*-merged.profraw
             target/nextest/**/*.xml
           include-hidden-files: true
           if-no-files-found: error

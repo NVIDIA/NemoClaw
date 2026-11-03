@@ -556,18 +556,19 @@ It builds instrumented test executables and an instrumented bundle; it does not 
 At build time, `NEMOCLAW_COVERAGE` enables bundle instrumentation, retains checkout source paths, and permits SDK child processes to inherit `LLVM_PROFILE_FILE`.
 Leave that variable unset for ordinary builds.
 
-Each layer writes separate LLVM profiles, compacted after execution to limit disk use.
+Each layer writes separate LLVM profiles, merged online by binary and compacted after execution to limit disk use.
+Linux continuous profiling retains counters when a test kills a provider; a startup probe verifies collection from a killed process before the workspace builds.
 Before image builds, the workflow archives live tests and removes compiler intermediates while retaining linked executables.
 Reports use the same debug and release objects as their denominator.
 Overall coverage merges the four layers' profile counters, counting shared lines once; it does not average their percentages.
 The job summary lists line, function, and region coverage.
-Its artifact retains JSON reports and compacted profiles for 14 days.
+Its artifact retains JSON reports and compacted profiles for 14 days; unprocessed raw profiles are excluded from uploads.
 Unit, contract, and integration reports are also uploaded before live setup, so an interrupted runner does not lose those measurements.
 Reports from failed layers are partial; overall coverage requires all four layers to pass.
 
 The scope excludes private `nemoclaw-e2e` fixtures, vendored code, third-party executables, and processes inside workload images.
 Hosted-model and remote-host E2E scenarios do not run here.
-Only processes that write LLVM profiles contribute counters; a process killed before flushing can leave executed code uncounted.
+Only processes that initialize valid LLVM profiles contribute counters; profile validation errors fail collection.
 Branch coverage is not enabled.
 
 ## Write Tests
