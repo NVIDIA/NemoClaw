@@ -33,7 +33,7 @@ pub struct Shared {
     upstream_endpoint: OnceLock<String>,
     upstream_requests: Mutex<Vec<String>>,
     /// The model IDs the upstream lists.
-    models: Mutex<Vec<String>>,
+    models: Mutex<Vec<Value>>,
     /// Fixture credential values by environment variable.
     credentials: Mutex<BTreeMap<String, String>>,
 }
@@ -175,10 +175,7 @@ impl Shared {
             let list = |key: &str| declared[key].as_array().cloned().unwrap_or_default();
             *self.images.lock().unwrap() = list("images");
             *self.containers.lock().unwrap() = list("containers");
-            *self.models.lock().unwrap() = list("models")
-                .iter()
-                .filter_map(|model| model.as_str().map(str::to_owned))
-                .collect();
+            *self.models.lock().unwrap() = list("models");
             self.gateway.lock().unwrap().declare(&declared);
         }
         (
@@ -329,14 +326,27 @@ impl Fixtures {
         let upstream = http_fixture::Fixture::start_tcp(move |request| {
             let target = format!("{} {}", request.method, request.path);
             serving.upstream_requests.lock().unwrap().push(target);
+            // A model is its name, or an Ollama model with its name and digest.
             let models = serving.models.lock().unwrap();
+            let name = |model: &Value| model.as_str().or(model["name"].as_str()).map(str::to_owned);
             if request.method == "GET" && request.path.ends_with("/models") && !models.is_empty() {
                 let data: Vec<Value> = models
                     .iter()
+                    .filter_map(name)
                     .map(|id| json!({"id": id, "object": "model"}))
                     .collect();
                 let list = json!({"object": "list", "data": data});
                 return Some((200, list.to_string().into_bytes()));
+            }
+            if request.method == "GET" && request.path.ends_with("/api/tags") && !models.is_empty()
+            {
+                let tags: Vec<Value> = models
+                    .iter()
+                    .filter_map(|model| {
+                        Some(json!({"name": name(model)?, "digest": model["digest"], "size": 42}))
+                    })
+                    .collect();
+                return Some((200, json!({"models": tags}).to_string().into_bytes()));
             }
             Some((404, Vec::new()))
         })
@@ -381,6 +391,25 @@ impl Fixtures {
             *engine = endpoint.to_owned();
         }
         let upstream = shared.upstream_endpoint.get().unwrap();
+        // An Ollama proxy's existing daemon is the upstream fixture too.
+        let mut value = serde_json::to_value(&*document).unwrap();
+        let mut proxied = false;
+        if let Some(services) = value["spec"]["services"].as_object_mut() {
+            for service in services.values_mut() {
+                if let Some(endpoint) = service["upstream"]["endpoint"].as_str() {
+                    let path = url::Url::parse(endpoint)
+                        .unwrap()
+                        .path()
+                        .trim_end_matches('/')
+                        .to_owned();
+                    service["upstream"]["endpoint"] = json!(format!("{upstream}{path}"));
+                    proxied = true;
+                }
+            }
+        }
+        if proxied {
+            *document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        }
         for provider in document.spec.inference_providers.values_mut() {
             if !provider.endpoint.is_empty() {
                 let path = url::Url::parse(&provider.endpoint)

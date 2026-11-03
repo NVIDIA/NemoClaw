@@ -80,6 +80,39 @@ run "verify" {
   }
 }
 
+# Verify's apply kept every identity on the OpenShift gateway: no gateway
+# change, the same sandboxes and registrations, and no agent started again.
+# var.baseline is what verify observed after deploy.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
+
+  variables {
+    baseline = run.verify.baseline
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.baseline.effects
+    error_message = "An unchanged apply changed the gateway."
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.sandboxes == var.baseline.sandboxes
+      && toset(module.observed.openshell.registrations) == toset(var.baseline.registrations)
+    )
+    error_message = "An unchanged apply replaced a sandbox or a registration."
+  }
+
+  assert {
+    condition     = module.observed.openshell.fabric_starts == var.baseline.fabric_starts
+    error_message = "An unchanged apply started an agent again."
+  }
+}
+
 # OpenTofu removes what the last applying run applied, with its variables:
 # this run permits deletion, as the SDK's teardown graph does.
 run "teardown" {
