@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { writeLocalHookConfig } from "./hook-config";
 
 it.each([
   { file: "src/lib/adapters/read.ts", expected: 1 },
@@ -50,7 +51,7 @@ it("formats existing source through the commit hook without a comparison ref", (
     fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
     fs.copyFileSync("oxfmt.config.ts", path.join(root, "oxfmt.config.ts"));
     fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
-    fs.copyFileSync(".pre-commit-config.yaml", path.join(root, ".pre-commit-config.yaml"));
+    writeLocalHookConfig(root);
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), "export const value={a:1,b:'two'}\n");
     const init = spawnSync("git", ["init", "--quiet"], { cwd: root, encoding: "utf8" });
@@ -60,6 +61,7 @@ it("formats existing source through the commit hook without a comparison ref", (
     const hookEnv = {
       ...process.env,
       PREK_NO_FAST_PATH: "1",
+      PREK_HOME: path.join(root, ".cache/prek"),
     };
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
