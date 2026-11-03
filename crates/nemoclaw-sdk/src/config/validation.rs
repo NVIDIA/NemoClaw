@@ -154,11 +154,8 @@ impl super::ManagedGateway {
                 && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
             "managed gateway requires a local engine socket and an unprivileged loopback HTTP port without credentials",
         )?;
-        let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(
-            net.is_some_and(|n| {
-                n.addr().is_private() && n.prefix_len() == 24 && n.addr() == n.network()
-            }),
+            crate::config::private_network(&self.network_cidr).is_some(),
             "managed gateway requires a private IPv4 /24 network",
         )
     }

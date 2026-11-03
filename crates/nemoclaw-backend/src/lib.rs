@@ -11,7 +11,7 @@ mod observation;
 mod secrets;
 
 pub use contract::{Backend, Mutation, Row};
-pub use endpoint::{validate_endpoint, validate_endpoint_url};
+pub use endpoint::{forbidden_address, validate_endpoint, validate_endpoint_url};
 pub use error::Error;
 pub use identity::{generate_generation, generate_owner};
 pub use nemoclaw_runtime::config::ConfigError;

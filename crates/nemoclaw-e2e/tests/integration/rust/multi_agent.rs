@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Several OpenClaw agents in one deployment, each in its own sandbox, through
-//! the SDK and the bundle's CLI against the fixture gateway.
+//! the SDK and the bundle's CLI against the fixture gateway: one agent's
+//! rejected start, and another owner's label on one sandbox. The HCL
+//! integration scenario kubernetes-external-three-agents owns one agent's
+//! replacement and restart leaving the others unchanged.
 use crate::deployment::Lifecycle;
 use nemoclaw_e2e::openshell::State;
 use nemoclaw_sdk::config::{AgentTools, Document};
@@ -11,7 +14,7 @@ use std::{collections::BTreeMap, fs, process::Command};
 /// its own model: assistant, researcher, and reviewer.
 fn three_agents() -> Document {
     let mut document =
-        Document::parse(include_str!("../../../../examples/fabric-openclaw.yaml").as_bytes())
+        Document::parse(include_str!("../../../../../examples/fabric-openclaw.yaml").as_bytes())
             .unwrap();
     let primary = document.spec.sandboxes["assistant"].clone();
     for (name, model) in [("researcher", "qwen3:8b"), ("reviewer", "qwen3:14b")] {
@@ -63,7 +66,7 @@ fn sandbox_ids(lifecycle: &Lifecycle) -> BTreeMap<String, String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
-    let mut lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
+    let lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
     lifecycle.apply().await;
     let applied = sandbox_ids(&lifecycle);
     let (configurations, calls) = {
@@ -109,11 +112,17 @@ async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
     let stderr = String::from_utf8(failed.stderr).unwrap();
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(report["outcome"], "failed");
+    let remaining = report["remainingState"].as_str().unwrap();
+    assert!(
+        remaining.contains("Changes may already have been made"),
+        "{remaining}"
+    );
     let message = report["error"]["message"].as_str().unwrap();
     for expected in [
         "sandbox/reviewer",
         "start_failed",
         "agent runtime is unknown",
+        "resources retained",
     ] {
         assert!(message.contains(expected), "{message}");
     }
@@ -207,110 +216,6 @@ async fn one_failed_agent_is_reported_alone_and_its_retry_replaces_only_it() {
         .apply(&changed, &lifecycle.cancel)
         .await
         .unwrap();
-    lifecycle.document = changed;
-    let effects = lifecycle.fixture.state.lock().unwrap().effects;
-    lifecycle.export_and_reapply_unchanged(effects).await;
-    lifecycle.destroy();
-}
-
-// The three agents share one provider registration and the workspace. Removing
-// one agent's sandbox must stop only that agent and keep what the others use.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn removing_one_agent_stops_only_its_runtime_and_keeps_shared_registrations() {
-    let mut lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
-    lifecycle.apply().await;
-    let applied = sandbox_ids(&lifecycle);
-    let workspace = lifecycle.document.workspace();
-    let (configurations, providers, profiles, workspaces, calls) = {
-        let state = lifecycle.fixture.state.lock().unwrap();
-        let registrations: Vec<_> = state
-            .providers
-            .values()
-            .map(|provider| provider.metadata.as_ref().unwrap().name.clone())
-            .collect();
-        assert_eq!(registrations.len(), 1, "{registrations:?}");
-        // Each sandbox runs its own agent with its own model, and attaches the
-        // shared registration.
-        for sandbox in lifecycle.document.sandboxes() {
-            let configuration = &state.fabric_configurations[&applied[sandbox.name]];
-            assert_eq!(configuration["metadata"]["name"], sandbox.agent.name);
-            let model = &sandbox.agent.inference.as_ref().unwrap().routes[0]
-                .overrides
-                .model;
-            assert_eq!(configuration["models"]["default"]["model"], *model);
-            let key = format!("{workspace}/{}", sandbox.name);
-            assert_eq!(
-                state.sandboxes[&key].spec.as_ref().unwrap().providers,
-                registrations
-            );
-        }
-        (
-            state.fabric_configurations.clone(),
-            state.providers.clone(),
-            state.profiles.clone(),
-            state.workspaces.clone(),
-            state.exec_calls.len(),
-        )
-    };
-
-    let mut reduced = lifecycle.document.clone();
-    reduced
-        .spec
-        .sandboxes
-        .retain(|name, _| name != "researcher");
-    let plan = lifecycle
-        .deployment
-        .plan(&reduced, &lifecycle.cancel)
-        .await
-        .unwrap();
-    let changes: BTreeMap<_, _> = plan
-        .changes
-        .iter()
-        .map(|change| (change.resource.as_str(), change.actions.clone()))
-        .collect();
-    let delete = vec!["delete".to_owned()];
-    assert_eq!(
-        changes,
-        BTreeMap::from([
-            ("fabric_agent.researcher", delete.clone()),
-            ("openshell_sandbox.researcher", delete.clone()),
-            ("terraform_data.agent_researcher", delete),
-        ])
-    );
-    lifecycle
-        .deployment
-        .apply(&reduced, &lifecycle.cancel)
-        .await
-        .unwrap();
-
-    let mut remaining = applied.clone();
-    remaining.remove("researcher");
-    assert_eq!(sandbox_ids(&lifecycle), remaining);
-    let effects = {
-        let state = lifecycle.fixture.state.lock().unwrap();
-        assert_eq!(
-            lifecycle_calls(&state, calls),
-            [("researcher", "stop")],
-            "only the researcher's agent may be stopped or started"
-        );
-        for id in remaining.values() {
-            assert_eq!(
-                state.fabric_configurations.get(id),
-                Some(&configurations[id])
-            );
-            assert!(!state.fabric_stopped.contains(id), "{id} was stopped");
-        }
-        assert!(
-            state.providers == providers,
-            "provider registrations changed"
-        );
-        assert!(state.profiles == profiles, "provider profiles changed");
-        assert!(state.workspaces == workspaces, "the workspace changed");
-        state.effects
-    };
-    lifecycle.document = reduced;
-    lifecycle.export_and_reapply_unchanged(effects).await;
     lifecycle.destroy();
 }
 

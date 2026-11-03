@@ -467,7 +467,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
             .remove(field);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
-    for cidr in ["172.30.119.8/24", "10.0.0.0/24"] {
+    for cidr in ["172.30.119.8/24", "10.0.0.0/24", "172.030.119.0/24"] {
         let mut invalid = value.clone();
         invalid["spec"]["services"]["qwen"]["placement"]["networkCIDR"] = json!(cidr);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());

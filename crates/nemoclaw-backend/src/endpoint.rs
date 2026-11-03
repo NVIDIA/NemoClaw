@@ -3,7 +3,7 @@
 //! The endpoint policy every backend applies before it connects.
 
 use nemoclaw_runtime::config::ConfigError;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use url::Url;
 
 fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
@@ -18,6 +18,28 @@ fn private(ip: IpAddr) -> bool {
         IpAddr::V4(ip) => ip.is_private(),
         IpAddr::V6(ip) => ip.is_unique_local(),
     }
+}
+
+/// Whether no endpoint or Service may name `ip`: unspecified, multicast,
+/// link-local, and the AWS IPv6 metadata address. IPv6 that embeds IPv4 is
+/// forbidden rather than converted: IPv4-mapped `::ffff:0:0/96`,
+/// IPv4-compatible `::/96` other than `::` and `::1`, and NAT64 `64:ff9b::/96`.
+/// Converting would accept plain HTTP to `[::ffff:10.0.0.1]`.
+pub fn forbidden_address(ip: IpAddr) -> bool {
+    ip.is_unspecified()
+        || ip.is_multicast()
+        || match ip {
+            IpAddr::V4(ip) => ip.is_link_local(),
+            IpAddr::V6(ip) => {
+                let [a, b, c, d, e, f, ..] = ip.segments();
+                let prefix = [a, b, c, d, e, f];
+                ip.is_unicast_link_local()
+                    || ip == Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254)
+                    || ip.to_ipv4_mapped().is_some()
+                    || prefix == [0x64, 0xff9b, 0, 0, 0, 0]
+                    || prefix == [0; 6] && !ip.is_loopback()
+            }
+        }
 }
 fn host_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
@@ -60,17 +82,10 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
         "gateway endpoint must not include a path",
     )?;
     let ip = host_ip(&url);
-    if let Some(ip) = ip {
-        // An IPv4-mapped address would need every IPv4 rule checked twice.
-        let link_local_or_mapped = match ip {
-            IpAddr::V4(ip) => ip.is_link_local(),
-            IpAddr::V6(ip) => ip.is_unicast_link_local() || ip.to_ipv4_mapped().is_some(),
-        };
-        require(
-            !ip.is_unspecified() && !ip.is_multicast() && !link_local_or_mapped,
-            "unspecified, multicast, link-local, and IPv4-mapped endpoints are forbidden",
-        )?;
-    }
+    require(
+        !ip.is_some_and(forbidden_address),
+        "unspecified, multicast, link-local, metadata, and IPv4-embedding endpoints are forbidden",
+    )?;
     // url also parses a special scheme without `//`, which would move the
     // authority read below into the path.
     let prefix = format!("{}://", url.scheme());
@@ -98,11 +113,12 @@ pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
             "HTTP requires a literal loopback address or private inference address",
         )?;
     }
+    // GCE resolves the single label `metadata` to its metadata server too.
     require(
         url.host_str().is_none_or(|host| {
-            !host
-                .trim_end_matches('.')
-                .eq_ignore_ascii_case("metadata.google.internal")
+            let host = host.trim_end_matches('.');
+            !host.eq_ignore_ascii_case("metadata")
+                && !host.eq_ignore_ascii_case("metadata.google.internal")
         }),
         "metadata endpoints are forbidden",
     )

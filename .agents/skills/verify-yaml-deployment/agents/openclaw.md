@@ -14,7 +14,7 @@ The adapter runs OpenClaw's gateway inside the sandbox; Fabric invocations reach
 
 ## YAML Edits
 
-For the [openclaw-dashboard](../features/openclaw-dashboard.md) feature, add to `spec.sandboxes.assistant`, with `URL` from that feature:
+For the [openclaw-dashboard](../features/openclaw-dashboard.md) feature, add to `spec.sandboxes.assistant`:
 
 ```yaml
 serviceExposures:
@@ -26,12 +26,10 @@ harness:
     interfaces:
       dashboard:
         port: 43000
-        public_origins:
-          - REPLACE_WITH_URL
 ```
 
 Merge `settings` into the example's `harness`; keep its `kind` and `execution`.
-The interface's `port` and the exposure's `targetPort` must match. `public_origins` lets the browser load the page from the exposure's URL; the forward's loopback origin needs no entry.
+The interface's `port` and the exposure's `targetPort` must match.
 Check the image's adapter declares the interface before relying on it:
 
 ```sh
@@ -47,9 +45,9 @@ The first request after apply can take about 30 seconds.
 
 ## Extra Features
 
-- [openclaw-dashboard](../features/openclaw-dashboard.md): the Control UI through a service exposure and through `openshell forward service`.
+- [openclaw-dashboard](../features/openclaw-dashboard.md): the Control UI through a service exposure with curl, and in a browser through `openshell forward service`.
 
 ## Known Gaps
 
 - **The agent can sign in to itself.** The agent's own tools can read the token file and reach the port ([docs/interfaces.md](../../../../docs/interfaces.md#who-can-use-an-interface)).
-- **Origins.** `public_origins` is the only way to load the page from the exposure's URL; OpenClaw accepts any loopback origin with the token.
+- **Origins.** The adapter accepts only loopback browser origins ([NVIDIA/NeMo-Fabric#573](https://github.com/NVIDIA/NeMo-Fabric/pull/573)), so a browser can sign in through the forward but not at the exposure's URL.
