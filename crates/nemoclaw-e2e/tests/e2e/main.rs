@@ -31,10 +31,3 @@ mod pseudo_terminal;
 mod registry_fixture;
 #[path = "rust/spark.rs"]
 mod spark;
-
-#[cfg(target_os = "linux")]
-#[path = "rust/remote_models.rs"]
-mod remote_models;
-#[cfg(target_os = "linux")]
-#[path = "rust/service_images/mod.rs"]
-mod service_images;

@@ -226,12 +226,12 @@ impl Scenario {
 // .config/test-budgets.yaml.
 //
 // vLLM recovery runs in the bearer scenario below. The runtime-independent
-// checks of an applied deployment (the readiness gate and pull policy reapply)
-// run once, against vLLM. Replacement protection runs for both model kinds, in
-// scenarios of its own that keep the reapply and recovery scenarios under that
-// limit. The memory decrease, whose compiled label does not depend on the kind,
-// runs once, against Ollama. The provider's readiness and storage tests cover
-// their own observations.
+// checks run once each: the readiness gate, pull policy reapply, and probes
+// against vLLM; capacity-free planning, incompatible images, and replacement
+// protection against Ollama. The SDK's runtime tests own the Preserve and
+// Recreate decision for every model kind; this scenario keeps a real plan
+// reaching it. The provider's readiness and storage tests cover their own
+// observations.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_reapply_and_drift_keep_bindings_and_stop_on_observation_failure() {
@@ -254,20 +254,9 @@ async fn remote_ollama_recovers_reapplies_and_stops_on_observation_failure_keepi
     let volume = recover_failed_creation_and_startup(&s).await;
     pull_policy_change_is_planned_without_engine_effects(&s).await;
     let stable = recover_lost_process_and_cache(&s, &volume).await;
-    export_and_reapply_are_unchanged(&s, &stable).await;
     let state = s.runtime_state();
     plans_stop_on_observation_failure(&s, &stable, &state, json!({"transport_failure":true})).await;
-    assert_no_probes(&s);
     incompatible_image_blocks_changes_but_not_teardown(&s, &stable["volume"]).await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn remote_vllm_preserve_refuses_image_change_and_recreate_plans_replacement() {
-    let s = Scenario::new("nvidia.fabric.openclaw", false, "vllm").await;
-    let stable = s.apply().await;
-    let state = s.runtime_state();
-    image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
-    assert_no_probes(&s);
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
@@ -277,7 +266,6 @@ async fn remote_ollama_preserve_refuses_image_and_memory_changes_and_recreate_pl
     let state = s.runtime_state();
     image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
     memory_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
-    assert_no_probes(&s);
 }
 
 // Bearer scenarios leave image compatibility, readiness, and transport checks,
@@ -286,12 +274,10 @@ async fn remote_ollama_preserve_refuses_image_and_memory_changes_and_recreate_pl
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_recovery_reapply_and_replacement_outside_state() {
     let s = Scenario::new("nvidia.fabric.hermes", true, "vllm").await;
-    plan_collects_no_host_capacity(&s).await;
     let volume = recover_failed_creation_and_startup(&s).await;
     bearer_is_registered_once_outside_state(&s);
     let stable = recover_lost_process_and_cache(&s, &volume).await;
     export_and_reapply_are_unchanged(&s, &stable).await;
-    assert_no_probes(&s);
     bearer_survives_compute_replacement(&s, &stable["volume"]).await;
     destroy_retains_storage(&s, &stable["volume"]).await;
 }
@@ -300,8 +286,6 @@ async fn managed_bearer_credentials_survive_recovery_reapply_and_replacement_out
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn managed_pi_applies_without_generation_and_failed_sandbox_changes_keep_intent() {
     let s = Scenario::new("nvidia.fabric.pi", false, "vllm").await;
-    present_incompatible_images_fail_before_effects(&s).await;
-    plan_collects_no_host_capacity(&s).await;
     s.apply().await;
     failed_sandbox_and_runtime_change_preserves_retained_intent(&s.root, &s.bundle, &s.gateway)
         .await;
@@ -312,9 +296,8 @@ async fn managed_pi_applies_without_generation_and_failed_sandbox_changes_keep_i
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; protocol-only partial deployment fixtures"]
 async fn partial_runtime_destroy_retains_storage_without_creating_network() {
-    let s = Scenario::new("nvidia.fabric.openclaw", false, "vllm").await;
-    plan_collects_no_host_capacity(&s).await;
-    partial_destroy_retains_storage(&s).await;
+    partial_destroy_retains_storage(&Scenario::new("nvidia.fabric.openclaw", false, "vllm").await)
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
