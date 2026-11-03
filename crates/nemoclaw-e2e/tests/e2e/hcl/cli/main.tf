@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Runs one bundled nemoclaw command against the case's deployment and reports
+# its result. The CLI owns the deployment and its state.
+
+terraform {
+  required_version = "= 1.12.9"
+}
+
+variable "context" {
+  type = object({
+    cli       = string
+    config    = string
+    state_dir = string
+    work_dir  = string
+  })
+}
+
+variable "operation" {
+  description = "plan, apply, or destroy."
+  type        = string
+  validation {
+    condition     = contains(["plan", "apply", "destroy"], var.operation)
+    error_message = "The operation must be plan, apply, or destroy."
+  }
+}
+
+locals {
+  arguments = {
+    plan    = ["plan", "--output", "json", "--non-interactive", var.context.config]
+    apply   = ["apply", "--output", "json", "--non-interactive", var.context.config]
+    destroy = ["destroy", "--output", "json"]
+  }[var.operation]
+}
+
+resource "terraform_data" "operation" {
+  # Every run block runs its command again, including identical repeated ones.
+  triggers_replace = uuid()
+  provisioner "local-exec" {
+    # The exit status is recorded rather than raised, so the run's assertion
+    # reports a failed command's message.
+    command = <<-EOT
+      mkdir -p "$OPERATION" && cd "$OPERATION" || exit 1
+      "$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
+      echo $? >exit
+    EOT
+    environment = {
+      NEMOCLAW  = var.context.cli
+      STATE     = var.context.state_dir
+      OPERATION = "${var.context.work_dir}/${self.id}"
+    }
+  }
+}
+
+# The operation's ID is unknown until apply, so its output is read after the
+# command ran. It stays in the private work directory.
+locals {
+  directory = "${var.context.work_dir}/${terraform_data.operation.id}"
+  exit_code = tonumber(trimspace(file("${local.directory}/exit")))
+  result    = local.exit_code == 0 ? jsondecode(file("${local.directory}/stdout")) : null
+}
+
+output "exit_code" {
+  value = local.exit_code
+}
+
+output "error" {
+  description = "The command's standard error, which carries a failure's message."
+  value       = trimspace(file("${local.directory}/stderr"))
+}
+
+output "result" {
+  description = "The command's JSON result, or null when it failed."
+  value       = local.result
+}
+
+output "changes" {
+  description = "The result's changes by resource address: actions and reason."
+  value       = { for change in try(local.result.changes, []) : change.resource => change }
+}

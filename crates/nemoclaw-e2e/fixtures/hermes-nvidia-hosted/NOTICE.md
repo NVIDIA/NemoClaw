@@ -6,7 +6,7 @@
 `v0-export.yaml` is the manually reviewed, credential-value-free output shape from the public `nemoclaw config export` contract delivered by NVIDIA/NemoClaw revision `b6934c6300c4e1e175757e9281ae3a641d9a5b1f` in #11986.
 It retains the NVIDIA credential environment-variable reference and the explicit Hermes API interface, but contains no credential value.
 
-`v1.yaml` records separately authored current v1 intent using the required singular `agent` shape and inference providers and sandboxes keyed by name.
+`../../cases/docker-hermes-v0-parity.yaml` records separately authored current v1 intent using the required singular `agent` shape and inference providers and sandboxes keyed by name.
 It declares the export's Hermes API interface as the adapter setting `harness.settings.interfaces.api`, where Fabric's Hermes adapter reads it.
 The deterministic test converts the historical one-element `agents` list and the named provider and sandbox lists only in memory and requires that projection to equal the parsed v1 document; the raw export is never deployed and no production translator is added.
-The explicitly selected live scenario reports its lifecycle assertions through Cargo and writes no separate evidence report.
+The live lifecycle deploys only the authored case, through `hcl/tests/docker-hermes-v0-parity.tftest.hcl`; the raw export is never deployed.

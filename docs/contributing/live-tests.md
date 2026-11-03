@@ -21,12 +21,11 @@ cargo ci live-kind
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
-Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
+The registry test uses a flow that deploys a gateway and an agent sandbox from that image through the public SDK, with one inference profile as in `examples/kubernetes/managed-development.yaml`.
 Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
 The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
 The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
-The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
+The registry test deploys `assistant` alone.
 The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
 A second apply must report no changes.
 Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
@@ -40,9 +39,12 @@ The answer shows that the runtime the first apply started still runs and that th
 Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
 If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, the namespace's 15 most recent events, and, for each sandbox whose Fabric runtime operation failed, Fabric's message from the deployment's `diagnostics/fabric-SANDBOX.json`, redacted as backend rejections are; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
 CI keeps that output in the suite's JUnit report for 14 days.
-The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that the gateway pod and each sandbox's agent pod use the assigned UID.
-Before deploying, it refuses a cluster that serves the `security.openshift.io` API group, where its annotations would replace the range that cluster assigns; on such a cluster, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
-Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
+The `kind-openshift-agents` [HCL E2E scenario](#hcl-e2e-scenarios) deploys three agents with the OpenShift profile, `assistant`, `researcher`, and `reviewer`, each sandbox granting one endpoint named for it so that no two have the same policy.
+Before its first apply, the `tests/e2e/hcl/kind` module releases a chart with the bundled Helm provider: the deployment's namespace with OpenShift UID-range annotations, as OpenShift prepares a project, and the same stub model in its own namespace.
+Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage; the test runner then uninstalls the release, which deletes both namespaces.
+`cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the agent image, and passes the kubeconfig as `TF_VAR_kubeconfig`.
+The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
+On a cluster that serves the `security.openshift.io` API group, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection. Then, as an operator would, it creates the deployment's namespace and a caller-managed image pull Secret before the first apply, and deploys an agent into that namespace, which NemoClaw binds by UID without labelling it.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
@@ -130,76 +132,65 @@ kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-tes
 
 Rerun `kubectl get persistentvolume VOLUME_NAME` with the same kubeconfig and context until it reports that the volume is not found.
 
-## Dependency Upgrade Test
+## HCL E2E Scenarios
 
-Before accepting an OpenShell or Fabric/image upgrade, use the small `dependency_upgrade_survives_apply_process_exit` test.
-It requires one agent and one already-running external inference provider; it rejects managed inference services.
-Supply a JSON input accepted by the selected Fabric adapter through `NEMOCLAW_UPGRADE_INPUT`.
-Run from the checkout that built the candidate bundle: the initial apply uses the bundled CLI, and subsequent checks use the checkout's SDK.
-Provide a dedicated deployment UID, an unused state directory whose parent exists, and an immutable candidate bundle.
-Use either an external gateway at the candidate SDK's pinned OpenShell version or a managed gateway with a free port and subnet.
-The compute daemon must have the selected agent image, and the inference endpoint must already serve the selected model.
-Supply any referenced credentials to the test process.
-The test makes real inference requests, which may incur charges for hosted providers.
+Each HCL E2E scenario deploys one document from `crates/nemoclaw-e2e/cases` and runs the matching `tests/e2e/hcl/tests/<case>.tftest.hcl` under the bundled OpenTofu `tofu test`.
+`hcl_live::case` sets the run's context and starts `tofu test`; the run blocks own the sequence and the assertions.
+Run blocks call these modules:
 
-From the repository root, with absolute paths:
+| Module | What it does |
+|---|---|
+| `tests/e2e/hcl/cli` | Runs one bundled `nemoclaw` command, `plan`, `apply`, or `destroy`, and reports its exit status, error, and JSON result. |
+| `tests/e2e/hcl/verifier` | Invokes agents through `hcl_live::probe` and reports targets without a reply, without an expected one-word answer, or from an unexpected runtime. |
+
+| Case | Runner | Checks |
+|---|---|---|
+| Case | Runner | Agent and reply |
+|---|---|---|
+| `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
+| `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
+| `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
+| `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
+| `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
+| `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
+| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply. |
+| `kind-openshift-agents` | `cargo ci live-kind` | Three agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli); each answers with the stub's reply. |
+
+Every scenario checks the same successful path:
+
+1. The bundled CLI applies the case.
+2. After the apply process exits, the agent replies from its recorded runtime, with the expected answer when the case names one.
+3. A second plan reports no changes.
+4. Destroy succeeds and retains only the case's persistent storage.
+
+Failure, recovery, drift, export, and reapply behavior belong to the [HCL integration tests](integration-tests.md), which run against fixtures.
+The hosted cases make real hosted inference requests, which may incur charges.
+
+The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
+Requests, replies, command output, and credentials stay in the run's private `work` directory.
+Before accepting an OpenShell, Fabric, or agent image upgrade, run the hosted cases against the candidate.
+
+To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
 ```sh
-NEMOCLAW_UPGRADE_CONFIG=/absolute/path/to/owned-deployment.yaml \
-NEMOCLAW_UPGRADE_STATE=/absolute/path/to/new-state \
-NEMOCLAW_UPGRADE_INPUT=/absolute/path/to/adapter-input.json \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
-  cargo test -p nemoclaw-e2e --test e2e \
-    fabric_live::dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+NEMOCLAW_HCL_CASE=docker-openclaw-v0-parity \
+NEMOCLAW_HCL_RUN=/absolute/path/to/new-run \
+NVIDIA_INFERENCE_API_KEY=... \
+  cargo test -p nemoclaw-e2e --test e2e hcl_live::case -- --exact --ignored --nocapture
 ```
 
-The test waits for the apply CLI to exit, then invokes the hosted Fabric runtime through OpenShell.
-It requires a successful Fabric result without assuming an adapter-specific output shape or qualifying response quality.
-It checks export/reapply and stable resource/runtime identities before destroying its owned workloads and registrations.
-It retains the workspace and persistent storage; failures retain state and resources for diagnosis and explicit cleanup.
-CLI failures appear in the test output.
-It never starts inference or substitutes another agent process through exec.
-
-If this test fails, passing lower-level fixture tests does not establish compatibility.
-Run it explicitly for candidate dependency upgrades, outside the default build; `CI / Bundle` retains the fast descriptor, reference, and protocol tests.
-
-## Retained Storage Observations
-
-The read-only live storage test requires an explicit OpenTofu state file containing the test deployment's retained inference credential-volume binding from an authenticated vLLM service:
-
-```sh
-NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/deployment-state/terraform.tfstate \
-  cargo test -p nemoclaw-sdk --test integration \
-  managed_live::retained_inference_credentials_preserve_their_reference_binding -- --ignored
-```
-
-The separate `existing_spark_runtime_bindings_are_observed_without_mutations` test requires both gateway and inference container bindings to exist and `NEMOCLAW_TEST_RUNTIME_ENGINE` to select their Docker engine.
-Neither read-only test creates resources or establishes live agent inference.
+Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deployment` with the same bundle, whether or not the scenario passed.
 
 ## Spark and Fabric
 
-The Spark test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes, and asserts the public plan and apply results.
+The `docker-openclaw-hermes-vllm` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
+Spark hardware has no CI runner yet.
+
+The Spark image-change test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes.
 Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
-Choose a fresh deployment UID, available gateway port and subnet, and a new state-directory path whose parent exists.
-The test derives the expected resources from the YAML's provider and sandbox names.
 
-From the repository root, with absolute paths:
-
-```sh
-NEMOCLAW_LIVE_SPARK_CONFIG=/absolute/path/to/deepagents-team.yaml \
-NEMOCLAW_LIVE_SPARK_STATE=/absolute/path/to/new-state \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test -p nemoclaw-e2e --test e2e spark::spark_yaml_plans_and_applies_expected_resources -- --ignored
-```
-
-The first plan must create gateway and inference compute, retained storage, and the service image resource, deferring OpenShell registration until the gateway exists.
-Apply must create those resources plus the provider profile, provider registration, sandbox, and workspace.
-A second plan and apply must report no changes.
-The test checks readiness without requesting a model response and leaves workloads running.
-It writes no separate test report.
-After failure, retain state for [explicit recovery](../usage.md#updates-and-recovery); use [destroy](../usage.md#destroy) when finished.
-
-Run `spark_image_change_plans_and_applies_replacement` separately with the same three variables and an established, running deployment.
+Run `spark::spark_image_change_plans_and_applies_replacement` with `NEMOCLAW_LIVE_SPARK_CONFIG`, `NEMOCLAW_LIVE_SPARK_STATE`, and `NEMOCLAW_TEST_BUNDLE` set to absolute paths, against an established, running deployment.
 Change only the inference image pin in the YAML.
 The test compares the input with exported configuration, then requires plan and apply to replace the service's `docker_container.inference_service_inference_<service>` and reconcile its image resource while retaining storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
@@ -207,21 +198,13 @@ Storage retention and watchdog recovery have separate tests under [runtime bound
 Use an immutable bundle copy for a long live run.
 Rebuilding `dist` replaces development artifacts; keep the selected bundle unchanged until the operation ends.
 
-The optional `fabric_live` test accepts absolute `NEMOCLAW_LIVE_FABRIC_CONFIG`, `NEMOCLAW_LIVE_FABRIC_STATE`, `NEMOCLAW_LIVE_FABRIC_INPUT`, and `NEMOCLAW_TEST_BUNDLE` paths.
-The input file contains JSON accepted by the selected Fabric adapter.
-Use a dedicated UID and state directory with an external gateway and inference endpoint.
-It applies the deployment, checks unchanged apply and export/reapply, explicitly invokes the hosted Fabric runtime, and destroys its owned registrations and sandbox.
-The hosted Fabric runtime must keep its identity throughout invocation and reapply.
-This test makes a real model request and reports assertion failures through the test runner.
-The workspace remains after destroy.
-
 ## Bare Brev
 
 The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
-Three jobs build the Linux AMD64 bundle and test binary, build the matching OpenClaw image, and provision the VM in parallel.
+Three jobs build the Linux AMD64 bundle and the `nemoclaw-e2e` `e2e` test executable, build the matching OpenClaw image, and provision the VM in parallel.
 Image transfer starts as soon as the image and VM are ready, overlapping any remaining bundle build.
 The image-loading job verifies the archive checksum and source revision, and requires Docker to retain the built image digest after loading.
-The lifecycle job waits for the bundle and loaded image, then transfers the bundle and runs the real inference and deployment checks on the fresh VM.
+The lifecycle job waits for the bundle and loaded image, then transfers the bundle and runs the `docker-openclaw-v0-parity` [HCL E2E scenario](#hcl-e2e-scenarios) on the fresh VM.
 Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
 The check list shows bundle build, image build, preparation, image loading, lifecycle, and deletion times separately; VM deletion remains part of successful qualification.
@@ -231,13 +214,9 @@ After the workflow file reaches the default branch, select `v1` with `workflow_d
 
 The reviewed Brev startup script installs the required host packages, enables Docker, and waits on a readiness sentinel before candidate transfer.
 The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock kernel ABI, and have at least 80 GiB free during the initial fresh-host check.
-The test refuses a host with a detected NemoClaw or OpenShell deployment.
-It uses the hosted NVIDIA OpenClaw fixture as the initial v1 configuration, replacing only its deployment UID and agent-image digest for the owned run.
-
-The test proves that plan leaves the Docker inventory unchanged, waits for the apply CLI process to exit, and then requires an exact agent reply through the hosted runtime.
-It checks unchanged apply, export/reapply, stable resource and Fabric runtime identities, denied undeclared egress, and preservation of an owned workspace file.
-Destroy must remove the provider, profile, sandbox, and managed gateway while retaining the documented workspace and gateway storage.
-The workflow uploads a sanitized Boolean proof and verifies that the Brev VM is absent before completing.
+The preparation refuses a host with a detected NemoClaw or OpenShell deployment.
+The lifecycle binds the case to the candidate image digest and a fresh deployment UID, runs the scenario, and then runs `nemoclaw destroy` whether or not the scenario passed.
+The workflow uploads the scenario's outcome reports, the destroy receipt, and the fresh-host checks, and verifies that the Brev VM is absent before completing.
 Failures still request VM deletion; no keep-alive option is provided.
 If cleanup fails, rerun the original `Delete VM` job until deletion is verified.
 After successful cleanup, rerun all jobs for fresh qualification; rerunning only lifecycle qualification cannot reuse the deleted VM.
@@ -246,61 +225,29 @@ Intermediate artifacts contain the candidate bundle, test executable, and image 
 These artifacts expire after one day; images are not published to a registry.
 Qualification transfers the inference credential through a private temporary file; the runner copy is removed after transfer, and the VM copy disappears with verified VM deletion.
 
-Run the Rust test directly only on a fresh owned Linux AMD64 host with the same prerequisites:
-
-```sh
-NEMOCLAW_LIVE_BREV_CONFIG=/absolute/path/to/owned-config.yaml \
-NEMOCLAW_LIVE_BREV_STATE=/absolute/path/to/new-state \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/linux-amd64-bundle \
-NVIDIA_INFERENCE_API_KEY=... \
-  cargo test -p nemoclaw-e2e --test brev \
-    bare_brev_hosted_openclaw_lifecycle -- --ignored --exact --nocapture
-```
-
-The direct command destroys NemoClaw workloads but leaves retained deployment storage and does not dispose of its host.
-The workflow owns and disposes of the Brev VM around that test.
-
 ## Generic Models
 
-The generic model lifecycle has a separate opt-in live test.
-Supply a fresh, owned OpenClaw or Hermes deployment configuration with a free gateway port and subnet, its state directory, and an immutable bundle:
+The `docker-openclaw-vllm` [HCL E2E scenario](#hcl-e2e-scenarios) deploys a vLLM model service on the `Live / HCL` NVIDIA GPU runner.
+The agent must reply from the local model, and destroy must retain only gateway storage and the model cache volume.
+The vLLM runtime's supervisor, memory guard, and storage reuse have their own tests; see [Run integration tests](integration-tests.md).
 
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_LIVE_MODEL_CONFIG=/absolute/path/to/vllm.yaml \
-NEMOCLAW_LIVE_MODEL_STATE=/absolute/path/to/state \
-  cargo test -p nemoclaw-e2e --test e2e \
-    model_live::selected_model_apply_export_and_watchdog_recovery -- --ignored --nocapture
-```
-
-It checks initial apply, unchanged apply, export and reapply, absence of PLE preparation, and an operator-triggered watchdog stop.
-It sends no agent requests; use the [Fabric test](#spark-and-fabric) for explicit invocation.
-Explicit recovery must preserve durable storage bindings and the model manifest; the Docker provider may replace inference compute.
-Successful completion destroys workloads and retains storage.
-Assertions report failures through the test runner; the test writes no separate report.
-
-Failures retain resources for diagnosis; recover the deployment using the same configuration and state directory before starting another run.
-Retained gateway storage includes its network, so a different deployment needs a different subnet.
-
-For an established deployment whose gateway is running, select `selected_model_continues_from_retained_state` with the same environment variables.
-It runs the same lifecycle assertions without the fresh-plan assertion.
-Run only one of these live tests against a given deployment at a time.
-
+Retained gateway storage includes its network, so a different deployment on the same host needs a different subnet.
 After intentional destroy, apply the retained configuration first.
 A read-only plan cannot observe workspace resources until apply has restored the gateway.
 
 ## Hosted NVIDIA Parity
 
-The hosted parity tests compare a reviewed, redacted v0 configuration export with separately authored v1 YAML, then run a new v1 deployment with NVIDIA hosted inference.
+The hosted parity tests compare a reviewed, redacted v0 configuration export with separately authored v1 YAML, which the `docker-openclaw-v0-parity` and `docker-hermes-v0-parity` [HCL E2E scenarios](#hcl-e2e-scenarios) deploy with NVIDIA hosted inference.
 They implement [NVIDIA/NemoClaw issue #11810](https://github.com/NVIDIA/NemoClaw/issues/11810) for OpenClaw and [issue #12019](https://github.com/NVIDIA/NemoClaw/issues/12019) for Hermes.
 They do not run, patch, adopt, or migrate a v0 deployment, its workspace, conversations, credentials, or runtime state, and the SDK has no v0 translator.
-The Hermes test does not qualify Relay, Switchyard, messaging, local inference, or custom images.
+The Hermes scenario does not qualify Relay, Switchyard, messaging, local inference, or custom images.
 
-Each fixture under `crates/nemoclaw-e2e/fixtures/` holds the raw export (`v0-export.yaml`), the reauthored current document (`v1.yaml`), and a `NOTICE.md` recording the producer revision and handling.
+Each fixture under `crates/nemoclaw-e2e/fixtures/` holds the raw export (`v0-export.yaml`) and a `NOTICE.md` recording the producer revision and handling; the reauthored current document is the matching case in `crates/nemoclaw-e2e/cases`.
 The historical exports use an `agents` list; current v1 accepts one `agent` per sandbox.
 Only inside the test, the comparison replaces the single-entry list with `agent` and requires the result to equal the ordinarily parsed v1 document; any change to identity, inference, policy, or other portable intent fails.
+The export records no agent image; the comparison supplies the case's image template, which CI binds to its candidate image.
 Only the authored v1 document drives deployment.
-To refresh a fixture, run the public v0 `nemoclaw config export` against a representative deployment, check the output for credential values, copy the redacted bytes without reshaping them, and update `v1.yaml` in the same change.
+To refresh a fixture, run the public v0 `nemoclaw config export` against a representative deployment, check the output for credential values, copy the redacted bytes without reshaping them, and update the case in the same change.
 
 Run the comparisons without Docker or a credential:
 
@@ -308,36 +255,7 @@ Run the comparisons without Docker or a credential:
 cargo test -p nemoclaw-e2e --test e2e hosted_parity::
 ```
 
-The live tests then check the public deployment operations:
-
-| Test | Checks |
-|---|---|
-| `authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle` | Plan creates gateway storage and the gateway with OpenShell registration deferred; apply adds the provider profile and registration, sandbox, and workspace; a second plan, and export/reapply, report no changes; destroy removes the workloads and retains the workspace and gateway storage. It requests no model response; use the [native agent procedure](../agents.md#run-one-headless-openclaw-request) to verify a reply. |
-| `authored_v1_intent_preserves_v0_export_through_hosted_hermes_lifecycle` | Apply reaches readiness; a real Hermes request through NVIDIA hosted inference must return `FOUR`; unchanged plan, apply, and export/reapply keep resource identities; destroy retains the workspace and gateway storage. |
-
-Use an owned native Linux Docker daemon, a fresh deployment UID, an available gateway port and subnet, and an unused state-directory path whose parent exists.
-Supply `NVIDIA_INFERENCE_API_KEY` through the process environment; never put its value in YAML, arguments, state, or repository files.
-The test installs that credential in OpenShell and does not revoke the upstream key.
-Keep the fixture's provider, sandbox, and agent names; the expected results name those resources.
-Build a matching bundle and load the gateway image pinned in [versions.json](../../versions.json) and the YAML's immutable agent images, including the Hermes image for the Hermes test, into the selected daemon.
-A GPU is not required.
-
-From the repository root, with absolute paths and one test selected:
-
-```sh
-NEMOCLAW_LIVE_V0_EXPORT=/absolute/private/path/v0-export.yaml \
-NEMOCLAW_LIVE_V1_CONFIG=/absolute/private/path/authored-v1.yaml \
-NEMOCLAW_LIVE_HOSTED_STATE=/absolute/path/to/new-state \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/verified-bundle \
-  cargo test -p nemoclaw-e2e --test e2e \
-  hosted_parity::live::authored_v1_intent_preserves_v0_export_through_hosted_openclaw_lifecycle \
-  -- --ignored
-```
-
-The test creates the state directory and rejects an existing path; assertion failures appear in the test output.
-Do not run live tests as an ignored-test aggregate.
-After a failed apply, keep both inputs, the bundle, and the state directory, and follow [interrupted-operation recovery](../usage.md#recover-an-interrupted-operation) with the same YAML and state; do not create another state directory for the same UID.
-Use [destroy](../usage.md#destroy) to remove a failed run's workloads; a successful run destroys them itself.
+The scenarios install `NVIDIA_INFERENCE_API_KEY` in OpenShell and do not revoke the upstream key; never put its value in YAML, arguments, state, or repository files.
 Retire the upstream NVIDIA key separately when it is no longer needed.
 
 ## SSH Engine Transport
@@ -352,11 +270,6 @@ The caller owns fixture setup and cleanup; never target an unrelated container.
 
 The SDK `ssh_capacity` live test exercises the fixed collector on an explicitly selected Linux ARM64 or AMD64 NVIDIA host without provisioning resources.
 It checks that the collected architecture matches the selected Docker daemon's reported architecture.
-
-The `fabric_live` test requires external inference and does not install managed SSH inference services.
-It invokes the hosted runtime separately from apply with caller-supplied input.
-The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
-
 
 ## Docker Live Suite
 
@@ -393,7 +306,7 @@ NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
   cargo test -p nemoclaw-e2e --test e2e cache_provider:: -- --ignored
 ```
 
-The [hand-written HCL](../../crates/nemoclaw-e2e/tests/e2e/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
+The [hand-written HCL](../../crates/nemoclaw-e2e/tests/e2e/rust/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
 The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
 Missing or substituted credential volumes must stop apply before compute creation and preserve state.
 Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.
@@ -403,25 +316,14 @@ The container's Python process simulates model reconstruction and a credential; 
 
 ## Dummy Agent Lifecycle
 
-nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
+The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
-Before destroy, it restarts the gateway's container: the next plan updates only the agent because its runtime is not running, apply starts a new runtime that answers, a file written in the sandbox before the restart is still there, and a further apply changes nothing.
+The agent must reply with the configured `reply` setting.
 It requests no inference and does not qualify a production adapter.
 
-Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_DUMMY_DOCUMENT=/absolute/path/to/dummy.yaml \
-cargo test -p nemoclaw-e2e --test e2e \
-  dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle -- --ignored --exact
-```
-
-A successful run deletes its temporary state directory and retains the gateway's storage, initializer, and bridge.
-A failed run keeps the state directory and prints its path, because the gateway and sandbox may still be running; remove them with the bundle's `nemoclaw destroy --state-dir PATH`.
-`cargo ci live-docker` removes every resource labeled with the document's UID, and the gateway's sandbox objects, after the suite.
-To remove the retained storage after a manual run, follow [Remove Retained Resources](../usage.md#remove-retained-resources); after a successful run there is no state directory, so skip that procedure's destroy check.
+`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
+After the suite, it removes every resource labeled with the document's UID and the gateway's sandbox objects; when the tests pass, it fails if OpenShell left a sandbox object.
+To run the scenario by hand, bind the template the same way and follow [HCL E2E Scenarios](#hcl-e2e-scenarios) with `NEMOCLAW_HCL_CASE=docker-dummy` and `NEMOCLAW_HCL_DOCUMENT=/absolute/path/to/bound.yaml`.
 
 ## Agent Interfaces
 

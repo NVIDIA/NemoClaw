@@ -133,8 +133,6 @@ mod managed_auth;
 mod managed_gateway_config;
 #[path = "managed_hermes.rs"]
 mod managed_hermes;
-#[path = "managed_live.rs"]
-mod managed_live;
 #[path = "managed_podman.rs"]
 mod managed_podman;
 #[path = "model_selection.rs"]

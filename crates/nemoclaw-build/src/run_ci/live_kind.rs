@@ -9,6 +9,7 @@
 //! bundle and run its OpenTofu and providers without a Helm executable.
 
 use super::*;
+use nemoclaw_build::ci::live;
 
 /// Agent Sandbox release the tests run against, as a platform would: the one
 /// the pinned OpenShell's own Kubernetes tests use. Its core manifest has been
@@ -189,6 +190,27 @@ pub(super) async fn run_live_kind(
         &image,
     ]))?;
 
+    // The kind HCL E2E case, bound to this cluster and agent image. Its
+    // namespaces are new, and the cluster is deleted afterward.
+    let hcl = inputs.path().join("hcl");
+    let case = inputs.path().join(format!("{KIND_CASE}.yaml"));
+    let mut namespace = [0u8; 6];
+    getrandom::fill(&mut namespace).map_err(|_| "cannot name the case's namespace")?;
+    fs::write(
+        &case,
+        bind_kind_case(
+            &fs::read_to_string(
+                Path::new("crates/nemoclaw-e2e/cases").join(format!("{KIND_CASE}.yaml")),
+            )?,
+            &live::uuid()?,
+            live::free_port()?,
+            &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
+            &format!("kind-{name}"),
+            &image,
+            harness,
+        )?,
+    )?;
+
     let mut command = match archive {
         Some(archive) => archived(Step::LiveKind, archive, configure)?,
         None => {
@@ -210,6 +232,10 @@ pub(super) async fn run_live_kind(
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
         .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)
         .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata)
+        .env("NEMOCLAW_HCL_CASE", KIND_CASE)
+        .env("NEMOCLAW_HCL_DOCUMENT", &case)
+        .env("NEMOCLAW_HCL_RUN", &hcl)
+        .env("TF_VAR_kubeconfig", &kubeconfig)
         // Only the image pull above needs the registry.
         .env_remove(REGISTRY_USERNAME)
         .env_remove(REGISTRY_PASSWORD);
@@ -217,6 +243,45 @@ pub(super) async fn run_live_kind(
     drop(cluster);
     drop(cleanup);
     result
+}
+
+/// The HCL E2E case that live-kind runs.
+const KIND_CASE: &str = "kind-openshift-agents";
+
+/// Binds the kind case's template to one run: its UID, gateway port,
+/// namespace (which also names the stub model's), kubeconfig context, and
+/// the agent image and harness that replace its placeholders.
+fn bind_kind_case(
+    template: &str,
+    uid: &str,
+    port: u16,
+    namespace: &str,
+    context: &str,
+    image: &str,
+    harness: &str,
+) -> Result<String> {
+    let placeholders = [
+        ("nc-hcl-kind", namespace.to_owned()),
+        ("kind-nemoclaw", context.to_owned()),
+        (
+            "https://127.0.0.1:17701",
+            format!("https://127.0.0.1:{port}"),
+        ),
+        ("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid.to_owned()),
+        (
+            "nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            image.to_owned(),
+        ),
+        ("nvidia.fabric.openclaw", harness.to_owned()),
+    ];
+    let mut bound = template.to_owned();
+    for (placeholder, value) in placeholders {
+        if !bound.contains(placeholder) {
+            return Err(format!("the kind case template has no {placeholder}").into());
+        }
+        bound = bound.replace(placeholder, &value);
+    }
+    Ok(bound)
 }
 
 /// The registry credentials a pull of pushed images uses, as for
@@ -329,6 +394,33 @@ impl Drop for ImagesCleanup {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_kind_case_binds_its_cluster_namespace_and_image() {
+        let template = include_str!("../../../nemoclaw-e2e/cases/kind-openshift-agents.yaml");
+        let bound = bind_kind_case(
+            template,
+            "11111111-2222-4333-8444-555555555555",
+            40123,
+            "nc-hcl-0a1b2c3d4e5f",
+            "kind-nc-live-1234",
+            "docker.io/library/agent@sha256:abc",
+            "nvidia.fabric.openclaw",
+        )
+        .unwrap();
+        for expected in [
+            "  uid: 11111111-2222-4333-8444-555555555555\n",
+            "    endpoint: https://127.0.0.1:40123\n",
+            "      context: kind-nc-live-1234\n",
+            "      namespace: nc-hcl-0a1b2c3d4e5f\n",
+            "      endpoint: http://model.nc-hcl-0a1b2c3d4e5f-model.svc.cluster.local:8000/v1\n",
+            "        ref: docker.io/library/agent@sha256:abc\n",
+        ] {
+            assert!(bound.contains(expected), "{expected}");
+        }
+        assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
+        assert!(bind_kind_case("uid: x", "u", 1, "n", "c", "i", "h").is_err());
+    }
 
     #[test]
     fn archived_agent_reaches_kind_without_loading_or_saving_host_images() {
