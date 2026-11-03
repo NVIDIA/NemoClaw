@@ -5,11 +5,6 @@
       "title": "About",
       "pages": [
         {
-          "title": "Documentation Index",
-          "source": "docs/README.md",
-          "slug": "index"
-        },
-        {
           "title": "Overview",
           "source": "docs/about/overview.md",
           "slug": "overview"
@@ -179,6 +174,11 @@
     {
       "title": "Resources",
       "pages": [
+        {
+          "title": "Documentation Index",
+          "source": "docs/README.md",
+          "slug": "index"
+        },
         {
           "title": "Documentation and Project Resources",
           "source": "docs/resources/resources.md",

@@ -403,7 +403,7 @@ The container's Python process simulates model reconstruction and a credential; 
 
 ## Dummy Agent Lifecycle
 
-nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../../docs/build-deploy/build.md#reference-contract-image) through a managed Docker gateway.
+nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](agent-image-maintenance.md#qualify-the-reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
 The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
 Before destroy, it restarts the gateway's container: the next plan updates only the agent because its runtime is not running, apply starts a new runtime that answers, a file written in the sandbox before the restart is still there, and a further apply changes nothing.

@@ -8,6 +8,8 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 
 ## About
 
+Start with the product overview, then use the architecture and ecosystem guides to distinguish deployment behavior from adjacent services.
+
 | Reader goal | Guide |
 |---|---|
 | Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
@@ -17,6 +19,8 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 
 ## Get Started
 
+Check the prerequisites before following the first deployment; migration is a separate path for existing users.
+
 | Reader goal | Guide |
 |---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
@@ -24,6 +28,8 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 | Assess a move from an earlier version | [Migration](get-started/migration.md) |
 
 ## Build and Deploy
+
+Choose the guide for the artifact or deployment operation you need to perform.
 
 | Reader goal | Guide |
 |---|---|
@@ -37,6 +43,8 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 
 ## Agents and Inference
 
+Configure the agent and its inference connection, then verify a reply through a native interface.
+
 | Reader goal | Guide |
 |---|---|
 | Select and invoke an agent | [Agent runtimes](agents-inference/agents.md) |
@@ -49,11 +57,15 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 
 ## Observability
 
+Use operation output and runtime evidence to identify where a deployment or agent request failed.
+
 | Reader goal | Guide |
 |---|---|
 | Collect operation output, sandbox logs, native artifacts, and available traces; distinguish readiness from a reply | [Troubleshooting](observability/troubleshooting.md) |
 
 ## References
+
+Look up the pinned v1 interface contract before adapting a command, configuration, or SDK call.
 
 | Reader goal | Guide |
 |---|---|
@@ -65,6 +77,8 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 
 ## Resources
 
+Use these sources to find help, development status, and currently documented limits.
+
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
@@ -72,6 +86,8 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
 
 ## Security
+
+Review trust boundaries before configuring sandbox access or rotating credentials.
 
 | Reader goal | Guide |
 |---|---|

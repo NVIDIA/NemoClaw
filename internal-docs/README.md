@@ -16,6 +16,7 @@ Use the [public guide](../docs/README.md) for deployment tasks. The pages here r
 | Write and reorganize guides | [Documentation contribution](contributing/documentation.md) |
 | Validate, preview, or publish the site | [Documentation build](contributing/documentation-build.md) |
 | Maintain generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
+| Maintain agent image pins, catalogs, and test fixtures | [Agent image maintenance](contributing/agent-image-maintenance.md) |
 | Assess image changes | [Image assessment](contributing/image-assessment.md) |
 
 ## Design Decisions
