@@ -15,7 +15,7 @@ import {
   setResolvedOllamaHost as defaultSetResolvedOllamaHost,
   type RunCaptureFn,
 } from "../inference/local";
-import type { NvidiaPlatform } from "../inference/nim";
+import { MODEL_LIST_STATUS_WRITE_OUT, type NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
 import { buildVllmDockerEnv } from "../inference/vllm-docker-env";
 import {
@@ -143,7 +143,9 @@ function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
   if (!endpoint) return false;
   const writeOut = endpoint.endsWith("/health")
     ? ["--noproxy", "*", "--write-out", "%{http_code}"]
-    : [];
+    : endpoint.endsWith("/models")
+      ? [...MODEL_LIST_STATUS_WRITE_OUT]
+      : [];
   const output = deps.runCapture(
     ["curl", "-sf", ...LOCAL_PROVIDER_PROBE_CURL_ARGS, ...writeOut, endpoint],
     {

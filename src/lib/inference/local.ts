@@ -49,7 +49,12 @@ import {
   type OllamaRouteHolder,
   writeLocalAdapterJsonFile,
 } from "./local-adapter-lifecycle";
-import { detectNvidiaPlatform } from "./nim";
+import {
+  buildModelListProbeCommand,
+  detectNvidiaPlatform,
+  isOpenAiModelListResponse,
+  MODEL_LIST_STATUS_WRITE_OUT,
+} from "./nim";
 import {
   anyRegistryModelFits,
   DEFAULT_OLLAMA_MODEL_TAG,
@@ -1330,7 +1335,8 @@ export function getLocalProviderAvailabilityEndpoint(provider: string): string |
 export function isLocalProviderProbeOutputHealthy(endpoint: string, output: string): boolean {
   const normalized = output.trim();
   if (!normalized || normalized === "000") return false;
-  return endpoint.endsWith("/health") ? normalized === "200" : true;
+  if (endpoint.endsWith("/health")) return normalized === "200";
+  return endpoint.endsWith("/models") ? isOpenAiModelListResponse(normalized) : true;
 }
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
@@ -1351,6 +1357,7 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
     ];
   }
   if (!endpoint) return null;
+  if (endpoint.endsWith("/models")) return buildModelListProbeCommand([], endpoint);
   const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
   return ["curl", ...curlArgs];
 }
@@ -1707,7 +1714,7 @@ export function getLocalProviderContainerReachabilityCheck(
         "10",
         ...(managedBaseUrl ? ["--noproxy", "*"] : []),
         "-sf",
-        ...(managedBaseUrl ? ["-w", "%{http_code}"] : []),
+        ...(managedBaseUrl ? ["-w", "%{http_code}"] : MODEL_LIST_STATUS_WRITE_OUT),
         managedBaseUrl
           ? `${managedBaseUrl}/health`
           : `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
