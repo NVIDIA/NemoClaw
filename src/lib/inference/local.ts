@@ -50,7 +50,7 @@ import {
 } from "./local-adapter-lifecycle";
 import {
   buildModelListProbeCommand,
-  isOpenAiModelListResponse,
+  isLocalProviderProbeOutputHealthy,
   MODEL_LIST_STATUS_WRITE_OUT,
   parseModelInventory,
 } from "./serving/model-inventory";
@@ -1305,12 +1305,7 @@ export function getLocalProviderAvailabilityEndpoint(provider: string): string |
   return getLocalProviderHealthEndpoint(provider);
 }
 
-export function isLocalProviderProbeOutputHealthy(endpoint: string, output: string): boolean {
-  const normalized = output.trim();
-  if (!normalized || normalized === "000") return false;
-  if (endpoint.endsWith("/health")) return normalized === "200";
-  return endpoint.endsWith("/models") ? isOpenAiModelListResponse(normalized) : true;
-}
+export { isLocalProviderProbeOutputHealthy };
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderAvailabilityEndpoint(provider);

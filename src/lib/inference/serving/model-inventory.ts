@@ -60,3 +60,10 @@ export function parseModelInventory(provider: string, body: string): string[] | 
     return null;
   }
 }
+
+export function isLocalProviderProbeOutputHealthy(endpoint: string, output: string): boolean {
+  const normalized = output.trim();
+  if (!normalized || normalized === "000") return false;
+  if (endpoint.endsWith("/health")) return normalized === "200";
+  return endpoint.endsWith("/models") ? isOpenAiModelListResponse(normalized) : true;
+}
