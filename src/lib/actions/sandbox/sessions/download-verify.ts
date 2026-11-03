@@ -431,6 +431,10 @@ function copyRegularFileToDescriptor(source: string, destinationFd: number): fs.
   }
 }
 
+/**
+ * Publish the file by atomically renaming a private copy in the destination directory.
+ * Give the copy its own name so even a maximum-length destination filename fits.
+ */
 function replaceWithPrivateEntry(
   source: string,
   destination: string,
