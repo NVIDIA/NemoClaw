@@ -381,32 +381,38 @@ export function archiveEmptyTelegramThreadBindings(stateDir: string): void {
       // file. Moving first preserves even a concurrently replaced source.
       const pending = fs.mkdtempSync(path.join(directory, EMPTY_ARCHIVE_PREFIX));
       const archived = path.join(pending, name);
-      fs.renameSync(source, archived);
-      const archivedFd = fs.openSync(archived, flags);
       try {
-        const moved = fs.fstatSync(archivedFd);
-        if (
-          !moved.isFile() ||
-          moved.nlink !== 1 ||
-          moved.ino !== opened.ino ||
-          moved.dev !== opened.dev ||
-          !fs.readFileSync(archivedFd).equals(bytes)
-        ) {
-          throw new Error("Telegram source changed during archival; retained for recovery");
+        fs.renameSync(source, archived);
+        const archivedFd = fs.openSync(archived, flags);
+        try {
+          const moved = fs.fstatSync(archivedFd);
+          if (
+            !moved.isFile() ||
+            moved.nlink !== 1 ||
+            moved.ino !== opened.ino ||
+            moved.dev !== opened.dev ||
+            !fs.readFileSync(archivedFd).equals(bytes)
+          ) {
+            throw new Error("Telegram source changed during archival; retained for recovery");
+          }
+          const retained = fs.lstatSync(archived);
+          if (
+            !retained.isFile() ||
+            retained.nlink !== 1 ||
+            retained.ino !== moved.ino ||
+            retained.dev !== moved.dev
+          ) {
+            throw new Error("Telegram archive changed during verification; retained for recovery");
+          }
+        } finally {
+          fs.closeSync(archivedFd);
         }
-        const retained = fs.lstatSync(archived);
-        if (
-          !retained.isFile() ||
-          retained.nlink !== 1 ||
-          retained.ino !== moved.ino ||
-          retained.dev !== moved.dev
-        ) {
-          throw new Error("Telegram archive changed during verification; retained for recovery");
-        }
-      } finally {
-        fs.closeSync(archivedFd);
+        fs.renameSync(pending, `${pending}.migrated`);
+      } catch {
+        // Once reserved, a pending archive requires recovery even if a move,
+        // verification, or completion operation fails on the first attempt.
+        throw new IncompleteTelegramArchiveError();
       }
-      fs.renameSync(pending, `${pending}.migrated`);
     } finally {
       fs.closeSync(fd);
     }

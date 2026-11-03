@@ -223,7 +223,7 @@ describe("empty Telegram thread-binding restoration", () => {
       originalRename(from, to);
     });
     expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(
-      /changed during archival/,
+      /Incomplete empty Telegram state archival/,
     );
     const pending = fs.readdirSync(proof.directory).find((name) => name.startsWith(".nemoclaw-"))!;
     expect(
@@ -269,7 +269,9 @@ describe("empty Telegram thread-binding restoration", () => {
         fs.writeFileSync(archived, "replacement-state");
         return bytes;
       });
-    expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(/archive changed/);
+    expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(
+      /Incomplete empty Telegram state archival/,
+    );
     const pending = fs.readdirSync(proof.directory).find((name) => name.startsWith(".nemoclaw-"))!;
     expect(pending).not.toMatch(/\.migrated$/);
     expect(
@@ -806,6 +808,93 @@ describe("OpenClaw intermediate restore migrations", () => {
     expect(proof.calls()).toEqual([]);
     expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
   });
+  it.each([
+    [
+      "moved bytes",
+      "fs.writeFileSync(to, 'replacement-secret-state');",
+      (retained: string, _bytes: string) =>
+        expect(fs.readFileSync(retained, "utf8")).toBe("replacement-secret-state"),
+    ],
+    [
+      "archive open",
+      "fs.renameSync(to, String(to)+'.original'); fs.symlinkSync(process.env.OPENCLAW_CONFIG_PATH, to);",
+      (retained: string, bytes: string) => {
+        expect(fs.lstatSync(retained).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(`${retained}.original`, "utf8")).toBe(bytes);
+      },
+    ],
+    [
+      "retained pathname",
+      "",
+      (retained: string, _bytes: string) =>
+        expect(fs.readFileSync(retained, "utf8")).toBe("replacement-secret-state"),
+    ],
+    [
+      "completion rename",
+      "",
+      (retained: string, bytes: string) => expect(fs.readFileSync(retained, "utf8")).toBe(bytes),
+    ],
+  ] as const)(
+    "reports recovery on the first archival failure (%s)",
+    (stage, mutation, verifyRetained) => {
+      const proof = fixture({ writer: "2026.9.6" });
+      const directory = path.join(proof.state, "telegram");
+      fs.mkdirSync(directory);
+      const source = path.join(directory, "thread-bindings-default.json");
+      const bytes = '{"version":1,"bindings":[]}';
+      fs.writeFileSync(source, bytes);
+      const modulePath = path.join(
+        proof.migrationRoot,
+        "2026.9.7/node_modules/openclaw/dist/paths-fixture.mjs",
+      );
+      fs.writeFileSync(
+        modulePath,
+        `import fs from 'node:fs';
+      function resolveStateDir() {
+        if (${JSON.stringify(stage)} === 'retained pathname') {
+          const lstat = fs.lstatSync;
+          fs.lstatSync = (name) => {
+            if (String(name).includes('/.nemoclaw-telegram-empty-') && String(name).endsWith('/thread-bindings-default.json')) {
+              fs.renameSync(name, String(name)+'.original');
+              fs.writeFileSync(name, 'replacement-secret-state');
+            }
+            return lstat(name);
+          };
+        }
+        const rename = fs.renameSync;
+        fs.renameSync = (from, to) => {
+          if (${JSON.stringify(stage)} === 'completion rename' && String(to).endsWith('.migrated')) {
+            throw new Error('fixture-secret-value');
+          }
+          rename(from, to);
+          if (String(from) === process.env.OPENCLAW_STATE_DIR+'/telegram/thread-bindings-default.json') { ${mutation} }
+        };
+        return process.env.OPENCLAW_STATE_DIR;
+      }
+      export { resolveStateDir };`,
+      );
+      const result = proof.run();
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(43);
+      expect(result.stderr).toContain("Incomplete Telegram archival");
+      expect(result.stderr).toContain("Restore a consistent backup before retrying");
+      expect(result.stderr).toContain("gateway remains stopped");
+      expect(result.stderr).not.toContain(proof.state);
+      expect(result.stderr).not.toContain("fixture-secret-value");
+      expect(result.stderr).not.toContain("replacement-secret-state");
+      expect(proof.calls()).toEqual([]);
+      expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
+      expect(fs.existsSync(source)).toBe(false);
+      const pending = fs.readdirSync(directory).filter((name) => name.startsWith(".nemoclaw-"));
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).not.toMatch(/\.migrated$/);
+      const retained = path.join(directory, pending[0]!, path.basename(source));
+      verifyRetained(retained, bytes);
+      const retry = proof.run();
+      expect(retry.status, retry.stderr).toBe(43);
+      expect(retry.stderr).toContain("Incomplete Telegram archival");
+    },
+  );
   it.each([
     {
       sourceRemains: false,
