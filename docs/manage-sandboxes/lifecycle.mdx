@@ -31,7 +31,10 @@ List every sandbox registered on this host:
 $$nemoclaw list
 ```
 
-The list shows each sandbox's model, provider, policy presets, and active SSH session indicator.
+The list shows each sandbox's model, provider, and policy presets.
+A `●` marker identifies a sandbox with an active SSH or interactive OpenShell `connect` session.
+JSON output reports the same sessions in `activeSessionCount`.
+Noninteractive exec commands and dashboard forwards are not counted.
 <AgentOnly variant="openclaw,hermes">
 It also shows the dashboard URL when NemoClaw records a dashboard port.
 </AgentOnly>
