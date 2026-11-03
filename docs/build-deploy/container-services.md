@@ -23,7 +23,7 @@ For an HTTP readiness path, the application must return HTTP 200 only when it ca
 
 ## Protect Application Credentials
 
-Do not put secrets in a shared YAML file. An `environment` value is literal, even if it looks like `${API_KEY}`; there is no automatic resolution or generic `secrets` field. If an application requires a literal key, use private local configuration and protect the resulting plan, state, export, and Docker metadata. Removing a container does not revoke a credential or erase retained copies. Prefer a typed managed service when its credential and storage safeguards are needed. See [security](../security/security.md) and [state](state.md) for ownership and retention.
+Do not put secrets in a shared YAML file. An `environment` value is literal, even if it looks like `${API_KEY}`; there is no automatic resolution or generic `secrets` field. If an application requires a literal key, use private local configuration and protect the resulting plan, state, export, and Docker metadata. Removing a container does not revoke a credential or erase retained copies. Prefer a typed managed service when its credential and storage safeguards are needed. Refer to [security](../security/security.md) and [state](state.md) for ownership and retention.
 
 ## Decide Whether the Image Fits
 
