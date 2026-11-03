@@ -758,3 +758,42 @@ fn routes_set_the_harness_provider_and_sampling() {
     assert_eq!(model["top_p"], 0.9, "{model}");
     assert_eq!(model["max_tokens"], 8192, "{model}");
 }
+
+#[test]
+fn model_tuning_rejects_fields_the_adapter_does_not_accept() {
+    let text = include_str!("../../../examples/openclaw.yaml");
+    for (authored, value, field) in [
+        ("maxTokens", json!(8192), "max_tokens"),
+        ("temperature", json!(0.2), "temperature"),
+        ("topP", json!(0.9), "top_p"),
+    ] {
+        let mut input: serde_json::Value = serde_saphyr::from_str(text).unwrap();
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+            json!("nvidia.fabric.langchain.deepagents-code");
+        input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
+            json!({"model":"test-model", authored:value});
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("unsupported authored tuning must not reach Fabric");
+        let message = error.to_string();
+        assert!(message.contains("assistant"), "{message}");
+        assert!(message.contains(field), "{message}");
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let error = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0")
+            .expect_err("planning must reject unsupported model tuning");
+        let message = error.to_string();
+        assert!(message.contains("assistant"), "{message}");
+        assert!(message.contains(field), "{message}");
+    }
+}

@@ -71,6 +71,31 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         result["runtime"]["keep_state"] = true.into();
     }
     for route in &selection.inference.routes {
+        // Authored tuning must not be discarded or sent to an adapter that
+        // rejects it. Model extensions can declare fields outside config.accepts.
+        for (field, authored) in [
+            ("max_tokens", route.overrides.tuning.max_tokens.is_some()),
+            ("temperature", route.overrides.tuning.temperature.is_some()),
+            ("top_p", route.overrides.tuning.top_p.is_some()),
+        ] {
+            if authored
+                && descriptor.is_some_and(|descriptor| {
+                    let path = format!("models.{field}");
+                    !descriptor["config"]["accepts"]
+                        .as_array()
+                        .is_some_and(|fields| fields.iter().any(|accepted| accepted == &path))
+                        && !(field != "temperature"
+                            && descriptor["extension_schemas"]["model"]["properties"]
+                                .get(field)
+                                .is_some())
+                })
+            {
+                return Err(ConfigError(format!(
+                    "sandbox {} route {}: the adapter does not accept models.{field}",
+                    sandbox.name, route.name
+                )));
+            }
+        }
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;
