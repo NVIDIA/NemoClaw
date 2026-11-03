@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Repository-relative exact path or directory prefix (ending /), then tab-separated case IDs.
+# Shared noncrate inputs follow determinator-live.toml and determinator-images.toml.
+# Runtime/vLLM image inputs remain specific to the local-model case.
+examples/	docker-openclaw-nvidia	docker-openclaw-vllm
+schemas/	docker-openclaw-nvidia	docker-openclaw-vllm
+.config/	docker-openclaw-nvidia	docker-openclaw-vllm
+.cargo/	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/actions/	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/workflows/validation-plan.yml	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/workflows/bundle-platform.yml	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/workflows/rust.yml	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/workflows/images.yml	docker-openclaw-nvidia	docker-openclaw-vllm
+docker-bake.hcl	docker-openclaw-nvidia	docker-openclaw-vllm
+.dockerignore	docker-openclaw-nvidia	docker-openclaw-vllm
+ruff.toml	docker-openclaw-nvidia	docker-openclaw-vllm
+LICENSE	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-sdk/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-cli/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-provider/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-build/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-backend/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-docker/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-tofu/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-openshell/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-fabric/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-onboarding/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-authoring/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-discovery/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/vendor/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/openshell-provider/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/fabric-provider/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-runtime/	docker-openclaw-vllm
+crates/nemoclaw-test-fixtures/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/Cargo.toml	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/fixtures/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/tests/e2e/main.rs	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/src/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/tests/e2e/hcl/main.tf	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/tests/e2e/hcl/verifier/	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-openclaw-nvidia.tftest.hcl	docker-openclaw-nvidia
+crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-openclaw-vllm.tftest.hcl	docker-openclaw-vllm
+crates/nemoclaw-e2e/tests/e2e/hcl_live.rs	docker-openclaw-nvidia	docker-openclaw-vllm
+crates/nemoclaw-e2e/cases/docker-openclaw-nvidia.yaml	docker-openclaw-nvidia
+crates/nemoclaw-e2e/cases/docker-openclaw-vllm.yaml	docker-openclaw-vllm
+image/fabric/	docker-openclaw-nvidia	docker-openclaw-vllm
+image/NOTICE.md	docker-openclaw-nvidia	docker-openclaw-vllm
+image/ollama/	docker-openclaw-nvidia	docker-openclaw-vllm
+image/ollama-proxy/	docker-openclaw-nvidia	docker-openclaw-vllm
+image/vllm/	docker-openclaw-vllm
+image/supervisor/	docker-openclaw-vllm
+.github/actions/setup-rust/	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/actions/containerd-store/	docker-openclaw-nvidia	docker-openclaw-vllm
+versions.json	docker-openclaw-nvidia	docker-openclaw-vllm
+.github/workflows/hcl-e2e.yml	docker-openclaw-nvidia	docker-openclaw-vllm
+.config/hcl-case-changes.tsv	docker-openclaw-nvidia	docker-openclaw-vllm
+tools/ci/select-hcl-cases.rs	docker-openclaw-nvidia	docker-openclaw-vllm
+Cargo.toml	docker-openclaw-nvidia	docker-openclaw-vllm
+Cargo.lock	docker-openclaw-nvidia	docker-openclaw-vllm
+rust-toolchain.toml	docker-openclaw-nvidia	docker-openclaw-vllm

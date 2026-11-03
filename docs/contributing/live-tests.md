@@ -9,6 +9,39 @@ Read each test’s lifecycle effects before running it.
 
 Do not run all ignored tests against a shared deployment.
 
+## Select HCL Cases for a Commit
+
+From the repository root, compile the selector and compare a base revision with an exact PR commit:
+
+```sh
+rustc --edition=2024 tools/ci/select-hcl-cases.rs -o /tmp/select-hcl-cases
+/tmp/select-hcl-cases origin/v1 FULL_40_CHARACTER_PR_COMMIT
+```
+
+The JSON result records `commit` and sorted, deduplicated `case_ids`.
+The selector reads the [change map](../../.config/hcl-case-changes.tsv), live HCL scenario filenames, and paired case YAML files from that commit, not the working tree.
+It compares both endpoints with rename detection disabled, so a move checks the old and new paths.
+Map rows match an exact repository-relative path or a directory prefix ending in `/`; unrelated paths select no cases.
+The map covers the established `docker-openclaw-nvidia` and `docker-openclaw-vllm` cases, not new hardware qualification.
+Update it when a case or its inputs change; unknown case IDs and malformed inputs fail instead of producing a selection.
+
+After reviewing advisor recommendations, maintainers may append explicit case IDs:
+
+```sh
+/tmp/select-hcl-cases origin/v1 FULL_40_CHARACTER_PR_COMMIT docker-openclaw-vllm
+```
+
+Recommendations only add cases; they cannot remove mapped matches.
+This command neither interprets advisor prose nor dispatches jobs or changes required checks.
+Live runs remain maintainer-run; use fresh deployment state and retain each case's inference and cleanup evidence.
+
+Run the fast selector checks without Cargo, Docker, credentials, or hardware:
+
+```sh
+rustc --edition=2024 --test tools/ci/select-hcl-cases.rs -o /tmp/nemoclaw-13939-tests
+/tmp/nemoclaw-13939-tests
+```
+
 ## Kubernetes Gateway Without the Helm CLI
 
 On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run the live and chart-render tests with a fresh kind cluster:
