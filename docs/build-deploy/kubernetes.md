@@ -14,6 +14,8 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 
 ## Prerequisites
 
+Confirm client access, cluster permissions, image availability, and inference reachability before applying the example. Managed model services are not supported on Kubernetes.
+
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
@@ -64,7 +66,7 @@ See [Build agent images](build.md#build-agent-images) for the harnesses each pla
 
 The SDK binds the namespace, creating it if it doesn't exist, adds a credential key, starts a development token issuer, and installs the pinned OpenShell chart.
 The `openshell` and `fabric` providers reach the gateway through port forwards they open on free loopback ports while OpenTofu runs.
-Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml) and set:
+Start from [the Kubernetes example](../../examples/kubernetes/managed-development.yaml). Replace these deployment-specific inputs before running the commands:
 
 - `metadata.uid` to a new UUID.
 - `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context; omit both when [NemoClaw runs in a pod](#run-nemoclaw-in-a-pod).

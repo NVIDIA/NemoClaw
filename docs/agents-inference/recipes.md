@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Inline Model Recipes
+# Use Inline Model Recipes
 
 An [ordinary vLLM service](../../examples/spark/vllm.yaml) needs a pinned image and model snapshot.
 Use [the ordinary vLLM image build](../build-deploy/build.md#build-a-runtime-image).
@@ -54,7 +54,7 @@ The runtime verifies imported files again before recording the new preparation a
 
 ## Execution Protocol
 
-Both executables receive one JSON request on stdin:
+Package the preparation and runtime executables in the pinned image before selecting the recipe. Both executables receive one JSON request on stdin:
 
 ```json
 {

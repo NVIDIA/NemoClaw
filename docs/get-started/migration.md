@@ -12,6 +12,8 @@ The evaluation steps below create a separate deployment; they do not provide an 
 
 ## Map the User Task
 
+Choose the current owner of the task rather than translating earlier CLI commands literally.
+
 | Earlier task | Current destination |
 |---|---|
 | Install with npm | Build the native bundle from source; releases are tracked in [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
@@ -38,6 +40,8 @@ The [validator](../../crates/nemoclaw-sdk/src/config/validation.rs) rejects unsu
 These checks are not a conversion mechanism.
 
 ## Evaluate v1 Beside the Existing Deployment
+
+Use a separate identity and state directory so the comparison does not mutate an earlier deployment.
 
 1. Record the earlier deployment's version, tooling, configuration, state, endpoints, and native data you need to retain.
    Use that version's documentation and tools to inspect it.

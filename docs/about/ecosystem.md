@@ -1,12 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw Ecosystem
+# Ecosystem
 
 NemoClaw combines deployment management, OpenShell sandbox controls, and NeMo Fabric agent execution.
 You use NemoClaw to configure and operate the deployment, then send requests to the running agent through Fabric.
 
 ## Understand Each Component
+
+Choose the component responsible for the action you need rather than assuming NemoClaw owns every runtime operation.
 
 | Component | Responsibility |
 |---|---|
@@ -20,33 +22,11 @@ NemoClaw's CLI and Rust SDK use [OpenTofu](../references/provider.md) to order r
 OpenShell enforces the sandbox's access controls while Fabric runs the selected harness inside it.
 The [accepted scope](../../internal-docs/design/scope.md#upstream-boundaries) defines these ownership boundaries.
 
-```mermaid
-flowchart TD
-    NemoClaw["NemoClaw: deployment management"] --> Gateway["OpenShell gateway"]
-    Gateway --> Fabric
-    subgraph Sandbox["OpenShell sandbox: enforced access controls"]
-        Fabric["NeMo Fabric: agent execution"] --> Agent["Selected agent harness"]
-    end
-    Agent -->|Inference requests| Gateway
-    Gateway --> Model["Hosted or managed inference"]
-```
-
-## Follow a Deployment
-
-For an OpenClaw deployment, the components take these roles:
-
-1. You choose the gateway, agent image, inference provider, model, and sandbox policy in deployment YAML.
-   [Guided onboarding](../references/cli.md#commands) can help author that file; it does not deploy resources.
-2. NemoClaw plans the resource changes, then applies them through OpenTofu.
-   OpenShell creates the sandbox and applies the deployment's access controls.
-3. Fabric validates the OpenClaw configuration and starts its runtime inside the sandbox.
-   OpenClaw handles the conversation and tool use, with inference connections configured through OpenShell.
-4. You [send a request through OpenShell](../agents-inference/agents.md#run-one-headless-openclaw-request) to the running agent.
-   Verify an agent reply separately: applying deployment configuration does not send an agent request.
-
-Use [desired-state operations](../build-deploy/usage.md) for deployment changes and recovery, and [agent runtimes](../agents-inference/agents.md) for requests and native configuration.
+For the configuration-to-request flow, refer to [Architecture Overview](architecture-overview.md). Use [desired-state operations](../build-deploy/usage.md) to change deployment resources and [native agent access](../agents-inference/agents.md#choose-native-access) to send requests.
 
 ## Choose Where to Start
+
+Start with the guide for the component that owns your task.
 
 | Your task | Starting point |
 |---|---|

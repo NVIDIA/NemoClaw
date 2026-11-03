@@ -9,6 +9,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 ## Installation and Releases
 
+The source-build workflow does not supply an installer or a published package; keep the matching bundle for an existing deployment.
+
 | Limit | Issue |
 |---|---|
 | No release, installer or release downloads; build the bundle from source | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
@@ -16,6 +18,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | No support policy or enterprise deployment qualification | [#12638](https://github.com/NVIDIA/NemoClaw/issues/12638) |
 
 ## Platforms, Models, and Placement
+
+Accepted platform and model declarations are not a tested matrix; verify the exact host and runtime combination before relying on a reply.
 
 | Limit | Issue |
 |---|---|
@@ -38,6 +42,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 ## Inference
 
+A configured connection or ready container does not establish successful model responses.
+
 | Limit | Issue |
 |---|---|
 | Fabric reports a harness process that exited as unknown rather than stopped, so plan doesn't [start it again](../build-deploy/usage.md#agent-runtimes-during-apply); the runtime is found at its next invocation | [NVIDIA/NeMo-Fabric#298](https://github.com/NVIDIA/NeMo-Fabric/issues/298) |
@@ -47,6 +53,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Managed NVIDIA NIM service | [#12649](https://github.com/NVIDIA/NemoClaw/issues/12649) |
 
 ## Agents and Integrations
+
+Select the adapter and image together, then verify its integrations and native request path separately from apply.
 
 | Limit | Issue |
 |---|---|
@@ -62,6 +70,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 ## Access and Diagnostics
 
+Access paths and diagnostic signals depend on the gateway and harness in use.
+
 | Limit | Issue |
 |---|---|
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
@@ -69,6 +79,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
 
 ## Data and Cleanup
+
+Preserve state and native data before attempting a destructive operation.
 
 | Limit | Issue |
 |---|---|
@@ -78,6 +90,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Verified removal of retained objects on SSH engines; the [Docker procedure](../build-deploy/usage.md#remove-retained-resources) covers them | [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640) |
 
 ## Security
+
+Sandbox policy and credential routing depend on OpenShell and the host's controls; assess their trust boundaries for your deployment.
 
 | Limit | Issue |
 |---|---|
@@ -92,6 +106,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 
 ## SDK and Provider
 
+Keep the SDK, bundled providers, and their state format matched when integrating or recovering a deployment.
+
 | Limit | Issue |
 |---|---|
 | Configuration or state migration between releases | Not during alpha; see [compatibility](../references/compatibility.md) |
@@ -99,6 +115,8 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | `tofu import`, adoption, and remote state for CLI and SDK deployments | Not supported; see [compatibility](../references/compatibility.md) |
 
 ## Documentation Site
+
+Select the v1 guide explicitly and match its source revision to the bundle before using hosted instructions.
 
 | Limit | Issue |
 |---|---|

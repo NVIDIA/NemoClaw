@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Documentation
+# Documentation Index
 
 These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The published [v1 field reference](references/v1-configuration.md) is a snapshot generated at that implementation revision; this checkout's separate generated reference describes its older SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
 [Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
@@ -13,6 +13,7 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 | Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
 | Follow the components and deployment flow | [Architecture overview](about/architecture-overview.md) |
 | Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
+| Check v1 development status and changes | [Release Notes](about/release-notes.md) |
 
 ## Get Started
 
@@ -67,7 +68,7 @@ These guides describe NemoClaw v1. The operational updates beyond the first-depl
 | Reader goal | Guide |
 |---|---|
 | Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
-| Check release status | [Release notes](resources/release-notes.md) |
+| Check release status | [Release Notes](about/release-notes.md) |
 | Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
 
 ## Security

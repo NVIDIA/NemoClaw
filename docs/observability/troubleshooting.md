@@ -33,6 +33,8 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 
 ## Identify the Failure
 
+Start with the failed phase; apply readiness, endpoint reachability, and a native reply are different outcomes.
+
 | Symptom | Next action |
 |---|---|
 | Unknown field, duplicate key, or rejected combination | Use the [document path and source position](#correct-a-document-validation-error), then compare the input with the matching [configuration reference](../references/v1-configuration.md) |

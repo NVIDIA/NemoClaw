@@ -10,7 +10,7 @@ The workspace package version alone does not establish that a release has been p
 ## Product Changes
 
 The development branch provides desired-state YAML, a Rust SDK, the `onboard`/`plan`/`apply`/`export`/`destroy` CLI, and a bundled OpenTofu provider.
-See [the overview](../about/overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
+Refer to [the overview](overview.md) for implemented boundaries and [the CLI reference](../references/cli.md) for commands.
 
 ## Breaking Changes and Migration
 
@@ -25,7 +25,7 @@ Recent development changes that affect existing deployments:
 
 ## Qualification and Known Issues
 
-See [current limits](limits.md) for what v1 does not do yet or has not tested, with the issue tracking each.
+Refer to [current limits](../resources/limits.md) for what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## Previous Releases
 

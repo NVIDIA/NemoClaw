@@ -205,6 +205,8 @@ To retire a deployment, follow [Remove Retained Resources](usage.md#remove-retai
 
 ### Understand the Retained Resources
 
+Destroy removes workloads but leaves some bound data and infrastructure for explicit operator cleanup.
+
 | Resource or data | Result of a completed destroy |
 |---|---|
 | Sandbox writable layer and in-memory conversation history | Deleted; caller-supplied mounted volumes remain under platform control |

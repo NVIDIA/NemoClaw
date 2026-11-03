@@ -94,27 +94,11 @@ Keep state, diagnose the failure, and reapply after recovery; see [recovering an
 
 ## Configuration and Credentials
 
+Choose the configuration owner for each setting and keep credential values out of shared YAML. The procedures below distinguish gateway settings, application inputs, and credential references.
+
 ### Run an Application Container
 
-Declare a `kind: container` service with an immutable image and literal environment settings.
-The image owns its entrypoint; optional `command` overrides its arguments, and `files` supplies nonsecret configuration with mode 0444.
-Environment values enter configuration, plans/state, exports, and Docker inspection; they are not protected credential references.
-Generic credential-file delivery is deferred.
-If an application needs a key through `environment`, follow the [temporary plaintext environment approach](container-services.md#protect-application-credentials) and protect every resulting artifact.
-NemoClaw does not expand host environment variables in this map.
-`container` sets GPU access, CPU/memory limits, shared memory, IPC, and ulimits; omission does not expose GPUs.
-The default user is 65532:65532; images that require root must explicitly request `user: "0:0"`.
-The container runs on the managed local Docker gateway's engine and network.
-Optional `publication` binds an unprivileged TCP port to loopback or a private IPv4 address; `port` must agree with the application's listener.
-`readiness.path` selects an HTTP GET expecting 200; `readiness.runtimeStatus` selects a managed-runtime status file such as `/data/status.json`.
-Choose at most one; omission uses Docker HEALTHCHECK, and all modes check on unchanged applies.
-The default readiness timeout is 300 seconds.
-HTTP probes must reach the published or container address from the provider process; virtualized engine networking may require explicit publication.
-A private publication allows an OpenAI-compatible container to be selected by `serviceRef`; registration waits for its readiness and uses /v1.
-Application data defaults to /data, or `data.mountPath` selects a directory below /var/lib.
-This data is disposable: destroy removes the owned volume.
-See the [container contract](container-services.md) for the generic service boundary; VoiceClaw still needs separate qualification.
-The typed `ollama` and `vllm` kinds retain their current policies and use this same assembly base.
+Declare a `kind: container` service with an immutable image on a managed local Docker gateway. Follow [Configure a Container Service](container-services.md) for inputs, readiness, credential exposure, disposable data, and the distinction between application readiness and successful inference. VoiceClaw still needs separate qualification. The typed `ollama` and `vllm` kinds use the same assembly base but retain their own policies.
 
 ### Configure a Managed Gateway
 
@@ -303,6 +287,8 @@ Sandboxes can select distinct Brave credential references; shared references reu
 Removing or replacing a sandbox deletes its writable layer and in-memory conversation, and the plan shows it; keep files that must survive on [mounted agent-data volumes](state.md#keep-agent-files-on-mounted-volumes).
 
 ### Choose the Change Path
+
+Check whether the desired edit updates a running resource, replaces it, or requires a separate deployment before applying.
 
 | Proposed change | Current behavior and next step |
 |---|---|

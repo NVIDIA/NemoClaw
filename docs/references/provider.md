@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Understand the OpenTofu Provider
+# OpenTofu Provider Reference
 
 The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
@@ -11,6 +11,8 @@ Docker manages disposable service compute and Docker gateway processes; Helm ins
 Use [the SDK](sdk.md) or [CLI](cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
+
+These ownership facts explain what each provider records and why an operation can refuse a change. For recovery and retention steps, refer to [Use Desired State](../build-deploy/usage.md#updates-and-recovery) and [Locate and Preserve Deployment State](../build-deploy/state.md).
 
 OpenTofu owns graph execution and resource state.
 The SDK retains desired intent, validates plans, and reports provider observations.
@@ -60,6 +62,8 @@ This gateway-side format break is separate from the provider-type change describ
 
 ## Provider Catalog
 
+Look up the bundled provider addresses and types below. For deployment tasks, use the [desired-state guide](../build-deploy/usage.md) rather than editing a generated graph.
+
 The bundle pins these providers:
 
 | Provider | Source address | Version |
@@ -75,6 +79,8 @@ The bundle pins these providers:
 None of them exposes ephemeral resources or provider functions.
 
 ### OpenShell Resources and Data Sources
+
+The OpenShell types manage gateway-scoped resources and observe gateway capabilities.
 
 | Type | Manages or observes |
 |---|---|
@@ -290,6 +296,8 @@ The storage volume, bridge network, and initialization labels derive from `name`
 Planning new storage, or a new Podman gateway, fails when another network on the engine overlaps `network_cidr`; the deployment's own network, found by name and owner, doesn't count.
 
 ### Fabric Resource and Data Source
+
+Fabric resource operations manage the agent runtime; the data source inspects the image contract.
 
 | Type | Manages or observes |
 |---|---|

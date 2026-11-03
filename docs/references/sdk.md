@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Programmatic Access
+# Use the Rust SDK
 
 `nemoclaw-sdk` owns the same operations used by the CLI.
 Callers supply a verified runtime bundle, a persistent state directory, and a cancellation token.
@@ -73,6 +73,8 @@ Callbacks run synchronously; keep them short.
 A timed step reports when it returns, including cooperative cancellation; dropping its future does not emit a completed event.
 
 ## Choose the Lifecycle Operation
+
+Select the SDK call for the effect you need; keep the same state directory and bundle across operations.
 
 | Method | Input and result | Effect |
 |---|---|---|
@@ -234,8 +236,8 @@ This transport does not tunnel inference traffic.
 
 ## Package Distribution and API Reference
 
-The public Rust API is exported from [the SDK crate](../../crates/nemoclaw-sdk/src/lib.rs).
-The [deployment implementation](../../crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
+The public Rust API is exported from [the pinned v1 SDK crate](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-sdk/src/lib.rs).
+The [pinned deployment implementation](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/crates/nemoclaw-sdk/src/deployment/mod.rs) defines the lifecycle methods used above.
 See [the provider guide](provider.md) for the bundled OpenTofu boundary and [CLI reference](cli.md) for terminal access.
 
 The SDK crate is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).

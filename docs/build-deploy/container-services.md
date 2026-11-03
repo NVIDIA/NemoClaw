@@ -7,6 +7,8 @@ Use `kind: container` to run an image-owned application on a managed local Docke
 
 ## Supply Inputs
 
+The container image owns its application behavior; configure the inputs NemoClaw needs to install and check it.
+
 | Input | Behavior |
 |---|---|
 | `image` | Immutable OCI reference compatible with the host. |

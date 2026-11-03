@@ -208,6 +208,8 @@ If the runtime's process is killed instead of stopped, the marker stays, and the
 
 ### Who Can Use an Interface
 
+The interface's location and authentication determine which actors can reach it.
+
 - **The agent's own tools.** Tools that the agent runs in its sandbox run as the same user as its runtime, so they can read and change the token files and reach the interfaces' ports. The agent can sign in to its own interfaces and use their configuration, cron, and plugin features, which can change what it does outside the guardrails of its harness, though not OpenShell's policy.
 - **Hermes's dashboard.** Anyone who can reach its forward can use it, including its browser chat, which runs the agent without approvals. Its gateway actions, such as restarting the gateway, start Hermes processes that replace the one Fabric started and can keep running after the runtime stops.
 - **Forwards and exposed URLs.** Prefer `openshell forward service`: the gateway authorizes each forwarded connection for your identity and workspace. A [service exposure](#expose-a-service-through-the-gateway) skips that authorization, so the interface's own sign-in is all that protects it, and Hermes's dashboard has none.
