@@ -184,11 +184,17 @@ describe.skipIf(!canRun)(
       ),
     )(
       "filters unsafe identity value $value from $source metadata and mutable display fields (#14084)",
-      ({ value, install }) => {
+      ({ value, source, install }) => {
         withTempDir((dir) => {
+          const identityConfig =
+            source === "legacy"
+              ? SAMPLE_CONFIG.replace(
+                  "provider route: inference",
+                  `provider route: ${value}`,
+                ).replace("upstream provider: nvidia-prod", `upstream provider: ${value}`)
+              : SAMPLE_CONFIG;
           const config =
-            SAMPLE_CONFIG.replace("provider route: inference", `provider route: ${value}`)
-              .replace("upstream provider: nvidia-prod", `upstream provider: ${value}`)
+            identityConfig
               .replace("openai:demo-model", `openai:${value}`)
               .replace("https://inference.local/v1", `https://example.test/${value}`) +
             `\n[nemoclaw]\nprovider_route = "${value}"\nupstream_provider = "${value}"\n`;
@@ -211,7 +217,6 @@ describe.skipIf(!canRun)(
 
     it.each(
       [
-        { state: "missing", mutate: (file: string) => fs.rmSync(file) },
         {
           state: "symlink",
           mutate: (file: string) => {
@@ -220,6 +225,26 @@ describe.skipIf(!canRun)(
           },
         },
         { state: "writable", mutate: (file: string) => fs.chmodSync(file, 0o644) },
+        {
+          state: "noncanonical read-only mode",
+          mutate: (file: string) => fs.chmodSync(file, 0o400),
+        },
+        {
+          state: "empty",
+          mutate: (file: string) => {
+            fs.chmodSync(file, 0o644);
+            fs.writeFileSync(file, "");
+            fs.chmodSync(file, 0o444);
+          },
+        },
+        {
+          state: "oversized",
+          mutate: (file: string) => {
+            fs.chmodSync(file, 0o644);
+            fs.writeFileSync(file, `${"x".repeat(257)}\n`);
+            fs.chmodSync(file, 0o444);
+          },
+        },
       ].flatMap((scenario) =>
         [
           { name: "dcode-provider-route", omitted: "Route:", retained: "Provider: nvidia-prod" },
@@ -230,27 +255,75 @@ describe.skipIf(!canRun)(
           },
         ].map((field) => ({ ...scenario, ...field })),
       ),
-    )("omits $name identity from a $state file (#14084)", ({ name, omitted, retained, mutate }) => {
-      withTempDir((dir) => {
-        const config = SAMPLE_CONFIG.split("\n")
-          .filter((line) => !line.startsWith("#"))
-          .join("\n");
-        const fixture = buildFixture(dir, config);
-        writeManagedIdentity(fixture);
-        mutate(path.join(dir, name));
-        const run = runBashWrapper(fixture, ["status"], {});
-        expect(run.status).toBe(0);
-        expect(run.stdout).not.toContain(omitted);
-        expect(run.stdout).toContain(retained);
-      });
-    });
+    )(
+      "rejects a $state $name despite legacy comments (#14084)",
+      ({ name, omitted, retained, mutate }) => {
+        withTempDir((dir) => {
+          const fixture = buildFixture(dir, SAMPLE_CONFIG);
+          writeManagedIdentity(fixture);
+          mutate(path.join(dir, name));
+          const run = runBashWrapper(fixture, ["status"], {});
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(omitted);
+          expect(run.stdout).toContain(retained);
+        });
+      },
+    );
 
-    it("omits managed identity from files with the wrong owner (#14084)", () => {
+    it.each([
+      {
+        name: "dcode-provider-route",
+        fallback: "Route:    inference",
+        retained: "Provider: nvidia-prod",
+      },
+      {
+        name: "dcode-upstream-provider",
+        fallback: "Provider: legacy-provider",
+        retained: "Route:    nvidia-prod",
+      },
+    ])(
+      "uses legacy comments only for the missing $name file (#14084)",
+      ({ name, fallback, retained }) => {
+        withTempDir((dir) => {
+          const config = SAMPLE_CONFIG.replace(
+            "upstream provider: nvidia-prod",
+            "upstream provider: legacy-provider",
+          );
+          const fixture = buildFixture(dir, config);
+          writeManagedIdentity(fixture);
+          fs.rmSync(path.join(dir, name));
+          const run = runBashWrapper(fixture, ["status"], {});
+          expect(run.status).toBe(0);
+          expect(run.stdout).toContain(fallback);
+          expect(run.stdout).toContain(retained);
+        });
+      },
+    );
+
+    it.each([
+      { name: "dcode-provider-route", omitted: "Route:", retained: "Provider: nvidia-prod" },
+      { name: "dcode-upstream-provider", omitted: "Provider:", retained: "Route:    nvidia-prod" },
+    ])(
+      "omits $name when both the file and legacy comment are missing (#14084)",
+      ({ name, omitted, retained }) => {
+        withTempDir((dir) => {
+          const config = SAMPLE_CONFIG.split("\n")
+            .filter((line) => !line.startsWith("#"))
+            .join("\n");
+          const fixture = buildFixture(dir, config);
+          writeManagedIdentity(fixture);
+          fs.rmSync(path.join(dir, name));
+          const run = runBashWrapper(fixture, ["status"], {});
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(omitted);
+          expect(run.stdout).toContain(retained);
+        });
+      },
+    );
+
+    it("rejects managed identity with the wrong owner despite legacy comments (#14084)", () => {
       withTempDir((dir) => {
-        const config = SAMPLE_CONFIG.split("\n")
-          .filter((line) => !line.startsWith("#"))
-          .join("\n");
-        const fixture = buildFixture(dir, config);
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
         writeManagedIdentity(fixture);
         const wrapper = fs
           .readFileSync(fixture.wrapperPath, "utf8")
