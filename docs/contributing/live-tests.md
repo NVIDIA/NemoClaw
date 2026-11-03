@@ -20,6 +20,24 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
+The gateway test, `kubernetes_live::the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage`, covers what the HCL scenario below cannot.
+It runs the compiled runtime and teardown graphs through the bundled OpenTofu with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
+It requires authenticated `GetGatewayInfo` with the development token and refusal of a token signed by another key.
+It removes and reinstalls the gateway, requiring the namespace, encryption key, and PVCs to keep their UIDs, then deletes its namespace; with kind's `Delete` reclaim policy, that also removes the volumes.
+It creates no agent sandbox.
+To run it alone, use an owned disposable kind cluster with Agent Sandbox and a cluster administrator's kubeconfig that holds its credentials, because OpenTofu runs with an empty `PATH`:
+
+```sh
+NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
+NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test --locked -p nemoclaw-e2e --test e2e \
+    kubernetes_live::the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage \
+    -- --ignored --exact --nocapture
+```
+
+The test prints its private state directory, which holds OpenTofu state and generated key material; remove it when finished.
+On a cluster whose volumes use the `Retain` reclaim policy, the volumes outlive the namespace; delete them as [Remove Retained Resources](../usage.md#remove-retained-resources) describes.
 The registry test uses a flow that deploys a gateway and an agent sandbox from that image through the public SDK, with one inference profile as in `examples/kubernetes/managed-development.yaml`.
 Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
 The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
@@ -43,7 +61,6 @@ Before its first apply, the `tests/e2e/hcl/kind` module releases a chart with th
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage; the test runner then uninstalls the release, which deletes both namespaces.
 `cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the agent image, and passes the kubeconfig as `TF_VAR_kubeconfig`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
-The CLI installs the gateway with the bundled Helm provider, so no test needs a Helm executable.
 The scenario annotates the namespace itself; don't run it on a cluster that serves the `security.openshift.io` API group, where that would replace the range the cluster assigns.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection. Then, as an operator would, it creates the deployment's namespace and a caller-managed image pull Secret before the first apply, and deploys an agent into that namespace, which NemoClaw binds by UID without labelling it.
