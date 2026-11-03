@@ -152,6 +152,7 @@ describe("manifest-owned health checks after rebuild", () => {
   it.each([
     {
       channel: "discord",
+      condition: "the native probe fails",
       status: 1,
       config: {},
       log: "invalid-output-with-secret",
@@ -161,6 +162,7 @@ describe("manifest-owned health checks after rebuild", () => {
     },
     {
       channel: "telegram",
+      condition: "the provider starts",
       config: {
         channels: {
           telegram: {
@@ -179,6 +181,7 @@ describe("manifest-owned health checks after rebuild", () => {
     },
     {
       channel: "slack",
+      condition: "credentials are rejected",
       config: { channels: { slack: { enabled: true } } },
       log: "[channels] [slack] provider failed to start: invalid_auth\n",
       messages: [
@@ -188,7 +191,44 @@ describe("manifest-owned health checks after rebuild", () => {
       command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
       timeout: 10_000,
     },
-  ])("reports $channel runtime health through its manifest hook", async (fixture) => {
+    {
+      channel: "telegram",
+      condition: "the channel is not enabled",
+      config: { channels: { telegram: {} } },
+      log: "",
+      messages: [expect.stringContaining("was not marked enabled in the current")],
+      command: "cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "startup logs are empty",
+      config: { channels: { telegram: { enabled: true } } },
+      log: "",
+      messages: [expect.stringContaining("did not log a startup breadcrumb")],
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "startup times out",
+      config: { channels: { telegram: { enabled: true } } },
+      log: "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled",
+      messages: [expect.stringContaining("did not start within")],
+      forbidden: "bridge startup detected",
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "the credential placeholder mismatches",
+      config: { channels: { telegram: { enabled: true } } },
+      log: "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder",
+      messages: [expect.stringContaining("logged credential/startup warnings")],
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+  ])("reports $channel health when $condition", async (fixture) => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       undefined,
@@ -223,6 +263,8 @@ describe("manifest-owned health checks after rebuild", () => {
       honorCallerTimeout: true,
     });
     expect(log.mock.calls.flat()).toEqual(expect.arrayContaining(fixture.messages));
-    expect(JSON.stringify(log.mock.calls)).not.toContain("invalid-output-with-secret");
+    expect(JSON.stringify(log.mock.calls)).not.toContain(
+      fixture.forbidden ?? "invalid-output-with-secret",
+    );
   });
 });

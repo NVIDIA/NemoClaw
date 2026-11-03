@@ -120,7 +120,6 @@ function successfulProbe(body = '{"ok":true}'): ProbeResult {
 let logSpy: MockInstance;
 let errorSpy: MockInstance;
 let exitSpy: MockInstance;
-let promptSpy: MockInstance;
 let getCredentialSpy: MockInstance;
 let saveCredentialSpy: MockInstance;
 let deleteCredentialSpy: MockInstance;
@@ -143,8 +142,6 @@ let sessionState: onboardSession.Session | null;
 let callOrder: string[];
 let slackBotProbe: ProbeResult;
 let slackAppProbe: ProbeResult;
-let testConfig: Record<string, unknown>;
-let testLog: string;
 let testHome: string;
 
 const originalBuildPlan = MessagingWorkflowPlanner.prototype.buildPlan;
@@ -192,8 +189,6 @@ beforeEach(() => {
   callOrder = [];
   slackBotProbe = successfulProbe();
   slackAppProbe = successfulProbe('{"ok":true,"url":"wss://wss-primary.slack.com/link"}');
-  testConfig = {};
-  testLog = "";
 
   logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
     const text = args.map(String).join(" ");
@@ -253,7 +248,7 @@ beforeEach(() => {
     callOrder.push(`saveCredential:${key}`);
   });
   deleteCredentialSpy = vi.spyOn(store, "deleteCredential").mockImplementation(() => true);
-  promptSpy = vi.spyOn(store, "prompt").mockImplementation(async () => {
+  vi.spyOn(store, "prompt").mockImplementation(async () => {
     callOrder.push("credentialPrompt");
     return "y";
   });
@@ -299,13 +294,11 @@ beforeEach(() => {
 
   execSpy = vi
     .spyOn(commandTransport, "executeSandboxExecCommand")
-    .mockImplementation(async (_name, command) => {
-      return command.includes("/sandbox/.openclaw/openclaw.json")
-        ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
-        : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")
-          ? { status: 0, stdout: testLog, stderr: "" }
-          : { status: 0, stdout: "", stderr: "" };
-    });
+    .mockImplementation(async (_name, command) => ({
+      status: 0,
+      stdout: command.includes("/sandbox/.openclaw/openclaw.json") ? "{}" : "",
+      stderr: "",
+    }));
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")
@@ -799,77 +792,20 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 });
 
-describe("channels add verifies bridge startup after rebuild (#4314, #4390)", () => {
-  beforeEach(() => {
+describe("channels add delegates bridge health to rebuild (#4314, #4390)", () => {
+  it.each([
+    ["openclaw", "telegram"],
+    ["hermes", "telegram"],
+    ["openclaw", "whatsapp"],
+  ] as const)("delegates %s/%s without a second probe", async (agent, channel) => {
     delete process.env.NEMOCLAW_NON_INTERACTIVE;
-    promptSpy.mockResolvedValue("y");
-    testConfig = { channels: { telegram: { enabled: true, accounts: { default: {} } } } };
-  });
+    sandboxAgent = agent;
+    registryEntry = makeRegistryEntry([], [], agent);
 
-  it("confirms the startup breadcrumb when the bridge logs the starting-provider line", async () => {
-    testLog = [
-      "[telegram] [default] starting provider",
-      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
-    ].join("\n");
-
-    await addSandboxChannel("test-sb", { channel: "telegram" });
+    await addSandboxChannel("test-sb", { channel });
 
     expect(rebuildSpy).toHaveBeenCalledOnce();
-    expect(printedText()).toContain("'telegram' bridge startup detected");
-  });
-
-  it("warns when the current config does not mark the channel enabled", async () => {
-    testConfig = { channels: { telegram: { accounts: { default: {} } } } };
-
-    await addSandboxChannel("test-sb", { channel: "telegram" });
-
-    expect(printedText()).toContain("was not marked enabled in the current");
-  });
-
-  it("warns when the gateway log shows no bridge breadcrumb yet", async () => {
-    await addSandboxChannel("test-sb", { channel: "telegram" });
-
-    expect(printedText()).toContain("did not log a startup breadcrumb");
-  });
-
-  it("does NOT claim success when only the no-start breadcrumb is present", async () => {
-    testLog =
-      "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled, plugin entries, and gateway log";
-
-    await addSandboxChannel("test-sb", { channel: "telegram" });
-
-    expect(printedText()).not.toContain("bridge startup detected");
-    expect(printedText()).toMatch(/logged credential\/startup warnings|did not start within/);
-  });
-
-  it("forwards credential-placeholder warnings surfaced by the bridge", async () => {
-    testLog =
-      "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder";
-
-    await addSandboxChannel("test-sb", { channel: "telegram" });
-
-    expect(printedText()).toContain("logged credential/startup warnings");
-  });
-
-  it("skips the OpenClaw-shaped probe for Hermes sandboxes (avoids false negatives)", async () => {
-    sandboxAgent = "hermes";
-    registryEntry = makeRegistryEntry([], [], "hermes");
-    testConfig = { channels: { telegram: {} } };
-
-    await addSandboxChannel("test-sb", { channel: "telegram" });
-
     expect(execSpy).not.toHaveBeenCalled();
-    expect(printedText()).not.toContain("was not marked enabled in baked");
-    expect(printedText()).not.toContain("bridge startup detected");
-  });
-
-  it("skips the verifier for WhatsApp's QR-only runtime", async () => {
-    testConfig = { channels: {} };
-
-    await addSandboxChannel("test-sb", { channel: "whatsapp" });
-
-    expect(execSpy).not.toHaveBeenCalled();
-    expect(printedText()).not.toContain("was not marked enabled in the current openclaw.json");
   });
 });
 
