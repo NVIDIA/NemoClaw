@@ -85,14 +85,19 @@ it("prints the providers_v2 refusal with the administrator command on its own li
   );
 });
 
-it("prints the full provider removal command on its own line (#14079)", () => {
-  const refusal = unownedNativeProviderRefusal("nemoclaw-nvidia-prod-v1", {
-    kind: "named",
-    gatewayName: "selected",
-  });
-  const error = vi.fn();
-  expect(handleOnboardCommandError(refusal, { error }, null)).toBe(1);
-  const lines = (error.mock.calls.flat() as string[]).join("\n").split("\n");
-  expect(lines).toContain("    openshell provider delete -g 'selected' 'nemoclaw-nvidia-prod-v1'");
-  expect(lines).toContain("  Then run onboarding again.");
-});
+it.each(["selected", "token", "my-token", "secret", "api-key"])(
+  "prints the full provider removal command for gateway %s (#14079)",
+  (gatewayName) => {
+    const refusal = unownedNativeProviderRefusal("nemoclaw-nvidia-prod-v1", {
+      kind: "named",
+      gatewayName,
+    });
+    const error = vi.fn();
+    expect(handleOnboardCommandError(refusal, { error }, null)).toBe(1);
+    const lines = (error.mock.calls.flat() as string[]).join("\n").split("\n");
+    expect(lines).toContain(
+      `    openshell provider delete 'nemoclaw-nvidia-prod-v1' -g '${gatewayName}'`,
+    );
+    expect(lines).toContain("  Then run onboarding again.");
+  },
+);

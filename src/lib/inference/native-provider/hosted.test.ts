@@ -129,7 +129,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
         lines: [
           `OpenShell provider '${definition.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
           "Check whether any sandbox on this gateway uses this provider. If none does, remove it with:",
-          `  openshell provider delete -g ${quotedGateway} '${definition.providerName}'`,
+          `  openshell provider delete '${definition.providerName}' -g ${quotedGateway}`,
           "Then run onboarding again.",
         ],
       });
