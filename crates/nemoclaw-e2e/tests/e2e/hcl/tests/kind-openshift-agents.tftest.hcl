@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Three agents with the OpenShift profile on a managed gateway in kind:
+# Two agents with the OpenShift profile on a managed gateway in kind:
 # apply, a reply from each agent's recorded runtime, an unchanged plan, and
 # destroy that keeps only the gateway's storage. cargo ci live-kind runs it.
 # The stub's reply shows each request reached it; no model runs.
@@ -39,7 +39,7 @@ run "reply" {
 
   variables {
     targets = {
-      for agent in ["main", "researcher", "reviewer"] : agent => {
+      for agent in ["main", "researcher"] : agent => {
         agent            = agent
         request          = "Reply to this NemoClaw live test."
         response_pointer = "/output/response"

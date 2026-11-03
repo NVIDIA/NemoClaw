@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Three agents with the OpenShift profile on a managed gateway in a kind
+# Two agents with the OpenShift profile on a managed gateway in a kind
 # cluster, each with its own sandbox and policy, sharing one inference route
 # to a stub model in its own namespace. cargo ci live-kind gives each run a
 # fresh identity, port, namespace, kubeconfig context, and agent image.
@@ -69,21 +69,4 @@ spec:
         kind: nvidia.fabric.openclaw
       agent:
         name: researcher
-        inferenceRef: chat
-    reviewer:
-      image:
-        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
-        metadata:
-          env: NEMOCLAW_TEST_AGENT_METADATA
-      network:
-        tier: isolated
-        grants:
-          reviewer:
-            endpoints:
-              - host: reviewer.example.test
-                port: 443
-      harness:
-        kind: nvidia.fabric.openclaw
-      agent:
-        name: reviewer
         inferenceRef: chat

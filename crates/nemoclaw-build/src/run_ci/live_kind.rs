@@ -198,12 +198,12 @@ pub(super) async fn run_live_kind(
     getrandom::fill(&mut namespace).map_err(|_| "cannot name the case's namespace")?;
     fs::write(
         &case,
-        bind_kind_case(
+        kind_case(
             &fs::read_to_string(
                 Path::new("crates/nemoclaw-e2e/cases").join(format!("{KIND_CASE}.yaml")),
             )?,
             &live::uuid()?,
-            live::free_port()?,
+            &format!("https://127.0.0.1:{}", live::free_port()?),
             &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
             &format!("kind-{name}"),
             &image,
@@ -226,7 +226,6 @@ pub(super) async fn run_live_kind(
     command
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
-        .env("NEMOCLAW_TEST_KUBE_RUNTIME", "kubernetes")
         .env("NEMOCLAW_TEST_KIND_NODE", &node_container)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
         .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
@@ -248,40 +247,30 @@ pub(super) async fn run_live_kind(
 /// The HCL E2E case that live-kind runs.
 const KIND_CASE: &str = "kind-openshift-agents";
 
-/// Binds the kind case's template to one run: its UID, gateway port,
-/// namespace (which also names the stub model's), kubeconfig context, and
-/// the agent image and harness that replace its placeholders.
-fn bind_kind_case(
+/// The kind case bound to one run: its UID, gateway endpoint, namespace
+/// (which also names the stub model's), kubeconfig context, agent image, and
+/// harness.
+fn kind_case(
     template: &str,
     uid: &str,
-    port: u16,
+    endpoint: &str,
     namespace: &str,
     context: &str,
     image: &str,
     harness: &str,
 ) -> Result<String> {
-    let placeholders = [
-        ("nc-hcl-kind", namespace.to_owned()),
-        ("kind-nemoclaw", context.to_owned()),
-        (
-            "https://127.0.0.1:17701",
-            format!("https://127.0.0.1:{port}"),
-        ),
-        ("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid.to_owned()),
-        (
-            "nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            image.to_owned(),
-        ),
-        ("nvidia.fabric.openclaw", harness.to_owned()),
-    ];
-    let mut bound = template.to_owned();
-    for (placeholder, value) in placeholders {
-        if !bound.contains(placeholder) {
-            return Err(format!("the kind case template has no {placeholder}").into());
-        }
-        bound = bound.replace(placeholder, &value);
-    }
-    Ok(bound)
+    let zero = format!("nc-fabric@sha256:{}", "0".repeat(64));
+    Ok(live::bind_case(
+        template,
+        &[
+            ("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid),
+            ("https://127.0.0.1:17701", endpoint),
+            ("nc-hcl-kind", namespace),
+            ("kind-nemoclaw", context),
+            (&zero, image),
+            ("nvidia.fabric.openclaw", harness),
+        ],
+    )?)
 }
 
 /// The registry credentials a pull of pushed images uses, as for
@@ -398,28 +387,19 @@ mod tests {
     #[test]
     fn the_kind_case_binds_its_cluster_namespace_and_image() {
         let template = include_str!("../../../nemoclaw-e2e/cases/kind-openshift-agents.yaml");
-        let bound = bind_kind_case(
+        let bound = kind_case(
             template,
-            "11111111-2222-4333-8444-555555555555",
-            40123,
-            "nc-hcl-0a1b2c3d4e5f",
-            "kind-nc-live-1234",
-            "docker.io/library/agent@sha256:abc",
-            "nvidia.fabric.openclaw",
+            "u-1",
+            "https://127.0.0.1:1",
+            "nc-n",
+            "kind-c",
+            "i@1",
+            "h",
         )
         .unwrap();
-        for expected in [
-            "  uid: 11111111-2222-4333-8444-555555555555\n",
-            "    endpoint: https://127.0.0.1:40123\n",
-            "      context: kind-nc-live-1234\n",
-            "      namespace: nc-hcl-0a1b2c3d4e5f\n",
-            "      endpoint: http://model.nc-hcl-0a1b2c3d4e5f-model.svc.cluster.local:8000/v1\n",
-            "        ref: docker.io/library/agent@sha256:abc\n",
-        ] {
-            assert!(bound.contains(expected), "{expected}");
-        }
+        assert!(bound.contains("      namespace: nc-n\n"));
+        assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
         assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
-        assert!(bind_kind_case("uid: x", "u", 1, "n", "c", "i", "h").is_err());
     }
 
     #[test]

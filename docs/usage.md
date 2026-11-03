@@ -622,5 +622,3 @@ On OpenShift, `oc delete project` does the same as deleting the namespace.
 If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
 Run the volume list again; once the volumes are gone, it prints only its header.
 When the namespace, or in a kept namespace those objects, and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
-
-The [live Kubernetes gateway test](contributing/live-tests.md#kubernetes-gateway-without-the-helm-cli) deletes its namespace this way, after switching any volume whose reclaim policy is not `Delete` to `Delete`, and checks that the namespace and its volumes are gone.
