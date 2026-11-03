@@ -862,3 +862,33 @@ fn binary_budgets_bound_each_binary_summed_across_partitions_and_each_of_its_tes
         timing.report
     );
 }
+#[test]
+fn coverage_bundle_executables_write_profiles() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("main.rs");
+    let executable = root.path().join("example");
+    let profile = root.path().join("example.profraw");
+    std::fs::write(&source, "fn main() { println!(\"coverage\"); }").unwrap();
+    let flags = nemoclaw_build::ci::bundle_rustflags(root.path(), true);
+    assert!(
+        std::process::Command::new("rustc")
+            .args(flags.split_whitespace())
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::process::Command::new(executable)
+            .env("LLVM_PROFILE_FILE", &profile)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        profile.is_file(),
+        "bundle executable must emit coverage counters"
+    );
+}

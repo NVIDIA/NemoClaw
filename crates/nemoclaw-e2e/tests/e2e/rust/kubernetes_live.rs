@@ -115,6 +115,9 @@ impl Tofu {
             .env("TF_VAR_nemoclaw_kubeconfig", &self.target.kubeconfig)
             .env(STATE_ENV, self.directory.join("kubernetes"))
             .kill_on_drop(true);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env("LLVM_PROFILE_FILE", profile);
+        }
         let output = tokio::time::timeout(Duration::from_secs(900), command.output())
             .await
             .expect("OpenTofu timed out; private state and cluster resources retained")

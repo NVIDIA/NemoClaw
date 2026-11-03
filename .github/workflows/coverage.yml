@@ -1,0 +1,133 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: CI / Coverage
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/coverage.yml
+permissions:
+  contents: read
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      TEST_PLATFORM: linux_amd64
+      CARGO_INCREMENTAL: "0"
+      NEMOCLAW_COVERAGE: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          cache-prefix: coverage-v1
+          save-cache: "false"
+      - uses: ./.github/actions/containerd-store
+      - name: Install coverage tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+          cargo llvm-cov show-env --export-prefix --no-cfg-coverage > "$RUNNER_TEMP/coverage.env"
+      - name: Build instrumented tests and bundle
+        id: build
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          cargo ci build
+          cargo ci bundle
+          # Build-time executions do not belong to a test layer.
+          rm -f target/*.profraw
+          mkdir -p .build/coverage/raw/{unit,contract,integration,e2e}
+      - name: Unit tests
+        id: unit
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/unit/unit-%m-%p.profraw"
+          cargo nextest run --locked --workspace --all-targets --profile ci
+          cargo test --locked --workspace --doc
+      - name: Provider contracts
+        id: contract
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/contract/contract-%m-%p.profraw"
+          export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
+          cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only \
+            -E '(package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract)'
+      - name: System integration
+        id: integration
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/integration/integration-%m-%p.profraw"
+          export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
+          cargo nextest run --locked --workspace --all-targets --profile lifecycle --run-ignored only \
+            -E 'package(nemoclaw-e2e) & binary(=integration)'
+      - name: Docker and Kind E2E
+        id: e2e
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          export LLVM_PROFILE_FILE="$PWD/.build/coverage/raw/e2e/e2e-%m-%p.profraw"
+          # The driver owns cleanup of its uniquely named images and resources.
+          cargo ci live-images
+          docker_result=0
+          cargo ci live-docker --images .build/ci/live-images.tar.zst || docker_result=$?
+          kind_result=0
+          cargo ci live-kind --images .build/ci/live-images.tar.zst || kind_result=$?
+          test "$docker_result" = 0 && test "$kind_result" = 0
+      - name: Report each layer and their union
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          COMPLETE: ${{ steps.unit.outcome == 'success' && steps.contract.outcome == 'success' && steps.integration.outcome == 'success' && steps.e2e.outcome == 'success' }}
+        run: |
+          source "$RUNNER_TEMP/coverage.env"
+          # Keep the same debug and release objects in every report, including
+          # objects whose counters a layer never executed.
+          export LLVM_COV_FLAGS="-object=$PWD/target/x86_64-unknown-linux-gnu/release/nemoclaw"
+          for provider in openshell fabric vllm ollama host; do
+            LLVM_COV_FLAGS+=" -object=$PWD/target/x86_64-unknown-linux-gnu/release/terraform-provider-$provider"
+          done
+          echo '| Layer | Lines | Functions | Regions |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---|---:|---:|---:|' >> "$GITHUB_STEP_SUMMARY"
+          for layer in unit contract integration e2e overall; do
+            rm -f target/*.profraw
+            if [ "$layer" = overall ]; then
+              if [ "$COMPLETE" != true ]; then
+                echo 'Overall coverage unavailable: at least one test layer did not pass.' >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+              cp .build/coverage/raw/*/*.profraw target/
+            else
+              if ! compgen -G ".build/coverage/raw/$layer/*.profraw" > /dev/null; then
+                echo "| $layer (no profiles) | — | — | — |" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+              cp .build/coverage/raw/"$layer"/*.profraw target/
+            fi
+            cargo llvm-cov report --json --summary-only --ignore-filename-regex 'crates/(nemoclaw-e2e|vendor)/' \
+              --output-path ".build/coverage/$layer.json"
+            jq -r --arg layer "$layer" '.data[0].totals | "| \($layer) | \(.lines.covered)/\(.lines.count) (\(.lines.percent)%) | \(.functions.percent)% | \(.regions.percent)% |"' \
+              ".build/coverage/$layer.json" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo 'Scope: host Rust code on linux_amd64; excludes test fixtures, vendored code, workload-image processes, and hosted/cloud E2E. Reports from failed layers are partial. Overall merges raw counters; it does not average percentages.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .build/coverage
+            target/nextest/**/*.xml
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

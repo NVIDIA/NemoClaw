@@ -42,6 +42,9 @@ async fn tofu(bundle: &Bundle, directory: &Path, arguments: &[&str]) -> std::pro
         .env("CHECKPOINT_DISABLE", "1")
         .env("TF_CLI_CONFIG_FILE", directory.join("providers.tfrc"))
         .kill_on_drop(true);
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
     tokio::time::timeout(Duration::from_secs(180), command.output())
         .await
         .expect("chart rendering timed out")

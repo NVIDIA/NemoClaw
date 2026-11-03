@@ -387,7 +387,10 @@ fn build(packages: &[&str], target: &str) -> Result<()> {
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env(
             "RUSTFLAGS",
-            format!("--remap-path-prefix={}=/workspace", root.display()),
+            nemoclaw_build::ci::bundle_rustflags(
+                &root,
+                std::env::var_os("NEMOCLAW_COVERAGE").is_some(),
+            ),
         );
     run(&mut command)
 }

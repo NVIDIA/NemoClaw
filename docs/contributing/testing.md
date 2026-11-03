@@ -546,7 +546,27 @@ To print a summary from the collected data without rerunning tests:
 cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
 ```
 
-There is no coverage threshold or CI coverage job.
+There is no coverage threshold.
+
+### Coverage Across Test Layers
+
+`CI / Coverage` measures host-side Rust coverage on `linux_amd64` for unit tests, provider contracts,
+system integration tests, and Docker/Kind E2E tests. It runs when its workflow changes in a PR,
+or through `workflow_dispatch` when GitHub makes that workflow available.
+It builds instrumented test executables and an instrumented bundle; it does not publish that bundle.
+`NEMOCLAW_COVERAGE` enables bundle instrumentation and retains checkout source paths for LLVM.
+Leave that variable unset for ordinary builds.
+
+Each layer writes separate LLVM profiles. Reports use the same debug and release objects as their
+denominator. Overall coverage merges the four layers' raw counters, counting shared lines once;
+it does not average their percentages. The job summary lists line, function, and region coverage,
+and its artifact retains JSON reports and raw profiles for 14 days.
+Reports from failed layers are partial; overall coverage requires all four layers to pass.
+
+The scope excludes the private `nemoclaw-e2e` fixtures, vendored code, third-party executables,
+and processes inside workload images. Hosted-model and remote-host E2E scenarios do not run here.
+Only processes that write LLVM profiles contribute counters; a process killed before flushing can
+leave executed code uncounted. Branch coverage is not enabled.
 
 ## Write Tests
 

@@ -11,6 +11,16 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+/// Release builds normally hide the checkout path. Coverage needs the original
+/// source paths to join debug-test and release-bundle counters.
+pub fn bundle_rustflags(root: &Path, coverage: bool) -> String {
+    if coverage {
+        "-C instrument-coverage".to_owned()
+    } else {
+        format!("--remap-path-prefix={}=/workspace", root.display())
+    }
+}
+
 /// One `CI / Bundle` step, in workflow order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
