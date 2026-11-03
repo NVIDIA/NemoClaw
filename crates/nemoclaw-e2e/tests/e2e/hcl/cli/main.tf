@@ -39,16 +39,22 @@ resource "terraform_data" "operation" {
   triggers_replace = uuid()
   provisioner "local-exec" {
     # The exit status is recorded rather than raised, so the run's assertion
-    # reports a failed command's message.
+    # reports a failed command's message. Each file in the private
+    # credentials directory, such as a kind case's OIDC token, becomes the
+    # variable it names.
     command = <<-EOT
       mkdir -p "$OPERATION" && cd "$OPERATION" || exit 1
+      for credential in "$CREDENTIALS"/*; do
+        [ -f "$credential" ] && export "$(basename "$credential")=$(cat "$credential")"
+      done
       "$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
       echo $? >exit
     EOT
     environment = {
-      NEMOCLAW  = var.context.cli
-      STATE     = var.context.state_dir
-      OPERATION = "${var.context.work_dir}/${self.id}"
+      NEMOCLAW    = var.context.cli
+      STATE       = var.context.state_dir
+      OPERATION   = "${var.context.work_dir}/${self.id}"
+      CREDENTIALS = "${var.context.work_dir}/credentials"
     }
   }
 }

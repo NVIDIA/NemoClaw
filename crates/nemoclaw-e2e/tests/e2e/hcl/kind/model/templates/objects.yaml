@@ -10,6 +10,36 @@ metadata:
     openshift.io/sa.scc.uid-range: {{ .Values.uidRange | quote }}
     openshift.io/sa.scc.supplemental-groups: {{ .Values.uidRange | quote }}
 ---
+# The operator's pull Secret for the private registry the sandbox images name.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.pullSecret.name }}
+  namespace: {{ .Values.deploymentNamespace }}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: {{ .Values.pullSecret.dockerconfigjson | b64enc }}
+---
+# The CA the gateway trusts for the existing issuer's HTTPS endpoint.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.issuer.caConfigMap }}
+  namespace: {{ .Values.deploymentNamespace }}
+data:
+  ca.crt: {{ .Values.issuer.ca | quote }}
+---
+# The existing issuer: the SDK's development issuer objects, in their own
+# namespace as an identity provider's would be.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.issuer.namespace }}
+{{- range .Values.issuer.objects }}
+---
+{{ toYaml . }}
+{{- end }}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:

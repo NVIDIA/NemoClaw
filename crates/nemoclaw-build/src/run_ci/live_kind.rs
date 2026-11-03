@@ -6,7 +6,9 @@
 //! The pinned kind executable is downloaded by checksum. The cluster gets
 //! the pinned Agent Sandbox release, as a platform would provide it; the
 //! SDK under test installs nothing cluster-wide. The tests verify the native
-//! bundle and run its OpenTofu and providers without a Helm executable.
+//! bundle and run its OpenTofu and providers without a Helm executable. The
+//! kind case pulls its agent image from a registry this run owns, with a
+//! login, so it needs the pull Secret the case creates.
 
 use super::*;
 use nemoclaw_build::ci::live;
@@ -189,6 +191,13 @@ pub(super) async fn run_live_kind(
         &node_image,
         &image,
     ]))?;
+    // The run's own registry, holding the agent image under a new index
+    // digest; the case pulls it from there.
+    let registry = kind_registry::Registry::start(&inputs.path().join("registry")).await?;
+    let pushed_metadata = inputs.path().join("registry/agent.metadata.json");
+    let pushed = registry
+        .push(&node_container, &image, &metadata, &pushed_metadata)
+        .await?;
 
     // The kind HCL E2E case, bound to this cluster and agent image. Its
     // namespaces are new, and the cluster is deleted afterward.
@@ -206,7 +215,7 @@ pub(super) async fn run_live_kind(
             &format!("https://127.0.0.1:{}", live::free_port()?),
             &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
             &format!("kind-{name}"),
-            &image,
+            &pushed,
             harness,
         )?,
     )?;
@@ -226,19 +235,25 @@ pub(super) async fn run_live_kind(
     command
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
-        .env("NEMOCLAW_TEST_KIND_NODE", &node_container)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
-        .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
-        .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)
-        .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata)
+        .env("NEMOCLAW_TEST_AGENT_METADATA", &pushed_metadata)
         .env("NEMOCLAW_HCL_CASE", KIND_CASE)
         .env("NEMOCLAW_HCL_DOCUMENT", &case)
         .env("NEMOCLAW_HCL_RUN", &hcl)
         .env("TF_VAR_kubeconfig", &kubeconfig)
+        .env(
+            "TF_VAR_pull_credentials",
+            format!(
+                r#"{{ username = "{}", password = "{}" }}"#,
+                kind_registry::USER,
+                kind_registry::PASSWORD
+            ),
+        )
         // Only the image pull above needs the registry.
         .env_remove(REGISTRY_USERNAME)
         .env_remove(REGISTRY_PASSWORD);
     let result = run(&mut command);
+    drop(registry);
     drop(cluster);
     drop(cleanup);
     result
@@ -247,8 +262,9 @@ pub(super) async fn run_live_kind(
 /// The HCL E2E case that live-kind runs.
 const KIND_CASE: &str = "kind-openshift-agents";
 
-/// The kind case bound to one run: its UID, gateway endpoint, namespace
-/// (which also names the stub model's), kubeconfig context, agent image, and
+/// The kind case bound to one run: its UID, which is also its token audience,
+/// gateway endpoint, namespace (which also names the stub model's and the
+/// issuer's), kubeconfig context, agent image in the run's registry, and
 /// harness.
 fn kind_case(
     template: &str,
@@ -259,7 +275,7 @@ fn kind_case(
     image: &str,
     harness: &str,
 ) -> Result<String> {
-    let zero = format!("nc-fabric@sha256:{}", "0".repeat(64));
+    let zero = format!("nc-registry:5000/agent@sha256:{}", "0".repeat(64));
     Ok(live::bind_case(
         template,
         &[
@@ -393,12 +409,15 @@ mod tests {
             "https://127.0.0.1:1",
             "nc-n",
             "kind-c",
-            "i@1",
+            "nc-registry-1:5000/agent@sha256:1",
             "h",
         )
         .unwrap();
         assert!(bound.contains("      namespace: nc-n\n"));
         assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
+        assert!(bound.contains("https://issuer-oidc.nc-n-issuer.svc.cluster.local:8443"));
+        assert!(bound.contains("        audience: u-1\n"));
+        assert!(bound.contains("        ref: nc-registry-1:5000/agent@sha256:1\n"));
         assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
     }
 
