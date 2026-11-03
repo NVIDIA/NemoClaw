@@ -11,10 +11,49 @@ import { readWorkflow, required, step } from "../../helpers/managed-image-public
 const original = "|/fixture/original-handler %p\n";
 
 describe("managed-image passive crash capture workflow", () => {
+  it("removes private crash memory when preparation did not save the core pattern", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const builder = required(workflow.jobs?.["pr-build-and-entrypoint"], "missing PR builder");
+    const cleanup = step(builder, "Restore core settings and remove private Hermes crash memory");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-core-cleanup-"));
+    const privateMemory = path.join(directory, "nemoclaw-hermes-crash-owned");
+    const unrelated = path.join(directory, "unrelated");
+    try {
+      fs.mkdirSync(privateMemory);
+      fs.writeFileSync(path.join(privateMemory, "core"), "private synthetic process memory");
+      fs.mkdirSync(unrelated);
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `
+        sudo() { return 91; }
+        docker() { test "$*" = 'ps -aq --filter label=io.nvidia.nemoclaw.hermes-crash-capture=1'; }
+        ${required(cleanup.run, "missing capture cleanup")}
+      `,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: { PATH: process.env.PATH, RUNNER_TEMP: directory },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(privateMemory)).toBe(false);
+      expect(fs.existsSync(unrelated)).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { failure: "none", expectedPattern: original },
     { failure: "prepare", expectedPattern: original },
     { failure: "restore", expectedPattern: "/tmp/nemoclaw-hermes-crash/core.%p\n" },
+    { failure: "read", expectedPattern: original },
+    { failure: "read-after-output", expectedPattern: original },
+    { failure: "mismatch", expectedPattern: "different\n" },
+    { failure: "saved-remove", expectedPattern: original },
     { failure: "list", expectedPattern: original },
     { failure: "remove", expectedPattern: original },
   ])("cleans private memory across the $failure failure case", ({ failure, expectedPattern }) => {
@@ -33,18 +72,21 @@ describe("managed-image passive crash capture workflow", () => {
     // setting, package manager or Docker daemon is touched.
     const boundaries = String.raw`
       gdb() { :; }
-      cp() {
-        test "$1" = /proc/sys/kernel/core_pattern || return 91
-        command cp "$FAKE_KERNEL" "$2"
-      }
       sudo() {
-        test "$*" = 'tee /proc/sys/kernel/core_pattern' || return 92
+        test "$1" = tee && test "$2" = "$FAKE_KERNEL" || return 92
         test "$FAIL_WRITE" != 1 || return 1
         command tee "$FAKE_KERNEL"
+        if test "$FAILURE" = mismatch; then printf 'different\n' > "$FAKE_KERNEL"; fi
       }
-      cmp() {
-        test "$1" = -s && test "$3" = /proc/sys/kernel/core_pattern || return 93
-        command cmp -s "$2" "$FAKE_KERNEL"
+      cat() {
+        test "$*" = "$FAKE_KERNEL" || return 93
+        test "$FAILURE" != read || return 1
+        command cat "$@"
+        test "$FAILURE" != read-after-output
+      }
+      rm() {
+        if test "$FAILURE" = saved-remove && test "$*" = "-f $SAVED"; then return 1; fi
+        command rm "$@"
       }
       docker() {
         case "$*" in
@@ -59,21 +101,30 @@ describe("managed-image passive crash capture workflow", () => {
       }
     `;
     const execute = (script: string, phase: "prepare" | "cleanup") =>
-      spawnSync("bash", ["-c", `${boundaries}\n${script}`], {
-        encoding: "utf8",
-        timeout: 10_000,
-        env: {
-          PATH: process.env.PATH,
-          RUNNER_TEMP: directory,
-          FAKE_KERNEL: kernel,
-          REMOVAL_ATTEMPT: removed,
-          FAIL_WRITE: (phase === "prepare" ? failure === "prepare" : failure === "restore")
-            ? "1"
-            : "0",
-          FAIL_LIST: failure === "list" ? "1" : "0",
-          FAIL_REMOVE: failure === "remove" ? "1" : "0",
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          `${boundaries}\n${script.replaceAll("/proc/sys/kernel/core_pattern", '"$FAKE_KERNEL"')}`,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: {
+            PATH: process.env.PATH,
+            RUNNER_TEMP: directory,
+            FAKE_KERNEL: kernel,
+            SAVED: saved,
+            FAILURE: phase === "cleanup" ? failure : "",
+            REMOVAL_ATTEMPT: removed,
+            FAIL_WRITE: (phase === "prepare" ? failure === "prepare" : failure === "restore")
+              ? "1"
+              : "0",
+            FAIL_LIST: failure === "list" ? "1" : "0",
+            FAIL_REMOVE: failure === "remove" ? "1" : "0",
+          },
         },
-      });
+      );
     try {
       fs.writeFileSync(kernel, original);
       const setup = execute(required(prepare.run, "missing capture setup"), "prepare");
@@ -83,13 +134,13 @@ describe("managed-image passive crash capture workflow", () => {
       fs.writeFileSync(path.join(privateMemory, "core"), "private synthetic process memory");
       fs.mkdirSync(unrelated);
       const result = execute(required(cleanup.run, "missing capture cleanup"), "cleanup");
-      expect(result.status, result.stderr).toBe(
-        ["restore", "list", "remove"].includes(failure) ? 1 : 0,
-      );
+      expect(result.status, result.stderr).toBe(["none", "prepare"].includes(failure) ? 0 : 1);
       expect(fs.existsSync(privateMemory)).toBe(false);
       expect(fs.existsSync(unrelated)).toBe(true);
       expect(fs.existsSync(removed)).toBe(failure !== "list");
-      expect(fs.existsSync(saved)).toBe(failure === "restore");
+      expect(fs.existsSync(saved)).toBe(
+        ["restore", "read", "read-after-output", "mismatch", "saved-remove"].includes(failure),
+      );
       expect(fs.readFileSync(kernel, "utf8")).toBe(expectedPattern);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });

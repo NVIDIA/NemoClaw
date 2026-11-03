@@ -1018,11 +1018,15 @@ jobs:
           status=0
           saved="$RUNNER_TEMP/nemoclaw-hermes-original-core-pattern"
           if [ -f "$saved" ]; then
-            if sudo tee /proc/sys/kernel/core_pattern <"$saved" >/dev/null && cmp -s "$saved" /proc/sys/kernel/core_pattern; then
-              rm -f "$saved" || status=1
-            else
+            if ! sudo tee /proc/sys/kernel/core_pattern <"$saved" >/dev/null; then
               echo '::error::Failed to restore the original core pattern'
               status=1
+            # Read procfs through a pipe: its reported file size can be zero.
+            elif ! cat /proc/sys/kernel/core_pattern | cmp -s "$saved" -; then
+              echo '::error::Failed to verify the restored core pattern'
+              status=1
+            else
+              rm -f "$saved" || status=1
             fi
           fi
           find "$RUNNER_TEMP" -maxdepth 1 -type d -name 'nemoclaw-hermes-crash-*' -exec rm -rf -- {} + || status=1
