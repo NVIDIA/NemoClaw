@@ -84,7 +84,7 @@ import {
 import { VLLM_MODELS } from "./vllm-models";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "./vllm-models";
 
-const READY_MODELS_RESPONSE = '{"data":[]}';
+const READY_MODELS_RESPONSE = '{"data":[]}\n200';
 
 function installVllm(profile: VllmProfile, options: InstallVllmOptions) {
   return installVllmProduction(profile, withVllmInstallTestReadiness(profile, options));

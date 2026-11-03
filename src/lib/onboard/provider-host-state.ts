@@ -15,6 +15,7 @@ import {
   setResolvedOllamaHost as defaultSetResolvedOllamaHost,
   type RunCaptureFn,
 } from "../inference/local";
+import { buildModelListProbeCommand } from "../inference/serving/model-inventory";
 import type { NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
 import { buildVllmDockerEnv } from "../inference/vllm-docker-env";
@@ -141,15 +142,16 @@ function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
     return false;
   }
   if (!endpoint) return false;
-  const writeOut = endpoint.endsWith("/health")
-    ? ["--noproxy", "*", "--write-out", "%{http_code}"]
-    : [];
-  const output = deps.runCapture(
-    ["curl", "-sf", ...LOCAL_PROVIDER_PROBE_CURL_ARGS, ...writeOut, endpoint],
-    {
-      ignoreError: true,
-    },
-  );
+  const command = endpoint.endsWith("/models")
+    ? buildModelListProbeCommand([...LOCAL_PROVIDER_PROBE_CURL_ARGS], endpoint)
+    : [
+        "curl",
+        "-sf",
+        ...LOCAL_PROVIDER_PROBE_CURL_ARGS,
+        ...(endpoint.endsWith("/health") ? ["--noproxy", "*", "--write-out", "%{http_code}"] : []),
+        endpoint,
+      ];
+  const output = deps.runCapture(command, { ignoreError: true });
   return isLocalProviderProbeOutputHealthy(endpoint, output);
 }
 
