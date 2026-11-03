@@ -97,6 +97,8 @@ The render test also rejects an unavailable chart digest.
 
 Each HCL E2E scenario deploys one document from `crates/nemoclaw-e2e/cases` and runs the matching `tests/e2e/hcl/tests/<case>.tftest.hcl` under the bundled OpenTofu `tofu test`.
 `hcl_live::case` sets the run's context and starts `tofu test`; the run blocks own the sequence and the assertions.
+When `tofu test` ends, `hcl_live::case` prints how long each run block took, and the cleanup that destroys their state, with the total; with `GITHUB_STEP_SUMMARY` set, it also appends the table to the job summary.
+It reads the times from OpenTofu's debug log, which can hold deployment values: the test creates it owner-only in the run's `work` directory, never prints it, and deletes it once read, and reports run names and seconds only.
 Run blocks call these modules:
 
 | Module | What it does |
