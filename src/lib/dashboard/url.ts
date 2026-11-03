@@ -186,8 +186,14 @@ function parseDashboardOrigin(candidate: string, position: number): string {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error(`${entry} must use http or https.`);
   }
-  // URL parsing drops a bare "?" or "#", so also reject them in the raw input.
-  if (url.pathname !== "/" || url.search || url.hash || /[?#]/u.test(candidate)) {
+  // URL parsing normalizes dot segments and backslashes and drops bare query
+  // and fragment delimiters. Check the raw origin syntax before accepting it.
+  if (
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    !/^https?:\/\/[^/\\?#]+\/?$/iu.test(candidate)
+  ) {
     throw new Error(`${entry} must not include a path, query, or fragment.`);
   }
   if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) {

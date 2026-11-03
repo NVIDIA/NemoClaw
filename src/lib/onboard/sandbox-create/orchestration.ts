@@ -1845,6 +1845,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     allowRemovedImmutabilityStateRecord = false,
     fromImage: string | null = null,
     requestedExternalToolDisclosure: ToolDisclosure | null = null,
+    switchyardRoutingConfigured = false,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
@@ -2196,6 +2197,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         : managedWorkloadOnboard.prepareSandboxWorkloadForPortableLifecycle(
             runtime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            switchyardRoutingConfigured,
           );
     };
     const prepareManagedStateVolumeLifecycle = (
@@ -2428,6 +2430,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           toolDisclosure: effectiveToolDisclosure,
           dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          ...sandboxReuse.hermesSwitchyardRoutingCreateIntentFields(
+            getRequestedSandboxAgentName(agent),
+            process.env,
+          ),
         },
       });
     let pendingStateRestoreBackupPath: string | null = null,
@@ -2455,6 +2461,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       })
     ) {
       const existingSandboxState = getSandboxReuseState(sandboxName);
+      sandboxReuse.assertHermesSwitchyardRoutingReusable({
+        agentName: getRequestedSandboxAgentName(agent),
+        entry: registry.getSandbox(sandboxName),
+        env: process.env,
+        recreate: isRecreateSandbox(createIntent?.recreate),
+        sandboxState: existingSandboxState,
+      });
       const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
       let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 

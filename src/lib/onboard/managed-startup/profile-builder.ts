@@ -10,6 +10,10 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydrat
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { withLocalNoProxy } from "../../proxy/local-no-proxy";
 import {
+  HERMES_SWITCHYARD_ROUTING_ENV,
+  readHermesSwitchyardRoutingEnvironment,
+} from "../../hermes-switchyard-routing";
+import {
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
   PEM_CERTIFICATE_RE_GLOBAL,
@@ -66,7 +70,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "3140d68b4842ea3fa865f2c5ca05381376bab17d888ae06ad7c27272aaedfa29",
-  hermes: "795c97be2dcb1921e06328a6d23b1f7389ebb2f6a085fa67b7aaa0f287ce88e0",
+  hermes: "b33584cd58428ff7e3810c4a95a7b2fb43f393f13e2e8c4010816742db7ca200",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
   pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
 } as const satisfies Record<ManagedStartupAgent, string>;
@@ -833,6 +837,13 @@ function assertEnvironmentConsistency(
         profile.tools.enabledGateways,
       );
     }
+    if (presentEnvironmentValue(environment, HERMES_SWITCHYARD_ROUTING_ENV) !== null) {
+      assertEquivalent(
+        HERMES_SWITCHYARD_ROUTING_ENV,
+        readHermesSwitchyardRoutingEnvironment(environment),
+        config.switchyardRouting ?? null,
+      );
+    }
   } else if (profile.agentConfig.agent === "langchain-deepagents-code") {
     const config = profile.agentConfig;
     const approval = presentEnvironmentValue(environment, "NEMOCLAW_DCODE_AUTO_APPROVAL");
@@ -942,7 +953,11 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
     };
   } else if (input.agent === "hermes") {
     if (!webSearch) fail("Hermes web-search state is missing");
-    agentConfig = { agent: "hermes", webSearch };
+    agentConfig = {
+      agent: "hermes",
+      webSearch,
+      switchyardRouting: readHermesSwitchyardRoutingEnvironment(input.environment),
+    };
     tuning = {
       contextWindow: parsePositiveInteger(input.environment, "NEMOCLAW_CONTEXT_WINDOW", null, {
         minimum: MIN_HERMES_CONTEXT_WINDOW,

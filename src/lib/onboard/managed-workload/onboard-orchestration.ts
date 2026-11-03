@@ -255,8 +255,12 @@ export function assertPortableManagedBootstrapNotSelected(
 export async function prepareSandboxWorkloadForPortableLifecycle(
   runtime: ManagedWorkloadOnboardRuntime,
   portableLifecycle: boolean,
+  switchyardRoutingConfigured = false,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
+  if (switchyardRoutingConfigured && workload.source.kind !== "managed-image") {
+    throw new Error("Hermes Switchyard routing requires the managed Hermes image.");
+  }
   if (workload.source.kind === "portable-image") {
     throw new Error("Portable image workload activation is not enabled.");
   }

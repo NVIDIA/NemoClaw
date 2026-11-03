@@ -35,6 +35,10 @@ describe("parseDashboardOrigins (#13177)", () => {
 
   it.each([
     ["a path", "https://a.example.test/dashboard"],
+    ["a normalized dot-segment path", "https://a.example.test/private/.."],
+    ["an encoded dot-segment path", "https://a.example.test/%2e"],
+    ["a backslash path separator", "https://a.example.test\\"],
+    ["no authority delimiter", "https:a.example.test"],
     ["a query", "https://a.example.test?x=1"],
     ["a fragment", "https://a.example.test#x"],
     ["an empty query", "https://a.example.test?"],

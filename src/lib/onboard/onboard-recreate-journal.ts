@@ -36,6 +36,7 @@ export interface OnboardRecreateTargetIntent {
   readonly toolDisclosure: string;
   readonly dcodeAutoApprovalMode: string | null;
   readonly observabilityEnabled: boolean;
+  readonly switchyardRouting?: import("../hermes-switchyard-routing").HermesSwitchyardRoutingIntent;
 }
 
 export function fingerprintOnboardRecreateTargetIntent(

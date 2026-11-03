@@ -327,6 +327,19 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle",
 ] as const;
 
+const OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS = [
+  "agents/openclaw/manifest.yaml",
+  "nemoclaw-blueprint/blueprint.yaml",
+  "nemoclaw/package.json",
+  "nemoclaw/src/index.ts",
+  "nemoclaw/src/denied-search-state.ts",
+  "nemoclaw/src/runtime-context.ts",
+  "nemoclaw/src/search-config.ts",
+  "scripts/generate-openclaw-config.mts",
+  "scripts/nemoclaw-start.sh",
+  "src/lib/openclaw/agent-json-provenance.ts",
+] as const;
+
 function commonEgressTarget(options: {
   displayName: string;
   environment?: Readonly<Record<string, string>>;
@@ -334,6 +347,7 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
+  prAdvisorSelectable?: boolean;
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -344,6 +358,7 @@ function commonEgressTarget(options: {
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
     profile: options.profile ?? "nvidia-inference",
+    prAdvisorSelectable: options.prAdvisorSelectable,
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -653,7 +668,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     displayName: "Networking: OpenClaw answers through balanced egress",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
+    prAdvisorSelectable: true,
     selector: "^common-egress.+C1.+$",
+    owningPaths: OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS,
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
@@ -674,6 +691,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     runnerComparison: false,
     owningPaths: [
+      ...OPENCLAW_SEARCH_RUNTIME_OWNING_PATHS,
       "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
       "nemoclaw-blueprint/policies/tiers.yaml",
       "src/lib/onboard/policy-selection.ts",
@@ -849,7 +867,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/fixtures/native-local-chat.ts"],
+    owningPaths: [
+      "test/e2e/fixtures/native-local-chat.ts",
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
@@ -870,6 +892,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
       "test/e2e/fixtures/native-local-chat.ts",
       "test/e2e/live/hermes-cli-adapter-live.ts",
       "src/lib/inference/ollama/proxy.ts",
@@ -1097,6 +1120,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/actions/sandbox/inference-route-health.ts",
       "test/e2e/fixtures/inference-routing-openclaw-native.ts",
       "test/e2e/fixtures/native-local-ipv6-evidence.ts",
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],
   }),
@@ -1105,7 +1130,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local llama.cpp",
     profile: "standard",
-    owningPaths: ["scripts/patch-openclaw-device-self-approval.mts"],
+    owningPaths: [
+      "scripts/patch-openclaw-device-self-approval.mts",
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
+    ],
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 120,
     installMode: "authenticated",
@@ -1314,6 +1343,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/sandbox-prebuild.ts",
       "src/lib/onboard/sandbox-recreate-transaction.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
       "test/e2e/live/public-nvidia-switch-provider.ts",
       "scripts/patch-openclaw-device-self-approval.mts",
       "test/e2e/live/openclaw-admin-scope.ts",
@@ -1351,6 +1382,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/inference/native-provider/",
       "src/lib/onboard/setup-inference.ts",
       "test/e2e/live/openclaw-inference-switch-helpers.ts",
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/gpu-e2e-ollama.ts",
       "test/e2e/live/openclaw-anthropic-provider.ts",
       "test/e2e/live/cloudflared-prerequisite.ts",
       "test/e2e/live/mcp-bridge-servers.ts",
