@@ -78,11 +78,9 @@ describe("rebuild confirmation", () => {
     await expect(confirmSandboxRebuildIfNeeded(false, 2, prompt)).resolves.toBe(false);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH sessions detected (2 connections)");
-    expect(output).toContain("terminate all active sessions with a Broken pipe error");
-    expect(output.indexOf("Active SSH sessions detected")).toBeLessThan(
-      output.indexOf("Cancelled."),
-    );
+    expect(output).toContain("Active sessions detected (2 connections)");
+    expect(output).toContain("terminate all active sessions; running commands will be interrupted");
+    expect(output.indexOf("Active sessions detected")).toBeLessThan(output.indexOf("Cancelled."));
   });
 
   it("omits the active-session warning when detection yields no sessions", async () => {
@@ -92,13 +90,19 @@ describe("rebuild confirmation", () => {
     await expect(confirmSandboxRebuildIfNeeded(false, 0, prompt)).resolves.toBe(false);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).not.toContain("Active SSH");
+    expect(output).not.toContain("Active session");
     expect(output).toContain("Cancelled.");
   });
 
-  it("does not prompt when confirmation is skipped", async () => {
+  it("prints the active-session warning but does not prompt when confirmation is skipped", async () => {
     const prompt = vi.fn(async () => "n");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
     await expect(confirmSandboxRebuildIfNeeded(true, 3, prompt)).resolves.toBe(true);
+
+    const output = log.mock.calls.flat().join("\n");
+    expect(output).toContain("Active sessions detected (3 connections)");
+    expect(output).toContain("terminate all active sessions; running commands will be interrupted");
     expect(prompt).not.toHaveBeenCalled();
   });
 

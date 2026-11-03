@@ -1634,6 +1634,7 @@ jobs:
           retention-days: 1
 
   pi-candidate:
+    needs: [publication-identity]
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
@@ -1652,6 +1653,7 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     env: &pi_candidate_env
+      RELEASE: ${{ needs.publication-identity.outputs.release }}
       BASE_DOCKERFILE: agents/pi/Dockerfile.base
       CANDIDATE_IMAGE: nemoclaw-managed-candidate/pi
       DOCKERFILE: agents/pi/Dockerfile
@@ -2007,7 +2009,7 @@ jobs:
             echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
             exit 1
           fi
-          release="v$(node -p 'require("./package.json").version')"
+          release="$RELEASE"
           contract_dir="$RUNNER_TEMP/managed-candidate-contract"
           mkdir -p "$contract_dir"
           jq -n \
@@ -2049,6 +2051,7 @@ jobs:
           retention-days: 7
 
   pi-candidate-publish:
+    needs: [publication-identity]
     name: Publish and validate the Pi candidate managed image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw' && github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
