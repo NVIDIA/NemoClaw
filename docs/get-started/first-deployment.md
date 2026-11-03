@@ -80,7 +80,7 @@ Replace the following illustrative values before planning:
 Keep `spec.gateway.management: external`; this deployment does not manage the gateway or inference server.
 The external gateway's engine is used for image inspection; it does not transfer ownership of that gateway.
 Update the editor schema comment in the copied file to `../../schemas/nemoclaw-v1alpha1.schema.json`.
-For other fields, use the generated configuration reference from the selected v1 worktree (`docs/reference/configuration.md` there); the [reference in this documentation checkout](../reference/configuration.md) describes its older SDK and cannot validate this v1 example. See [inference configuration](../agents-inference/inference.md) for the task-specific choices.
+For other fields, use the generated configuration reference from the selected v1 worktree (`docs/reference/configuration.md` there) or its [source-pinned v1 snapshot](../references/v1-configuration.md). The generated reference in this documentation checkout describes an older SDK and cannot validate this example. Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
 
 If your endpoint requires a key, add a reference under `spec.inferenceProviders.local`:
 

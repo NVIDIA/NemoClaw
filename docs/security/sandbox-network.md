@@ -51,7 +51,7 @@ The input supports TCP destinations and REST, WebSocket, JSON-RPC, and MCP inspe
 Unknown fields and unsupported combinations are rejected.
 Middleware, inline credentials, credential-provider bindings, GraphQL, and SQL policy settings are outside this configuration contract.
 The pinned OpenShell parser and validator check protocol-specific rules, destination restrictions, paths, and process identities.
-See the [generated field reference](../reference/configuration.md#explicitpolicy) for the complete input surface.
+See the [generated field reference](../references/v1-configuration.md#explicitpolicy) for the complete input surface.
 
 `landlock.compatibility: best_effort` permits startup when the host cannot enforce Landlock restrictions.
 Use `hard_requirement` to require enforcement.

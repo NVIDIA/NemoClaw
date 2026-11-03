@@ -8,14 +8,14 @@ Keep the documentation, configuration schema, and runtime bundle matched to the 
 
 ## Documentation for Coding Agents
 
-Repository Markdown and the [generated configuration reference](../reference/configuration.md) are available in this checkout.
+Repository Markdown and the [source-pinned v1 field reference](../references/v1-configuration.md) are available in this checkout. The generated reference at `docs/reference/configuration.md` belongs to this documentation checkout's older SDK, not to the v1 implementation documented here.
 Use [CLI reference](../references/cli.md) for accepted commands and [migration](../get-started/migration.md) for earlier-product boundaries.
 
 ### Choose the v1 Sources
 
 | Source | Use |
 |---|---|
-| This checkout's `docs/README.md` and task guides | Documentation matched to your checkout; generated field reference must also match |
+| This checkout's `docs/README.md` and task guides | V1 guidance grounded in the pinned implementation revision; use its [v1 field snapshot](../references/v1-configuration.md) or the generated reference in a matching v1 worktree |
 | [v1 staging overview](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview) | Browser preview; choose **v1 (Development)** in the version selector |
 | [v1 Markdown index](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/llms.txt) | Discover pages in this version |
 | [v1 overview as Markdown](https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw/v1/overview.md) | Fetch page text; append `.md` to another v1 page URL for that page |
@@ -33,7 +33,7 @@ Use this prompt with an assistant that can read your checkout, replacing the fin
 ```text
 Help me use the v1 development version of NemoClaw.
 Read docs/README.md, docs/about/overview.md, and the guide for my task from this checkout.
-Use docs/references/cli.md and docs/reference/configuration.md from the same revision as my bundle.
+Use CLI and configuration references from the same source revision as my bundle. For pinned v1, start with docs/references/v1-configuration.md.
 For hosted documentation, use the v1 (Development) selector and /nemoclaw/v1/llms.txt.
 Keep main-version commands and procedures separate from v1 guidance.
 Treat anything listed in docs/resources/limits.md as not yet available or tested.

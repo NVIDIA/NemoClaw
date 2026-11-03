@@ -145,8 +145,8 @@
           "slug": "reference/cli"
         },
         {
-          "title": "YAML configuration reference",
-          "source": "docs/reference/configuration.md",
+          "title": "V1 YAML configuration reference",
+          "source": "docs/references/v1-configuration.md",
           "slug": "reference/configuration"
         },
         {

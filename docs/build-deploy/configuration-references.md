@@ -10,7 +10,7 @@ Managed services have a separate rule: every entry in `spec.services` is install
 
 The authoring library and its [example TUI](../../crates/nemoclaw-onboarding/README.md) can generate a validated starter document without resolving credentials, planning, or applying.
 The questionnaire edits a single-sandbox deployment and derives native settings questions from Fabric schemas.
-Other deployment shapes remain available through hand-authored YAML according to the [field reference](../reference/configuration.md).
+Other deployment shapes remain available through hand-authored YAML according to the [field reference](../references/v1-configuration.md).
 Generated and hand-authored files use the same lifecycle CLI `plan` and `apply` implementations.
 
 ## The Authoring Rule
@@ -185,7 +185,7 @@ No single active configuration exercises every schema branch:
 | Hermes provider authentication or Relay tracing | [Authentication](../../examples/hermes-auth.yaml), [Relay](../agents-inference/agents.md#hermes-relay-tracing) | The full-featured example selects OpenClaw |
 | Pi model extensions | [Pi example](../../examples/fabric-pi.yaml) | Pi needs a context window for a model it does not ship |
 | Model preparation recipe | [Recipe declaration](../agents-inference/recipes.md#declaration) | Separate model, image, and hardware contract |
-| External gateway credentials and mTLS | [Gateway fields](../reference/configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
+| External gateway credentials and mTLS | [Gateway fields](../references/v1-configuration.md#gateway) | Managed gateways use local HTTP and reject these fields |
 
 The [multiple-provider example](../../examples/multiple-providers.yaml) combines selected local and hosted endpoints.
 Unselected definitions do not exercise another provider's runtime.
@@ -199,6 +199,6 @@ Managed services are named definitions under `spec.services`; providers select t
 Services have no inline provider form or sandbox-local scope, and every declared service participates in apply and destroy.
 Use [service configuration](../agents-inference/inference.md#choose-a-service-mode) for the available installers and lifecycle limits.
 
-The [field reference](../reference/configuration.md) lists exact shapes and constraints.
+The [field reference](../references/v1-configuration.md) lists exact shapes and constraints.
 Editor schema checks cover structure and conditional forms; the SDK parser also resolves names and checks selected-provider compatibility when multiple named definitions exist.
 Validate connectivity and inference separately using the [deployment verification steps](../agents-inference/inference.md#verify-the-result).

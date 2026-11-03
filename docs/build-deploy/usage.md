@@ -146,7 +146,7 @@ An external gateway takes no `config`; its operator configures it.
 ### Supply Credential References
 
 Use [definitions and references](configuration-references.md) to choose shared or inline configuration.
-Use the [field reference](../reference/configuration.md) for names, defaults, and validation rules.
+Use the [field reference](../references/v1-configuration.md) for names, defaults, and validation rules.
 
 Unknown fields, duplicate keys, and unsupported combinations are rejected; images require immutable SHA-256 references.
 Container `environment` values are literal settings retained in configuration and state, not the credential references described below.
@@ -283,7 +283,7 @@ Keep `$schema` in the comment; a YAML field named `$schema` is an unknown config
 Exported YAML omits comments, so add the association again if you want editor assistance for an export.
 
 Editor validation does not replace SDK parsing or deployment checks.
-See [validation beyond the schema](../reference/configuration.md#validation-beyond-the-schema) for those limits.
+See [validation beyond the schema](../references/v1-configuration.md#validation-beyond-the-schema) for those limits.
 
 ## Updates and Recovery
 
