@@ -291,9 +291,10 @@ describe("rebuild replacement journal", () => {
     vi.restoreAllMocks();
   });
 
-  function open(target = NON_DEFAULT_TARGET) {
+  function open(target = NON_DEFAULT_TARGET, retainedBackupPath?: string) {
     return openRebuildRecreateJournal({
       target,
+      retainedBackupPath,
       expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       agentName: "langchain-deepagents-code",
       targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
@@ -454,6 +455,31 @@ describe("rebuild replacement journal", () => {
       gatewayName: "nemoclaw-9090",
       phase: "deleted",
     });
+  });
+
+  it("refuses a retained backup if the original source reappears before deletion (#14073)", () => {
+    open();
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    const resumed = open(NON_DEFAULT_TARGET, "/tmp/retained-backup");
+    const checkpoint = structuredClone(session.checkpoint);
+
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    expect(() => resumed.beginDelete()).toThrow("The original sandbox still exists");
+    expect(session.checkpoint).toEqual(checkpoint);
+  });
+
+  it("preserves a retained transaction when source observation fails (#14073)", () => {
+    open();
+    const checkpoint = structuredClone(session.checkpoint);
+    mocks.captureOpenshell.mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "connection refused",
+    });
+
+    expect(() => open(NON_DEFAULT_TARGET, "/tmp/retained-backup")).toThrow();
+    expect(session.checkpoint).toEqual(checkpoint);
   });
 
   it("records the delete boundary before and after the destructive command", () => {

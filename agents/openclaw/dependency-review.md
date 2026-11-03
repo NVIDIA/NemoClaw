@@ -21,7 +21,7 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Security override: `@modelcontextprotocol/sdk@1.32.0` (`sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==`) replaces `1.31.0` for [GHSA-22jm-h49p-29qw](https://github.com/advisories/GHSA-22jm-h49p-29qw) and retains the earlier fix for [GHSA-6qxp-vccf-f47h](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h). The replacement stays within mcporter's declared `^1.25.1` range and preserves the MIT license and Node.js `>=18` floor. Mcporter persists complete token and client-information objects, preserving the patched SDK's `issuer` field. Existing OAuth credentials saved without `issuer` require clearing and a new sign-in, as specified by the earlier advisory. Remove this override when the reviewed graph resolves to a patched SDK.
 - SDK compatibility: `1.32.0` binds experimental tasks to their creating session and restricts HTTP redirects to the same origin by default. Mcporter uses the SDK's client transports; it does not configure a server task store. The managed discovery client already refuses redirects. OpenClaw, managed messaging, the reviewed archive audit, and the generated discovery bundle use the same SDK release.
 - Security override: `@hono/node-server@2.0.11` (`sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`) replaces the SDK's vulnerable `1.19.14` resolution for `GHSA-frvp-7c67-39w9` and the previously reviewed `2.0.5` resolution affected by `GHSA-9mqv-5hh9-4cgg`. `2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`. The reviewed v2 range retains the `getRequestListener` API used by `@modelcontextprotocol/sdk`; its Node.js 20 floor is below NemoClaw's Node.js 22.19 floor, and the `/vercel` adapter is not consumed. Mcporter's production path imports the SDK's client transport, not the server adapter, and the image build still exercises the installed CLI after the locked install. Remove the override when the SDK's declared range resolves to a reviewed release outside both affected ranges.
-- Security override: `fast-uri@3.1.7` (`sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`) replaces Ajv's vulnerable resolution. [GHSA-58mr-gqgx-xq4g](https://github.com/advisories/GHSA-58mr-gqgx-xq4g) and [GHSA-qw65-cvwx-89v3](https://github.com/advisories/GHSA-qw65-cvwx-89v3) affect the previous `3.1.6` pin; `3.1.7` fixes both and retains the earlier 3.x security fixes. The replacement remains within Ajv's declared `^3.0.1` range and preserves the reviewed v3 API and BSD-3-Clause license. The CLI, OpenClaw, mcporter, MCP discovery bundle, legacy OpenClaw remediation, and weather fixture use this patch release. Remove the override when the declared graph resolves to a reviewed release outside all affected ranges.
+- Security override: `fast-uri@3.1.9` (`sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==`) fixes CVE-2026-110306 and retains the previous 3.x fixes. The replacement stays within Ajv's `^3.0.1` range and preserves its API and BSD-3-Clause license. The CLI, OpenClaw, mcporter, MCP discovery bundle, migration runtimes, and weather fixture use this release. OpenClaw's managed plugin overrides use the corresponding fixed 4.x release, `4.2.3`. Remove the overrides when upstream resolves outside the affected ranges.
 - Security override: `hono@4.12.34` (`sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`) replaces the SDK's vulnerable `4.12.27` resolution.
   `GHSA-8j4g-w8fx-2239`, `GHSA-54fx-42gc-7vw4`, `GHSA-f23p-vx2j-j53r`, and `GHSA-79qm-7rj5-m7r9` are fixed in `4.12.34`.
   The replacement remains within the SDK's declared `^4.11.4` range and preserves Hono's Node.js `>=16.9.0` contract.
@@ -148,7 +148,7 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 ## Source-of-Truth Boundary
 
-- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.7`, resolves `hono` to any version other than exact `4.12.34`, resolves `ip-address` to any version other than exact `10.3.1`, resolves `@modelcontextprotocol/sdk` to any version other than exact `1.32.0`, or leaves any final managed-messaging `proxy-addr` installation at a version other than exact `2.0.8`.
+- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.9`, resolves `hono` to any version other than exact `4.12.34`, resolves `ip-address` to any version other than exact `10.3.1`, resolves `@modelcontextprotocol/sdk` to any version other than exact `1.32.0`, or leaves any final managed-messaging `proxy-addr` installation at a version other than exact `2.0.8`.
 - `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so the required `reviewed-npm-audit` CI check materializes the exact locked production graph and verifies its registry signatures.
 - `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, and lifecycle suppression.
@@ -248,3 +248,28 @@ Node bundles native libraries that npm audit and dpkg do not cover. Older
 cached bases fail admission and follow the existing rebuild path. The reviewed
 npm target remains 12.0.2; Node’s initial npm 11.19.1 tree is replaced before
 package installation, then the existing private-package repairs are applied.
+
+## November 2026 dependency remediation
+
+The November 2 review checked the supplied CVEs against the latest upstream main checkout and published CVE records.
+Axios `1.20.0` fixes CVE-2026-101898, CVE-2026-101899, CVE-2026-101900, CVE-2026-101904, CVE-2026-101905, CVE-2026-101907, and CVE-2026-101909.
+The CLI development graph and managed messaging cache pin this version and `follow-redirects@1.16.1`, which fixes CVE-2026-111755.
+
+OpenClaw copies its workspace overrides into official plugin projects.
+`patch-openclaw-dependency-overrides.mts` verifies the original and replacement workspace digests before changing Axios, follow-redirects, fast-uri, and Undici pins.
+Both managed image layers apply this patch after the verified OpenClaw install; migration audits apply it to retained runtimes.
+
+WhatsApp 2026.9.2 and 2026.9.5 bundle `music-metadata@11.15.0`; npm overrides leave those bundled bytes intact.
+The archive audit and verified official plugin installation replace that package with `11.16.0` for CVE-2026-107391.
+The replacement verifies registry integrity, the plugin and Baileys identities, the unchanged dependency contract, and the complete patched archive digest.
+It uses the existing atomic replacement and recovery path. Retries reject modified replacement bytes.
+The offline cache includes the replacement archive and its dependencies.
+Remove this remediation when every supported WhatsApp archive ships a fixed parser; the reviewed 2026.10.5 archive already contains `11.16.1`.
+
+Node.js image pins already use `24.22.1`, outside the affected ranges for CVE-2026-106069, CVE-2026-111497, and CVE-2026-105483.
+Existing Slack and Discord remediation replaces bundled proxy-addr and Undici copies after provenance verification.
+Their vulnerable versions remain in upstream archive inventory entries; those entries describe original archives, not the final patched installation.
+
+The final image scan also found npm 12.0.2’s private `undici@6.27.0`, affected by CVE-2026-87018.
+All managed base and final images now invoke the existing registry- and SRI-verified `patch-bundled-npm-undici.mts` helper after the npm upgrade to install `6.29.1`.
+Final images repeat the check so older bases cannot restore the affected package.
