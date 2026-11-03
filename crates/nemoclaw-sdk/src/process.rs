@@ -325,8 +325,8 @@ const PLATFORM_VARIABLES: &[&str] = &[
     "SSH_AUTH_SOCK",
 ];
 
-/// The caller's variables a child inherits: the platform set above, names
-/// compared without case as Windows does.
+/// Inherit platform variables, comparing names without case as Windows does.
+/// Coverage builds also forward the profile path to bundled providers.
 fn child_environment(
     caller: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
 ) -> Vec<(String, String)> {
@@ -335,7 +335,12 @@ fn child_environment(
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
         .filter(|(name, _)| {
             let upper = name.to_ascii_uppercase();
-            PLATFORM_VARIABLES.contains(&upper.as_str()) && inherited_variable(name)
+            // Compile this exception only into coverage builds; ordinary
+            // bundles retain the platform-only environment boundary.
+            let coverage_profile =
+                option_env!("NEMOCLAW_COVERAGE").is_some() && name == "LLVM_PROFILE_FILE";
+            (PLATFORM_VARIABLES.contains(&upper.as_str()) || coverage_profile)
+                && inherited_variable(name)
         })
         .collect()
 }
@@ -407,6 +412,21 @@ mod environment_tests {
             ("SystemRoot", "C:\\Windows"),
         ]));
         assert_eq!(names(&environment), ["Path", "SystemRoot"]);
+    }
+
+    #[test]
+    fn coverage_builds_pass_only_the_named_profile_variable() {
+        let environment = child_environment(caller(&[
+            ("LLVM_PROFILE_FILE", "/profiles/provider-%m-%p.profraw"),
+            ("LLVM_OTHER", "unrelated"),
+            ("NVIDIA_INFERENCE_API_KEY", "unrelated-secret"),
+        ]));
+        let expected = if option_env!("NEMOCLAW_COVERAGE").is_some() {
+            vec!["LLVM_PROFILE_FILE"]
+        } else {
+            vec![]
+        };
+        assert_eq!(names(&environment), expected);
     }
 
     /// Unrelated short credentials in the caller's environment no longer hide

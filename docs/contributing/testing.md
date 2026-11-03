@@ -554,7 +554,8 @@ There is no coverage threshold.
 system integration tests, and Docker/Kind E2E tests. It runs when its workflow changes in a PR,
 or through `workflow_dispatch` when GitHub makes that workflow available.
 It builds instrumented test executables and an instrumented bundle; it does not publish that bundle.
-`NEMOCLAW_COVERAGE` enables bundle instrumentation and retains checkout source paths for LLVM.
+At build time, `NEMOCLAW_COVERAGE` enables bundle instrumentation, retains checkout source paths,
+and permits SDK child processes to inherit `LLVM_PROFILE_FILE`.
 Leave that variable unset for ordinary builds.
 
 Each layer writes separate LLVM profiles. Reports use the same debug and release objects as their
