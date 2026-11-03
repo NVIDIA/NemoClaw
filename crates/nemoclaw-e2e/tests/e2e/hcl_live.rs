@@ -158,7 +158,12 @@ fn run_durations(log: &str) -> Vec<(String, Duration)> {
         let Some((stamp, message)) = line.split_once(" [DEBUG] ") else {
             continue;
         };
-        let Ok(at) = time::OffsetDateTime::parse(stamp, &format) else {
+        // A UTC host logs `Z` in place of the numeric offset.
+        let stamp = match stamp.strip_suffix('Z') {
+            Some(utc) => std::borrow::Cow::Owned(format!("{utc}+0000")),
+            None => std::borrow::Cow::Borrowed(stamp),
+        };
+        let Ok(at) = time::OffsetDateTime::parse(&stamp, &format) else {
             continue;
         };
         if let Some(run) = message.strip_prefix("TestFileRunner: starting validate for ") {
@@ -292,6 +297,24 @@ continued line without a timestamp
             ("apply".to_owned(), Duration::from_millis(1210)),
             ("unchanged_plan".to_owned(), Duration::from_millis(5358)),
             ("(cleanup)".to_owned(), Duration::from_millis(2300)),
+        ]
+    );
+}
+
+/// OpenTofu writes Go's `Z0700` layout, so a UTC host such as a GitHub
+/// runner logs `Z` rather than `+0000`.
+#[test]
+fn run_durations_read_utc_timestamps() {
+    let log = "\
+2026-11-03T08:47:40.561Z [DEBUG] TestFileRunner: starting validate for tests/case.tftest.hcl/apply
+2026-11-03T08:47:42.061Z [DEBUG] TestStateManager: cleaning up state for tests/case.tftest.hcl/apply
+2026-11-03T08:47:43.000Z [DEBUG] TestFileRunner: completed apply for tests/case.tftest.hcl/apply
+";
+    assert_eq!(
+        run_durations(log),
+        [
+            ("apply".to_owned(), Duration::from_millis(1500)),
+            ("(cleanup)".to_owned(), Duration::from_millis(939)),
         ]
     );
 }
