@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, lstatSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -29,41 +28,20 @@ type LockEntry = Record<string, unknown>;
 
 function writeUnchangedJsonObject(filename: string, expected: string, updated: object): void {
   rewriteRegularFile(filename, "OpenClaw remediation metadata", (original) => {
-    if (JSON.stringify(JSON.parse(original)) !== expected)
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(original);
+    } catch {
+      throw new Error("OpenClaw remediation metadata changed before writing");
+    }
+    if (JSON.stringify(parsed) !== expected)
       throw new Error("OpenClaw remediation metadata changed before writing");
     return `${JSON.stringify(updated, null, 2)}\n`;
   });
 }
 
-/** OpenClaw copies these overrides into each official plugin's managed npm project. */
-export function patchOpenClawManagedPluginOverrides(packageDirectory: string): void {
-  requireRealDirectory(packageDirectory, "OpenClaw managed override owner");
-  const manifest = readJsonObject(
-    join(packageDirectory, "package.json"),
-    "OpenClaw override owner",
-  );
-  if (manifest.name !== "openclaw" || manifest.version !== "2026.10.5") {
-    throw new Error("OpenClaw managed override owner identity has drifted");
-  }
-  const filename = join(packageDirectory, "pnpm-workspace.yaml");
-  rewriteRegularFile(filename, "OpenClaw managed overrides", (original) => {
-    const digest = (text: string) => createHash("sha256").update(text).digest("hex");
-    if (digest(original) === "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb")
-      return original;
-    if (digest(original) !== "c95a6b7be1fa13956265abbff9bc9895064bf6677123c88314ef4dc20410bda3")
-      throw new Error("OpenClaw managed override source integrity mismatch");
-    const patched = original
-      .replace(
-        "overrides:\n",
-        "overrides:\n" +
-          '  "@azure/msal-node": 7.1.0\n  body-parser: 2.4.0\n  undici: 8.12.3\n  zod: 4.6.6\n',
-      )
-      .replace("  qs: 6.16.0\n", "  qs: 6.16.1\n");
-    if (digest(patched) !== "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb")
-      throw new Error("OpenClaw managed override replacement integrity mismatch");
-    return patched;
-  });
-}
+export { patchOpenClawManagedPluginOverrides } from "./patch-openclaw-dependency-overrides.mts";
+import { patchOpenClawManagedPluginOverrides } from "./patch-openclaw-dependency-overrides.mts";
 
 function remediatePluginDependencies(
   root: string,
@@ -251,8 +229,9 @@ export function remediateOpenClawRuntimeDependencies(
     }
     if (options.updateLock) delete packages[legacyUndiciLocation];
   }
-  if (packages["node_modules/openclaw"]?.version === "2026.10.5") {
+  if (packages["node_modules/openclaw"])
     patchOpenClawManagedPluginOverrides(join(root, "node_modules/openclaw"));
+  if (packages["node_modules/openclaw"]?.version === "2026.10.5") {
     const ownerFile = join(root, "node_modules/openclaw/package.json");
     const owner = readJsonObject(ownerFile, "OpenClaw runtime owner");
     const originalOwner = JSON.stringify(owner);
