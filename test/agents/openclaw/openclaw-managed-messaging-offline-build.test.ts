@@ -79,6 +79,10 @@ describe("OpenClaw managed messaging offline image build", () => {
 
     expect(runtimeManifest.overrides).toEqual({
       "@modelcontextprotocol/sdk": "1.32.0",
+      axios: "1.20.0",
+      "fast-uri": "3.1.9",
+      "follow-redirects": "1.16.1",
+      undici: "8.12.2",
       "body-parser": "2.4.0",
       "proxy-addr": "2.0.8",
       "@openclaw/discord@2026.9.2": {

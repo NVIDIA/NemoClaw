@@ -407,6 +407,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "patch-openclaw-native-network.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-dependency-overrides.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-dependency-overrides.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-npm12-pack-json.mts"),
     path.join(stagedScriptsDir, "lib", "patch-openclaw-npm12-pack-json.mts"),
   );
@@ -475,6 +479,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "patch-bundled-npm-ip-address.mts"),
     path.join(stagedScriptsDir, "lib", "patch-bundled-npm-ip-address.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-bundled-npm-undici.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-bundled-npm-undici.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
