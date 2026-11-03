@@ -5,7 +5,8 @@
 //! names. Its run blocks drive the bundled CLI through `tests/e2e/hcl/cli` and
 //! run `probe` from this binary once per target through `tests/e2e/hcl/verifier`.
 //! OpenTofu installs providers that a case's own modules use, such as Helm for
-//! a kind case's fixtures, from the bundle. The caller
+//! a kind case's fixtures, from the bundle. A kind case's `tests/e2e/hcl/kind`
+//! module runs `issuer` once for its existing OIDC issuer. The caller
 //! destroys the deployment, so cleanup also runs after a failed, cancelled, or
 //! timed-out job: `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 //! After `tofu test`, `case` reports how long each run block took, on stderr
@@ -108,10 +109,9 @@ async fn probe() {
                 state: state.join("kubernetes"),
                 openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
             };
-            let (forward, client) =
-                crate::kubernetes_live::requests::gateway(&operations, &recorded)
-                    .await
-                    .unwrap();
+            let (forward, client) = crate::kubernetes_live::gateway(&operations, &recorded)
+                .await
+                .unwrap();
             (Some(forward), client)
         }
         None => {
@@ -134,6 +134,47 @@ async fn probe() {
     });
     fs::write(input("REPLY"), reply).unwrap();
     fs::write(input("REPORT"), report.to_string()).unwrap();
+}
+
+/// Create the existing OIDC issuer a kind case names: the SDK's development
+/// issuer material for its service and namespace, the objects that serve its
+/// discovery document and key set, and one token for the case's audience.
+/// OpenTofu cannot sign the token, which must come from the issuer's key. The
+/// token goes only to a private credentials file, which the cli and verifier
+/// modules export as the case's `token.env`; it is valid for an hour.
+#[test]
+#[ignore = "run by tests/e2e/hcl/kind for a case with an existing OIDC issuer"]
+fn issuer() {
+    use nemoclaw_sdk::kubernetes::{auth::Development, issuer};
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let (name, namespace) = (input("ISSUER_NAME"), input("ISSUER_NAMESPACE"));
+    let material = Development::new(input("KEYS").into(), &name, &namespace, &input("AUDIENCE"))
+        .ensure()
+        .unwrap();
+    assert_eq!(
+        material.issuer(),
+        input("ISSUER"),
+        "the case names this issuer"
+    );
+    fs::write(
+        input("OBJECTS"),
+        serde_json::to_vec(&issuer::objects(&material, &name, &namespace)).unwrap(),
+    )
+    .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let token = PathBuf::from(input("TOKEN"));
+    fs::create_dir_all(token.parent().unwrap()).unwrap();
+    let mut file = fs::OpenOptions::new();
+    file.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o600);
+    file.open(token)
+        .unwrap()
+        .write_all(material.token(i64::try_from(now).unwrap()).as_bytes())
+        .unwrap();
 }
 
 /// The row for the time `tofu test` spends destroying the runs' state after
