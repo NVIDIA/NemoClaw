@@ -21,12 +21,11 @@ cargo ci live-kind
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
-Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
+The registry test uses a flow that deploys a gateway and an agent sandbox from that image through the public SDK, with one inference profile as in `examples/kubernetes/managed-development.yaml`.
 Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
 The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
 The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
-The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
+The registry test deploys `assistant` alone.
 The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
 A second apply must report no changes.
 Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
@@ -40,9 +39,12 @@ The answer shows that the runtime the first apply started still runs and that th
 Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
 If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, the namespace's 15 most recent events, and, for each sandbox whose Fabric runtime operation failed, Fabric's message from the deployment's `diagnostics/fabric-SANDBOX.json`, redacted as backend rejections are; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
 CI keeps that output in the suite's JUnit report for 14 days.
-The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that the gateway pod and each sandbox's agent pod use the assigned UID.
-Before deploying, it refuses a cluster that serves the `security.openshift.io` API group, where its annotations would replace the range that cluster assigns; on such a cluster, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
-Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
+The `kind-openshift-agents` [HCL E2E scenario](#hcl-e2e-scenarios) deploys three agents with the OpenShift profile, `assistant`, `researcher`, and `reviewer`, each sandbox granting one endpoint named for it so that no two have the same policy.
+Before its first apply, the `tests/e2e/hcl/kind` module releases a chart with the bundled Helm provider: the deployment's namespace with OpenShift UID-range annotations, as OpenShift prepares a project, and the same stub model in its own namespace.
+Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage; the test runner then uninstalls the release, which deletes both namespaces.
+`cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the agent image, and passes the kubeconfig as `TF_VAR_kubeconfig`.
+The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
+On a cluster that serves the `security.openshift.io` API group, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection. Then, as an operator would, it creates the deployment's namespace and a caller-managed image pull Secret before the first apply, and deploys an agent into that namespace, which NemoClaw binds by UID without labelling it.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
@@ -152,6 +154,7 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply. |
+| `kind-openshift-agents` | `cargo ci live-kind` | Three agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli); each answers with the stub's reply. |
 
 Every scenario checks the same successful path:
 

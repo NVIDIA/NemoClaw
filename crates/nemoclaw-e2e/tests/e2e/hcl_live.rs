@@ -3,7 +3,9 @@
 //! Live HCL scenarios. `case` runs `tests/e2e/hcl/tests/<case>.tftest.hcl`
 //! against `cases/<case>.yaml`, or the bound copy that `NEMOCLAW_HCL_DOCUMENT`
 //! names. Its run blocks drive the bundled CLI through `tests/e2e/hcl/cli` and
-//! run `probe` from this binary once per target through `tests/e2e/hcl/verifier`. The caller
+//! run `probe` from this binary once per target through `tests/e2e/hcl/verifier`.
+//! OpenTofu installs providers that a case's own modules use, such as Helm for
+//! a kind case's fixtures, from the bundle. The caller
 //! destroys the deployment, so cleanup also runs after a failed, cancelled, or
 //! timed-out job: `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 
@@ -35,12 +37,25 @@ fn case() {
         "work_dir": work,
         "evidence_dir": reports,
     });
+    let providers = run.join("providers.tfrc");
+    fs::write(
+        &providers,
+        format!(
+            "provider_installation {{ filesystem_mirror {{ path = {} }} }}\n",
+            json!(bundle.root().join("providers"))
+        ),
+    )
+    .unwrap();
     let filter = format!("-filter=tests/{case}.tftest.hcl");
-    for args in [&["get", "-no-color"][..], &["test", "-no-color", &filter]] {
+    for args in [
+        &["init", "-input=false", "-no-color"][..],
+        &["test", "-no-color", &filter],
+    ] {
         let status = Command::new(bundle.tofu())
             .args(args)
             .current_dir("tests/e2e/hcl")
             .env("TF_DATA_DIR", run.join("tofu"))
+            .env("TF_CLI_CONFIG_FILE", &providers)
             .env("TF_VAR_context", context.to_string())
             .status()
             .unwrap();
@@ -60,11 +75,44 @@ async fn probe() {
         .sandboxes()
         .find(|s| s.agent.name == agent)
         .unwrap();
-    let binding = fabric_provider::fabric_binding(sandbox_binding(&state, sandbox.name)).unwrap();
+    let recorded = sandbox_binding(&state, sandbox.name);
     let runtime = runtime_id(&state, sandbox.name);
-    let connection = document.spec.gateway.connection();
-    let client = OpenShell::connect(&connection, Arc::new(EnvironmentSecrets)).unwrap();
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
+    // A managed Kubernetes gateway is reached through a port-forward that the
+    // connection holds, as the SDK's providers reach it.
+    let (_forward, client) = match document
+        .spec
+        .gateway
+        .as_managed()
+        .and_then(|gateway| gateway.kubernetes.as_deref())
+    {
+        Some(kubernetes) => {
+            let target = nemoclaw_sdk::kubernetes::ClusterTarget {
+                kubeconfig: var(&kubernetes.kubeconfig.as_ref().unwrap().env)
+                    .unwrap()
+                    .into(),
+                context: kubernetes.context.clone().unwrap(),
+            };
+            let operations = nemoclaw_sdk::kubernetes::operations::Operations {
+                client: nemoclaw_sdk::kubernetes::connect(&target).await.unwrap(),
+                state: state.join("kubernetes"),
+                openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
+            };
+            let (forward, client) =
+                crate::kubernetes_live::requests::gateway(&operations, &recorded)
+                    .await
+                    .unwrap();
+            (Some(forward), client)
+        }
+        None => {
+            let connection = document.spec.gateway.connection();
+            (
+                None,
+                OpenShell::connect(&connection, Arc::new(EnvironmentSecrets)).unwrap(),
+            )
+        }
+    };
+    let binding = fabric_provider::fabric_binding(recorded).unwrap();
     let response = client.invoke_agent(&binding, &runtime, &request).await.ok();
     let field = |name: &str| response.as_ref().and_then(|r| r.pointer(name)?.as_str());
     let reply = field(&input("RESPONSE_POINTER")).unwrap_or_default();

@@ -238,7 +238,7 @@ pub(super) enum Answer {
 
 /// Connect to the managed gateway that `binding` records, as the SDK's
 /// providers do. The connection holds the port-forward.
-async fn gateway(
+pub(crate) async fn gateway(
     operations: &Operations,
     binding: &Row,
 ) -> Result<(Connection, OpenShell), String> {

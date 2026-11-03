@@ -9,7 +9,7 @@ mod oidc;
 #[path = "kubernetes_registry.rs"]
 mod registry;
 #[path = "kubernetes_requests.rs"]
-mod requests;
+pub(crate) mod requests;
 
 use k8s_openapi::api::{
     apps::v1::StatefulSet,
@@ -1127,23 +1127,7 @@ const ONE_AGENT: [(&str, &str); 1] = [("assistant", "main")];
 /// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
-async fn deploy_and_export(
-    provider: &str,
-    sandboxes: &[(&str, &str)],
-    while_applying: impl AsyncFnOnce(&str),
-) {
-    let _ = deploy_image_and_export(
-        provider,
-        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
-        &required("NEMOCLAW_TEST_AGENT_METADATA"),
-        &[],
-        sandboxes,
-        async |_| {},
-        while_applying,
-    )
-    .await;
-}
-
+///
 /// `before_applying` runs with the namespace name before the first apply, as an
 /// operator who prepares the namespace would; `while_applying` runs alongside it.
 async fn deploy_image_and_export(
@@ -1408,144 +1392,4 @@ async fn deploy_image_and_export(
         unanswered.join("\n")
     );
     state_snapshot
-}
-
-/// The sandboxes the OpenShift-profile test deploys, with their agents.
-const THREE_AGENTS: [(&str, &str); 3] = [
-    ("assistant", "main"),
-    ("researcher", "researcher"),
-    ("reviewer", "reviewer"),
-];
-
-/// Three agents on one gateway with the OpenShift profile, on kind. kind does
-/// not enforce OpenShift's security policy, but the SDK and OpenShell both
-/// read the UID range OpenShift writes on each namespace, and that works on
-/// any cluster. The test writes the range itself once the namespace exists,
-/// as OpenShift would, then checks that the gateway and each sandbox's agent
-/// pod ran as its first UID. The shared flow checks that each agent keeps its
-/// own identities and, after the unchanged apply and the export's apply,
-/// answers a request from the runtime the first apply started; a fixed stub
-/// replies, so no model runs. The agents share this test's gateway to keep
-/// the live-kind suite within its 270-second budget.
-#[tokio::test]
-#[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn on_openshift_three_agents_keep_separate_identities_run_as_the_namespace_uid_and_answer_after_each_reapply()
- {
-    use k8s_openapi::api::core::v1::{Namespace, Pod};
-    use kube::{
-        Api,
-        api::{ListParams, Patch, PatchParams},
-    };
-    const RANGE: &str = "1000680000/10000";
-    let kubeconfig =
-        kube::config::Kubeconfig::read_from(required("NEMOCLAW_TEST_KUBECONFIG")).unwrap();
-    let options = kube::config::KubeConfigOptions {
-        context: Some(required("NEMOCLAW_TEST_KUBE_CONTEXT")),
-        ..Default::default()
-    };
-    let client = nemoclaw_sdk::kubernetes::client(
-        kube::Config::from_custom_kubeconfig(kubeconfig, &options)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    // The test writes the namespace's range itself, which would overwrite the
-    // one a cluster that enforces OpenShift's constraints assigned.
-    assert!(
-        !client
-            .list_api_groups()
-            .await
-            .unwrap()
-            .groups
-            .iter()
-            .any(|group| group.name == "security.openshift.io"),
-        "this test writes the namespace's UID range itself; do not run it on a cluster that serves security.openshift.io"
-    );
-    let observed = std::sync::Mutex::new(None::<(BTreeMap<&str, Option<i64>>, Option<i64>)>);
-    deploy_and_export("openshift", &THREE_AGENTS, async |namespace| {
-        // Annotate the namespace as soon as the SDK creates it, as OpenShift
-        // does when a project is created.
-        let namespaces: Api<Namespace> = Api::all(client.clone());
-        let annotation = json!({"metadata": {"annotations": {
-            "openshift.io/sa.scc.uid-range": RANGE,
-            "openshift.io/sa.scc.supplemental-groups": RANGE,
-        }}});
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-        while namespaces
-            .patch(
-                namespace,
-                &PatchParams::default(),
-                &Patch::Merge(&annotation),
-            )
-            .await
-            .is_err()
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the namespace was never created"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        // Read each agent's and the gateway's users while they still run.
-        let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        loop {
-            let listed = pods.list(&ListParams::default()).await.unwrap().items;
-            let user = |suffix: &str, container: &str| {
-                listed
-                    .iter()
-                    .find(|pod| {
-                        pod.metadata
-                            .name
-                            .as_deref()
-                            .is_some_and(|name| name.ends_with(suffix))
-                    })
-                    .and_then(|pod| pod.spec.as_ref())
-                    .map(|spec| {
-                        spec.containers
-                            .iter()
-                            .find(|candidate| candidate.name == container)
-                            .and_then(|found| found.security_context.as_ref())
-                            .and_then(|context| context.run_as_user)
-                            .or_else(|| {
-                                spec.security_context
-                                    .as_ref()
-                                    .and_then(|context| context.run_as_user)
-                            })
-                    })
-            };
-            // Each sandbox's pod is named `<workspace>--<sandbox>`.
-            let agents: Option<BTreeMap<_, _>> = THREE_AGENTS
-                .iter()
-                .map(|(sandbox, _)| Some((*sandbox, user(&format!("--{sandbox}"), "agent")?)))
-                .collect();
-            if let (Some(agents), Some(gateway)) = (agents, user("-gateway-0", "openshell-gateway"))
-            {
-                *observed.lock().unwrap() = Some((agents, gateway));
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the agent and gateway pods never appeared"
-            );
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-    })
-    .await;
-    let (agents, gateway) = observed
-        .into_inner()
-        .unwrap()
-        .expect("the agent and gateway pods appeared");
-    assert_eq!(
-        agents,
-        THREE_AGENTS
-            .map(|(sandbox, _)| (sandbox, Some(1_000_680_000)))
-            .into(),
-        "each sandbox's agent pod runs as the namespace's first UID"
-    );
-    assert_eq!(
-        gateway,
-        Some(1_000_680_000),
-        "the gateway runs as the namespace's first UID"
-    );
 }

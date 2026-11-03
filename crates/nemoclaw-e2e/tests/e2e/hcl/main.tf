@@ -16,3 +16,9 @@ variable "context" {
     evidence_dir     = string
   })
 }
+
+# A kind case's cluster, which cargo ci live-kind sets as TF_VAR_kubeconfig.
+variable "kubeconfig" {
+  type    = string
+  default = ""
+}
