@@ -59,11 +59,14 @@ NemoClaw sanitizes machine-local authority from the durable OpenClaw database co
 For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup.
 A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar.
 
+If a backup credential scan detects credential material, move credentials into supported OpenShell credential storage or bindings.
+Remove them from the native home.
+Then retry the backup.
+
 Unknown agent paths transfer when their archive paths and link targets have no line breaks and their content is inspectable and credential-free.
 For a line break in a path or link target, [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) explains how to rename the path or recreate the link.
 
 A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful.
-Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
 
 Credential sanitization can increase the size of a structured configuration.
 NemoClaw expands only the private archive copy and leaves the live configuration unchanged.
