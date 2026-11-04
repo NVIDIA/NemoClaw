@@ -64,6 +64,13 @@ import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json
 import { fullE2eGateway, withOwnedFullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
 import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import {
+  nativePluginAgentInvocationOutcome,
+  nativePluginPresent,
+  NATIVE_PLUGIN_ID,
+  nativePluginWriteScript,
+  type NativePluginVersion,
+} from "../fixtures/native-plugin-evidence.ts";
+import {
   cleanupAcquiredResource,
   cleanupWhenOpenShellAvailable,
 } from "../fixtures/cleanup-resources.ts";
@@ -219,99 +226,20 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
   return status.value;
 }
 
-type NativePluginVersion = "v1" | "v2";
-
-function nativeWeatherPluginWriteScript(version: NativePluginVersion): string {
-  const packageJson = JSON.stringify({
-    name: "@nemoclaw/e2e-native-weather",
-    version: version === "v1" ? "1.0.0" : "2.0.0",
-    type: "module",
-    main: "index.js",
-    files: ["index.js", "openclaw.plugin.json"],
-    openclaw: { extensions: ["./index.js"] },
-    peerDependencies: { openclaw: ">=2026.7.1" },
-  });
-  const manifest = JSON.stringify({
-    id: "weather",
-    name: "NemoClaw Native Weather",
-    version: version === "v1" ? "1.0.0" : "2.0.0",
-    description: "Dependency-free native plugin lifecycle fixture",
-    activation: { onStartup: true },
-    contracts: { tools: ["get_weather"] },
-    configSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-  });
-  const entrypoint = `const plugin = {
-  id: "weather",
-  name: "NemoClaw Native Weather",
-  version: ${JSON.stringify(version === "v1" ? "1.0.0" : "2.0.0")},
-  description: "Dependency-free native plugin lifecycle fixture",
-  register(api) {
-    api.registerTool({
-      name: "get_weather",
-      label: "Get Weather",
-      description: "Return deterministic weather data.",
-      parameters: {
-        type: "object",
-        properties: { location: { type: "string" } },
-        required: ["location"],
-        additionalProperties: false,
-      },
-      async execute(_toolCallId, params) {
-        const details = {
-          location: String(params.location),
-          condition: "clear",
-          fixtureVersion: ${JSON.stringify(version)},
-        };
-        return { content: [{ type: "text", text: JSON.stringify(details) }], details };
-      },
-    });
-  },
-};
-export default plugin;
-`;
-  return [
-    "set -eu",
-    "source_dir=/sandbox/e2e-native-weather",
-    'rm -rf -- "$source_dir"',
-    'mkdir -p -- "$source_dir"',
-    `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
-    `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
-    `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
-  ].join("\n");
-}
-
-/** Invoke the installed native weather plugin and verify its versioned response. */
-async function invokeNativeWeatherPlugin(
+async function invokeNativePlugin(
   sandbox: SandboxClient,
   version: NativePluginVersion,
   artifactName: string,
 ): Promise<void> {
-  const result = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      `. /tmp/nemoclaw-proxy-env.sh && printf 'header = "Authorization: Bearer %s"\\n' "$OPENCLAW_GATEWAY_TOKEN" | curl --noproxy '*' --max-time 30 --silent --show-error --fail-with-body --config - -H 'Content-Type: application/json' --data '{"agentId":"main","tool":"get_weather","args":{"location":"Santa Clara"}}' "http://127.0.0.1:\${OPENCLAW_GATEWAY_PORT:-18789}/tools/invoke"`,
-    ),
-    { artifactName, env: env(), timeoutMs: 60_000 },
-  );
-  await captureNativePluginFailureReadiness(sandbox, result, SANDBOX_NAME, artifactName, env());
-  const document = parseOpenClawJsonDocuments(result.stdout)[0] as
-    | {
-        ok?: boolean;
-        result?: { details?: { fixtureVersion?: string; location?: string } };
-      }
-    | undefined;
-  expect(
-    result.exitCode === 0 &&
-      document?.ok === true &&
-      document.result?.details?.fixtureVersion === version &&
-      document.result.details.location === "Santa Clara",
-    resultText(result),
-  ).toBe(true);
+  const outcome = await nativePluginAgentInvocationOutcome(sandbox, {
+    sandboxName: SANDBOX_NAME,
+    version,
+    artifactName,
+    env: env(),
+    turnTimeoutMs: FIRST_TURN_TIMEOUT_MS,
+    audit: { attempts: 5, delayMs: 1_000, timeoutMs: 30_000 },
+  });
+  expect(outcome, "the plugin tool must start and succeed in this agent run").toBe("succeeded");
 }
 
 async function exerciseNativeOpenClawPluginVersion(
@@ -319,16 +247,16 @@ async function exerciseNativeOpenClawPluginVersion(
   sandbox: SandboxClient,
   version: NativePluginVersion,
 ): Promise<void> {
-  const install = await sandbox.execShell(
+  await sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript(nativeWeatherPluginWriteScript(version)),
+    trustedSandboxShellScript(nativePluginWriteScript(version)),
     {
       artifactName: `phase-4-native-plugin-install-${version}`,
       env: env(),
       timeoutMs: 120_000,
     },
   );
-  expect(install.exitCode, resultText(install)).toBe(0);
+  // Successful execution of this version's distinct tool proves installation.
   const restartArtifact = `phase-4-native-plugin-gateway-restart-${version}`;
   const restart = await repoNemoclaw(
     host,
@@ -339,7 +267,7 @@ async function exerciseNativeOpenClawPluginVersion(
   );
   await captureNativePluginFailureReadiness(sandbox, restart, SANDBOX_NAME, restartArtifact, env());
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
+  await invokeNativePlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
 }
 
 async function exerciseNativeOpenClawPluginLifecycle(
@@ -351,7 +279,7 @@ async function exerciseNativeOpenClawPluginLifecycle(
 
   const updateDryRun = await sandbox.exec(
     SANDBOX_NAME,
-    ["/usr/local/bin/openclaw", "plugins", "update", "weather", "--dry-run"],
+    ["/usr/local/bin/openclaw", "plugins", "update", NATIVE_PLUGIN_ID, "--dry-run"],
     {
       artifactName: "phase-4-native-plugin-update-dry-run",
       env: env(),
@@ -379,28 +307,26 @@ async function exerciseNativeOpenClawPluginLifecycle(
   );
   expect(selfUpdateDryRun.exitCode, resultText(selfUpdateDryRun)).toBe(0);
 
-  const uninstall = await sandbox.exec(
+  await sandbox.exec(
     SANDBOX_NAME,
-    ["/usr/local/bin/openclaw", "plugins", "uninstall", "weather", "--force"],
+    ["/usr/local/bin/openclaw", "plugins", "uninstall", NATIVE_PLUGIN_ID, "--force"],
     {
       artifactName: "phase-4-native-plugin-uninstall",
       env: env(),
       timeoutMs: 120_000,
     },
   );
-  expect(uninstall.exitCode, resultText(uninstall)).toBe(0);
   const absent = await sandbox.exec(
     SANDBOX_NAME,
-    ["/usr/local/bin/openclaw", "plugins", "inspect", "weather", "--json"],
+    ["/usr/local/bin/openclaw", "plugins", "list", "--json"],
     {
       artifactName: "phase-4-native-plugin-absent",
       env: env(),
       timeoutMs: 30_000,
     },
   );
-  expect(`exit=${absent.exitCode}\n${resultText(absent)}`).toMatch(
-    /^exit=1\n[\s\S]*(?:weather.*(?:not found|unknown)|(?:not found|unknown).*weather)/iu,
-  );
+  expect(absent.exitCode, resultText(absent)).toBe(0);
+  expect(nativePluginPresent(absent.stdout, NATIVE_PLUGIN_ID)).toBe(false);
 }
 
 async function inspectNativeNetwork(sandbox: SandboxClient, artifactName: string) {

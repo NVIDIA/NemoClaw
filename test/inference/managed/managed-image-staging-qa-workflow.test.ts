@@ -103,6 +103,7 @@ describe("managed-image staging QA workflow", () => {
       "ci/reviewed-npm-audit.json",
       "scripts/lib/bundled-npm-package.mts",
       "scripts/lib/patch-bundled-npm-ip-address.mts",
+      "scripts/lib/patch-bundled-npm-undici.mts",
       "scripts/lib/reviewed-npm-archive.mts",
       "scripts/lib/reviewed-npm-audit.mts",
       "scripts/lib/reviewed-npm-identity.mts",
@@ -126,6 +127,7 @@ describe("managed-image staging QA workflow", () => {
       "ci/reviewed-npm-audit.json",
       "scripts/lib/bundled-npm-package.mts",
       "scripts/lib/patch-bundled-npm-ip-address.mts",
+      "scripts/lib/patch-bundled-npm-undici.mts",
       "scripts/lib/reviewed-npm-archive.mts",
       "scripts/lib/reviewed-npm-audit.mts",
       "scripts/lib/reviewed-npm-identity.mts",
@@ -196,6 +198,11 @@ describe("managed-image staging QA workflow", () => {
       nativeSupportFiles.forEach((supportFile) => {
         expect(fs.readFileSync(path.join(stagingRoot, supportFile), "utf8")).toBe(
           "candidate native support\n",
+        );
+      });
+      npmSupportFiles.forEach((supportFile) => {
+        expect(fs.readFileSync(path.join(stagingRoot, supportFile), "utf8")).toBe(
+          "candidate npm support\n",
         );
       });
     } finally {

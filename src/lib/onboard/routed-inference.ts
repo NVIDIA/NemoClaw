@@ -64,14 +64,15 @@ export function normalizeRoutedEndpointUrl(
     url = (loadProfile("routed")?.endpoint || "").trim();
   }
   if (!url) return url;
-  if (/localhost|127\.0\.0\.1/.test(url)) {
-    try {
-      const parsed = new URL(url);
+  try {
+    const parsed = new URL(url);
+    if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) {
+      if (parsed.protocol !== "http:" || parsed.username || parsed.password) return url;
       const port = parsed.port ? `:${parsed.port}` : "";
       return `${HOST_GATEWAY_URL}${port}${parsed.pathname}${parsed.search}${parsed.hash}`;
-    } catch {
-      return url;
     }
+  } catch {
+    return url;
   }
   return url;
 }
