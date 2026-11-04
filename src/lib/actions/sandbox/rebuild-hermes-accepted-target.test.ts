@@ -292,6 +292,30 @@ describe("Hermes accepted replacement recovery", () => {
     );
   });
 
+  it.each(["direct", "progressive"])(
+    "retains the frozen %s disclosure choice during accepted recovery",
+    async (mode) => {
+      const preflight = await phaseMocks.runPreflight();
+      phaseMocks.runPreflight.mockResolvedValue({
+        ...preflight,
+        targetConfig: {
+          ...preflight.targetConfig,
+          durableConfig: { ...preflight.targetConfig.durableConfig, toolDisclosure: mode },
+        },
+      });
+
+      await rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+
+      expect(phaseMocks.runPostRestore).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          forceDirectToolDisclosure: mode === "direct",
+          preparedBackupRecovery: true,
+        }),
+      );
+      expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    },
+  );
+
   it("observes current MCP sources when another sandbox owns the recovery transaction", async () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       checkpoint: { sandboxRecreate: { sandboxName: "beta" } },

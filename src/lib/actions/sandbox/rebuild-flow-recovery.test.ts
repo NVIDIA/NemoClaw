@@ -12,6 +12,8 @@ import {
   policies,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
+  agentDefs,
+  configOwner,
   mcpBridgeSource,
   openClawLifecycle,
   snapshotBackup,
@@ -89,6 +91,25 @@ describe("rebuildSandbox flow: recovery", () => {
         },
       });
       configureSession(restarted);
+      const agent = agentDefs.loadAgent(dcode ? "langchain-deepagents-code" : "openclaw");
+      vi.mocked(agentDefs.loadAgent).mockReturnValue({
+        ...agent,
+        ...(dcode
+          ? {}
+          : {
+              configPaths: {
+                dir: "/sandbox/.openclaw",
+                configFile: "openclaw.json",
+                format: "json5",
+              },
+            }),
+      });
+      vi.spyOn(configOwner, "readSandboxConfig").mockReturnValue({
+        tools: { toolSearch: { mode: "tools" } },
+      });
+      const nativeWrite = vi
+        .spyOn(configOwner, "setOpenClawConfigValues")
+        .mockImplementation(() => {});
       restarted.session.checkpoint = checkpoint;
       restarted.backupSandboxStateSpy.mockClear();
       restarted.restoreSandboxStateSpy.mockClear();
@@ -98,6 +119,7 @@ describe("rebuildSandbox flow: recovery", () => {
       expect(recreatedPolicy).toContain("host_preserved");
       expect(restarted.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(restarted.restoreSandboxStateSpy).toHaveBeenCalled();
+      expect(nativeWrite).toHaveBeenCalledTimes(dcode ? 0 : 1);
     },
   );
 

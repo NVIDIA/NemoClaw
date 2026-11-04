@@ -53,6 +53,23 @@ export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
+export const configOwner: typeof import("../../src/lib/sandbox/config") =
+  requireDist("../../sandbox/config.js");
+export const hermesProjection = requireDist(
+  "../../onboard/hermes/initial-inference-route.js",
+) as typeof import("../../src/lib/onboard/hermes/initial-inference-route");
+export const hermesPostRestore = requireDist(
+  "./rebuild-hermes-post-restore.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-hermes-post-restore");
+export const rebuildPostRestore = requireDist(
+  "./rebuild-post-restore-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-post-restore-phase");
+export const hermesManagedRoute: typeof import("../../src/lib/hermes-managed-route") = requireDist(
+  "../../hermes-managed-route.js",
+);
+export const sanitizedCapture = requireDist(
+  "../../adapters/openshell/sanitized-capture.js",
+) as typeof import("../../src/lib/adapters/openshell/sanitized-capture");
 export const nativeLocalProfile = requireDist(
   "../../inference/native-local/profile.js",
 ) as typeof import("../../src/lib/inference/native-local/profile");

@@ -154,6 +154,40 @@ export function printMcpRebuildRetryCommand(
   );
 }
 
+/** Reapply the selected direct choice after the native home replaces image defaults. */
+export function applyRestoredDirectToolDisclosure(
+  sandbox: RebuildSandboxEntry,
+  agentName: "openclaw" | "hermes",
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): void {
+  try {
+    const sandboxName = sandbox.name;
+    const config: typeof import("../../sandbox/config") = require("../../sandbox/config");
+    const target = config.resolveAgentConfig(sandboxName);
+    if (target.agentName !== agentName) {
+      throw new Error("The agent configuration does not match the rebuilt sandbox.");
+    }
+    const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+    const current = config.readSandboxConfig(sandboxName, target, selectedRuntime);
+    const dotpath = agentName === "openclaw" ? "tools.toolSearch" : "tools.tool_search.enabled";
+    if (config.findClobberingAncestor(current, dotpath)) {
+      throw new Error("The restored tool configuration has a non-object parent.");
+    }
+
+    if (agentName === "openclaw") {
+      config.setOpenClawConfigValues(sandboxName, [{ dotpath, value: false }], selectedRuntime);
+      return;
+    }
+
+    // The ordinary writer requires the digest on this matching read object.
+    config.setDotpath(current, dotpath, "off");
+    config.writeSandboxConfig(sandboxName, target, current);
+  } catch {
+    // Native parser failures can contain restored configuration and credentials.
+    throw new Error("Direct tool disclosure could not be applied to the rebuilt sandbox.");
+  }
+}
+
 export async function restoreMcpAfterRebuild(
   sandboxName: string,
   entries: McpRebuildPreparation["entries"],
