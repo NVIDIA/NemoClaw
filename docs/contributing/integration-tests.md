@@ -77,7 +77,7 @@ Its modules run the `nemoclaw` types against fake Docker engines, SSH hosts, and
 | `provider_protocol` | The fixture provider from `nemoclaw-fixture-provider`, and on Unix the provider against a fake Docker API: network and image planning, including prerequisite changes before saved-plan application |
 | `failures/service_capacity` | `vllm_capacity` through an isolated SSH simulator (shared-host overcommit, deferred reads, state kept after failed observations, and cleanup without capacity checks), and Ollama readiness and capacity rejecting a vLLM contract |
 | `failures/service_readiness` | Standalone service readiness; see [below](#standalone-service-readiness) |
-| `failures/service_storage` | Checks an invalid owner, missing, foreign, or substituted storage, and a lost creation reply |
+| `failures/service_storage` | Checks an invalid owner, an unchanged plan of intact storage, missing, foreign, or substituted storage, and a lost creation reply |
 | `failures/discovery` | Fabric requirements and compiled discovery that read image metadata |
 | `replacement_cleanup` | On Unix, the plans and state the SDK reads after a container replacement whose cleanup is unfinished |
 
@@ -127,7 +127,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p fabric-provider --test contract -- --ignored
 ```
 
-`pi_agent_lifecycle` runs the `hcl/agent` module, a `fabric_agent` that starts a Pi agent in a sandbox: planning does not start it, an unchanged apply does not restart it, a changed configuration replaces the sandbox, removing the agent stops it and keeps its sandbox, and a sandbox that is already gone takes its agent with it.
+`pi_agent_lifecycle` runs the `hcl/agent` module, a `fabric_agent` that starts a Pi agent in a sandbox: planning does not start it, an unchanged apply does not restart it, a changed configuration replaces the sandbox, removing the agent stops it and keeps its sandbox, and a sandbox that is already gone takes its agent with it. A model changed inside the sandbox is not drift, and a stopped runtime starts again in the same sandbox.
 The tests in `failures/agent.rs` check failures: an invalid configuration fails validation at its field without repeating the value, a lost start reply is not retried and recovers in a replaced sandbox, an incomplete runtime check changes nothing, a changed agent without a new sandbox is refused, and a failed start keeps Fabric's message in a private file.
 On Unix, the `capabilities` test runs the `capabilities` module, which reads `fabric_harnesses` from a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
@@ -149,7 +149,7 @@ To run the Rust system tests:
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
+  cargo test -p nemoclaw-e2e --test integration -- container_service:: deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
 ```
 
 Append a test name to run one scenario, or `--test-threads=4` to match CI's concurrency.
@@ -157,12 +157,13 @@ The fixtures return protocol responses; they do not establish agent inference, n
 
 | Module | Checks |
 |---|---|
-| `deployment` | SDK and CLI lifecycles: the CLI's text and JSON results, a gateway change between plan and apply, interrupted creation, startup, admission, and observation failures with their recovery, credential redaction, and destroy after a failed first apply. One test applies a document with integrations, an authored inference API, native harness settings, grants, service exposures, and a tool limit; the CLI exports it, an unchanged reapply changes nothing, and each kind of observed drift stops plan and export without changes |
-| `export_observations` | Export through provider refresh without applying, without inference or search credentials, rejection of observed drift without changes to saved state, and a model changed inside the sandbox, which export ignores |
-| `fabric_deployment` | A runtime declaration missing from saved state, and a rejected start whose message stays in the deployment's diagnostics |
+| `deployment` | SDK and CLI lifecycles: the CLI's text and JSON results on a real bundle, a gateway change between plan and apply, interrupted creation, a sandbox startup failure reported through the CLI and recovered, admission and observation failures, credential redaction, and destroy after a failed first apply. The CLI's formatter tests and the SDK's reporting tests own the wording of each result and authored provider labels. One test applies a document with integrations, an authored inference API, native harness settings, grants, service exposures, and a tool limit; the CLI exports it, an unchanged reapply changes nothing, and each kind of observed drift stops plan and export without changes |
+| `export_observations` | Export through provider refresh without the gateway's readiness checks or runtime probes, and export, preview, and teardown of a credentialed deployment without its secret. The SDK's unit tests own how observations become an exported document, including search scopes and observed drift. |
+| `fabric_deployment` | A runtime declaration missing from saved state, and a rejected first start whose message stays in the deployment's diagnostics, followed by a corrected document that replaces the sandbox |
 | `multi_agent` | Three OpenClaw agents: one agent's rejected start is reported alone and its retry replaces only it, and another owner's label on one sandbox stops every operation before it changes anything |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
+| `container_service` | On Unix, `kind: container` services behind a managed Docker gateway, with the bundle's Docker provider against a fake engine that keeps what it creates: apply waits for HTTP, runtime-status, and Docker HEALTHCHECK readiness and leaves nothing observing the engine; an unchanged apply changes nothing; unhealthy, unknown, timed-out, and interrupted setups fail with the provider's reason, and a retry creates no second container; a changed application replaces only its container and keeps its volume; apply refuses to remove a service; destroy deletes the application containers and volumes, keeps the gateway's storage and another owner's objects, and the deployment applies again |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
 | `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
 
@@ -216,7 +217,7 @@ Harness variables change what the fixtures do:
 |---|---|
 | `compute_driver` | The driver the gateway reports instead of the one the document requires |
 | `sandbox_create_delay_ms` | How long the gateway takes to create each sandbox, so that overlapping creations show |
-| `gateway_change` | A change the gateway makes once, as an outage would, in a run that targets `data.fixture_state.setup`: `stop_agent_runtime` stops one sandbox's Fabric runtime, and `forget_registrations` forgets every provider registration |
+| `sandbox_delete_delay_ms` | How long the gateway takes to answer each sandbox deletion |
 | `permit_destroy` | The `openshell` and `fabric` providers' `destroy`, which the runner sets from it as the SDK's teardown graph does |
 | `baseline` | What an earlier run observed, for assertions to compare |
 
@@ -259,17 +260,18 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | `docker-openclaw-vllm-bearer` | A vLLM service with bearer authentication. The credential storage is created on the engine and mounted by the container, and readiness reads the status file and the generated key. The registration holds that key under the sandbox's name for it, and the agent gets its model, address, and key name. |
 | `docker-openclaw-ollama` | A managed Ollama service. The container's Docker inputs come from the Ollama runtime launch, the runtime image is found on the engine, and readiness comes from the container's status file. The registration is at the service address without a credential, the sandbox's policy allows that address, and the agent gets its model and address. |
 | `docker-hosted-ollama-two-agents` | An OpenClaw agent on hosted inference and a Hermes agent on Ollama. There are two registrations, and each sandbox is bound to and may reach only its own provider. Each agent starts once in its own sandbox with its own harness and configuration. |
+| `docker-hermes-kept-state` | A Hermes agent whose sandbox mounts a volume on `/sandbox/artifacts`. Replacing the sandbox gives the new one the same mount, and the agent starts again under the same name with kept state, so Fabric hands it the same state folder. Whether Hermes finds its sessions there needs real Hermes. |
+| `docker-ollama-proxy` | An authenticating proxy in front of an existing Ollama daemon, which the fixture upstream lists the model for. The registration reads the key from the proxy's retained `/data` volume, and no resource or readiness check keeps it in OpenTofu state. An unchanged apply changes nothing; replacing the proxy container keeps the volume, the key's registration, and the agent's sandbox. |
 | `docker-vllm-shared-two-agents` | One authenticated vLLM service shared by OpenClaw and Hermes agents. Each harness has its own registration holding the generated key under its own sandbox name. Each sandbox names only its own registration, and each agent starts with that key name. |
-| `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. |
+| `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider. Each registration has its own API, base URL, and credential. The OpenClaw agent has both routes, the Hermes agent has one, and their sandboxes share no binding. An unchanged apply keeps every sandbox, registration, and agent start. |
 | `kubernetes-gateway-driver-mismatch` | A Kubernetes document against a gateway that reports Docker. The workspace precondition rejects the plan, and the gateway's incompatibility names the Kubernetes driver. Nothing reaches OpenShell, Fabric, or the upstream. |
-| `kubernetes-external-three-agents` | `examples/kubernetes/external-gateway.yaml`, unchanged: three agents share one registration holding the credential from `INFERENCE_API_KEY`, and each starts with its own name; independent sandboxes are created at the same time, and no sandbox runs an inference or runtime probe. An unchanged apply changes nothing on the gateway and starts no agent. A stopped runtime starts again in the same sandbox, a model changed inside another sandbox is not drift, a forgotten registration is registered again without a sandbox change, and replacing one sandbox stops and starts only its agent |
-| `kubernetes-search-scopes` | OpenClaw, Hermes, and Pi agents on one image with web search declared by the deployment, a sandbox, and an agent: each harness gets its own inference and web search registration with the credential its scope names, and the unused integration is not registered |
+| `kubernetes-external-three-agents` | `examples/kubernetes/external-gateway.yaml`, unchanged: three agents share one registration holding the credential from `INFERENCE_API_KEY`, and each starts with its own name; independent sandboxes are created at the same time, and no sandbox runs an inference or runtime probe. An unchanged apply changes nothing on the gateway and starts no agent. Replacing one sandbox stops and starts only its agent |
 | `kubernetes-slow-sandbox-delete` | The gateway takes 31 seconds to answer a sandbox deletion during a replacement: the provider deletes it once, without asking again, and then creates the replacement |
 | `external-multiple-providers` | Two deployments on one gateway. The researcher attaches its hosted and local registrations, and the writer only the local one. The second deployment has its own workspace, each registration carries its deployment's owner, and each sandbox attaches only its own workspace's registrations. Applying the first deployment again after the second changes nothing |
 | `travel` | `examples/hcl/travel` applied unchanged with the Docker provider mocked: Ollama readiness against the fixture upstream listing the model, the registration at the address sandboxes use, the sandbox's policy, and the Pi agent's name, model, and instructions. An unchanged apply changes nothing on the gateway and starts no agent |
 | `travel-team` | `examples/hcl/travel-team` applied the same way: four registrations, each role's attachments, grants, and toolsets, and a hosted-model change that replaces only the scheduler's and buyer's sandboxes |
 
-In every scenario except the authored examples, whose readiness lists the model, the inference upstream receives no request.
+In every scenario except the authored examples and the Ollama proxy, whose readiness lists the model, the inference upstream receives no request.
 The scenarios do not invoke agents or perform inference; the live E2E suites do.
 The vLLM and Ollama runtimes are represented by declared containers and files, not run.
 The OpenShift scenario does not exercise gateway TLS or bearer credentials.
@@ -305,7 +307,8 @@ The tests exercise the bundled CLI and providers with an isolated Docker-over-SS
 They check recovery after failed startup, export and unchanged reapply, failed observation without lost bindings, and replacement of credentials outside state.
 Destroy removes disposable containers and service networks while retaining storage; the partial-runtime tests tear down after failed creation without first creating the missing compute.
 `unverified_vllm_images_are_checked_after_pull_before_storage` checks that an image is rejected after pull without creating storage or compute, and that the recorded image binding is cleaned up; the image check after pull and the storage it protects are the same for Ollama.
-The `managed_bearer` tests check that apply sends no generation probes; Fabric owns native service startup, authentication, configuration, and protocol checks.
+The remote vLLM scenario checks that apply sends no generation probes; Fabric owns native service startup, authentication, configuration, and protocol checks.
+Each runtime-independent check runs in one scenario. The SDK's runtime tests own the Preserve and Recreate decision for every model kind; the Ollama scenario keeps a real plan reaching it, and the SDK's `runtime_compile` tests own where a remote service publishes its port.
 Runtime status and Docker responses are simulated; the tests do not download or serve a model.
 
 ## Other Fixture Tests
@@ -323,7 +326,7 @@ cargo test -p nemoclaw-provider --lib
 cargo test -p nemoclaw-sdk --test integration -- service_references:: multiple_providers::
 ```
 
-The [Docker-provider lifecycle fixture](live-tests.md#docker-provider-lifecycle) checks the managed proxy through the SDK and its production provider graph.
+The `docker-ollama-proxy` [scenario](#tofu-test-cases) checks the managed proxy through its production provider graph: its key stays in its retained volume and out of OpenTofu state, an unchanged apply changes nothing, and replacing its container keeps the key and registration. The `nemoclaw-provider` contract test `standalone_proxy_readiness_rechecks_identity_and_credentials_without_sdk_or_gateway` refuses a stopped proxy, a rewritten key, a replaced container, or a changed model, and `missing_foreign_or_substituted_storage_stops_plan_and_apply_without_changing_state` refuses a lost or substituted key volume.
 
 The OpenShell and Fabric backends' tests against the fake gateway, in each provider's `src/fake_gateway_tests.rs`, run in the default workspace suite; they include bound exec identity and a deadline for an exec stream that never finishes.
 Launch compatibility runs there too.
@@ -367,7 +370,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/ddf59e875d50d925991cd40c44dc63facf391bac/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/e5b5ebf2b81cc3c6325301ea419ebf2453dab12e/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

@@ -227,20 +227,41 @@ pub fn observe(secrets: &dyn Secrets, name: &str, image: &str) -> FabricObservat
         file.take((MAX_BUNDLE_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| invalid())?;
-        verify(&bytes, image)
+        Ok(bytes)
     };
-    read().unwrap_or_else(|_| FabricObservation {
-        status: ObservationStatus::Unknown,
-        reason: Some(
-            "image metadata bundle is missing, invalid, or does not match the immutable image"
-                .into(),
-        ),
-        source: SOURCE.into(),
-        image_id: None,
-        catalog: None,
-        image: ImageMetadata::default(),
-        compatibility: None,
-    })
+    let bytes = read();
+    bytes
+        .as_deref()
+        .map_err(Clone::clone)
+        .and_then(|bytes| verify(bytes, image))
+        .unwrap_or_else(|_| FabricObservation {
+            status: ObservationStatus::Unknown,
+            reason: Some(unverified(name, image, bytes.as_deref().ok())),
+            source: SOURCE.into(),
+            image_id: None,
+            catalog: None,
+            image: ImageMetadata::default(),
+            compatibility: None,
+        })
+}
+
+/// Why a bundle didn't verify. A well-formed bundle without the image's root
+/// digest describes another image; anything else is missing or invalid. Names
+/// only the variable and the image's digest, never the bundle's path or contents.
+fn unverified(name: &str, image: &str, bytes: Option<&[u8]>) -> String {
+    let digest = image
+        .rsplit_once('@')
+        .map(|(_, digest)| digest)
+        .filter(|digest| digest_valid(digest));
+    let bundle = bytes.and_then(|bytes| serde_json::from_slice::<Bundle>(bytes).ok());
+    match (digest, bundle) {
+        (Some(digest), Some(bundle))
+            if bundle.schema_version == 2 && !bundle.blobs.contains_key(digest) =>
+        {
+            format!("the image metadata bundle that {name} names doesn't describe {digest}")
+        }
+        _ => format!("the image metadata bundle that {name} names is missing or invalid"),
+    }
 }
 
 #[cfg(test)]

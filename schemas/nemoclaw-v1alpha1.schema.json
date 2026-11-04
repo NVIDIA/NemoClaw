@@ -342,17 +342,11 @@
       "properties": {
         "path": {
           "description": "HTTP GET path on the container's listener. Success requires HTTP 200; redirects are not followed.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "runtimeStatus": {
           "description": "Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "timeoutSeconds": {
           "description": "Startup wait in seconds, 1–3600. Omission selects 300.",
@@ -3399,10 +3393,7 @@
               "items": {
                 "type": "string"
               },
-              "type": [
-                "array",
-                "null"
-              ]
+              "type": "array"
             },
             "container": {
               "$ref": "#/$defs/ContainerExecution",

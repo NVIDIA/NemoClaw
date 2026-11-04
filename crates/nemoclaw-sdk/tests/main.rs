@@ -28,8 +28,12 @@ mod support;
 mod transport;
 mod travel_team;
 
+#[path = "agent_runtimes.rs"]
+mod agent_runtimes;
 #[path = "agent_tools.rs"]
 mod agent_tools;
+#[path = "application_container.rs"]
+mod application_container;
 #[path = "compile.rs"]
 mod compile;
 #[path = "config.rs"]

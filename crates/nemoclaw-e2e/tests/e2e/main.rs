@@ -14,10 +14,6 @@ mod hcl_live;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
 
-#[path = "rust/cache_provider.rs"]
-mod cache_provider;
-#[path = "rust/docker_provider_proxy.rs"]
-mod docker_provider_proxy;
 #[path = "rust/interfaces_live.rs"]
 mod interfaces_live;
 #[path = "rust/kubernetes_chart.rs"]
@@ -29,14 +25,3 @@ mod kubernetes_live;
 mod managed_gateway;
 #[path = "rust/pseudo_terminal.rs"]
 mod pseudo_terminal;
-#[path = "rust/registry_fixture.rs"]
-mod registry_fixture;
-#[path = "rust/spark.rs"]
-mod spark;
-
-#[cfg(target_os = "linux")]
-#[path = "rust/remote_models.rs"]
-mod remote_models;
-#[cfg(target_os = "linux")]
-#[path = "rust/service_images/mod.rs"]
-mod service_images;

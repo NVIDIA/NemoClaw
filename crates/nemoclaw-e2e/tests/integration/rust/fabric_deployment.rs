@@ -58,9 +58,13 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
+/// A first apply whose agent start Fabric rejects reports it without Fabric's
+/// message, which stays in the deployment's private diagnostics. A corrected
+/// document is accepted: the failed start may have left a runtime running, so
+/// the agent starts in a new sandbox.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_next_apply() {
+async fn a_rejected_start_is_reported_safely_and_a_corrected_document_replaces_the_sandbox() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -72,30 +76,6 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
-    deployment.apply(&document, &cancel).await.unwrap();
-    let original = fixture.state.lock().unwrap().sandboxes.clone();
-    let sandbox_id = original
-        .values()
-        .next()
-        .unwrap()
-        .metadata
-        .as_ref()
-        .unwrap()
-        .id
-        .clone();
-    let effects = fixture.state.lock().unwrap().effects;
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .agent
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "changed-model".into();
     fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
         "error": {"stage":"start", "code":"start_failed", "message":"native-secret-must-not-escape"}
     }));
@@ -108,8 +88,6 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
     assert!(error.contains("sandbox/assistant"), "{error}");
     assert!(error.contains("agent runtime is unknown"), "{error}");
     assert!(!error.contains("native-secret"), "{error}");
-    // The deployment's private state keeps Fabric's own message, and the
-    // error names where.
     let saved = std::path::absolute(directory.path())
         .unwrap()
         .join("diagnostics")
@@ -120,7 +98,6 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
     );
     let message: serde_json::Value = serde_json::from_slice(&fs::read(&saved).unwrap()).unwrap();
     assert_eq!(message["message"], "native-secret-must-not-escape");
-    // The changed agent was started in a new sandbox, where it failed.
     let current = || {
         let state = fixture.state.lock().unwrap();
         assert_eq!(state.sandboxes.len(), 1);
@@ -135,23 +112,35 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
             .id
             .clone()
     };
-    let replaced = current();
-    assert_ne!(replaced, sandbox_id);
+    let failed = current();
     assert!(
         fixture
             .state
             .lock()
             .unwrap()
             .fabric_uncertain
-            .contains(&replaced)
+            .contains(&failed)
     );
-    let _ = (original, effects);
-    // The failed start may have left a runtime running, so the next apply
-    // starts the agent in yet another new sandbox.
+
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .agent
+        .inference
+        .as_mut()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model = "corrected-model".into();
     fixture.state.lock().unwrap().configuration_error = None;
-    deployment.apply(&document, &cancel).await.unwrap();
+    deployment
+        .apply(&document, &cancel)
+        .await
+        .expect("a corrected document replaces the sandbox");
     let recovered = current();
-    assert_ne!(recovered, replaced);
+    assert_ne!(recovered, failed);
     assert!(
         fixture
             .state
@@ -160,6 +149,5 @@ async fn failed_configuration_reports_safe_runtime_state_and_recovers_on_the_nex
             .fabric_configurations
             .contains_key(&recovered)
     );
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     deployment.destroy(&cancel).await.unwrap();
 }

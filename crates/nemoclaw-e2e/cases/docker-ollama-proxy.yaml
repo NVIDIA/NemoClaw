@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# An OpenClaw agent behind a managed Docker gateway, reaching an existing
+# Ollama daemon through an authenticating proxy that NemoClaw places. The
+# proxy keeps its key in a retained volume.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-ollama-proxy
+  uid: 2d7c9e41-5b3a-4f8e-9c1d-6a0b2e3f4d58
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17681
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.20.0.0/24
+  services:
+    ollama-auth:
+      kind: ollamaProxy
+      image: nc-ollama-proxy@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      imagePullPolicy: Never
+      endpoint: http://127.0.0.1:11435/v1
+      upstream:
+        endpoint: http://127.0.0.1:11434/v1
+        model:
+          name: qwen3:0.6b
+          digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  inferenceProviders:
+    local:
+      provider: openai
+      serviceRef: ollama-auth
+  sandboxes:
+    assistant:
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:0.6b

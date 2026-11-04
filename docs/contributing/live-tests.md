@@ -20,52 +20,49 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
-The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The registry test uses a flow that deploys a gateway and an agent sandbox from that image through the public SDK, with one inference profile as in `examples/kubernetes/managed-development.yaml`.
-Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
-The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
-The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
-The registry test deploys `assistant` alone.
-The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
-A second apply must report no changes.
-Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
-Export must reproduce the authored configuration, and applying the export must report no changes and leave OpenTofu state as the second apply left it, apart from its serial and the order of check results.
-Export refreshes each sandbox from the gateway and compares its provider registrations and policy with those NemoClaw compiles for it; this covers NemoClaw's mapping, not OpenShell's isolation.
-Each sandbox must have its own ID, with its agent bound to it, and keep that ID, the binding, and the agent's Fabric runtime ID through the second apply and the export's apply.
-After the second apply, and again after the export's apply, the flow sends every agent one text prompt through Fabric's bridge, all at once, addressed to the runtime ID the first apply recorded.
-Each agent must answer from that runtime, as that agent, with a succeeded run whose output holds the stub's value.
-Each round ends after 30 seconds and abandons a request that has not answered; Fabric keeps running that request, so the export's round skips its agent, and destroy's stop of that agent waits for the request to end.
-The answer shows that the runtime the first apply started still runs and that the agent's request reached the stub.
-Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
-If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, the namespace's 15 most recent events, and, for each sandbox whose Fabric runtime operation failed, Fabric's message from the deployment's `diagnostics/fabric-SANDBOX.json`, redacted as backend rejections are; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
-CI keeps that output in the suite's JUnit report for 14 days.
-The `kind-openshift-agents` [HCL E2E scenario](#hcl-e2e-scenarios) deploys three agents with the OpenShift profile, `assistant`, `researcher`, and `reviewer`, each sandbox granting one endpoint named for it so that no two have the same policy.
-Before its first apply, the `tests/e2e/hcl/kind` module releases a chart with the bundled Helm provider: the deployment's namespace with OpenShift UID-range annotations, as OpenShift prepares a project, and the same stub model in its own namespace.
-Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage; the test runner then uninstalls the release, which deletes both namespaces.
-`cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the agent image, and passes the kubeconfig as `TF_VAR_kubeconfig`.
+The gateway test, `kubernetes_live::the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage`, covers what the HCL scenario below cannot.
+It runs the compiled runtime and teardown graphs through the bundled OpenTofu with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
+It requires authenticated `GetGatewayInfo` with the development token and refusal of a token signed by another key.
+It removes and reinstalls the gateway, requiring the namespace, encryption key, and PVCs to keep their UIDs, then deletes its namespace; with kind's `Delete` reclaim policy, that also removes the volumes.
+It creates no agent sandbox.
+To run it alone, use an owned disposable kind cluster with Agent Sandbox and a cluster administrator's kubeconfig that holds its credentials, because OpenTofu runs with an empty `PATH`:
+
+```sh
+NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
+NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
+  cargo test --locked -p nemoclaw-e2e --test e2e \
+    kubernetes_live::the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage \
+    -- --ignored --exact --nocapture
+```
+
+The test prints its private state directory, which holds OpenTofu state and generated key material; remove it when finished.
+On a cluster whose volumes use the `Retain` reclaim policy, the volumes outlive the namespace; delete them as [Remove Retained Resources](../usage.md#remove-retained-resources) describes.
+The `kind-openshift-agents` [HCL E2E scenario](#hcl-e2e-scenarios) deploys two agents with the OpenShift profile, `assistant` and `researcher`, each sandbox granting one endpoint named for it so that no two have the same policy.
+Before the scenario, `cargo ci live-kind` starts a pinned registry that requires a login on the run's kind network and pushes the agent image there under a new image-index digest.
+The node may pull from that registry over HTTP, and its configuration for it holds no credentials, so a pod can pull the image only with a pull Secret.
+The new digest makes the node fetch the index from the registry, although the node already has the image's layers.
+Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice with the bundled Helm provider, as a platform and an operator would prepare the cluster: once for the namespaces, the pull Secret, and the CA, and once for the stub model and the issuer, whose release waits until both are ready:
+
+- The deployment's namespace with OpenShift UID-range annotations, as OpenShift prepares a project. It holds the registry's image pull Secret and the CA of the existing issuer.
+- A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
+- An existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
+
+`hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
+The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
+The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
+Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
+The test runner then uninstalls both releases, which deletes the three namespaces; it does not wait for Kubernetes to finish deleting them.
+`cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
+It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
-On a cluster that serves the `security.openshift.io` API group, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
-The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
-It checks anonymous and wrong-credential rejection. Then, as an operator would, it creates the deployment's namespace and a caller-managed image pull Secret before the first apply, and deploys an agent into that namespace, which NemoClaw binds by UID without labelling it.
-A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
-Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must keep the namespace with its UID and labels unchanged and retain the caller-managed Secret.
-The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
-
-The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider, and deletes that namespace when the test passes or panics, but not when nextest stops it at its time limit.
-It deploys a gateway and sandbox from the agent image with the `oidc` authentication profile, supplying the issuer's token through `token.env`.
-Apply must complete with the agent started and no development issuer in the deployment's namespace.
-A plan with a token for another audience, signed with the same key, must be refused without echoing a token, and must leave `intent.json`, the OpenTofu state, and every file under `kubernetes/` in the state directory byte-identical.
-The test then supplies only a second token, issued one second after the first, as a user does after a token expires.
-With it, a plan must report no changes, export must reproduce the authored configuration, and destroy must keep the gateway's storage; if that destroy fails, the test destroys with the first token before failing.
-No regular file in the state directory may contain any of the three tokens in its raw bytes; the search does not follow symbolic links or open saved plans, which are zip archives.
-
+The scenario annotates the namespace itself; don't run it on a cluster that serves the `security.openshift.io` API group, where that would replace the range the cluster assigns.
 These live tests run no model and need no GPU or user registry credentials; the stub's fixed reply does not establish inference or model compatibility.
 The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
 Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
-The runner deletes its cluster and removes its built image tag after success or failure; pulled images and build caches remain.
-Set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to retain the cluster on either outcome, then delete it with the printed kind command after inspection.
-The gateway test's private state directory remains as described below, including when the runner deletes the cluster.
+The runner deletes its cluster and registry and removes its built image tag after success or failure; pulled images and build caches remain.
+Set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to retain the cluster and registry on either outcome, then delete the cluster with the printed kind command and the registry container with `docker rm --force --volumes` after inspection.
 
 To render the pinned chart through the bundled provider without cluster access:
 
@@ -77,65 +74,12 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 
 The render test also rejects an unavailable chart digest.
 
-To run only the gateway test, use an owned disposable cluster with the Kubernetes guide's [cluster setup](../kubernetes.md#prerequisites): Agent Sandbox and a default StorageClass.
-The host pulls the pinned chart from ghcr.io, and the cluster pulls the gateway image from ghcr.io and the development issuer image from Docker Hub.
-Besides the [cluster access](../kubernetes.md#prerequisites) rights, the chart creates a ClusterRole and a ClusterRoleBinding, and the test deletes its namespace and can change the reclaim policy of the volumes bound to its PVCs, so use a cluster administrator's context.
-Use a kubeconfig that holds its credentials, such as a client certificate or a token: the test runs OpenTofu with an empty `PATH` and an isolated home, so an exec plugin that relies on either fails.
-On OpenShift Local, write the `system:admin` kubeconfig to a private file outside the checkout with `(umask 077 && crc generate-kubeconfig > /absolute/path/to/crc-kubeconfig)` and use its `admin` context.
-Its client certificate is valid for ten years from the instance's first start, and deleting the copy does not revoke it; keep the file private and delete it once any cleanup below is done.
-On OpenShift, set `NEMOCLAW_TEST_KUBE_RUNTIME=openshift` to deploy the gateway with `runtime.provider: openshift`; the default is `kubernetes`, and any other value fails the test.
-Supply the cluster's kubeconfig and context, and a verified immutable bundle built from the checkout:
-
-```sh
-NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
-NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-e2e --test e2e \
-    kubernetes_live::the_gateway_installs_authenticates_and_is_removed_keeping_storage \
-    -- --ignored --exact --nocapture
-```
-
-The test runs the compiled runtime and teardown graphs through the bundled OpenTofu and providers.
-Each OpenTofu process has an empty `PATH` and an isolated home, so a host Helm executable cannot satisfy the test.
-The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and rejects a forged token.
-It removes and reinstalls the Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
-With `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, after each installation it also requires every pod in the namespace to be admitted under the `restricted-v2` security context constraint, to run every container as the first UID of the range OpenShift assigned to the namespace, and to use the first group of the namespace's supplemental-group range as `fsGroup`.
-Finally it switches each volume bound to its PVCs whose reclaim policy is not `Delete`, such as OpenShift Local's `Retain`, to `Delete`, and stops instead if that volume was not provisioned dynamically for its PVC.
-It then deletes the namespace, which removes the encryption key and the PVCs, and requires the namespace and every volume bound to its PVCs to be gone within 2 minutes; the provisioner removes each volume only after deleting its storage.
-It creates no agent sandbox and requests no inference.
-
-The test prints the path to its private temporary state directory and retains it after success or failure.
-That directory contains OpenTofu state, saved plans, the authored document, generated signing and TLS material, and private diagnostic output; keep it private and outside Git.
-Raw OpenTofu output is suppressed from the test log because it can contain deployment values; each command's stdout and stderr remain in `diagnostics/` with mode `0600` on Unix.
-After success, images the cluster pulled remain on its nodes; remove the printed state directory when finished.
-
-If the test fails, its namespace, the volumes bound to its PVCs, and the chart's ClusterRole and ClusterRoleBinding, both named `<release>-node-reader-<namespace>`, can remain.
-In the state directory, `kubernetes/receipt.json` gives the release as `name` and the namespace as `namespace.name`; without the directory, find the namespace as `nc-live-` followed by 16 hexadecimal digits.
-Inspect those resources, then delete the ClusterRole and ClusterRoleBinding:
-
-```sh
-jq -r '.name, .namespace.name' /absolute/path/to/state/kubernetes/receipt.json
-kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-test \
-  delete --ignore-not-found \
-  clusterrolebinding/RELEASE-node-reader-NAMESPACE clusterrole/RELEASE-node-reader-NAMESPACE
-```
-
-Then remove the namespace with the Kubernetes steps of [Remove Retained Resources](../usage.md#remove-retained-resources).
-Skip that procedure's destroy check and its requirement that no pods remain: `nemoclaw` cannot use the test's state directory, and the test's gateway can still be running.
-Under `Retain`, the volumes that procedure lists remain `Released` after the namespace goes; set each one's reclaim policy to `Delete`, as the test does, so that the provisioner deletes the volume and its storage:
-
-```sh
-kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-test \
-  patch persistentvolume VOLUME_NAME --type merge \
-  --patch '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
-```
-
-Rerun `kubectl get persistentvolume VOLUME_NAME` with the same kubeconfig and context until it reports that the volume is not found.
-
 ## HCL E2E Scenarios
 
 Each HCL E2E scenario deploys one document from `crates/nemoclaw-e2e/cases` and runs the matching `tests/e2e/hcl/tests/<case>.tftest.hcl` under the bundled OpenTofu `tofu test`.
 `hcl_live::case` sets the run's context and starts `tofu test`; the run blocks own the sequence and the assertions.
+When `tofu test` ends, `hcl_live::case` prints how long each run block took, and the cleanup that destroys their state, with the total; with `GITHUB_STEP_SUMMARY` set, it also appends the table to the job summary.
+It reads the times from OpenTofu's debug log, which can hold deployment values: the test creates it owner-only in the run's `work` directory, never prints it, and deletes it once read, and reports run names and seconds only.
 Run blocks call these modules:
 
 | Module | What it does |
@@ -154,7 +98,7 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply. |
-| `kind-openshift-agents` | `cargo ci live-kind` | Three agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli); each answers with the stub's reply. |
+| `kind-openshift-agents` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:
 
@@ -187,12 +131,7 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 The `docker-openclaw-hermes-vllm` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
 Spark hardware has no CI runner yet.
 
-The Spark image-change test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes.
-Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
-
-Run `spark::spark_image_change_plans_and_applies_replacement` with `NEMOCLAW_LIVE_SPARK_CONFIG`, `NEMOCLAW_LIVE_SPARK_STATE`, and `NEMOCLAW_TEST_BUNDLE` set to absolute paths, against an established, running deployment.
-Change only the inference image pin in the YAML.
-The test compares the input with exported configuration, then requires plan and apply to replace the service's `docker_container.inference_service_inference_<service>` and reconcile its image resource while retaining storage.
+The SDK's `runtime_compile::an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes` test owns what changing only a model's image pin reaches: its container and image, not its storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.
@@ -273,46 +212,8 @@ It checks that the collected architecture matches the selected Docker daemon's r
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, standalone cache, dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
-
-## Docker Provider Lifecycle
-
-On Linux with local Docker, provide a verified bundle and two different, already loaded digest-pinned images containing the Ollama proxy executable.
-Run from the repository root:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE=repository@sha256:YOUR_REPLACEMENT_DIGEST \
-  cargo test -p nemoclaw-e2e --test e2e docker_provider_proxy:: -- --ignored
-```
-
-This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
-It checks SDK apply, export/reapply, failed readiness, image changes and container replacement with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes.
-OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
-
-
-## Standalone Cache and Credential Resources
-
-On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing `python3` and `sha256sum`, such as an agent image.
-The fixture container runs as root, so the image's own user does not matter.
-From the repository root:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_CACHE_ENGINE=unix:///var/run/docker.sock \
-NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-  cargo test -p nemoclaw-e2e --test e2e cache_provider:: -- --ignored
-```
-
-The [hand-written HCL](../../crates/nemoclaw-e2e/tests/e2e/rust/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `vllm_credential_storage`; no SDK compiler or deployment coordinator runs.
-The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
-Missing or substituted credential volumes must stop apply before compute creation and preserve state.
-Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.
-The test removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
-The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
-
 
 ## Dummy Agent Lifecycle
 
@@ -382,8 +283,8 @@ cargo test -p nemoclaw-e2e --test e2e \
 ```
 
 The test checks read-only planning, unchanged apply, stopped/deleted process recovery, retained credential identity, and destroy/reapply.
-It also replaces the listen port inside the runtime-stage test and temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
-That internal replacement test does not authorize retargeting an established public deployment endpoint; the SDK still rejects that operation.
+It also temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
+The SDK's `runtime_compile` tests own what a listen-port change reaches in the runtime graph: the gateway container, not its storage. The SDK still rejects retargeting an established public deployment endpoint.
 The gateway image remains pinned by the SDK.
 
 ## Docker Gateway Isolation

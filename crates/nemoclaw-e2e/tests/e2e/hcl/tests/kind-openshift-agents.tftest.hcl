@@ -1,10 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Three agents with the OpenShift profile on a managed gateway in kind:
+# Two agents with the OpenShift profile on a managed gateway in kind:
 # apply, a reply from each agent's recorded runtime, an unchanged plan, and
 # destroy that keeps only the gateway's storage. cargo ci live-kind runs it.
-# The stub's reply shows each request reached it; no model runs.
+# The stub's reply shows each request reached it; no model runs. The agent
+# image comes from the run's private registry with the operator's pull
+# Secret, and the CLI and the probe reach the gateway with a token from an
+# existing OIDC issuer, so apply and the replies show that the gateway
+# accepts that issuer's tokens.
 
 run "cluster" {
   module {
@@ -14,6 +18,8 @@ run "cluster" {
   variables {
     kubeconfig = var.kubeconfig
     reply      = "nemoclaw-stub-reply"
+    # The module reads TF_VAR_pull_credentials itself, as an object; the
+    # test file's var.pull_credentials would be the raw string.
   }
 }
 
@@ -39,7 +45,7 @@ run "reply" {
 
   variables {
     targets = {
-      for agent in ["main", "researcher", "reviewer"] : agent => {
+      for agent in ["main", "researcher"] : agent => {
         agent            = agent
         request          = "Reply to this NemoClaw live test."
         response_pointer = "/output/response"

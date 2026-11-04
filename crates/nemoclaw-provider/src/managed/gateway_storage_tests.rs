@@ -206,3 +206,60 @@ async fn gateway_prerequisites_can_be_checked_without_storage_or_resource_reads(
         Some("engine")
     );
 }
+
+#[tokio::test]
+async fn storage_left_by_another_state_directory_names_the_object_and_the_way_out() {
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
+    let mut spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    spec.layout = 1;
+    // A destroyed deployment with the same metadata.uid, applied from another
+    // state directory, left its gateway storage under another generation.
+    let mut earlier = spec.clone();
+    earlier.generation = "c".repeat(spec.generation.len());
+    assert_ne!(earlier.generation, spec.generation);
+    let data_path = "/var/lib/docker/volumes/fixture/_data";
+    let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":data_path,"CreatedAt":"2026-09-14T00:00:00Z","Labels":earlier.labels().unwrap(),"Options":{}});
+    let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":earlier.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.gateway.network_cidr,"Gateway":spec.gateway.bridge().unwrap()}]}});
+    let state = Arc::new(Mutex::new((None::<Value>, Some(network))));
+    let shared = state.clone();
+    let fixture = Fixture::engine(move |request| {
+        assert_eq!(
+            request.method, "GET",
+            "gateway storage observation mutated Docker"
+        );
+        let state = shared.lock().unwrap();
+        let found = if request.path == "/info" {
+            Some(json!({"ID":"engine","DockerRootDir":"/var/lib/docker"}))
+        } else if request.path.starts_with("/volumes/") {
+            state.0.clone()
+        } else if request.path.starts_with("/networks/") {
+            state.1.clone()
+        } else if request.path.starts_with("/containers/") {
+            None
+        } else {
+            panic!("unexpected request {}", request.path)
+        };
+        Some(match found {
+            Some(value) => (200, serde_json::to_vec(&value).unwrap()),
+            None => (404, br#"{"message":"missing"}"#.to_vec()),
+        })
+    })
+    .await;
+    let engine = fixture.engine_for(&spec.gateway.engine);
+    for object in [
+        format!("network {}", spec.network()),
+        format!("volume {}", spec.volume()),
+    ] {
+        if object.starts_with("volume") {
+            state.lock().unwrap().0 = Some(volume.clone());
+        }
+        let error = engine
+            .gateway_storage(&spec, "", true)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(&object), "{error}");
+        assert!(error.contains("another state directory"), "{error}");
+        assert!(error.contains("new metadata.uid"), "{error}");
+    }
+}

@@ -68,6 +68,10 @@
     "/spec/services/*/container/sharedMemoryGiB": {
       "title": "Shared memory (GiB)"
     },
+    "/spec/services/*/environment/*": {
+      "title": "Application setting",
+      "description": "A literal value the application reads. NemoClaw passes it unchanged and keeps it in plans, state, and exports, so don't enter a credential."
+    },
     "/spec/services/*/hardware/architecture": {
       "title": "CPU architecture"
     },

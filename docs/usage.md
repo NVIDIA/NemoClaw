@@ -97,6 +97,7 @@ Keep state, diagnose the failure, and reapply after recovery; see [recovering an
 ### Run an Application Container
 
 Declare a `kind: container` service with an immutable image and literal environment settings.
+The [application container example](../examples/application-container.yaml) runs an application beside one agent and passes it the workspace, sandbox, agent, and gateway address as literal environment values; NemoClaw does not interpret them.
 The image owns its entrypoint; optional `command` overrides its arguments, and `files` supplies nonsecret configuration with mode 0444.
 Environment values enter configuration, plans/state, exports, and Docker inspection; they are not protected credential references.
 Generic credential-file delivery is deferred.
@@ -622,5 +623,3 @@ On OpenShift, `oc delete project` does the same as deleting the namespace.
 If `kubectl get namespace "$deployment_namespace"` reports it not found, the namespace and its objects are gone.
 Run the volume list again; once the volumes are gone, it prints only its header.
 When the namespace, or in a kept namespace those objects, and the volumes are gone, remove the state directory, which holds the cluster receipt and any development issuer keys.
-
-The [live Kubernetes gateway test](contributing/live-tests.md#kubernetes-gateway-without-the-helm-cli) deletes its namespace this way, after switching any volume whose reclaim policy is not `Delete` to `Delete`, and checks that the namespace and its volumes are gone.

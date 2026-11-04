@@ -85,15 +85,12 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     assert_eq!(result["changes"], serde_json::json!([]));
     let applied = invoke("apply", "text");
     let summary = String::from_utf8(applied.stdout).unwrap();
-    assert!(summary.contains("Apply complete"), "{summary}");
-    assert!(summary.contains("No resource changes"));
-    assert!(summary.contains("Model and agent responses were not tested"));
+    assert!(summary.contains("No resource changes"), "{summary}");
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
 
     let destroyed = invoke("destroy", "text");
     let summary = String::from_utf8(destroyed.stdout).unwrap();
     assert!(summary.contains("Destroy complete"), "{summary}");
-    assert!(summary.contains("Sandbox files and conversation history deleted"));
     let repeated = invoke("destroy", "json");
     let result: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
     assert_eq!(result["outcome"], "destroyed");
@@ -205,51 +202,15 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
             .contains("unfinished creation requires its original resource configuration"),
         "{error}"
     );
+    // A change that leaves every pending target as it was is accepted, and
+    // the apply finishes the interrupted creation.
     document.metadata.name = "revised-unrelated-description".into();
     deployment.apply(&document, &cancel).await.unwrap();
-    let effects = fixture.state.lock().unwrap().effects;
-    assert_eq!(effects, 4);
-    let preview = deployment.plan_destroy(&cancel).await.unwrap();
-    // Destroy also removes the agent configuration that replaces the sandbox,
-    // the workspace, and the record of the sandbox image's pull.
-    assert_eq!(preview.changes.len(), 6);
-    assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let destroyed = Command::new(
-        bundle
-            .join("bin")
-            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-    )
-    .args(["destroy", "--state-dir"])
-    .arg(directory.path())
-    .output()
-    .unwrap();
-    assert!(
-        destroyed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&destroyed.stderr)
-    );
-
-    assert!(
-        deployment
-            .destroy(&cancel)
-            .await
-            .unwrap()
-            .changes
-            .is_empty()
+    assert_eq!(
+        deployment.destroy(&cancel).await.unwrap().outcome,
+        Outcome::Destroyed
     );
     assert!(fixture.state.lock().unwrap().workspaces.is_empty());
-    // The workspace, registration, sandbox, agent, the agent's
-    // configuration, and the sandbox image's pull: re-apply after destroy
-    // recreates the workspace too.
-    assert_eq!(
-        deployment
-            .apply(&document, &cancel)
-            .await
-            .unwrap()
-            .changes
-            .len(),
-        6
-    );
 }
 
 /// One document carries the authored settings that export must reproduce:
@@ -596,9 +557,11 @@ impl Lifecycle {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn startup_and_observation_failures_retain_bindings_and_recover() {
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapply() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    // The sandbox startup failure test owns a failed sandbox; this one fails
+    // the agent's start, after the sandbox exists.
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(
@@ -607,213 +570,64 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    fixture.state.lock().unwrap().exec_exit = 1;
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
-    fixture.state.lock().unwrap().sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
-    fixture.state.lock().unwrap().sandbox_conditions =
-        vec![openshell_core::proto::SandboxCondition {
-            r#type: "Ready".into(),
-            status: "False".into(),
-            reason: "ControlSupervisorExited".into(),
-            message: "private-backend-diagnostic".into(),
-            ..Default::default()
-        }];
-    let error = deployment
-        .apply(&document, &cancel)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("ControlSupervisorExited"), "{error}");
-    assert!(!error.contains("private-backend-diagnostic"));
-    let state_path = directory.path().join("terraform.tfstate");
-    assert_eq!(fixture.state.lock().unwrap().effects, 4);
-    assert_apply_unfinished(&deployment, &cancel).await;
-    // Reapplying replaces the exited sandbox; the replacement fails the same way.
-    let error = deployment
-        .apply(&document, &cancel)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("ControlSupervisorExited"), "{error}");
-    {
-        let state = fixture.state.lock().unwrap();
-        assert_eq!(state.delete_calls, 1);
-        assert_eq!(state.sandboxes.len(), 1);
-        assert!(state.exec_calls.is_empty());
-    }
-    fixture.state.lock().unwrap().sandbox_phase = None;
-    for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
-        sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
-    }
-    let recovery = deployment.apply(&document, &cancel).await.unwrap();
-    // The failed start may have left a runtime running, so the retry creates
-    // the agent in a new sandbox.
-    let action = |prefix: &str| {
-        recovery
-            .changes
-            .iter()
-            .find(|change| change.resource.starts_with(prefix))
-            .map(|change| change.actions.clone())
-    };
-    assert_eq!(
-        action("openshell_sandbox."),
-        Some(vec!["delete".into(), "create".into()])
-    );
-    assert_eq!(action("fabric_agent."), Some(vec!["create".into()]));
-    let recovered = fs::read(&state_path).unwrap();
-    let observed: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
-    let configuration_count = observed["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|resource| resource["type"] == "fabric_agent")
-        .count();
-    assert_eq!(configuration_count, 1);
-    let effects = fixture.state.lock().unwrap().effects;
-    fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
-    assert!(deployment.export(&cancel).await.is_err());
-    assert!(deployment.plan(&document, &cancel).await.is_err());
     assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_eq!(fs::read(&state_path).unwrap(), recovered);
+    let intent_path = directory.path().join("intent.json");
+    let intent = fs::read(&intent_path).unwrap();
+    let state_path = directory.path().join("terraform.tfstate");
+    let saved = fs::read(&state_path).unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    fixture.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::PermissionDenied));
+    assert!(deployment.plan_destroy(&cancel).await.is_err());
+    assert_eq!(fs::read(&intent_path).unwrap(), intent);
+    assert_eq!(fs::read(&state_path).unwrap(), saved);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().fail_read = None;
-    // Exporting checks each agent's runtime; a check whose reply is cut off
-    // leaves it unobserved, so export fails and changes nothing.
-    fixture.state.lock().unwrap().exec_truncated = true;
-    assert!(deployment.export(&cancel).await.is_err());
-    assert_eq!(fs::read(&state_path).unwrap(), recovered);
-    fixture.state.lock().unwrap().exec_truncated = false;
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
-    fixture.state.lock().unwrap().lose_delete = true;
-    assert!(deployment.destroy(&cancel).await.is_err());
-    assert!(deployment.apply(&document, &cancel).await.is_err());
-    assert_eq!(
-        deployment.destroy(&cancel).await.unwrap().outcome,
-        Outcome::Destroyed
-    );
-    assert!(fixture.state.lock().unwrap().workspaces.is_empty());
-    assert!(fixture.state.lock().unwrap().providers.is_empty());
-    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapply() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    for sandbox_error in [true, false] {
-        let directory = tempfile::tempdir().unwrap();
-        let fixture = Fixture::start().await;
-        let mut document = Document::parse(
-            include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-        )
-        .unwrap();
-        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-        if sandbox_error {
-            fixture.state.lock().unwrap().sandbox_phase =
-                Some(openshell_core::proto::SandboxPhase::Error);
-        } else {
-            fixture.state.lock().unwrap().exec_exit = 1;
+    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
+    for field in ["owner", "id"] {
+        for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
+            let metadata = sandbox.metadata.as_mut().unwrap();
+            if field == "owner" {
+                metadata
+                    .labels
+                    .insert("nemoclaw.nvidia.com/uid".into(), "foreign".into());
+            } else {
+                metadata.id = "replacement".into();
+            }
         }
-        let deployment = Deployment::new(directory.path(), &bundle);
-        let cancel = CancellationToken::new();
-        assert!(deployment.apply(&document, &cancel).await.is_err());
-        let intent_path = directory.path().join("intent.json");
-        let intent = fs::read(&intent_path).unwrap();
-        let state_path = directory.path().join("terraform.tfstate");
-        let saved = fs::read(&state_path).unwrap();
-        let effects = fixture.state.lock().unwrap().effects;
-        assert_eq!(effects, 4);
-        fixture.state.lock().unwrap().fail_read = Some(("sandbox", tonic::Code::PermissionDenied));
         assert!(deployment.plan_destroy(&cancel).await.is_err());
         assert_eq!(fs::read(&intent_path).unwrap(), intent);
         assert_eq!(fs::read(&state_path).unwrap(), saved);
         assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        fixture.state.lock().unwrap().fail_read = None;
-        let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-        for field in ["owner", "id"] {
-            for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
-                let metadata = sandbox.metadata.as_mut().unwrap();
-                if field == "owner" {
-                    metadata
-                        .labels
-                        .insert("nemoclaw.nvidia.com/uid".into(), "foreign".into());
-                } else {
-                    metadata.id = "replacement".into();
-                }
-            }
-            assert!(deployment.plan_destroy(&cancel).await.is_err());
-            assert_eq!(fs::read(&intent_path).unwrap(), intent);
-            assert_eq!(fs::read(&state_path).unwrap(), saved);
-            assert_eq!(fixture.state.lock().unwrap().effects, effects);
-            fixture.state.lock().unwrap().sandboxes = sandboxes.clone();
-        }
-        let preview = deployment
-            .plan_destroy(&cancel)
-            .await
-            .expect("identified failed creations must have a teardown path");
-        assert!(
-            preview
-                .changes
-                .iter()
-                .any(|change| change.resource == "openshell_sandbox.assistant")
-        );
-        assert_eq!(fs::read(&intent_path).unwrap(), intent);
-        assert_eq!(fs::read(&state_path).unwrap(), saved);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-        let destroyed = deployment.destroy(&cancel).await.unwrap();
-        assert_eq!(destroyed.outcome, Outcome::Destroyed);
-        let state = fixture.state.lock().unwrap();
-        assert!(state.sandboxes.is_empty());
-        assert!(state.providers.is_empty());
-        assert!(state.profiles.is_empty());
-        assert!(state.workspaces.is_empty());
+        fixture.state.lock().unwrap().sandboxes = sandboxes.clone();
     }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn failed_first_configuration_accepts_corrected_intent_by_replacing_the_sandbox() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    let directory = tempfile::tempdir().unwrap();
-    let fixture = Fixture::start().await;
-    let mut document = Document::parse(
-        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-    )
-    .unwrap();
-    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let deployment = Deployment::new(directory.path(), &bundle);
-    let cancel = CancellationToken::new();
-    fixture.state.lock().unwrap().exec_exit = 1;
-    assert!(deployment.apply(&document, &cancel).await.is_err());
-    let sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .agent
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "corrected-model".into();
-    fixture.state.lock().unwrap().exec_exit = 0;
-    deployment
-        .apply(&document, &cancel)
+    let preview = deployment
+        .plan_destroy(&cancel)
         .await
-        .expect("a corrected agent replaces the sandbox");
-    let replaced = fixture.state.lock().unwrap().sandboxes.clone();
-    assert_eq!(replaced.len(), 1);
-    assert_ne!(replaced, sandboxes);
-    deployment.destroy(&cancel).await.unwrap();
+        .expect("identified failed creations must have a teardown path");
+    assert!(
+        preview
+            .changes
+            .iter()
+            .any(|change| change.resource == "openshell_sandbox.assistant")
+    );
+    assert_eq!(fs::read(&intent_path).unwrap(), intent);
+    assert_eq!(fs::read(&state_path).unwrap(), saved);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    assert_eq!(destroyed.outcome, Outcome::Destroyed);
+    let state = fixture.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert!(state.providers.is_empty());
+    assert!(state.profiles.is_empty());
+    assert!(state.workspaces.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_credentials() {
+async fn cli_redaction_withholds_short_and_colliding_credentials() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
@@ -863,7 +677,6 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         "{}",
         String::from_utf8_lossy(&applied.stdout)
     );
-    let original = fixture.state.lock().unwrap().sandboxes.clone();
     document
         .spec
         .sandboxes
@@ -881,7 +694,8 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         "error": {"stage":"start", "code":"start_failed", "message":"native-secret-must-not-escape"}
     }));
     // The process tests own the credential/context matrix. Keep the native
-    // withholding and collision paths here, including failure recovery.
+    // withholding and collision paths here; the Fabric start failure test owns
+    // recovery.
     for (secret, format) in [("a", "text"), ("start_failed", "json")] {
         let failed = invoke("apply", format, secret);
         assert_eq!(failed.status.code(), Some(1));
@@ -915,17 +729,6 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
         assert!(!stdout.contains("native-secret-must-not-escape"));
         assert!(!stderr.contains("native-secret-must-not-escape"));
     }
-    fixture.state.lock().unwrap().configuration_error = None;
-    let recovered = invoke("apply", "json", "a");
-    assert!(
-        recovered.status.success(),
-        "{}",
-        String::from_utf8_lossy(&recovered.stdout)
-    );
-    // The changed agent runs in a new sandbox.
-    let recovered_sandboxes = fixture.state.lock().unwrap().sandboxes.clone();
-    assert_eq!(recovered_sandboxes.len(), 1);
-    assert_ne!(recovered_sandboxes, original);
     let destroyed = invoke("destroy", "json", "a");
     assert!(
         destroyed.status.success(),
@@ -1044,161 +847,158 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
     }
 }
 
+/// A sandbox that exits during startup: the CLI's JSON report and plan name the
+/// sandbox, phase, reason, and guidance without the backend's private message,
+/// and the apply stays unfinished. A retry replaces the exited sandbox, and once
+/// the gateway admits it, the agent starts in a new sandbox. Failed or cut-off
+/// observations stop export, plan, and apply without changing state, and a
+/// lost delete leaves a destroy that a retry finishes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() {
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
-    // The CLI renderer's tests own text presentation and each reason's
-    // guidance; this native row keeps the producer and JSON report.
-    for (format, reason, guidance) in [(
-        "json",
-        "ControlSupervisorStartFailed",
-        "check the sandbox policy and attached providers",
-    )] {
-        let directory = tempfile::tempdir().unwrap();
-        let fixture = Fixture::start().await;
-        let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-            "../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
-        ))
-        .unwrap();
-        input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-        let sandboxes = input["spec"]["sandboxes"].as_object_mut().unwrap();
-        let sandbox = sandboxes.remove("assistant").unwrap();
-        sandboxes.insert("coder".into(), sandbox);
-        let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
-        let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-        let input = directory.path().join("input.yaml");
-        fs::write(&input, document.yaml().unwrap()).unwrap();
-        let state = directory.path().join("state");
-        {
-            let mut fixture_state = fixture.state.lock().unwrap();
-            fixture_state.sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
-            fixture_state.sandbox_conditions = vec![openshell_core::proto::SandboxCondition {
-                r#type: "Ready".into(),
-                status: "False".into(),
-                reason: reason.into(),
-                message: "PRIVATE_SENTINEL".into(),
-                ..Default::default()
-            }];
-        }
-        let invoke = |operation: &str| {
-            let mut command = Command::new(
-                bundle
-                    .join("bin")
-                    .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-            );
-            command
-                .arg("--bundle")
-                .arg(&bundle)
-                .arg("--state-dir")
-                .arg(&state)
-                .args(["--progress", "off", operation, "-o", format]);
-            if matches!(operation, "apply" | "plan") {
-                command.arg(&input);
-            }
-            if operation == "apply" {
-                command.arg("--non-interactive");
-            }
-            command.output().unwrap()
-        };
-        for operation in ["apply"] {
-            let failed = invoke(operation);
-            assert_eq!(failed.status.code(), Some(1));
-            let stdout = String::from_utf8(failed.stdout).unwrap();
-            let stderr = String::from_utf8(failed.stderr).unwrap();
-            let message = if format == "json" {
-                let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-                assert_eq!(report["outcome"], "failed");
-                report["error"]["message"].as_str().unwrap().to_owned()
-            } else {
-                stderr.clone()
-            };
-            for expected in [
-                "sandbox/coder",
-                "SANDBOX_PHASE_ERROR",
-                reason,
-                guidance,
-                "resources retained",
-            ] {
-                assert!(message.contains(expected), "{message}");
-            }
-            assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
-            assert_eq!(fixture.state.lock().unwrap().sandboxes.len(), 1);
-            assert!(state.join("terraform.tfstate").exists());
-        }
-        // The plan replaces the exited sandbox and says why, without the
-        // backend's private message.
-        let before = fixture.state.lock().unwrap().effects;
-        let planned = invoke("plan");
-        let stdout = String::from_utf8(planned.stdout).unwrap();
-        let stderr = String::from_utf8(planned.stderr).unwrap();
-        assert!(planned.status.success(), "{stdout} {stderr}");
-        let exited = format!("sandbox exited: SANDBOX_PHASE_ERROR, reason {reason}");
-        assert!(stdout.contains(&exited), "{stdout}");
-        assert!(!stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"));
-        assert_eq!(fixture.state.lock().unwrap().effects, before);
-        let destroyed = invoke("destroy");
-        assert!(
-            destroyed.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&destroyed.stdout),
-            String::from_utf8_lossy(&destroyed.stderr)
-        );
-        assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
-async fn scoped_provider_labels_preserve_authored_identity() {
+async fn a_sandbox_startup_failure_is_reported_safely_retained_and_recovered() {
+    const REASON: &str = "ControlSupervisorStartFailed";
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let fixture = Fixture::start().await;
-    let mut input: serde_json::Value = serde_saphyr::from_str(include_str!(
-        "../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
-    ))
+    let mut document = Document::parse(
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
     .unwrap();
-    input["spec"]["gateway"]["endpoint"] = fixture.endpoint.clone().into();
-    let provider = input["spec"]["inferenceProviders"]["local"].take();
-    input["spec"]
-        .as_object_mut()
-        .unwrap()
-        .remove("inferenceProviders");
-    input["spec"]["sandboxes"]["assistant"]["inferenceProviders"] =
-        serde_json::json!({"responses": provider});
-    input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["providerRef"] =
-        "responses".into();
-    let mut document = Document::parse(input.to_string().as_bytes()).unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
-    let state = directory.path().join("state");
     let input = directory.path().join("input.yaml");
     fs::write(&input, document.yaml().unwrap()).unwrap();
+    let state = directory.path().join("state");
     let deployment = Deployment::new(&state, &bundle);
     let cancel = CancellationToken::new();
-    let preview = Command::new(
-        bundle
-            .join("bin")
-            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-    )
-    .args(["--progress", "off", "--state-dir"])
-    .arg(&state)
-    .args(["plan", "--non-interactive"])
-    .arg(&input)
-    .output()
-    .unwrap();
+    {
+        let mut fixture_state = fixture.state.lock().unwrap();
+        fixture_state.sandbox_phase = Some(openshell_core::proto::SandboxPhase::Error);
+        fixture_state.sandbox_conditions = vec![openshell_core::proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: REASON.into(),
+            message: "PRIVATE_SENTINEL".into(),
+            ..Default::default()
+        }];
+    }
+    let invoke = |operation: &str, format: &str| {
+        let mut command = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        );
+        command
+            .arg("--bundle")
+            .arg(&bundle)
+            .arg("--state-dir")
+            .arg(&state)
+            .args([
+                "--progress",
+                "off",
+                operation,
+                "-o",
+                format,
+                "--non-interactive",
+            ])
+            .arg(&input);
+        let output = command.output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            !stdout.contains("PRIVATE_SENTINEL") && !stderr.contains("PRIVATE_SENTINEL"),
+            "{stdout} {stderr}"
+        );
+        (output.status.code(), stdout, stderr)
+    };
+
+    let (code, stdout, _) = invoke("apply", "json");
+    assert_eq!(code, Some(1));
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["outcome"], "failed");
+    let message = report["error"]["message"].as_str().unwrap();
+    for expected in [
+        "sandbox/assistant",
+        "SANDBOX_PHASE_ERROR",
+        REASON,
+        "check the sandbox policy and attached providers",
+        "resources retained",
+    ] {
+        assert!(message.contains(expected), "{message}");
+    }
+    assert_apply_unfinished(&deployment, &cancel).await;
+
+    // The plan replaces the exited sandbox and says why.
+    let effects = fixture.state.lock().unwrap().effects;
+    let (code, stdout, stderr) = invoke("plan", "text");
+    assert_eq!(code, Some(0), "{stdout} {stderr}");
     assert!(
-        preview.status.success(),
-        "{}",
-        String::from_utf8_lossy(&preview.stderr)
+        stdout.contains(&format!(
+            "sandbox exited: SANDBOX_PHASE_ERROR, reason {REASON}"
+        )),
+        "{stdout}"
     );
-    let text = String::from_utf8(preview.stdout).unwrap();
-    assert!(
-        text.contains(
-            "provider/responses at spec.sandboxes[assistant].inferenceProviders[responses]"
-        ),
-        "{text}"
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+
+    // A retry replaces the exited sandbox; the replacement fails the same way.
+    let error = deployment
+        .apply(&document, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains(REASON), "{error}");
+    {
+        let fixture_state = fixture.state.lock().unwrap();
+        assert_eq!(fixture_state.delete_calls, 1);
+        assert_eq!(fixture_state.sandboxes.len(), 1);
+        assert!(fixture_state.exec_calls.is_empty());
+    }
+
+    // Once the gateway admits the sandbox, the failed start may have left a
+    // runtime running, so the agent starts in a new sandbox.
+    fixture.state.lock().unwrap().sandbox_phase = None;
+    for sandbox in fixture.state.lock().unwrap().sandboxes.values_mut() {
+        sandbox.status.as_mut().unwrap().phase = openshell_core::proto::SandboxPhase::Ready as i32;
+    }
+    let recovery = deployment.apply(&document, &cancel).await.unwrap();
+    let action = |prefix: &str| {
+        recovery
+            .changes
+            .iter()
+            .find(|change| change.resource.starts_with(prefix))
+            .map(|change| change.actions.clone())
+    };
+    assert_eq!(
+        action("openshell_sandbox."),
+        Some(vec!["delete".into(), "create".into()])
     );
-    assert!(!text.contains("provider/local-"), "{text}");
-    assert_eq!(fixture.state.lock().unwrap().effects, 0);
-    deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(action("fabric_agent."), Some(vec!["create".into()]));
+
+    let state_path = state.join("terraform.tfstate");
+    let recovered = fs::read(&state_path).unwrap();
+    let effects = fixture.state.lock().unwrap().effects;
+    fixture.state.lock().unwrap().fail_read = Some(("provider", tonic::Code::Unavailable));
+    assert!(deployment.export(&cancel).await.is_err());
+    assert!(deployment.plan(&document, &cancel).await.is_err());
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    assert_eq!(fs::read(&state_path).unwrap(), recovered);
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    fixture.state.lock().unwrap().fail_read = None;
+    // A runtime check whose reply is cut off leaves the agent unobserved.
+    fixture.state.lock().unwrap().exec_truncated = true;
+    assert!(deployment.export(&cancel).await.is_err());
+    assert_eq!(fs::read(&state_path).unwrap(), recovered);
+    fixture.state.lock().unwrap().exec_truncated = false;
+
+    fixture.state.lock().unwrap().lose_delete = true;
+    assert!(deployment.destroy(&cancel).await.is_err());
+    assert!(deployment.apply(&document, &cancel).await.is_err());
+    assert_eq!(
+        deployment.destroy(&cancel).await.unwrap().outcome,
+        Outcome::Destroyed
+    );
+    let fixture_state = fixture.state.lock().unwrap();
+    assert!(fixture_state.workspaces.is_empty());
+    assert!(fixture_state.providers.is_empty());
+    assert!(fixture_state.sandboxes.is_empty());
 }

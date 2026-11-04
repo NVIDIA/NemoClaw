@@ -31,7 +31,7 @@ const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/integration/hcl")
 /// The live E2E test files, which name their documents by file name.
 const LIVE_TESTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/hcl/tests");
 const EXAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples");
-const GENERATIONS: [&str; 7] = [
+const GENERATIONS: [&str; 8] = [
     "workspace",
     "provider",
     "sandbox",
@@ -39,6 +39,7 @@ const GENERATIONS: [&str; 7] = [
     "inference_service",
     "ollama",
     "ollama_service",
+    "ollama_proxy",
 ];
 
 struct Scenario {

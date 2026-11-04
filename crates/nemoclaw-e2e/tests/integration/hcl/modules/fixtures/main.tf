@@ -34,12 +34,6 @@ variable "sandbox_delete_delay_ms" {
   default     = 0
 }
 
-variable "gateway_change" {
-  description = "A change to what the gateway holds, made once when declared; see the harness."
-  type        = any
-  default     = null
-}
-
 locals {
   spec   = yamldecode(file(var.document)).spec
   owner  = yamldecode(file(var.document)).metadata.uid
@@ -53,9 +47,14 @@ locals {
   ])
   services = {
     for name in sort(keys(try(local.spec.services, {}))) : name => {
-      service       = local.spec.services[name]
-      container_id  = "fixture-${name}-container"
-      container     = local.spec.services[name].kind == "vllm" ? "${local.prefix}-inference-${name}" : "${local.prefix}-ollama-${name}"
+      service      = local.spec.services[name]
+      container_id = "fixture-${name}-container"
+      container = lookup({
+        vllm        = "${local.prefix}-inference-${name}"
+        ollamaProxy = "${local.prefix}-ollama-proxy-${name}"
+      }, local.spec.services[name].kind, "${local.prefix}-ollama-${name}")
+      # An Ollama proxy keeps its key in its retained /data volume.
+      proxy         = local.spec.services[name].kind == "ollamaProxy"
       authenticated = try(local.spec.services[name].authentication, "") == "bearer"
     }
   }
@@ -83,6 +82,11 @@ output "prefix" {
   value       = local.prefix
 }
 
+output "key" {
+  description = "The key every authenticated service holds, which must never reach OpenTofu state."
+  value       = local.key
+}
+
 output "services" {
   description = "Each service's container name and ID, by service."
   value       = { for name, service in local.services : name => { name = service.container, id = service.container_id } }
@@ -94,7 +98,12 @@ output "declare" {
     compute_driver          = local.driver
     sandbox_create_delay_ms = var.sandbox_create_delay_ms
     sandbox_delete_delay_ms = var.sandbox_delete_delay_ms
-    change                  = var.gateway_change
+    # The models an Ollama proxy's existing daemon lists.
+    models = [
+      for service in values(try(local.spec.services, {})) :
+      { name = service.upstream.model.name, digest = service.upstream.model.digest }
+      if service.kind == "ollamaProxy"
+    ]
     # Only a managed Docker gateway's engine holds images and containers.
     }, [for docker in [local.docker] : {
       images = concat(
@@ -128,16 +137,16 @@ output "declare" {
           labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
           running = true
           # OpenShell finds an authenticated service by name for its key.
-          by_name    = service.authenticated
+          by_name    = service.authenticated || service.proxy
           started_at = "2026-01-01T00:00:00Z"
-          mounts = merge(
+          mounts = service.proxy ? tomap({ "/data" = "${service.container}-auth" }) : tomap(merge(
             { "/data" = "${service.container}-data" },
             service.authenticated ? { "/credentials" = "${service.container}-auth" } : {}
-          )
-          files = merge(
+          ))
+          files = service.proxy ? tomap({ "/data/inference-key" = local.key }) : tomap(merge(
             { "/data/status.json" = jsonencode({ phase = "ready", updated = "2026-01-01T00:00:05Z", detail = "serving", pid = 7 }) },
             service.authenticated ? { "/credentials/inference-key" = local.key } : {}
-          )
+          ))
         }],
       )
   } if docker]...))

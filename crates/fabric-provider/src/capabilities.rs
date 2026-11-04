@@ -336,6 +336,25 @@ fn adapter_catalog(observation: &Value<String>, adapter_id: &str) -> Option<Stri
     serde_json::to_string(&catalog.for_adapter(adapter_id)).ok()
 }
 
+/// Why a harness has no launch. A metadata bundle that didn't verify says
+/// nothing about the image's catalog label, so its observation's reason
+/// stands; otherwise the image doesn't install this adapter's runtime.
+fn unavailable_harness(state: &FabricHarnessState) -> String {
+    let bundle_reason = match (&state.metadata_env, &state.status, &state.observation_json) {
+        (Value::Value(name), Value::Value(status), Value::Value(observation))
+            if !name.is_empty() && status != "available" =>
+        {
+            serde_json::from_str::<serde_json::Value>(observation)
+                .ok()
+                .and_then(|observation| observation["reason"].as_str().map(str::to_owned))
+        }
+        _ => None,
+    };
+    bundle_reason.unwrap_or_else(|| {
+        "The image's io.nemoclaw.fabric.catalog label declares no runtime for this adapter. Select an image that installs it; an image derived from a NemoClaw agent image must keep its base image's labels.".into()
+    })
+}
+
 impl FabricHarnessState {
     /// The image read `fabric_harnesses` performs for this adapter and agent.
     fn catalog_read(&self) -> FabricCapabilitiesState {
@@ -453,10 +472,7 @@ impl DataSource for FabricHarnessDataSource {
         };
         // A known image without this adapter's runtime cannot launch it.
         if matches!(&config.launch_json, Value::Value(launch) if launch.is_empty()) {
-            diags.root_error(
-                "Harness unavailable",
-                "The image's io.nemoclaw.fabric.catalog label declares no runtime for this adapter. Select an image that installs it; an image derived from a NemoClaw agent image must keep its base image's labels.",
-            );
+            diags.root_error("Harness unavailable", unavailable_harness(&config));
             return None;
         }
         Some(config)
@@ -528,6 +544,37 @@ mod tests {
         assert_eq!(observation["status"], "unknown");
         assert!(!observation.to_string().contains("/does-not-exist"));
     }
+
+    /// A harness whose metadata bundle can't be read names the bundle, not a
+    /// catalog label that the image may well carry.
+    #[tokio::test]
+    async fn a_harness_without_its_metadata_bundle_names_the_bundle() {
+        let mut diagnostics = Diagnostics::default();
+        let output = FabricHarnessDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(String::new()),
+                    image: Value::Value(format!("registry/agent@sha256:{}", "a".repeat(64))),
+                    metadata_env: Value::Value("NEMOCLAW_TEST_UNSET_METADATA_77A856B9".into()),
+                    adapter_id: Value::Value("nvidia.fabric.openclaw".into()),
+                    agent_name: Value::Value("assistant".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await;
+        assert!(output.is_none());
+        let errors = format!("{diagnostics:?}");
+        assert!(
+            errors.contains(
+                "the image metadata bundle that NEMOCLAW_TEST_UNSET_METADATA_77A856B9 names is missing or invalid"
+            ),
+            "{errors}"
+        );
+        assert!(!errors.contains("io.nemoclaw.fabric.catalog"), "{errors}");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn selected_image_checks_the_adapter_platform_and_missing_metadata_without_starting_containers()

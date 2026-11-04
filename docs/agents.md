@@ -42,7 +42,8 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
-`ID` is the agent's `runtime_id`, recorded in the deployment's OpenTofu state; the [OpenClaw example](#run-one-headless-openclaw-request) reads it.
+`NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
+Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`; see [invoke an agent](interfaces.md#invoke-an-agent).
 Use `--input -` to read the value from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
 Fabric receives the value unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 A request can incur inference charges and affect retained agent history.
@@ -53,18 +54,19 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/ddf59e875d50d925991cd40c44dc63facf391bac/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/e5b5ebf2b81cc3c6325301ea419ebf2453dab12e/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
-With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
+With a running agent whose YAML `agent.name` is `assistant`, in the sandbox `assistant`, read its runtime ID from a plan's JSON result, then send the request from the client host:
 
 ```sh
-RUNTIME_ID=$(jq -r '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.name == "assistant") | .runtime_id' .local/deployment/terraform.tfstate)
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/deployment deployment.yaml | jq -r '.agents.assistant.runtimeId')
 openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with exactly READY."
 JSON
 ```
 
+The plan changes no runtime resources and reports the runtime that the last apply recorded; `agents` is keyed by sandbox name.
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
 On success, inspect `result.status` and `result.output.response`; a successful command does not establish general model compatibility.
 If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
