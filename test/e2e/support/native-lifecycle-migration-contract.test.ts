@@ -141,6 +141,8 @@ describe("OpenShell stop/start sandbox cleanup", () => {
       cleanup?: () => Promise<void>;
       cliAvailable?: boolean;
       listFails?: boolean;
+      approvalFails?: boolean;
+      pluginFails?: boolean;
     } = {},
   ) {
     vi.resetModules();
@@ -159,30 +161,68 @@ describe("OpenShell stop/start sandbox cleanup", () => {
     const complete = vi.fn();
     const isCommandAvailable = vi.fn(async () => options.cliAvailable ?? true);
     const waitForSandboxReadyAfterGatewayRestart = vi.fn();
-    const exec = vi.fn(
-      async (_name: string, args: string[], _options: { env?: NodeJS.ProcessEnv }) => ({
+    const execResults: Record<string, typeof success> = {
+      "openclaw cron": {
         ...success,
-        stdout:
-          args[2] === "echo alive"
-            ? "alive"
-            : args[2].includes("/health")
-              ? "ready"
-              : JSON.stringify({ ok: true, result: { details: { survived: true } } }),
+        exitCode: 1,
+        stderr: "scope upgrade pending approval (requestId: 12345678-1234-4123-8123-123456789abc)",
+      },
+      "openclaw agent": {
+        ...success,
+        stdout: JSON.stringify({
+          runId: "survival-run",
+          status: "ok",
+          summary: "completed",
+          result: { payloads: [], meta: {} },
+        }),
+      },
+      "openclaw audit": {
+        ...success,
+        stdout: JSON.stringify({
+          events: [
+            ["tool.action.started", "started"],
+            ["tool.action.finished", options.pluginFails ? "failed" : "succeeded"],
+          ].map(([action, status]) => ({
+            kind: "tool_action",
+            runId: "survival-run",
+            toolName: "nemoclaw_e2e_check_v1",
+            toolCallId: "call-1",
+            action,
+            status,
+          })),
+        }),
+      },
+    };
+    const exec = vi.fn(
+      async (_name: string, args: string[], _options: { env?: NodeJS.ProcessEnv }) =>
+        execResults[args.slice(0, 2).join(" ")] ?? {
+          ...success,
+          stdout: args[2] === "echo alive" ? "alive" : args[2].includes("/health") ? "ready" : "",
+        },
+    );
+    const commandResults: Record<string, () => Promise<typeof success>> = {
+      "install-sh-sandbox-survival": async () => (await options.install?.()) ?? success,
+      "openclaw-explicit-admin-approval": async () => ({
+        ...success,
+        exitCode: options.approvalFails ? 1 : 0,
+        stdout: options.approvalFails ? "" : "ISSUE_5324_ADMIN_APPROVAL_OK",
       }),
+    };
+    const command = vi.fn(
+      async (
+        _command: string,
+        _args: string[],
+        commandOptions: { artifactName: string; env?: NodeJS.ProcessEnv },
+      ) => commandResults[commandOptions.artifactName]?.() ?? success,
     );
     const finished = run({
       artifacts: { target: { declare: vi.fn(), complete } },
       cleanup: { trackGateway: vi.fn(), trackDisposable },
       host: {
+        commandPath: "nemoclaw",
         openshellCommandPath: "openshell",
         isCommandAvailable,
-        command: vi.fn(
-          async (_command: string, _args: string[], commandOptions: { artifactName: string }) => {
-            return commandOptions.artifactName === "install-sh-sandbox-survival"
-              ? ((await options.install?.()) ?? success)
-              : success;
-          },
-        ),
+        command,
       },
       lifecycle: {
         trackInstallerGatewayUserService: vi.fn(),
@@ -212,6 +252,7 @@ describe("OpenShell stop/start sandbox cleanup", () => {
       complete,
       isCommandAvailable,
       exec,
+      command,
       waitForSandboxReadyAfterGatewayRestart,
     };
   }
@@ -270,6 +311,11 @@ describe("OpenShell stop/start sandbox cleanup", () => {
     expect(fixture.exec.mock.calls.map((call) => call[2].env)).toEqual(
       Array(fixture.exec.mock.calls.length).fill(fixture.cleanupSandbox.mock.calls[0]![1].env),
     );
+    expectGatewayContext(
+      fixture.command.mock.calls.find(
+        (call) => call[2].artifactName === "openclaw-explicit-admin-approval",
+      )![2].env,
+    );
     await fixture.trackDisposable.mock.calls[0]![1]();
     expect(fixture.cleanupSandbox).toHaveBeenCalledTimes(1);
     expect(fixture.isCommandAvailable).not.toHaveBeenCalled();
@@ -280,6 +326,23 @@ describe("OpenShell stop/start sandbox cleanup", () => {
     const fixture = await runSurvival({ listFails: true });
     await expect(fixture.finished).rejects.toThrow("sandbox destroy verification failed");
     expect(fixture.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      approvalFails: true,
+      pluginFails: false,
+      message: "explicit admin approval did not complete",
+    },
+    { approvalFails: false, pluginFails: true, message: "the plugin tool must start and succeed" },
+  ])("retains deferred cleanup when post-start verification fails: %j", async (options) => {
+    const fixture = await runSurvival(options);
+    await expect(fixture.finished).rejects.toThrow(options.message);
+    expect(fixture.complete).not.toHaveBeenCalled();
+    expect(fixture.cleanupSandbox).not.toHaveBeenCalled();
+    await fixture.trackDisposable.mock.calls[0]![1]();
+    expect(fixture.cleanupSandbox).toHaveBeenCalledTimes(1);
+    expectGatewayContext(fixture.cleanupSandbox.mock.calls[0]![1].env);
   });
 });
 

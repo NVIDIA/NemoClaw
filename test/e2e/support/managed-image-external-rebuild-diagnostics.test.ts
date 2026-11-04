@@ -51,9 +51,16 @@ it.each([
       events.push(operation!);
       return operation === "rebuild" ? rebuild : ok;
     }),
-    command: vi.fn(async (_command: string, args: string[]) => ({
+    command: vi.fn(async (_command: string, args: string[], options: { artifactName: string }) => ({
       ...ok,
-      stdout: args[0] === "image" ? imageId : "",
+      stdout:
+        options.artifactName === "activation-runtime-sandbox-id-ext-img-hermes-before-rebuild"
+          ? "hermes-before-rebuild"
+          : options.artifactName === "activation-runtime-sandbox-id-ext-img-hermes-after-rebuild"
+            ? "hermes-after-rebuild"
+            : args[0] === "image"
+              ? imageId
+              : "",
     })),
     bestEffortCleanupSandbox: vi.fn(async () => ok),
     cleanupGatewayRegistration: vi.fn(async () => ok),
@@ -99,6 +106,12 @@ it.each([
       redactionValues: ["nemoclaw-managed-activation-e2e-key"],
       captureGatewayLog: true,
     });
+    expect(
+      host.command.mock.calls.filter((call) => call[1][0] === "volume").map((call) => call[1]),
+    ).toEqual([
+      ["volume", "ls", "-q", "--filter", "label=openshell.ai/sandbox-id=hermes-before-rebuild"],
+      ["volume", "ls", "-q", "--filter", "label=openshell.ai/sandbox-id=hermes-after-rebuild"],
+    ]);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

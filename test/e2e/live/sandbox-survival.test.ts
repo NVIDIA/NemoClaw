@@ -282,19 +282,12 @@ test(
       markers,
       "post-openshell-start-marker-read",
     );
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      SANDBOX_NAME,
-      { ...buildAvailabilityProbeEnv(), ...hosted.env },
-      [apiKey],
-      false,
-    );
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, sandboxEnv, [apiKey], false);
     const pluginOutcome = await nativePluginAgentInvocationOutcome(sandbox, {
       sandboxName: SANDBOX_NAME,
       version: "v1",
       artifactName: "post-openshell-start-native-plugin-invoke",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       turnTimeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
       audit: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT,
     });
