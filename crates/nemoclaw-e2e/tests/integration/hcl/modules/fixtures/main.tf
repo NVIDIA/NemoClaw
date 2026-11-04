@@ -34,12 +34,6 @@ variable "sandbox_delete_delay_ms" {
   default     = 0
 }
 
-variable "gateway_change" {
-  description = "A change to what the gateway holds, made once when declared; see the harness."
-  type        = any
-  default     = null
-}
-
 locals {
   spec   = yamldecode(file(var.document)).spec
   owner  = yamldecode(file(var.document)).metadata.uid
@@ -99,7 +93,6 @@ output "declare" {
     compute_driver          = local.driver
     sandbox_create_delay_ms = var.sandbox_create_delay_ms
     sandbox_delete_delay_ms = var.sandbox_delete_delay_ms
-    change                  = var.gateway_change
     # The models an Ollama proxy's existing daemon lists.
     models = [
       for service in values(try(local.spec.services, {})) :
