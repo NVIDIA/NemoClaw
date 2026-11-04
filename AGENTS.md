@@ -12,7 +12,7 @@ Follow [WRITING.md](WRITING.md) for all prose, including messages and pull reque
 
 ## Changes
 
-- For behavior changes and bug fixes, write a behavioral test and observe it fail before implementing; the `test-driven-development` skill routes other work.
+- For behavior changes and bug fixes, write a behavioral test and observe it fail before implementing; the `test-driven-development` skill routes other work, and the `write-tests` skill chooses the test's layer and suite.
 - Before pushing, run checks appropriate to the change; see [local validation](docs/contributing/testing.md#choose-local-validation). Use targeted checks for prose, declarative configuration, and isolated code changes; otherwise run `cargo ci`, which selects bundle and lifecycle checks from the changed inputs. When a change affects what runs in images or on Kubernetes, also run `cargo ci live-docker` or `cargo ci live-kind`.
 - Rerun checks after merging the base branch. Commit regenerated schemas and fixtures with the change that alters them, and don't skip commit hooks.
 - Report which checks ran and which were deferred to CI, with the reason. `cargo test` alone skips the bundle lifecycle tests.

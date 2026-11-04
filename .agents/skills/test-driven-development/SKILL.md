@@ -27,6 +27,7 @@ For mixed work, refactor with the tests passing first, then start RED for the ne
    Derive its expected result from the requirement, not from running the code.
    The test should fail for a plausible regression and still pass under a different correct implementation.
 3. **Test through the production path:** the entrypoint, the owning logic, and the observable result.
+   Choose the layer and suite with the `write-tests` skill.
    Assert outputs, state, errors, and persisted effects, not internal calls.
    Substitute only what is slow, nondeterministic, external, or destructive, and don't claim that a substitute proves the real boundary.
 4. **RED:** run the smallest command that exercises the test, and confirm it fails for the expected reason.

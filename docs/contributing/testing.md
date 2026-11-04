@@ -133,7 +133,7 @@ Live tests use real Docker engines, kind clusters, images, or remote hosts, and 
 Its [HCL E2E scenarios](live-tests.md#hcl-e2e-scenarios) are in `tests/e2e/hcl`, and the live tests not yet migrated to them are Rust modules in `tests/e2e/rust`.
 The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` and `kubernetes_chart` tests and its kind HCL E2E scenario.
 The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
-Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
+Other ignored tests, such as the Brev and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 
 ## Run Each Layer
@@ -549,6 +549,15 @@ cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
 There is no coverage threshold or CI coverage job.
 
 ## Write Tests
+
+Put each test at the layer that owns its behavior, and don't repeat a check that a lower layer covers:
+
+1. Unit: one crate's rule, with in-process fakes.
+2. Contract: one provider type through OpenTofu, in its `tests/contract/hcl/` scenarios.
+3. Integration: the compiled graph across providers in a `tests/integration/hcl/` scenario, or, in `tests/integration/rust/`, what `tofu test` cannot observe: the SDK and CLI, expected provider errors, saved plans, and interrupted or cancelled operations.
+4. Live E2E: successful paths that need a real engine, cluster, image, model, or host.
+
+At each layer, prefer a `tofu test` scenario to a Rust test. The [`write-tests` skill](../../.agents/skills/write-tests/SKILL.md) walks through the choice.
 
 Write each test as input, operation, and expected result, and name the observable behavior and its conditions in its title.
 For deployment tests, keep the YAML and expected plan and apply resource actions easy to find.
