@@ -11,7 +11,7 @@ Do not run all ignored tests against a shared deployment.
 
 ## Kubernetes Gateway Without the Helm CLI
 
-On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run the live and chart-render tests with a fresh kind cluster:
+On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), run the live tests with a fresh kind cluster:
 
 ```sh
 cargo ci build
@@ -58,21 +58,11 @@ It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
 The scenario annotates the namespace itself; don't run it on a cluster that serves the `security.openshift.io` API group, where that would replace the range the cluster assigns.
 These live tests run no model and need no GPU or user registry credentials; the stub's fixed reply does not establish inference or model compatibility.
-The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
-Kind does not enforce OpenShift security context constraints; these checks do not establish OpenShift admission or platform compatibility.
 
 The runner deletes its cluster and registry and removes its built image tag after success or failure; pulled images and build caches remain.
 Set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to retain the cluster and registry on either outcome, then delete the cluster with the printed kind command and the registry container with `docker rm --force --volumes` after inspection.
 
-To render the pinned chart through the bundled provider without cluster access:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-e2e --test e2e \
-    kubernetes_chart::the_pinned_chart_renders_with_the_sdk_values -- --ignored --exact
-```
-
-The render test also rejects an unavailable chart digest.
+The `chart` [contract module](integration-tests.md#openshell-provider-contract) renders the pinned gateway chart with the SDK's values; it needs no cluster.
 
 ## HCL E2E Scenarios
 
