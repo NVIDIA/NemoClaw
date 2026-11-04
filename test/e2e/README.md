@@ -462,7 +462,7 @@ from the candidate working directory. Normal branch protection and independent
 review govern that transition. An open PR's temporary admission is not merge authority.
 `Security / Candidate Upgrade Admission` refreshes the `check-hash` commit status
 on upstream PR changes and review submission, editing, or dismissal.
-Review events run a credential-free signal workflow without a checkout. Its completion
+Review events run a signal workflow with `permissions: {}` and no checkout. Its completion
 wakes the default-branch controller, which reads current reviews through GitHub's API.
 The signal provides no approval authority or candidate artifacts.
 When `check-hash` is required, both that status and the native hash check must pass.

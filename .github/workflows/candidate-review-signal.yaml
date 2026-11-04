@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # This PR-context workflow only wakes the default-branch admission controller.
-# It has no credentials, checkout, artifacts, or authority to admit candidate inputs.
+# It uses permissions: {} and has no checkout, artifacts, or admission authority.
 name: Security / Candidate Review Signal
 on:
   pull_request_review:
