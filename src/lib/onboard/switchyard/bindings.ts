@@ -179,7 +179,7 @@ export async function verifySwitchyardProviderBindings(
   return observed;
 }
 
-/** Called only after confirmed sandbox deletion. Never detach another consumer or adopt a replacement. */
+/** Remove owned revisions after sandbox deletion or a confirmed failed fresh reservation. */
 export async function removeSwitchyardProviders(input: {
   state: import("../../hermes-switchyard-routing").SwitchyardBindingState;
   adapter: OpenShellProviderAdapter;

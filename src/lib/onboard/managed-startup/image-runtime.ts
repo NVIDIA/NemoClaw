@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  readSwitchyardProviderBindingsEnvironment,
-  assertSwitchyardProviderEnvironment,
-} from "../../hermes-switchyard-routing";
-
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import fs from "node:fs";
@@ -20,7 +15,9 @@ import {
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
+  assertSwitchyardProviderEnvironment,
   readHermesSwitchyardRoutingEnvironment,
+  readSwitchyardProviderBindingsEnvironment,
   serializeHermesSwitchyardRouting,
 } from "../../hermes-switchyard-routing";
 import {

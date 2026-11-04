@@ -1,18 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  type SwitchyardProviderBindings,
-  validateSwitchyardProviderBindings,
-} from "../../hermes-switchyard-routing";
-
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { isLoopbackDashboardUrl } from "../../dashboard/url.ts";
 import {
   type HermesSwitchyardRoutingIntent,
+  type SwitchyardProviderBindings,
   validateHermesSwitchyardRoutingIntent,
+  validateSwitchyardProviderBindings,
 } from "../../hermes-switchyard-routing.ts";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";

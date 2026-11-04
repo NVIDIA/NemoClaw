@@ -23,6 +23,7 @@ import {
   observeSwitchyardProviderBindings,
   verifySwitchyardProviderBindings,
   switchyardProviderDefinition,
+  removeSwitchyardProviders,
 } from "./bindings";
 import type { SetupInferenceDeps } from "../setup-inference";
 import type { ProviderInferenceSetupOptions } from "../machine/handlers/provider-inference";
@@ -132,21 +133,43 @@ export async function setupSwitchyardInference(input: {
       readCredential: deps.hydrateCredentialEnv,
     });
   }
-  const reserved = deps.updateSandbox(sandboxName, {
-    provider,
-    model,
-    endpointUrl: input.endpointUrl,
-    endpointSource: input.endpointSource,
-    credentialEnv: input.credentialEnv,
-    gatewayName,
-    preferredInferenceApi: input.options.preferredInferenceApi ?? null,
-    reservationSessionId: input.options.reservationSessionId,
-    hermesSwitchyard: { routing, bindings },
-  });
-  if (!reserved)
-    throw new SwitchyardProviderBindingError(
-      "could not reserve the sandbox. Providers were retained for recovery; routing was not activated.",
-    );
+  try {
+    const reserved = deps.updateSandbox(sandboxName, {
+      provider,
+      model,
+      endpointUrl: input.endpointUrl,
+      endpointSource: input.endpointSource,
+      credentialEnv: input.credentialEnv,
+      gatewayName,
+      preferredInferenceApi: input.options.preferredInferenceApi ?? null,
+      reservationSessionId: input.options.reservationSessionId,
+      hermesSwitchyard: { routing, bindings },
+    });
+    if (!reserved)
+      throw new SwitchyardProviderBindingError(
+        "could not reserve the sandbox. Routing was not activated.",
+      );
+  } catch (error) {
+    if (!previous?.hermesSwitchyard) {
+      try {
+        if (!deps.getSandbox) throw new Error("Sandbox reservation readback is unavailable.");
+        // A durability failure can follow a committed registry write. Preserve recorded providers.
+        if (!deps.getSandbox(sandboxName)?.hermesSwitchyard) {
+          await removeSwitchyardProviders({
+            state: { routing, bindings },
+            adapter: deps.providerAdapter,
+            target: { kind: "named", gatewayName },
+          });
+        }
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Switchyard provider reservation failed and cleanup could not be confirmed. Routing was not activated. Inspect the sandbox's Switchyard providers before retrying.",
+        );
+      }
+    }
+    throw error;
+  }
   input.environment[HERMES_SWITCHYARD_BINDINGS_ENV] = encodeSwitchyardProviderBindings(
     bindings,
     routing,

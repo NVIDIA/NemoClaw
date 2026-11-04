@@ -75,17 +75,24 @@ export async function validateAttachedSwitchyardProvidersBeforeSandboxCreation(
   deps: ProviderPreparationDeps,
 ): Promise<void> {
   if (!input.hermesSwitchyard) return;
-  const state = validateSwitchyardBindingState(input.hermesSwitchyard);
-  const observed = await observeSwitchyardProviderBindings({
-    routing: state.routing,
-    adapter: resolveProviderAdapter(deps),
-    target: namedOpenShellGateway(input.gatewayName),
-    providerNames: Object.fromEntries(
-      state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
-    ),
-  });
-  if (!isDeepStrictEqual(state.bindings, observed))
-    throw new Error("Switchyard provider state changed before sandbox creation.");
+  try {
+    const state = validateSwitchyardBindingState(input.hermesSwitchyard);
+    const observed = await observeSwitchyardProviderBindings({
+      routing: state.routing,
+      adapter: resolveProviderAdapter(deps),
+      target: namedOpenShellGateway(input.gatewayName),
+      providerNames: Object.fromEntries(
+        state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+      ),
+    });
+    if (!isDeepStrictEqual(state.bindings, observed))
+      throw new Error("Switchyard provider state changed before sandbox creation.");
+  } catch (error) {
+    throwAfterCleanup(
+      deps,
+      error instanceof Error ? error : new Error("Switchyard provider validation failed."),
+    );
+  }
 }
 
 export async function verifySwitchyardAttachmentAfterCreate(
@@ -391,8 +398,8 @@ async function inspectExpectedMessagingBinding(
   };
 }
 
-function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): never {
-  const providerFailure = new Error(message);
+function throwAfterCleanup(deps: ProviderPreparationDeps, failure: string | Error): never {
+  const providerFailure = typeof failure === "string" ? new Error(failure) : failure;
   try {
     deps.cleanupCreateSources();
   } catch (error) {
@@ -400,7 +407,7 @@ function throwAfterCleanup(deps: ProviderPreparationDeps, message: string): neve
       error instanceof Error ? error : new Error("Temporary sandbox create-source cleanup failed.");
     throw new AggregateError(
       [providerFailure, cleanupFailure],
-      `${message} Temporary sandbox create-source cleanup also failed.`,
+      `${providerFailure.message} Temporary sandbox create-source cleanup also failed.`,
     );
   }
   throw providerFailure;

@@ -322,18 +322,16 @@ export async function requireNativeInferenceHealth(input: {
   if (!provider || !model) throw new LaunchReadinessEvidenceError();
   const nvidia = normalizeNativeNvidiaProviderAttachment(expected);
   if (nvidia)
-    await verifyNativeNvidiaStatusAttachment({
+    await (input.deps.verifyNativeNvidiaAttachment ?? verifyNativeNvidiaStatusAttachment)({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected: nvidia,
-      verify: input.deps.verifyNativeNvidiaAttachment,
     });
   else
-    await verifyNativeHostedStatusAttachment({
+    await (input.deps.verifyNativeHostedAttachment ?? verifyNativeHostedStatusAttachment)({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected,
-      verify: input.deps.verifyNativeHostedAttachment,
     });
   const invocation = await (
     input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe

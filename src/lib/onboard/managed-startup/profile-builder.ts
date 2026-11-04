@@ -650,6 +650,12 @@ function profilePathExists(profile: ManagedStartupProfile, profilePath: string):
 function assertInventoryPathsResolved(profile: ManagedStartupProfile): void {
   for (const affordance of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
     if (profile.inference === null && affordance.profilePath.startsWith("inference.")) continue;
+    if (
+      affordance.input === HERMES_SWITCHYARD_BINDINGS_ENV &&
+      profile.agentConfig.agent === "hermes" &&
+      !profile.agentConfig.switchyardRouting
+    )
+      continue;
     if (!profilePathExists(profile, affordance.profilePath)) {
       fail(`${affordance.input} has no resolved value at ${affordance.profilePath}`);
     }
@@ -969,9 +975,14 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       agent: "hermes",
       webSearch,
       switchyardRouting,
-      switchyardBindings: switchyardRouting
-        ? readSwitchyardProviderBindingsEnvironment(input.environment, switchyardRouting)
-        : null,
+      ...(switchyardRouting
+        ? {
+            switchyardBindings: readSwitchyardProviderBindingsEnvironment(
+              input.environment,
+              switchyardRouting,
+            ),
+          }
+        : {}),
     };
     tuning = {
       contextWindow: parsePositiveInteger(input.environment, "NEMOCLAW_CONTEXT_WINDOW", null, {

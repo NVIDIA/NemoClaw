@@ -593,7 +593,6 @@ describe("buildManagedStartupProfile", () => {
     expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
       switchyardRouting: null,
-      switchyardBindings: null,
       webSearch: { enabled: true, provider: "tavily" },
     });
     expect(built.profile.inference).toMatchObject({
@@ -763,9 +762,11 @@ describe("buildManagedStartupProfile", () => {
     expect(built.profile.agentConfig).toEqual({
       agent: "hermes",
       switchyardRouting: null,
-      switchyardBindings: null,
       webSearch: { enabled: false, provider: "tavily" },
     });
+    expect(decodeManagedStartupProfile(built.encodedProfile).agentConfig).not.toHaveProperty(
+      "switchyardBindings",
+    );
   });
 
   it("persists validated Switchyard routing in the Hermes startup profile (#13862)", () => {

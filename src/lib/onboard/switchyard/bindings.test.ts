@@ -34,6 +34,31 @@ const target = { kind: "named", gatewayName: "test-gateway" } as const;
 
 const fixture = () => createSwitchyardProviderFixture(routing);
 
+function setupInput(
+  f: ReturnType<typeof fixture>,
+  updateSandbox: SetupInferenceDeps["updateSandbox"],
+  getSandbox: NonNullable<SetupInferenceDeps["getSandbox"]> = () => null,
+): Parameters<typeof setupSwitchyardInference>[0] {
+  return {
+    routing,
+    sandboxName: f.input.sandboxName,
+    gatewayName: f.input.gatewayName,
+    provider: routing.capable.provider,
+    model: routing.capable.model,
+    endpointUrl: "https://api.openai.com/v1",
+    endpointSource: "onboard",
+    credentialEnv: "OPENAI_API_KEY",
+    environment: {},
+    options: { reservationSessionId: "session-test" },
+    deps: {
+      providerAdapter: f.input.adapter,
+      hydrateCredentialEnv: f.input.readCredential,
+      updateSandbox,
+      getSandbox,
+    },
+  };
+}
+
 describe("Switchyard provider bindings", () => {
   it("publishes both observations through onboarding without changing a shared inference route (#13863)", async () => {
     const f = fixture();
@@ -96,6 +121,149 @@ describe("Switchyard provider bindings", () => {
         ([input]) => input.expectedProfile !== undefined,
       ),
     ).toBe(true);
+  });
+
+  it.each([
+    { failure: "refused", reserve: () => false, expected: "could not reserve" },
+    {
+      failure: "thrown",
+      reserve: () => {
+        throw new Error("reservation failed");
+      },
+      expected: "reservation failed",
+    },
+  ])(
+    "removes fresh providers after a $failure reservation without publishing bindings (#13863)",
+    async ({ reserve, expected }) => {
+      const f = fixture();
+      const input = setupInput(f, reserve);
+
+      await expect(setupSwitchyardInference(input)).rejects.toThrow(expected);
+
+      expect(f.providers.size).toBe(0);
+      expect(f.methods.deleteProvider).toHaveBeenCalledTimes(2);
+      expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+    },
+  );
+
+  it("retains providers after a reservation write commits then throws and permits resume (#13863)", async () => {
+    const f = fixture();
+    let recorded: SandboxEntry | null = null;
+    const failure = new Error("reservation durability is uncertain");
+    const input = setupInput(
+      f,
+      (name, route) => {
+        recorded = { name, ...route, pendingRouteReservation: true };
+        throw failure;
+      },
+      () => recorded,
+    );
+
+    await expect(setupSwitchyardInference(input)).rejects.toThrow();
+    expect(f.providers.size).toBe(2);
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+
+    input.deps.updateSandbox = () => true;
+    await expect(setupSwitchyardInference(input)).resolves.toEqual({ ok: true });
+    expect(f.methods.createProvider).toHaveBeenCalledTimes(2);
+    expect(input.environment).toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+  });
+
+  it("retains fresh providers when reservation readback is unavailable (#13863)", async () => {
+    const f = fixture();
+    const input = setupInput(f, () => false);
+    delete input.deps.getSandbox;
+
+    const failure = await setupSwitchyardInference(input).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors[1].message).toContain("readback is unavailable");
+    expect(f.providers.size).toBe(2);
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+  });
+
+  it("retains fresh providers when reservation readback fails (#13863)", async () => {
+    const f = fixture();
+    const reservationFailure = new Error("reservation failed");
+    const readFailure = new Error("registry is unavailable");
+    const getSandbox = vi
+      .fn<NonNullable<SetupInferenceDeps["getSandbox"]>>()
+      .mockReturnValueOnce(null)
+      .mockImplementation(() => {
+        throw readFailure;
+      });
+    const input = setupInput(
+      f,
+      () => {
+        throw reservationFailure;
+      },
+      getSandbox,
+    );
+
+    const failure = await setupSwitchyardInference(input).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([reservationFailure, readFailure]);
+    expect(f.providers.size).toBe(2);
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+  });
+
+  it.each([
+    {
+      failure: "deletion failed",
+      refuse: (f: ReturnType<typeof fixture>) => {
+        f.methods.deleteProvider.mockResolvedValue({
+          ok: false,
+          error: { kind: "command", reason: "failed", message: "private-detail" },
+        });
+        return false;
+      },
+    },
+    {
+      failure: "identity changed",
+      refuse: (f: ReturnType<typeof fixture>) => {
+        const first = f.providers.values().next().value!;
+        f.providers.set(first.name, {
+          ...first,
+          revision: { id: "replacement", resourceVersion: 1 },
+        });
+        return false;
+      },
+    },
+  ])("reports incomplete reservation cleanup when $failure (#13863)", async ({ refuse }) => {
+    const f = fixture();
+    const input = setupInput(f, () => refuse(f));
+
+    const result = await setupSwitchyardInference(input).catch((error: unknown) => error);
+    expect(result).toBeInstanceOf(AggregateError);
+    expect((result as AggregateError).message).toContain("cleanup could not be confirmed");
+    expect((result as AggregateError).message).not.toContain("private-detail");
+    expect(f.providers.size).toBe(2);
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+  });
+
+  it("preserves recorded providers when a resumed reservation is refused (#13863)", async () => {
+    const f = fixture();
+    const { bindings } = await f.setup();
+    const input = setupInput(
+      f,
+      () => false,
+      () => ({
+        name: f.input.sandboxName,
+        gatewayName: f.input.gatewayName,
+        provider: routing.capable.provider,
+        model: routing.capable.model,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-test",
+        hermesSwitchyard: { routing, bindings },
+      }),
+    );
+
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("could not reserve");
+    expect(f.providers.size).toBe(2);
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
   it("shares one physical binding for different models at the same provider (#13863)", async () => {

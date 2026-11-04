@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { HermesSwitchyardRoutingIntent } from "../../src/lib/hermes-switchyard-routing";
 import {
+  type HermesSwitchyardRoutingIntent,
   type SwitchyardProviderBindings,
+  switchyardClientProfile,
   validateSwitchyardProviderBindings,
-} from "../../src/lib/hermes-switchyard-routing";
-import { switchyardProviderDefinition } from "../../src/lib/onboard/switchyard/bindings";
+} from "../../src/lib/hermes-switchyard-routing.ts";
+import { NVIDIA_HOSTED_NATIVE_PROFILE_ID } from "../../src/lib/inference/native-nvidia/contract.ts";
+import { hostedNativeProvider } from "../../src/lib/inference/native-provider/agent-config.ts";
 
 /** Synthetic observations for configuration tests; lifecycle tests own actual adapter observation. */
 export function switchyardBindingFixture(
@@ -14,16 +16,19 @@ export function switchyardBindingFixture(
 ): SwitchyardProviderBindings {
   const providers = [...new Set([routing.efficient.provider, routing.capable.provider])].map(
     (logicalProvider, index) => {
-      const definition = switchyardProviderDefinition(logicalProvider);
+      const client = switchyardClientProfile(logicalProvider);
       return {
         logicalProvider,
         providerName: `switchyard-test-${index}`,
         providerId: `provider-test-${index}`,
         resourceVersion: 1,
-        profileId: definition.profileId,
+        profileId:
+          logicalProvider === "nvidia-prod"
+            ? NVIDIA_HOSTED_NATIVE_PROFILE_ID
+            : hostedNativeProvider(logicalProvider)?.profileId,
         profileSha256: "0".repeat(64),
-        endpointUrl: definition.endpoint,
-        credentialEnv: definition.credentialEnv,
+        endpointUrl: client.baseUrl,
+        credentialEnv: client.apiKeyEnv,
       };
     },
   );
