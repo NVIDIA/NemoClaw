@@ -577,7 +577,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     path: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/",
     "if-no-files-found": "error",
     "retention-days": 1,
-    "compression-level": 0,
+    "compression-level": 1,
     overwrite: true,
   });
   const security = requireStep(errors, steps, "Validate OpenClaw managed-image security boundary");

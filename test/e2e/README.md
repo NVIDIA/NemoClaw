@@ -2539,6 +2539,13 @@ and the workflow reserves eight minutes for registry removal, source restoration
 and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
 fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
 NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
+NIM and vLLM readiness probes attempt to retain bounded, redacted container state and the last 200
+log lines when they fail or receive SIGTERM or SIGINT. Diagnostics use the verified full container
+ID before owner cleanup removes the container. The existing command timeout and kill grace bound
+diagnostic collection: after supervisor termination, it has only the remaining grace period.
+A hung diagnostic command is killed when that grace expires, so evidence may be partial.
+Successful readiness does not collect logs. The AMD64 cache upload uses fast compression for its
+uncompressed Docker image archive; image identities and offline-build checks remain unchanged.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
