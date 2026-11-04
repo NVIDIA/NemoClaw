@@ -3,11 +3,12 @@
 
 # The three-agent example for an external Kubernetes gateway, compiled
 # unchanged: assistant, researcher, and reviewer share one registration. This
-# scenario owns unchanged reconciliation, recovery of what the gateway lost,
-# and one agent's replacement leaving the others alone. Each run asserts what
-# the run before it left: a run's observations are read when it plans. Runs
-# compare with what verify observed after deploy through var.baseline, which
-# each applying run passes on as its baseline output.
+# scenario owns unchanged reconciliation of the whole graph, and one agent's
+# replacement leaving the others alone. A run's observations are read when it
+# plans, so each run asserts what the run before it left. The provider contract
+# scenarios own recovery of what the gateway lost: a forgotten registration
+# (OpenShell) and a stopped runtime or a model changed inside the sandbox
+# (Fabric).
 
 variables {
   # Long enough that sandboxes created together overlap.
@@ -112,36 +113,10 @@ run "verify" {
 }
 
 # Verify's apply changed nothing: no gateway mutation and no agent start since
-# deploy. The same run then stops the researcher's runtime inside its sandbox,
-# and changes the reviewer's model inside its sandbox, outside OpenTofu.
-run "stop_researcher_runtime" {
+# deploy. var.baseline is what verify observed after deploy.
+run "unchanged" {
   command = plan
 
-  module {
-    source = "./examples/kubernetes/external-gateway"
-  }
-
-  variables {
-    gateway_change = { stop_agent_runtime = "researcher", change_agent_model = "reviewer" }
-    baseline       = run.verify.baseline
-  }
-
-  plan_options {
-    target = [data.fixture_state.setup]
-  }
-
-  assert {
-    condition     = jsondecode(data.fixture_state.setup.observations).openshell.effects == var.baseline.effects
-    error_message = "An unchanged apply changed the gateway."
-  }
-
-  assert {
-    condition     = jsondecode(data.fixture_state.setup.observations).openshell.fabric_starts == var.baseline.fabric_starts
-    error_message = "An unchanged apply started an agent."
-  }
-}
-
-run "restart_researcher" {
   module {
     source = "./examples/kubernetes/external-gateway"
   }
@@ -149,76 +124,28 @@ run "restart_researcher" {
   variables {
     baseline = run.verify.baseline
   }
-}
 
-# The researcher's agent started again in the same sandbox; the others did not
-# start again. Fabric reports no applied configuration, so the reviewer's
-# changed model is not drift. The same run then makes the gateway forget the registration.
-run "forget_registration" {
-  command = plan
-
-  module {
-    source = "./examples/kubernetes/external-gateway"
-  }
-
-  variables {
-    gateway_change = { forget_registrations = true }
-    baseline       = run.restart_researcher.baseline
-  }
-
-  plan_options {
-    target = [data.fixture_state.setup]
+  assert {
+    condition     = module.observed.openshell.effects == var.baseline.effects
+    error_message = "An unchanged apply changed the gateway."
   }
 
   assert {
-    condition     = jsondecode(data.fixture_state.setup.observations).openshell.sandboxes == var.baseline.sandboxes
-    error_message = "Restarting the researcher's agent, or the reviewer's model changed inside its sandbox, replaced a sandbox."
-  }
-
-  assert {
-    condition = {
-      for name, id in var.baseline.sandboxes : name => jsondecode(data.fixture_state.setup.observations).openshell.fabric_starts[id]
-    } == { assistant = 1, researcher = 2, reviewer = 1 }
-    error_message = "Only the stopped researcher should have started again; the reviewer's changed model is not drift."
+    condition = (
+      module.observed.openshell.sandboxes == var.baseline.sandboxes
+      && module.observed.openshell.fabric_starts == var.baseline.fabric_starts
+    )
+    error_message = "An unchanged apply replaced a sandbox or started an agent."
   }
 }
 
-run "reregister" {
-  module {
-    source = "./examples/kubernetes/external-gateway"
-  }
-
-  variables {
-    baseline = run.restart_researcher.baseline
-  }
-}
-
-# The registration was created again under its name, and no sandbox changed.
-# This run then replaces only the researcher's sandbox.
 run "replace_researcher" {
   module {
     source = "./examples/kubernetes/external-gateway"
   }
 
-  variables {
-    baseline = run.reregister.baseline
-  }
-
   plan_options {
     replace = [openshell_sandbox.researcher]
-  }
-
-  assert {
-    condition = (
-      tolist(keys(module.observed.registrations)) == tolist(var.baseline.registrations)
-      && length(module.observed.openshell.created_providers) == 2
-    )
-    error_message = "The forgotten registration was not created again under its name."
-  }
-
-  assert {
-    condition     = module.observed.openshell.sandboxes == var.baseline.sandboxes
-    error_message = "Registering again replaced a sandbox."
   }
 }
 
@@ -259,7 +186,7 @@ run "teardown" {
   }
 
   assert {
-    condition     = length(module.observed.openshell.created_providers) == 2
+    condition     = length(module.observed.openshell.created_providers) == 1
     error_message = "Replacing the researcher's sandbox registered inference again."
   }
 }
