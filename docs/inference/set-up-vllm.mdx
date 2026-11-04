@@ -36,10 +36,12 @@ An authenticated fixed profile publishes the configured host port only on `127.0
 The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
 The native OpenShell supervisor reaches the server through `host.openshell.internal`, which resolves to loopback for the NemoClaw-managed gateway.
-<AgentOnly variant="openclaw,hermes,deepagents">
-New OpenClaw, Hermes, and Deep Agents Code standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
+<AgentOnly variant="openclaw,hermes,deepagents,pi">
+New OpenClaw, Hermes, Deep Agents Code, and Pi standalone vLLM selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
+For Pi's release-candidate and platform restrictions, refer to [Pi Support and Security](/user-guide/pi/reference/pi-support).
+Pi native local onboarding on OpenShell `0.1.5` remains unqualified.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 Older OpenClaw sandboxes without a native attachment retain their recorded shared route, which requires OpenShell `0.0.x`.
