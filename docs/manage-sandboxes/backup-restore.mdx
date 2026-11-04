@@ -52,7 +52,18 @@ After restore, NemoClaw replaces these references with a current OpenShell provi
 This does not repair configurations whose references were already stripped.
 Recovery for those configurations is tracked in [the Hermes NVIDIA recovery issue](https://github.com/NVIDIA/NemoClaw/issues/14094).
 
-Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up sessions, and transient SQLite write-ahead-log, shared-memory, and rollback-journal companions, and NemoClaw's configuration and blueprint cache are replacement-owned or generation-local. The replacement keeps its fresh copies instead of restoring the retired sandbox's values. NemoClaw sanitizes machine-local authority from the durable OpenClaw database copy and rejects an archive that still contains one of those database companions, because replaying it could restore removed authority. For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup. A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar. Unknown agent paths transfer when their archive paths and link targets have no line breaks and their content is inspectable and credential-free. For a line break in a path or link target, [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) explains how to rename the path or recreate the link. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
+Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up sessions, and transient SQLite write-ahead-log, shared-memory, and rollback-journal companions, and NemoClaw's configuration and blueprint cache are replacement-owned or generation-local.
+The replacement keeps its fresh copies instead of restoring the retired sandbox's values.
+NemoClaw sanitizes machine-local authority from the durable OpenClaw database copy and rejects an archive that still contains one of those database companions, because replaying it could restore removed authority.
+
+For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup.
+A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar.
+
+Unknown agent paths transfer when their archive paths and link targets have no line breaks and their content is inspectable and credential-free.
+For a line break in a path or link target, [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) explains how to rename the path or recreate the link.
+
+A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful.
+Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
 
 Credential sanitization can increase the size of a structured configuration.
 NemoClaw expands only the private archive copy and leaves the live configuration unchanged.
