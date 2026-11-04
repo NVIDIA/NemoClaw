@@ -438,7 +438,7 @@ The live assertion count decreases by three. Each removed check has a separate d
 | Removed check | Retained owner or reason |
 | --- | --- |
 | Repeated native-turn exit, PONG, and model checks | `runHermesPongWithRetry` already rejects these failures. `support/hermes-inference-switch-command-shape.test.ts` tests that rejection; live authenticated-request evidence remains. |
-| Diagnostic config-export exit | The export collects an artifact, not a separate product outcome. Live config integrity and inference checks remain. |
+| Diagnostic config-export exit | The diagnostic export is removed because it has no separate product outcome. Live config integrity and inference checks remain. |
 | Discord-state reader exit | The exact comparison of observed Discord settings remains. An execution failure after valid output is not an additional configuration outcome. Public rebuild and status exit checks remain. |
 | Proxy fixture's OpenShell metadata readback | Support tests own fixture arguments. Live route readback and Hermes CLI inference prove the resulting NemoClaw route; mock-backed runs also retain authenticated request evidence. The Anthropic metadata check remains. |
 | Repeated recovery-probe output shape | The fixture tests own constant diagnostic fields and fingerprint format. Live seed/verify command success and the cross-rebuild fingerprint comparison remain. No checks move into the Python probe. |
