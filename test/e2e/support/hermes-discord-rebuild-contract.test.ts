@@ -30,6 +30,7 @@ async function runPhase(
     publicKey?: string | null;
     failedCommand?: string;
     lostDiscord?: boolean;
+    failedDiscordRead?: "healthy" | "damaged";
     statusHealth?: { ok: boolean; probed: boolean } | null;
     statusProvider?: string;
     damageFailure?: "seed" | "readback" | "partial" | "route drift" | "user state" | "inference";
@@ -73,10 +74,16 @@ async function runPhase(
   );
   const exec = vi
     .fn<SandboxClient["exec"]>()
-    .mockResolvedValueOnce(discordState)
+    .mockResolvedValueOnce({
+      ...discordState,
+      exitCode: options.failedDiscordRead === "healthy" ? 1 : 0,
+    })
     .mockResolvedValueOnce(result(0, "PROBE_OK"))
     .mockResolvedValueOnce(seeded)
-    .mockResolvedValueOnce(discordState)
+    .mockResolvedValueOnce({
+      ...discordState,
+      exitCode: options.failedDiscordRead === "damaged" ? 1 : 0,
+    })
     .mockResolvedValueOnce(recovered)
     .mockResolvedValueOnce(
       result(0, options.damageFailure === "inference" ? "no response" : "PROBE_OK"),
@@ -139,6 +146,15 @@ describe("Hermes Discord rebuild evidence", () => {
     "rejects damaged-state recovery with failed %s evidence (#14094)",
     async (damageFailure) => {
       await expect(runPhase({ damageFailure })).rejects.toThrow();
+    },
+  );
+
+  it.each(["healthy", "damaged"] as const)(
+    "rejects a failed Discord-state read with valid output after the %s rebuild",
+    async (failedDiscordRead) => {
+      await expect(runPhase({ failedDiscordRead })).rejects.toThrow(
+        "read Discord settings after rebuild",
+      );
     },
   );
 

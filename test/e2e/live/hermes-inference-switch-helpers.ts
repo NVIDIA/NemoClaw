@@ -1003,6 +1003,7 @@ print(json.dumps({
             timeoutMs: 30_000,
           },
         );
+        expectExitZero(discordState, "read Discord settings after rebuild");
         expect(JSON.parse(discordState.stdout)).toEqual({
           enabled: true,
           requireMention: true,
