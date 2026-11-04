@@ -164,7 +164,7 @@ describe("managed vLLM authentication", () => {
     hostLocalRecovery.bridgeHost.mockReturnValue("172.18.0.1");
     const capture = vi.fn((argv: readonly string[]) =>
       argv[0] === "curl" || argv.includes("host.openshell.internal:172.18.0.1")
-        ? JSON.stringify({ data: [{ id: "test/model" }] })
+        ? `${JSON.stringify({ data: [{ id: "test/model" }] })}\n200`
         : "",
     );
 
@@ -190,7 +190,7 @@ describe("managed vLLM authentication", () => {
       .mockImplementation(() => {
         throw failure;
       });
-    const capture = vi.fn(() => JSON.stringify({ data: [{ id: "test/model" }] }));
+    const capture = vi.fn(() => `${JSON.stringify({ data: [{ id: "test/model" }] })}\n200`);
     const prepareDockerEnvironment = vi.fn();
 
     expect(validateLocalProvider("vllm-local", capture, vi.fn(), prepareDockerEnvironment)).toEqual(
