@@ -63,14 +63,15 @@ jobs:
       # integration tests use a third partition to keep that path closer to
       # the other platforms.
       integration-shards: "[1, 2, 3]"
-  # The live suites. E2E / PLATFORM runs the Docker and Kubernetes suites from
-  # the platform's test archive and bundle whenever the plan selects them,
-  # including on pull requests. E2E / HCL builds its own candidate and runs the
-  # HCL E2E cases that need a model, which spend hosted inference or the GPU
-  # runner, so it runs on v1 pushes; hcl-e2e.yml also runs on request.
+  # The live suites, whenever the plan selects them, including on pull
+  # requests. E2E / PLATFORM runs the Docker and Kubernetes suites from the
+  # platform's test archive and bundle. E2E / HCL builds its own candidate and
+  # runs the HCL E2E cases that need a model; they use the inference secret and
+  # the GPU runner, so a fork's pull request skips them.
   e2e_hcl:
     name: E2E / HCL
-    if: github.event_name == 'push' && github.ref == 'refs/heads/v1'
+    needs: plan
+    if: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     uses: ./.github/workflows/hcl-e2e.yml
     # The hosted cases read NVIDIA_API_KEY.
     secrets: inherit
@@ -100,9 +101,9 @@ jobs:
       tests: ${{ needs.linux_amd64.outputs.tests }}
       bundle: ${{ needs.linux_amd64.outputs.bundle }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
-  # The E2E layer's check, required like the other three. The Docker and
-  # Kubernetes suites count when the plan selects them; E2E / HCL counts on v1
-  # pushes, where it runs. A failed plan fails the check.
+  # The E2E layer's check, required like the other three. Each live suite counts
+  # when the plan selects it; a fork's pull request skips E2E / HCL. A failed
+  # plan fails the check.
   e2e:
     name: E2E
     if: ${{ !cancelled() }}
@@ -114,7 +115,7 @@ jobs:
         env:
           PLAN: ${{ needs.plan.result }}
           LIVE: ${{ needs.plan.outputs.live }}
-          HCL_SELECTED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
+          HCL_SELECTED: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
           ARM64: ${{ needs.e2e_linux_arm64.result }}
           AMD64: ${{ needs.e2e_linux_amd64.result }}
           HCL: ${{ needs.e2e_hcl.result }}

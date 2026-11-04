@@ -290,7 +290,7 @@ Documentation previews publish only for PRs targeting `v1`.
 
 | Workflow | Checks |
 |---|---|
-| CI / Bundle | `Unit`, `Contract`, `Integration`, `E2E`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; `E2E` reports `E2E / linux_arm64`, `E2E / linux_amd64`, and, on `v1` pushes, `E2E / HCL` |
+| CI / Bundle | `Unit`, `Contract`, `Integration`, `E2E`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; `E2E` reports `E2E / linux_arm64`, `E2E / linux_amd64`, and `E2E / HCL` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
@@ -387,9 +387,9 @@ A file inside a crate counts when that crate is in the live build: the packages 
 After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
 
 [Live / HCL](../../.github/workflows/hcl-e2e.yml) builds its own bundle, test executable, and agent images and runs the [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model, on hosted NVIDIA inference or the NVIDIA GPU runner.
-They spend inference or the GPU runner on each run, so CI / Bundle runs them, as `E2E / HCL`, only on `v1` pushes; dispatch the workflow on `v1` or push a `run-hcl-e2e/` branch to run them on request.
+CI / Bundle runs them as `E2E / HCL` whenever the plan selects the live suites, except on a fork's pull request, which cannot use the inference secret or the GPU runner; dispatch the workflow or push a `run-hcl-e2e/` branch to run them alone.
 
-The required `E2E` check fails when the plan fails, when a selected Docker or Kubernetes suite fails, or, on a `v1` push, when `E2E / HCL` fails; it passes when the plan selects no live suite.
+The required `E2E` check fails when the plan fails or a selected live suite fails; it passes when the plan selects no live suite.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Dependency Policy
