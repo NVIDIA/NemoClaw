@@ -16,6 +16,7 @@ import {
   buildProviderRoutedEnv,
   retainRouterDiagnostics,
   registerRouterDiagnostics,
+  routerSelectionsSince,
 } from "../live/model-router-provider-routed-inference-helpers.ts";
 
 // Model a test process configured for a different gateway than its filtered child.
@@ -212,4 +213,24 @@ describe("Model Router provider-routed live support", () => {
       await fs.rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("retains only supported router selections from the current interval (#14066)", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "router-selection-"));
+  try {
+    const log = path.join(directory, "router.log");
+    const old = "Model Router selected=nvidia/nemotron-3.5-lightning-30b-a3b rule=text\n";
+    await fs.writeFile(
+      log,
+      old +
+        "private prompt; Authorization: secret\nModel Router selected=nvidia/nemotron-3.5-super-vl-120b-a12b rule=image\n",
+    );
+    expect(routerSelectionsSince(log, Buffer.byteLength(old))).toEqual([
+      { model: "nvidia/nemotron-3.5-super-vl-120b-a12b", rule: "image" },
+    ]);
+    await fs.writeFile(log, "x".repeat(65537));
+    expect(() => routerSelectionsSince(log, 0)).toThrow("unavailable");
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });

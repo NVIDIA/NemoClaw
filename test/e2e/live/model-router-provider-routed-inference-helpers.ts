@@ -11,7 +11,9 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 export function summarizeRouterLog(text: string) {
   // Export only fixed booleans and counts. Never retain log lines or captured text.
   return {
-    strategyRegistered: text.includes("strategy registered in"),
+    strategyRegistered:
+      text.includes("strategy registered in") ||
+      text.includes("Model Router rules policy registered"),
     warmupCompleted: /Warmup route\s+:/.test(text),
     warmupFailed: text.includes("Warmup route failed"),
     strategyInjectionFailed: text.includes("Failed to inject routing strategy at startup"),
@@ -91,4 +93,31 @@ export function buildProviderRoutedEnv(
     NEMOCLAW_POLICY_TIER: "open",
     NEMOCLAW_PROVIDER: "routed",
   };
+}
+
+export const ROUTER_LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b";
+export const ROUTER_SUPER_VL = "nvidia/nemotron-3.5-super-vl-120b-a12b";
+
+/** Export only configured selection identifiers from this turn's log interval. */
+export function routerSelectionsSince(logPath: string, offset: number) {
+  const fd = fs.openSync(
+    logPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size - offset > 64 * 1024 || offset > stat.size)
+      throw new Error("Router selection log interval is unavailable.");
+    const buffer = Buffer.alloc(stat.size - offset);
+    fs.readSync(fd, buffer, 0, buffer.length, offset);
+    return [
+      ...buffer
+        .toString("utf8")
+        .matchAll(
+          /Model Router selected=(nvidia\/nemotron-3\.5-(?:lightning-30b-a3b|super-vl-120b-a12b)) rule=(text|image|explicit)/g,
+        ),
+    ].map((match) => ({ model: match[1], rule: match[2] }));
+  } finally {
+    fs.closeSync(fd);
+  }
 }

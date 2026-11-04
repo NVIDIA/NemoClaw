@@ -1162,7 +1162,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     // yet support (src/lib/onboard/model-router-python.ts). Pin until 3.14 is qualified.
     runner: "ubuntu-24.04",
     owningPaths: [
-      "nemoclaw-blueprint/router/pool-config.yaml",
+      "nemoclaw-blueprint/router/",
+      "src/lib/onboard/model-router-command.ts",
+      "scripts/generate-openclaw-config.mts",
+      "src/lib/onboard/inference-input-capability.ts",
       "src/lib/actions/sandbox/destroy-preflight.ts",
       "src/lib/onboard/model-router-process.ts",
       "src/lib/onboard/model-router.ts",

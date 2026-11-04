@@ -891,6 +891,11 @@ describe("E2E workflow plan", () => {
 
   it.each([
     "nemoclaw-blueprint/router/pool-config.yaml",
+    "nemoclaw-blueprint/router/rules.py",
+    "nemoclaw-blueprint/router/model-router",
+    "src/lib/onboard/model-router-command.ts",
+    "scripts/generate-openclaw-config.mts",
+    "src/lib/onboard/inference-input-capability.ts",
     "src/lib/actions/sandbox/destroy-preflight.ts",
     "src/lib/onboard/model-router-process.ts",
     "src/lib/onboard/model-router.ts",

@@ -127,10 +127,18 @@ Stop only that verified router process:
 kill -TERM <router-pid>
 ```
 
-Confirm that the listener has stopped before resuming:
+Inspect the listener before resuming:
 
 ```bash
 lsof -nP -iTCP:4000 -sTCP:LISTEN
+```
+
+If a listener remains, do not continue.
+Empty output from non-root `lsof` is inconclusive because it can hide a root-owned listener.
+Use a privileged listener check or a successful bind probe to confirm that the configured port is free.
+Then resume onboarding:
+
+```bash
 $$nemoclaw onboard --resume
 ```
 
