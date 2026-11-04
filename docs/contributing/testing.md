@@ -326,7 +326,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 5. `Layer results` reports each layer's result to the `Unit`, `Contract`, and `Integration` checks.
 
 On Linux, after a push to `v1`, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) then runs `Build live images` with `cargo ci live-images`, and `Live / Docker` and `Live / Kind`, from the platform's archive and bundle; see [live suites](#live-suites).
-When no image input changed since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
+When no image input changed since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
 Superseded pull request runs are cancelled, and their checks report as cancelled rather than failed.
