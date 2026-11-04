@@ -20,10 +20,9 @@ globs = [
     "rust-toolchain.toml",
     ".config/nextest.toml",
     ".github/actions/**",
-    # The live jobs run in CI / Bundle on v1, and in E2E on pull requests.
+    # The live jobs run in CI / Bundle on v1 pushes.
     ".github/workflows/bundle-platform.yml",
     ".github/workflows/e2e-platform.yml",
-    ".github/workflows/e2e.yml",
     ".github/workflows/rust.yml",
 ]
 mark-changed = "all"

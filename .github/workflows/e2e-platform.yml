@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The Docker and Kubernetes live suites for one Linux platform, from the test
 # inputs and bundle that its Bundle platform run uploaded. CI / Bundle calls it
-# on v1 pushes and run-live/ branches, and on a pull request labeled run-e2e;
-# no required check depends on it.
+# on each push to v1; no required check depends on it.
 name: E2E platform
 on:
   workflow_call:

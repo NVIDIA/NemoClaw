@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 name: CI / Bundle
 on:
+  # Pushes to v1 also run the live suites.
   push:
-    # Push a run-live/ branch to run every job, including the live suites,
-    # outside a pull request; dispatch needs this file on the default branch.
-    branches: [v1, run-live/**]
+    branches: [v1]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
-  # On pull requests, the live suites run only on request, in e2e.yml.
   pull_request:
   workflow_dispatch:
 # The planner and the Linux live suites read the per-commit image package for
@@ -34,7 +32,7 @@ jobs:
       platform: linux_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ github.event_name != 'pull_request' && needs.plan.outputs.live == 'true' }}
+      live: ${{ github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
   linux_amd64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -43,7 +41,7 @@ jobs:
       platform: linux_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ github.event_name != 'pull_request' && needs.plan.outputs.live == 'true' }}
+      live: ${{ github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
   darwin_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -64,15 +62,13 @@ jobs:
       # integration tests use a third partition to keep that path closer to
       # the other platforms.
       integration-shards: "[1, 2, 3]"
-  # The live suites, on v1 pushes, run-live/ branches, and dispatches when the
-  # plan selects them. No required check depends on them; on pull requests,
-  # e2e.yml runs them on request.
+  # The live suites, on each push to v1 only. No required check depends on them.
   e2e_linux_arm64:
     name: E2E / linux_arm64
     needs: [plan, linux_arm64]
     if: >-
       ${{ !cancelled() && needs.linux_arm64.outputs.tests != '' && needs.linux_arm64.outputs.bundle != '' &&
-      (github.event_name != 'pull_request' && needs.plan.outputs.live == 'true') }}
+      github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
     uses: ./.github/workflows/e2e-platform.yml
     with:
       runner: ubuntu-24.04-arm
@@ -85,7 +81,7 @@ jobs:
     needs: [plan, linux_amd64]
     if: >-
       ${{ !cancelled() && needs.linux_amd64.outputs.tests != '' && needs.linux_amd64.outputs.bundle != '' &&
-      (github.event_name != 'pull_request' && needs.plan.outputs.live == 'true') }}
+      github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
     uses: ./.github/workflows/e2e-platform.yml
     with:
       runner: ubuntu-24.04

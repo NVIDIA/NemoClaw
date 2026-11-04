@@ -290,8 +290,7 @@ Documentation previews publish only for PRs targeting `v1`.
 
 | Workflow | Checks |
 |---|---|
-| CI / Bundle | `Unit`, `Contract`, `Integration`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
-| E2E | `E2E / linux_arm64`, `E2E / linux_amd64`, on a pull request labeled `run-e2e`; never required |
+| CI / Bundle | `Unit`, `Contract`, `Integration`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; on `v1` pushes also `E2E / linux_arm64` and `E2E / linux_amd64`, which no ruleset requires |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
@@ -326,7 +325,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 4. When the partitions finish, `Contract timing` and `Integration timing` report each whole suite and check the binary budgets.
 5. `Layer results` reports each layer's result to the `Unit`, `Contract`, and `Integration` checks.
 
-On Linux, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) then runs `Build live images` with `cargo ci live-images`, and `Live / Docker` and `Live / Kind`, from the platform's archive and bundle; see [live suites on pull requests](#live-suites-on-pull-requests).
+On Linux, after a push to `v1`, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) then runs `Build live images` with `cargo ci live-images`, and `Live / Docker` and `Live / Kind`, from the platform's archive and bundle; see [live suites](#live-suites).
 When no image input changed since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
@@ -378,16 +377,12 @@ Windows has no Unix sockets for fake container engines, so tests reach them over
 The `contract` and `integration` steps also put the relay first on `PATH` as `ssh`, so the providers and CLI that OpenTofu and the SDK start reach it too.
 Use `Fixture::engine` for a fake engine so that the test runs on every platform; compile a test that needs a Unix-only fixture only on Unix with `#[cfg(unix)]`.
 
-### Live Suites on Pull Requests
+### Live Suites
 
 `Live / Docker` and `Live / Kind` run on the Linux platforms only, from that platform's archive, bundle, and live images, after enabling Docker's containerd image store on the runner.
-In CI / Bundle, they run on `v1` pushes, `run-live/` branch pushes, and manual runs when the shared validation plan selects them.
-On a pull request they run only on request: add the `run-e2e` label, and the [E2E workflow](../../.github/workflows/e2e.yml) builds each Linux platform's test inputs and bundle and runs both suites; each later push runs them again until the label is removed.
-The E2E workflow runs every live suite; the plan only chooses whether the live images are built or pulled.
-A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
-[Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suites.
-After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
-A live failure fails its own check, which no ruleset requires.
+CI / Bundle runs them on each push to `v1`, after a change merges; pull requests and manual runs don't run them.
+A live failure fails its own `E2E / PLATFORM` check, which no ruleset requires.
+To run a suite before merging, use `cargo ci live-docker` or `cargo ci live-kind`; see [run each layer](#run-each-layer).
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Dependency Policy
