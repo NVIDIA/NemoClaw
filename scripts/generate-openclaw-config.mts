@@ -975,8 +975,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
-  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider)
-    ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl)
+  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local", "nvidia-router"].includes(
+    upstreamProvider,
+  )
+    ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl, "openclaw")
     : null;
   const providers = {
     [providerKey]: {
