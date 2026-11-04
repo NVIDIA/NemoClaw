@@ -164,7 +164,13 @@ function prepareManagedAdminState(root: string, requestId: string): NodeJS.Proce
     helperPath,
     `import json\nfrom pathlib import Path\ndef read_openclaw_pairing_state(state_dir, timeout=1):\n    records=json.loads((Path(state_dir) / "pairing-state.json").read_text(encoding="utf-8"))\n    return records, {"timeout": timeout}\n`,
   );
+  fs.writeFileSync(
+    join(root, "bin", "mktemp"),
+    '#!/bin/sh\nexec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"\n',
+    { mode: 0o755 },
+  );
   return {
+    TMPDIR: root,
     FAKE_DEVICES_STATE: devicesPath,
     NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER: helperPath,
     OPENCLAW_STATE_DIR: stateRoot,
@@ -349,11 +355,6 @@ describe("managed image activation failure diagnostics", () => {
       const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
       const secret = "selector-private-diagnostic-value";
       const approveLog = fixture.path("approve.log");
-      // BSD mktemp without a template selects the system temp directory instead of TMPDIR.
-      fixture.writeExecutable(
-        "mktemp",
-        '#!/bin/sh\nexec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"\n',
-      );
       fixture.writeExecutable(
         "openclaw",
         `#!/bin/sh
@@ -732,6 +733,7 @@ ${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cr
       "approval-token-handoff-failed",
     ],
     ["scope upgrade pending approval", "scope-upgrade-pending"],
+    ["approval failed for a private device", "approval-command-failed"],
     ["operator.admin command returned an unexplained error", "command-failed"],
   ])("redacts native approval failure %s as a fixed diagnostic", (message, diagnostic) => {
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
@@ -772,9 +774,103 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requ
 
       expect(result.status).toBe(27);
       expect(result.stderr).toContain("ADMIN_APPROVE_FAILED");
+      expect(result.stderr).toContain("ADMIN_APPROVE_COMMAND_STATUS=91");
       expect(result.stderr).toContain(`ADMIN_DIAGNOSTIC=${diagnostic}`);
+      expect(result.stderr).toContain("ADMIN_APPROVAL_REQUEST_STATE=pending");
       expect(result.stderr).not.toContain(secret);
       expect(result.stderr).not.toContain(requestId);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("reports an absent request after approval fails without exposing device state", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-post-state-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
+printf '%s\n' '{"pending":[],"paired":[]}' > "$FAKE_DEVICES_STATE"
+printf '%s\n' 'approval failed for a private device' >&2
+exit 91
+`,
+    );
+
+    try {
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH\nexport PATH\n${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requestId)}`,
+        ],
+        {
+          env: fixture.environment({
+            ...prepareManagedAdminState(fixture.root, requestId),
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).toBe(27);
+      expect(result.stderr).toContain("ADMIN_APPROVE_COMMAND_STATUS=91");
+      expect(result.stderr).toContain("ADMIN_APPROVAL_REQUEST_STATE=absent");
+      expect(result.stderr).not.toContain(requestId);
+      expect(result.stderr).not.toContain(MANAGED_ADMIN_DEVICE_ID);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("keeps approval failure when the post-failure request read is unavailable", () => {
+    const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-read-failure-");
+    const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+    const approvalAttempted = fixture.path("approval-attempted");
+    const cliPath = fixture.writeExecutable("nemoclaw", ADMIN_APPROVAL_TEST_CLI_SH);
+    const openshellPath = fixture.writeExecutable("openshell", ADMIN_APPROVAL_TEST_OPENSHELL_SH);
+    fixture.writeExecutable(
+      "openclaw",
+      `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then
+  if [ -f "$APPROVAL_ATTEMPTED" ]; then exit 89; fi
+  cat "$FAKE_DEVICES_STATE"
+  exit 0
+fi
+: > "$APPROVAL_ATTEMPTED"
+printf '%s\n' 'approval failed for a private device' >&2
+exit 91
+`,
+    );
+
+    try {
+      const result = fixture.run(
+        "/bin/bash",
+        [
+          "-lc",
+          `PATH=${JSON.stringify(fixture.binDir)}:$PATH
+export PATH
+${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cron", requestId, true, { gatewayName: "nemoclaw", openshellPath })}`,
+        ],
+        {
+          env: fixture.environment({
+            ...prepareManagedAdminState(fixture.root, requestId),
+            APPROVAL_ATTEMPTED: approvalAttempted,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "fixture-token",
+          }),
+          killSignal: "SIGKILL",
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).toBe(27);
+      expect(result.stderr).toContain("ADMIN_APPROVE_COMMAND_STATUS=91");
+      expect(result.stderr).toContain("ADMIN_APPROVAL_REQUEST_STATE=unavailable");
+      expect(result.stderr).not.toContain("fixture-token");
     } finally {
       fixture.remove();
     }

@@ -14,7 +14,7 @@ const INSTALLER_SOURCE = fs.readFileSync(
   "utf8",
 );
 const TRUSTED_V017_TEMPLATE_DIGEST =
-  "63ffbb3d9a1081e0f8b89df0d892cec55891a2083242f70131c02155218a88f0";
+  "6f21070fe62f7556fcdb440c70fa0b792d4c1ab71441d2b9dcc74d21dadda252";
 const originalCurl =
   'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
 const boundedCurl = [
@@ -100,7 +100,7 @@ describe("installer Homebrew formula reuse trust", () => {
     ],
     [
       "download retry policy",
-      boundedInstaller.replace("--retry 3 --retry-delay 2", "--retry 4 --retry-delay 2"),
+      INSTALLER_SOURCE.replace("--retry 3 --retry-delay 2", "--retry 4 --retry-delay 2"),
     ],
   ])("rejects an unreviewed mutation of the OpenShell 0.1.7 %s", (_name, source) => {
     const result = runTrustCheck(source);

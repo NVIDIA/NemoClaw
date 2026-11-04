@@ -51,7 +51,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/installer-integration/install-openshell-version-check.test.ts",
       "test/installer-integration/install-openshell-retained-state-size.test.ts",
       "test/installer-integration/install-openshell-version-pin.test.ts",
+      "test/installer-integration/install-openshell-directory-safety.test.ts",
+      "test/install/installer-directory-bsd-stat.test.ts",
     ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/install\.sh$/,
+    testsToRun: runTests("test/install/installer-directory-bsd-stat.test.ts"),
   },
   {
     pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,

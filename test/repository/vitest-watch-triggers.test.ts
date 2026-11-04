@@ -119,6 +119,8 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/installer-integration/install-openshell-version-check.test.ts",
       "test/installer-integration/install-openshell-retained-state-size.test.ts",
       "test/installer-integration/install-openshell-version-pin.test.ts",
+      "test/installer-integration/install-openshell-directory-safety.test.ts",
+      "test/install/installer-directory-bsd-stat.test.ts",
     ]);
   });
   it.each(["test/helpers/onboard-fixture-contract.json", "test/helpers/onboard-script-mocks.cjs"])(

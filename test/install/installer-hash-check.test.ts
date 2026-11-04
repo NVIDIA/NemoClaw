@@ -45,6 +45,7 @@ import {
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
+  retainBaseInstallerTrust,
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
 import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
@@ -63,7 +64,6 @@ const NPM_CLEANUP_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "test/fixtures/openshell-brev-npm-cleanup.sh"),
   "utf8",
 );
-const BREV_TEMPLATE = NPM_CLEANUP_TEMPLATE;
 // Exact #12376 npm replacement, derived from the canonical bootstrap template.
 const DCODE_NPM_REPLACEMENT_TEMPLATE = NPM_CLEANUP_TEMPLATE.replace(
   '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
@@ -534,7 +534,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
-  const template = BREV_TEMPLATE.replaceAll(
+  const template = NPM_CLEANUP_TEMPLATE.replaceAll(
     /0\.0\.116|0\.1\.2|0\.1\.3|0\.1\.5|0\.1\.7/g,
     ["0.1.2", "0.1.3", "0.1.5", "0.1.7"].includes(openshellVersion) ? openshellVersion : "0.0.116",
   );
@@ -600,6 +600,7 @@ function createFixture(
   const binDir = path.join(fixtureRoot, "bin");
   tempDirs.push(fixtureRoot);
   copyTrustedInstallerVerifier(REPO_ROOT, fixtureRoot);
+  retainBaseInstallerTrust(fixtureRoot);
   prepareInstallerBin(binDir);
   fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), {
     recursive: true,
@@ -763,6 +764,7 @@ function runFixture(
   );
   tempDirs.push(trustedRoot);
   copyTrustedInstallerVerifier(REPO_ROOT, trustedRoot);
+  retainBaseInstallerTrust(trustedRoot, mode);
   const parserSource = fs.readFileSync(trustedParserPath, "utf8");
   const mutateParser = PARSER_MUTATIONS[mode];
   const mutatedParserSource = mutateParser?.(parserSource) ?? parserSource;
@@ -872,8 +874,7 @@ describe("installer hash verification", () => {
     );
     expect(parserSource).not.toContain(`"${OBSOLETE_NPM_REPLACEMENT_DIGEST}"`);
 
-    const fixture = createFixture("0.1.2");
-    const untrustedTemplate = `${fs.readFileSync(path.join(fixture, "scripts/brev-launchable-ci-cpu.sh"), "utf8")}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
+    const untrustedTemplate = `${NPM_CLEANUP_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
     const result = parseNpmReplacement(untrustedTemplate, OBSOLETE_NPM_REPLACEMENT_DIGEST);
 
     expect(result.status, result.stderr).toBe(1);

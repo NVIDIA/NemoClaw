@@ -84,6 +84,7 @@ function commandEnv(inferenceEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     ...inferenceEnv,
+    PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -330,7 +331,7 @@ test(
     const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-2-install-hermes",
       cwd: REPO_ROOT,
-      env,
+      env: { ...env, NPM_CONFIG_PREFIX: path.join(os.homedir(), ".npm-global") },
       redactionValues,
       timeoutMs: execTimeout(60 * 60_000),
     });
@@ -369,7 +370,10 @@ test(
 
     const cliProbe = await host.command(
       "bash",
-      ["-lc", "command -v nemoclaw && command -v openshell"],
+      [
+        "-lc",
+        'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw && command -v openshell',
+      ],
       {
         artifactName: "phase-2-cli-probe",
         env: commandEnv(),
