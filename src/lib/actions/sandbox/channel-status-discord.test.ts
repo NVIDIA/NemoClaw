@@ -119,7 +119,7 @@ describe("OpenClaw Discord channel status", () => {
     },
   );
 
-  it("does not probe a paused Discord connection (#13624)", async () => {
+  it("reports a paused Discord channel as terminal with --wait (#13624)", async () => {
     const { deps: base } = makeDeps({
       sandbox: entry(["discord"], ["discord"]),
       appliedPresets: ["discord"],
@@ -129,15 +129,21 @@ describe("OpenClaw Discord channel status", () => {
     const report = await showSandboxChannelStatus("alpha", {
       deps: { ...base, execSandbox: async (...args) => base.execSandbox(...args) },
       channel: "discord",
+      wait: true,
       asJson: true,
       quietJson: true,
     });
-    expect(report && "report" in report && report.report.signals).toContainEqual({
+    const status = report && "status" in report ? report.status : undefined;
+    expect(status && "report" in status && status.report.signals).toContainEqual({
       label: "Runtime health",
       severity: "info",
       detail: "not checked — discord is currently paused",
       hint: undefined,
     });
+    expect(report).toMatchObject({
+      readiness: { state: "terminal", reason: "channel_paused" },
+    });
+    expect(report && exitCodeFor(report)).toBe(1);
     expect(base.execSandbox).not.toHaveBeenCalledWith(
       "alpha",
       "openclaw channels status --channel discord --probe --json --timeout 8000",
