@@ -1,0 +1,69 @@
+{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}
+
+## v0.0.141
+
+NemoClaw v0.0.141 adds adaptive routing configuration for managed Hermes and improves sandbox recovery, inference validation, and credential handling.
+Eligible installer and CLI operations now send operation telemetry to NVIDIA's Production receiver by default.
+
+### Hermes and Inference
+
+- Managed Hermes onboarding accepts `--switchyard-config <file>` to generate routing configuration for efficient and capable hosted models.
+  The capable target is also configured as the classifier.
+  Provider credential attachment for the routed targets remains tracked in [issue #13863](https://github.com/NVIDIA/NemoClaw/issues/13863); this configuration does not establish production routing.
+  Targets must use approved fixed hosted providers and different model IDs; Portable and custom images are not supported.
+  Refer to the [onboarding command reference](/user-guide/hermes/reference/commands#--switchyard-config-file).
+  Related change: [PR #13982](https://github.com/NVIDIA/NemoClaw/pull/13982).
+- Native inference recreation defers the source sandbox's route reservation until after its backup succeeds, avoiding a conflict with its own registry entry.
+  Related change: [PR #13844](https://github.com/NVIDIA/NemoClaw/pull/13844).
+- Custom inference endpoint setup and switching refuse conflicting network policy rules before changing the provider or route.
+  Compatible-endpoint onboarding probes every resolved IPv4 and IPv6 address to confirm direct host inference is unavailable.
+  Related changes: [PR #13927](https://github.com/NVIDIA/NemoClaw/pull/13927) and [PR #13767](https://github.com/NVIDIA/NemoClaw/pull/13767).
+- Managed vLLM startup failures include available log excerpts from before the latest container restart as well as the current log tail.
+  Related change: [PR #14045](https://github.com/NVIDIA/NemoClaw/pull/14045).
+- OpenClaw web-research guidance requires the agent to disclose unavailable search and avoid presenting unverified results as current research.
+  Related change: [PR #13607](https://github.com/NVIDIA/NemoClaw/pull/13607).
+
+### Sandbox Recovery
+
+- Rebuild refuses a retained recovery journal while the original source sandbox still exists or its identity cannot be established.
+  Early rebuild preflight failures also identify that the rebuild stopped before replacement.
+  Related changes: [PR #14113](https://github.com/NVIDIA/NemoClaw/pull/14113) and [PR #14058](https://github.com/NVIDIA/NemoClaw/pull/14058).
+- Hermes rebuild archives preserve verified native NVIDIA credential references in supported configuration fields while continuing to remove raw credentials.
+  Related change: [PR #14030](https://github.com/NVIDIA/NemoClaw/pull/14030).
+- Lifecycle commands detect native `openshell sandbox connect` sessions as well as sessions started through NemoClaw.
+  Destroy and rebuild warn before interrupting detected active sessions, including when confirmation is skipped.
+  Related change: [PR #14000](https://github.com/NVIDIA/NemoClaw/pull/14000).
+- OpenClaw `start` waits for the agent gateway after Docker recovery and checks inference before reporting readiness.
+  Related change: [PR #14006](https://github.com/NVIDIA/NemoClaw/pull/14006).
+- On macOS, NemoClaw passes the selected Colima Docker socket to OpenShell.
+  Connect timeouts identify a foreign container when container identity prevents NemoClaw from matching the sandbox.
+  Related changes: [PR #13906](https://github.com/NVIDIA/NemoClaw/pull/13906) and [PR #13672](https://github.com/NVIDIA/NemoClaw/pull/13672).
+
+### Security and Credentials
+
+- Auxiliary agent forwards bind to loopback.
+  If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged; it can remain remotely reachable.
+  Related change: [PR #13515](https://github.com/NVIDIA/NemoClaw/pull/13515).
+- Removing the Tavily preset revokes its provider endpoint grants as well as the sandbox network rules.
+  Related change: [PR #13662](https://github.com/NVIDIA/NemoClaw/pull/13662).
+- Discord enrollment verifies authentication through the selected agent runtime, including the managed Hermes Discord path.
+  Related change: [PR #13873](https://github.com/NVIDIA/NemoClaw/pull/13873).
+- Managed runtime dependencies include reviewed vulnerability remediations for affected npm packages.
+  Related change: [PR #14096](https://github.com/NVIDIA/NemoClaw/pull/14096).
+- Hermes permits read-only Direct Rendering Manager (DRM) metadata discovery without granting access to GPU device nodes.
+  Related change: [PR #14027](https://github.com/NVIDIA/NemoClaw/pull/14027).
+
+### Operation Telemetry and Diagnostics
+
+- Eligible installer and supported CLI operations attempt to send completed-operation telemetry to NVIDIA's fixed Production receiver by default.
+  Set `NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use to disable collection and delivery.
+  Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for collected fields and exclusions.
+  Related change: [PR #14106](https://github.com/NVIDIA/NemoClaw/pull/14106).
+- Untagged Classic builds report version `0.0.0` instead of `0.1.0`.
+  Tagged releases retain their release version.
+  Related change: [PR #14108](https://github.com/NVIDIA/NemoClaw/pull/14108).
+- Configuration export explains unsupported image input, strict backup explains why the unreachable-sandbox opt-in does not apply, and `providers_v2` refusal messages put the recovery command on its own line.
+  Related changes: [PR #13789](https://github.com/NVIDIA/NemoClaw/pull/13789), [PR #13791](https://github.com/NVIDIA/NemoClaw/pull/13791), and [PR #13812](https://github.com/NVIDIA/NemoClaw/pull/13812).

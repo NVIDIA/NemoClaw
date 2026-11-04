@@ -176,11 +176,11 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
   });
 
-  it("rejects a runtime job that exceeds the 75 minute budget", () => {
+  it("rejects a runtime job that exceeds the 90 minute budget", () => {
     const value = workflow();
     runtimeJob(value)["timeout-minutes"] = 300;
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must keep the 75 minute timeout",
+      "managed-image-protected-runtime must keep the 90 minute timeout",
     );
   });
 

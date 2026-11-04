@@ -4,7 +4,8 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readVllmStartupLogExcerpts } from "./startup-observations";
+import { VLLM_PORT } from "../../core/vllm-port";
+import { readVllmStartupLogExcerpts, vllmEndpointReady } from "./startup-observations";
 
 const mocks = { capture: vi.fn(), spawn: vi.fn() };
 
@@ -161,4 +162,31 @@ describe("managed vLLM startup diagnostics", () => {
       expect(mocks.spawn).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("local vLLM startup readiness", () => {
+  it.each([
+    ["an HTML page", "<html>dev server</html>\n200", false],
+    ["a redirected model list", '{"data":[]}\n302', false],
+    ["a model list without HTTP status", '{"data":[]}', false],
+    ["a successful model list", '{"data":[]}\n200', true],
+  ])("classifies %s from the model-list probe", (_name, output, expected) => {
+    const capture = vi.fn(() => output);
+
+    expect(vllmEndpointReady(undefined, capture)).toBe(expected);
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "curl",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        "--write-out",
+        "\\n%{http_code}",
+        `http://127.0.0.1:${VLLM_PORT}/v1/models`,
+      ],
+      { ignoreError: true },
+    );
+  });
 });

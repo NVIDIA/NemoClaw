@@ -251,7 +251,8 @@
         "test/e2e/live/sandbox-credential-boundary.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
-        "test/e2e/fixtures/admin-approval-connect.sh"
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/native-plugin-evidence.ts"
       ],
       "fast": [
         "src/lib/onboard/gateway-host-runtime.test.ts",
@@ -264,6 +265,7 @@
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/full-e2e-native-model.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
+        "test/e2e/support/native-plugin-evidence.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
@@ -586,6 +588,7 @@
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/common-egress-agent-retry.test.ts",
+        "test/e2e/support/unavailable-search-reply.test.ts",
         "test/e2e/support/openclaw-agent-assertion.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
