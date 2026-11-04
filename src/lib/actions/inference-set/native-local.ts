@@ -58,6 +58,15 @@ export async function resolveOpenClawLocalSwitch(input: {
       expected: previous,
     });
   }
+  // A model-only change must preserve the native router selected during onboarding.
+  if (provider === "nvidia-router") {
+    if (previous?.provider === provider) return { selected: previous, previous };
+    throw new InferenceSetError(
+      "Model Router requires a verified native provider attachment. Back up this sandbox. " +
+        `Run nemoclaw onboard --fresh --name ${sandboxName} --recreate-sandbox to select Model Router.`,
+      2,
+    );
+  }
   if (!isLocalInferenceProvider(provider) || (provider === "vllm-local" && entry.nimContainer))
     return { previous };
   // A retained OpenClaw row may still own the historical shared route.
