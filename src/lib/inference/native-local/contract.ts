@@ -21,6 +21,7 @@ export type NativeLocalProvider =
   | "ollama-local"
   | "vllm-local"
   | "llama-cpp-local"
+  | "nvidia-router"
   | "compatible-endpoint";
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
@@ -42,12 +43,16 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   const input = value as Record<string, unknown>;
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
+      input.provider !== "nvidia-router" &&
       input.provider !== "compatible-endpoint") ||
     (input.agent !== undefined &&
       input.agent !== "openclaw" &&
       input.agent !== "pi" &&
       input.agent !== "hermes") ||
-    (input.agent === "openclaw" && !isLocalInferenceProvider(input.provider as string)) ||
+    (input.agent === "openclaw" &&
+      input.provider !== "nvidia-router" &&
+      !isLocalInferenceProvider(input.provider as string)) ||
+    (input.provider === "nvidia-router" && input.agent !== "openclaw") ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
     !/^[A-Z][A-Z0-9_]*$/.test(input.credentialEnv) ||

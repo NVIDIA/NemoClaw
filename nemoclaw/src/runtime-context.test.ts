@@ -604,7 +604,7 @@ const admissionCases: {
     "Do not search local files; look up the official installation documentation.",
     "Fetch https://docs.nvidia.com/nemoclaw/ and find alternative installation guides.",
     "Look up the official installation documentation using https://docs.nvidia.com as a starting point.",
-    "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.\nFormat the answer as JSON with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).",
+    "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.\nReply with only one JSON object, and no other text, with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).",
     "Search the web for NemoClaw installation documentation.",
     "Research the current Apple stock price.",
     "Browse current airline prices.",
