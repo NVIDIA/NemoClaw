@@ -10,6 +10,7 @@ const RECORDED_ROUTER_PID = 4321;
 
 const holder = vi.hoisted(() => ({
   responsive: true,
+  routerPolicy: "rules-v1" as string | undefined,
   snapshotBody: null as string | null,
   snapshotCalls: 0,
   stopped: [] as Array<[number, number]>,
@@ -27,6 +28,7 @@ vi.mock("./model-router-process", () => ({
     holder.snapshotCalls += 1;
     return {
       healthy: true,
+      routerPolicy: holder.routerPolicy,
       body: holder.snapshotBody,
       capturedBodyBytes: Buffer.byteLength(holder.snapshotBody ?? ""),
       elapsedMs: 45_000,
@@ -79,6 +81,7 @@ vi.mock("./host-service-reachability", () => ({
 describe("model router reconciliation", () => {
   beforeEach(() => {
     holder.responsive = true;
+    holder.routerPolicy = "rules-v1";
     holder.snapshotBody = null;
     holder.snapshotCalls = 0;
     holder.stopped = [];
@@ -142,12 +145,18 @@ describe("model router reconciliation", () => {
     expect(holder.reachabilityProbes).toBe(0);
   });
 
-  it("restarts the recorded router when liveness fails without starting a duplicate (#12089)", async () => {
+  it("refuses an unverifiable running policy without stopping the router (#14066)", async () => {
+    holder.routerPolicy = undefined;
+    await expect(reconcileModelRouter()).rejects.toThrow(/obsolete or its rules policy/);
+    expect(holder.stopped).toEqual([]);
+  });
+
+  it("requires manual restart when a recorded router is unresponsive (#14066)", async () => {
     holder.responsive = false;
 
-    await expect(reconcileModelRouter()).rejects.toThrow("router restart reached");
+    await expect(reconcileModelRouter()).rejects.toThrow(/manual router restart/);
 
     expect(holder.snapshotCalls).toBe(0);
-    expect(holder.stopped).toEqual([[RECORDED_ROUTER_PID, expect.any(Number)]]);
+    expect(holder.stopped).toEqual([]);
   });
 });

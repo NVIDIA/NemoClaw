@@ -32,7 +32,7 @@ export async function maybePromptForInferenceInputCapability(
   const env = deps.env || process.env;
   if (isValidInferenceInputsOverride(env.NEMOCLAW_INFERENCE_INPUTS)) return;
   // The hosted model has a different identity from the local NVFP4 checkpoint.
-  if (model === "nvidia/nemotron-3.5-super-vl-120b-a12b") {
+  if (model === "nvidia/nemotron-3.5-super-vl-120b-a12b" || model === "nvidia-routed") {
     env.NEMOCLAW_INFERENCE_INPUTS = "text,image";
     return;
   }

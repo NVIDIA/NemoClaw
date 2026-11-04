@@ -4,20 +4,20 @@
 title: "Set Up Model Router"
 sidebar-title: "Set Up Model Router"
 description: "Configure the NemoClaw host-side model router and its model pool."
-description-agent: "Sets up the NemoClaw Model Router. Use when routing requests across a configured model pool or tuning the router tolerance."
+description-agent: "Sets up the NemoClaw Model Router. Use when routing requests across a configured model pool with deterministic text and image rules."
 keywords: ["NemoClaw Model Router", "model routing", "router pool"]
 content:
   type: "how_to"
 ---
 Model Router runs on the host and selects a model from a configured pool for each request.
-OpenShell registers it as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+OpenShell attaches it as a native OpenAI-compatible provider. OpenClaw uses the attached endpoint with an opaque credential reference.
 
 ## How the Router Fits
 
 The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
-During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and registers the `nvidia-router` provider with OpenShell.
-The sandbox does not call port `4000` directly.
-On a host without cached routing-model files, Model Router downloads and loads its routing model before the health endpoint responds.
+During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and attaches the native provider to the sandbox.
+OpenShell authorizes the sandbox connection to the host endpoint.
+The default rules policy does not download or load a routing checkpoint or encoder.
 NemoClaw gives a running router up to 10 minutes to pass its health check and stops onboarding sooner if the process exits.
 Routed OpenClaw setup then waits for the selected sandbox gateway to accept connections before requesting its native restart.
 If the gateway does not become ready within the startup bound, or the sandbox identity changes while waiting, setup stops before restart.
@@ -30,7 +30,7 @@ If output capture fails, router startup continues without captured output.
 NemoClaw sends one semantic health request at a time so slow upstream checks do not overlap.
 Each request uses only the time that remains in the 10-minute startup limit.
 If a semantic health response completed before startup failed, the error identifies the last request outcome, HTTP status, duration, and captured body size.
-When a completed response returns an unhealthy-endpoint error, the startup error includes a redacted excerpt.
+When completed responses identify unhealthy pool models, the startup error preserves their names and redacted causes, even if the final observation times out.
 When output capture succeeded, the startup error also includes the log path.
 When the log contains readable output from this run, the error includes a redacted excerpt.
 The owner-only log contains unredacted router output.
@@ -77,42 +77,67 @@ The sandbox never sees raw API keys.
 ## Configure the Model Pool
 
 The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
-Edit that file to define the model names that the router can select.
-
-The default pool routes between models available through NVIDIA Endpoints.
-It uses `tolerance` to select the lowest-cost model whose predicted quality stays within the configured threshold.
+The default pool contains Lightning and SuperVL:
 
 ```yaml
 routing:
-  method: prefill
-  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
-  tolerance: 0.20
-  encoder: Qwen/Qwen3.5-0.8B
-  encoder_backend: transformers
+  method: rules
 
 models:
-  - name: gpt-oss-20b-high
-    display_name: "GPT-OSS 20B High"
-    litellm_model: "openai/openai/gpt-oss-20b"
-    cost_per_m_input_tokens: 0.052
-    cost_per_m_output_tokens: 0.245
+  - name: nvidia/nemotron-3.5-lightning-30b-a3b
+    display_name: "Nemotron 3.5 Lightning"
+    litellm_model: "openai/nvidia/nemotron-3.5-lightning-30b-a3b"
     api_base: "https://integrate.api.nvidia.com/v1"
 
-  - name: nemotron-3-super
-    display_name: "Nemotron 3 Super 120B"
-    litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
-    cost_per_m_input_tokens: 0.10
-    cost_per_m_output_tokens: 0.40
+  - name: nvidia/nemotron-3.5-super-vl-120b-a12b
+    display_name: "Nemotron 3.5 Super VL"
+    litellm_model: "openai/nvidia/nemotron-3.5-super-vl-120b-a12b"
     api_base: "https://integrate.api.nvidia.com/v1"
 ```
 
-Use these values to tune the accuracy and cost tradeoff.
+The rules inspect the entire conversation:
 
-| Value | Behavior |
-|---|---|
-| `0.0` | Always select the most accurate model. |
-| `0.20` | Allow up to 20 percentage points below the best result for a cheaper model. |
-| `1.0` | Always select the cheapest model. |
+1. A compatible explicit model selection wins. Use the model ID or the existing `metadata.pin_model` request field.
+2. Without an explicit selection, any image in the conversation selects SuperVL.
+3. Other supported text requests select Lightning.
+
+Unknown selections, Lightning with images, and unsupported content return an error.
+The router does not rank cost or difficulty and does not fail over to another model.
+Responses include `X-Model-Router-Selected` and `X-Model-Router-Rule` selection evidence.
+The selection record contains only the model and rule.
+Streaming and structured tool calls use the same policy.
+
+## Restart an Old Running Pool
+
+An update does not restart an existing router automatically.
+A manual restart interrupts requests from every sandbox that shares that router port.
+When a managed operation cannot verify the running rules policy, it stops with restart guidance.
+Before stopping a process, inspect the listener on the configured router port:
+
+```bash
+lsof -nP -iTCP:4000 -sTCP:LISTEN
+ps -p <router-pid> -o args=
+```
+
+Confirm that the command identifies `model-router proxy` on port `4000`.
+Use your configured port if it differs.
+Stop only that verified router process:
+
+```bash
+kill -TERM <router-pid>
+```
+
+Confirm that the listener has stopped before resuming:
+
+```bash
+lsof -nP -iTCP:4000 -sTCP:LISTEN
+$$nemoclaw onboard --resume
+```
+
+Resuming starts the supported pool and checks its health before reusing the native attachment.
+If another process now owns the PID or port, stop and inspect it instead of sending another signal.
+A router restart does not migrate legacy OpenShell 0.1.x sandboxes.
+Those sandboxes still require the separately documented recreation procedure.
 
 ## Meet the Python Requirement
 

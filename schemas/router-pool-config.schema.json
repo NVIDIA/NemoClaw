@@ -10,7 +10,7 @@
   "properties": {
     "routing": {
       "type": "object",
-      "required": ["method", "checkpoint", "tolerance", "encoder", "encoder_backend"],
+      "required": ["method"],
       "additionalProperties": false,
       "properties": {
         "method": { "type": "string", "minLength": 1 },
@@ -29,8 +29,6 @@
           "name",
           "display_name",
           "litellm_model",
-          "cost_per_m_input_tokens",
-          "cost_per_m_output_tokens",
           "api_base"
         ],
         "additionalProperties": false,
@@ -44,5 +42,16 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "routing": { "properties": { "method": { "const": "rules" } } } } },
+      "else": {
+        "properties": {
+          "routing": { "required": ["checkpoint", "tolerance", "encoder", "encoder_backend"] },
+          "models": { "items": { "required": ["cost_per_m_input_tokens", "cost_per_m_output_tokens"] } }
+        }
+      }
+    }
+  ]
 }

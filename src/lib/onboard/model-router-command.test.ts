@@ -46,7 +46,7 @@ function makeProvisioner(overrides: ProvisionerOverrides = {}) {
     fs.writeFileSync(path.join(binDir, "model-router"), "#!/bin/sh\n", { mode: 0o755 });
     return path.join(binDir, "python");
   });
-  const run = vi.fn(() => ({ status: 0 }));
+  const run = vi.fn((_command: string[], _options?: object) => ({ status: 0 }));
   const logs: string[] = [];
 
   const probeStorage = vi.fn((targetPath: string, source: string) =>
@@ -213,5 +213,20 @@ describe("model-router venv disk-space gate (#8973)", () => {
     );
     expect(measureDirectorySize).not.toHaveBeenCalled();
     expect(prepareModelRouterVenv).not.toHaveBeenCalled();
+  });
+});
+
+describe("rules policy provisioning (#14066)", () => {
+  it("omits prefill dependencies and invalidates a changed installed policy", () => {
+    const { root, provisioner, run } = makeProvisioner();
+    const router = path.join(root, "nemoclaw-blueprint", "router");
+    fs.mkdirSync(router, { recursive: true });
+    fs.writeFileSync(path.join(router, "pool-config.yaml"), "routing:\n  method: rules\n");
+    fs.writeFileSync(path.join(router, "rules.py"), "policy = 1\n");
+    provisioner.ensureModelRouterCommand();
+    expect(run.mock.calls[0]?.[0]).toContain(path.join(root, "router") + "[proxy]");
+    expect(provisioner.isManagedModelRouterCurrent()).toBe(true);
+    fs.writeFileSync(path.join(router, "rules.py"), "policy = 2\n");
+    expect(provisioner.isManagedModelRouterCurrent()).toBe(false);
   });
 });

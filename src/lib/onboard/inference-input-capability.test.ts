@@ -5,6 +5,18 @@ import { describe, expect, it, vi } from "vitest";
 import { maybePromptForInferenceInputCapability } from "./inference-input-capability";
 
 describe("catalog inference inputs for unattended onboarding", () => {
+  it("enables routed image requests without a prompt (#14066)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const prompt = vi.fn();
+    await maybePromptForInferenceInputCapability("nvidia-routed", {
+      env,
+      isNonInteractive: () => true,
+      prompt,
+    });
+    expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text,image");
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])(
     "defaults hosted Super VL to text and image with unattended=%s",
     async (unattended) => {

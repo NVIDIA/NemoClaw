@@ -58,9 +58,7 @@ export {
   type ModelRouterCommandProvisioner,
 } from "./model-router-command";
 
-// The prefill router downloads and loads its routing model before it serves
-// /health. Allow a cold host to finish while bounding elapsed time and the
-// number of health observations.
+// Bound upstream health observations, including a cold provider response.
 const ROUTER_HEALTH_RETRIES = 300;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const ROUTER_STARTUP_TIMEOUT_MS = 10 * 60_000;
@@ -165,6 +163,11 @@ export function createProductionModelRouterCommandProvisioner(
       routerDir,
       venvDir,
       defaultVenvDir: MODEL_ROUTER_VENV_DIR,
+      poolConfigPath: path.join(
+        ROOT,
+        "nemoclaw-blueprint",
+        loadBlueprintProfile("routed")?.router?.pool_config_path || "router/pool-config.yaml",
+      ),
     },
     {
       run,
@@ -330,9 +333,12 @@ export async function startModelRouter(
   deps.mkdirSync(stateDir);
   rejectSymlinksOnPath(stateDir);
 
+  const rulesPolicy = usesRulesPolicy(deps.readPoolConfig(poolConfigPath));
+  const command = rulesPolicy ? path.join(path.dirname(routerCommand), "python") : routerCommand;
+  const entry = rulesPolicy ? [path.join(blueprintDir, "router", "model-router")] : [];
   const proxyConfigResult = deps.runProxyConfig(
-    routerCommand,
-    ["proxy-config", "--config", poolConfigPath, "--output", litellmConfigPath],
+    command,
+    [...entry, "proxy-config", "--config", poolConfigPath, "--output", litellmConfigPath],
     { encoding: "utf8", timeout: 30_000, cwd: blueprintDir },
   );
   if (proxyConfigResult.status !== 0) {
@@ -385,8 +391,9 @@ export async function startModelRouter(
   let child: ModelRouterSpawnedProcess;
   try {
     child = deps.spawnProxy(
-      routerCommand,
+      command,
       [
+        ...entry,
         "proxy",
         "--litellm-config",
         litellmConfigPath,
@@ -439,6 +446,7 @@ export async function startModelRouter(
   const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
   let healthAttempts = 0;
   let lastSnapshot: RouterHealthSnapshot | null = null;
+  const endpointErrors = new Map<string, string>();
   while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
     const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
     await deps.sleep(delayMs);
@@ -462,6 +470,9 @@ export async function startModelRouter(
     }
     healthAttempts += 1;
     lastSnapshot = observation.snapshot;
+    for (const [model, error] of unhealthyEndpointErrors(lastSnapshot.body)) {
+      if (endpointErrors.has(model) || endpointErrors.size < 8) endpointErrors.set(model, error);
+    }
     const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
@@ -476,7 +487,7 @@ export async function startModelRouter(
   } catch {
     // already dead
   }
-  const lastHealthError = firstUnhealthyEndpointError(lastSnapshot?.body ?? null);
+  const lastHealthError = [...endpointErrors.values()].join("; ");
   const lastHealthObservation = formatHealthObservation(lastSnapshot);
   const logTail = routerLog === null ? "" : deps.readRouterLogTail(logPath, routerLog.startOffset);
   throw new Error(
@@ -531,34 +542,37 @@ export function poolTargetsOnlyNvidiaEndpoints(poolConfigText: string | null): b
   }
 }
 
-/**
- * Redact and cap the first unhealthy-endpoint error so a startup failure
- * cannot print a credential or an unbounded /health body.
- */
-function firstUnhealthyEndpointError(body: string | null): string | null {
-  if (!body) return null;
-  let error: string | null = null;
+/** Keep bounded redacted model diagnostics even if a later observation times out. */
+function unhealthyEndpointErrors(body: string | null): Array<[string, string]> {
+  if (!body) return [];
   try {
-    const parsed = JSON.parse(body) as {
-      unhealthy_endpoints?: readonly { error?: unknown }[];
-    };
-    for (const endpoint of parsed?.unhealthy_endpoints ?? []) {
-      if (typeof endpoint?.error === "string" && endpoint.error.length > 0) {
-        error = endpoint.error;
-        break;
-      }
-    }
+    const parsed = JSON.parse(body) as { unhealthy_endpoints?: unknown };
+    if (!Array.isArray(parsed.unhealthy_endpoints)) return [];
+    return parsed.unhealthy_endpoints.slice(0, 8).flatMap((endpoint) => {
+      if (!endpoint || typeof endpoint !== "object" || typeof endpoint.error !== "string")
+        return [];
+      const model = typeof endpoint.model === "string" ? endpoint.model : "";
+      const label = model ? `${model}: ` : "";
+      return [
+        [
+          model,
+          compactText(redactSensitiveText(`${label}${endpoint.error}`) ?? "").slice(0, 400),
+        ] as [string, string],
+      ];
+    });
   } catch {
-    // A body cut off at the capture cap is not parseable JSON; fall through
-    // to the textual match so the diagnostic survives truncation.
-  }
-  if (!error) {
+    // Retain the former bounded diagnostic when the body capture ends mid-JSON.
     const match = body.match(/"error"\s*:\s*"((?:[^"\\]|\\.)+)"/);
-    error = match ? match[1] : null;
+    return match ? [["", compactText(redactSensitiveText(match[1]) ?? "").slice(0, 400)]] : [];
   }
-  if (!error) return null;
-  const redacted = redactSensitiveText(error);
-  return redacted ? compactText(redacted) || null : null;
+}
+
+function usesRulesPolicy(text: string | null): boolean {
+  try {
+    return require("yaml").parse(text || "")?.routing?.method === "rules";
+  } catch {
+    return false;
+  }
 }
 
 function getRoutedProfile(): BlueprintInferenceProfile {
@@ -639,6 +653,21 @@ export async function reconcileModelRouter(): Promise<void> {
     const snapshot = responsive
       ? await getRouterHealthSnapshot(routerPort, ROUTER_RECONCILE_HEALTH_TIMEOUT_MS)
       : null;
+    const poolPath = path.join(
+      ROOT,
+      "nemoclaw-blueprint",
+      bp.router.pool_config_path || "router/pool-config.yaml",
+    );
+    if (
+      usesRulesPolicy(fs.readFileSync(poolPath, "utf8")) &&
+      snapshot?.routerPolicy !== "rules-v1"
+    ) {
+      throw new Error(
+        "The running Model Router pool is obsolete or its rules policy cannot be verified. " +
+          "Inspect the recorded model-router PID and port, stop that owned process with SIGTERM, then run `nemoclaw onboard --resume`. " +
+          "See the manual router restart procedure. Legacy OpenShell sandboxes still require recreation under #12558.",
+      );
+    }
     if (
       snapshot &&
       routerCredentialHash &&

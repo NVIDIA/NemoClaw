@@ -217,7 +217,7 @@ describe("onboard Model Router setup", () => {
     });
   });
 
-  it("recognizes the current managed command through the production command adapter", () => {
+  it("rejects an installation missing the current policy fingerprint (#14066)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-current-"));
     tempDirs.add(tmpDir);
     const routerDir = path.join(tmpDir, "model-router-source");
@@ -260,7 +260,7 @@ describe("onboard Model Router setup", () => {
       mode: 0o600,
     });
 
-    assert.equal(isManagedModelRouterCurrent(routerDir, venvDir), true);
+    assert.equal(isManagedModelRouterCurrent(routerDir, venvDir), false);
   });
 
   it("installs the managed command through the production provisioning adapters", async () => {
@@ -295,14 +295,12 @@ describe("onboard Model Router setup", () => {
     assert.match(setupLog, new RegExp(`python3 -m venv ${fixture.venvDir}`));
     assert.match(
       setupLog,
-      new RegExp(
-        `venv-python -m pip install --quiet --upgrade ${fixture.routerDir}\\[prefill,proxy\\]`,
-      ),
+      new RegExp(`venv-python -m pip install --quiet --upgrade ${fixture.routerDir}\\[proxy\\]`),
     );
     assert.doesNotMatch(setupLog, /path-router/);
-    assert.equal(
+    assert.match(
       fs.readFileSync(fixture.fingerprintPath, "utf8").trim(),
-      `git:${fixture.sourceHead}`,
+      new RegExp(`^git:${fixture.sourceHead}:policy:[a-f0-9]{64}$`),
     );
   });
 
@@ -1181,4 +1179,66 @@ describe("onboard Model Router setup", () => {
     assert.doesNotMatch(fingerprint, /^install:\d{13,}$/);
     assert.equal(harness.provisioner.isManagedModelRouterCurrent(), true);
   });
+});
+
+it("retains model-specific causes when the final health observation times out (#14066)", async () => {
+  let clock = 0;
+  const terminated: number[] = [];
+  await assert.rejects(
+    startModelRouter(
+      { port: 45699 },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => "/test/bin/model-router",
+        mkdirSync: () => {},
+        readPoolConfig: () => "routing:\n  method: rules\n",
+        runProxyConfig: () => ({ status: 0 }),
+        spawnProxy: () => ({ pid: 12345, onError: () => {}, onExit: () => {}, unref: () => {} }),
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        getProviderKey: () => "",
+        isRouterResponsive: async () => false,
+        isProcessAlive: () => true,
+        openRouterLog: () => null,
+        closeRouterLog: () => {},
+        readRouterLogTail: () => "",
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        terminateProcess: (pid) => {
+          terminated.push(pid);
+        },
+        getRouterHealthSnapshot: vi
+          .fn()
+          .mockResolvedValueOnce(
+            healthSnapshot(
+              true,
+              JSON.stringify({
+                healthy_endpoints: [],
+                unhealthy_endpoints: [
+                  { model: "nvidia/nemotron-3.5-lightning-30b-a3b", error: "HTTP 404" },
+                  {
+                    model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                    error: "upstream unavailable",
+                  },
+                ],
+              }),
+            ),
+          )
+          .mockImplementation(async () => {
+            clock = 600001;
+            return healthSnapshot(false, null, { outcome: "timeout" });
+          }),
+      },
+    ),
+    (error) => {
+      assert.match((error as Error).message, /last health check: timeout/);
+      assert.match((error as Error).message, /lightning-30b-a3b: HTTP 404/);
+      assert.match((error as Error).message, /super-vl-120b-a12b: upstream unavailable/);
+      return true;
+    },
+  );
+  assert.deepEqual(terminated, [12345]);
 });

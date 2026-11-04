@@ -34,6 +34,7 @@ export type ModelRouterProcessLookup =
 
 export type RouterHealthSnapshot = {
   healthy: boolean;
+  routerPolicy?: string;
   body: string | null;
   capturedBodyBytes: number;
   elapsedMs: number;
@@ -61,6 +62,7 @@ export async function getRouterHealthSnapshot(
     let size = 0;
     let bodyLimitExceeded = false;
     let statusCode: number | null = null;
+    let routerPolicy: string | undefined;
     const bufferedBody = () => (chunks.length > 0 ? Buffer.concat(chunks).toString("utf8") : null);
     const settle = (outcome: RouterHealthSnapshot["outcome"]) => {
       if (settled) return;
@@ -75,11 +77,14 @@ export async function getRouterHealthSnapshot(
         elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
         outcome,
         statusCode,
+        routerPolicy,
       });
     };
     const request = http
       .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
         statusCode = res.statusCode ?? null;
+        const policy = res.headers["x-nemoclaw-router-policy"];
+        routerPolicy = typeof policy === "string" ? policy : undefined;
         res.on("data", (chunk: Buffer) => {
           const remaining = ROUTER_HEALTH_BODY_MAX_BYTES - size;
           const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);

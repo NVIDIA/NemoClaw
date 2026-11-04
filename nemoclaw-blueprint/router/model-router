@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Launch the default rules policy with the managed router's Python environment."""
+import argparse
+from rules import start_proxy
+
+parser = argparse.ArgumentParser()
+commands = parser.add_subparsers(dest="command", required=True)
+config = commands.add_parser("proxy-config")
+config.add_argument("--config", required=True)
+config.add_argument("--output", required=True)
+proxy = commands.add_parser("proxy")
+proxy.add_argument("--litellm-config", required=True)
+proxy.add_argument("--router-config", required=True)
+proxy.add_argument("--host", required=True)
+proxy.add_argument("--port", type=int, required=True)
+args = parser.parse_args()
+if args.command == "proxy-config":
+    from model_router_toolkit.adapters.litellm.config_bridge import generate_litellm_config
+    generate_litellm_config(args.config, args.output)
+else:
+    start_proxy(args.litellm_config, args.router_config, args.host, args.port)

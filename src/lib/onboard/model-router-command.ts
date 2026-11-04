@@ -51,6 +51,7 @@ export type ModelRouterCommandPaths = {
   routerDir: string;
   venvDir: string;
   defaultVenvDir: string;
+  poolConfigPath?: string;
 };
 
 export type ModelRouterCommandDeps = {
@@ -179,23 +180,37 @@ export function createModelRouterCommandProvisioner(
   const relativeRouterDir = path.relative(paths.rootDir, paths.routerDir).split(path.sep).join("/");
 
   const getSourceFingerprint = (): string | null => {
-    if (deps.sourceFingerprint) return deps.sourceFingerprint(paths.routerDir);
+    const policyHash = crypto.createHash("sha256");
+    let hasPolicy = false;
+    for (const name of ["pool-config.yaml", "rules.py", "model-router"]) {
+      const file = path.join(paths.rootDir, "nemoclaw-blueprint", "router", name);
+      if (fs.existsSync(file)) {
+        policyHash.update(name).update(fs.readFileSync(file));
+        hasPolicy = true;
+      }
+    }
+    const policy = hasPolicy ? `:policy:${policyHash.digest("hex")}` : "";
+    if (deps.sourceFingerprint) {
+      const source = deps.sourceFingerprint(paths.routerDir);
+      return source ? source + policy : null;
+    }
 
     const gitHead = deps
       .runCapture(["git", "-C", paths.routerDir, "rev-parse", "HEAD"], {
         ignoreError: true,
       })
       .trim();
-    if (/^[0-9a-f]{40}$/i.test(gitHead)) return `git:${gitHead}`;
+    if (/^[0-9a-f]{40}$/i.test(gitHead)) return `git:${gitHead}${policy}`;
 
     const gitLink = deps
       .runCapture(["git", "-C", paths.rootDir, "rev-parse", `HEAD:${relativeRouterDir}`], {
         ignoreError: true,
       })
       .trim();
-    if (/^[0-9a-f]{40}$/i.test(gitLink)) return `gitlink:${gitLink}`;
+    if (/^[0-9a-f]{40}$/i.test(gitLink)) return `gitlink:${gitLink}${policy}`;
 
-    return hashModelRouterSourceTree(paths.routerDir);
+    const source = hashModelRouterSourceTree(paths.routerDir);
+    return source ? source + policy : null;
   };
 
   const isManagedModelRouterCurrent = (): boolean => {
@@ -292,16 +307,21 @@ export function createModelRouterCommandProvisioner(
       allowReplaceExisting: allowReplaceExistingVenv,
     });
 
+    let extras = "prefill,proxy";
+    try {
+      const pool = require("yaml").parse(
+        fs.readFileSync(
+          paths.poolConfigPath ??
+            path.join(paths.rootDir, "nemoclaw-blueprint/router/pool-config.yaml"),
+          "utf8",
+        ),
+      );
+      if (pool?.routing?.method === "rules") extras = "proxy";
+    } catch {
+      // A custom source-only installation retains the existing toolkit extras.
+    }
     const installResult = deps.run(
-      [
-        venvPython,
-        "-m",
-        "pip",
-        "install",
-        "--quiet",
-        "--upgrade",
-        `${paths.routerDir}[prefill,proxy]`,
-      ],
+      [venvPython, "-m", "pip", "install", "--quiet", "--upgrade", `${paths.routerDir}[${extras}]`],
       { ignoreError: true, timeout: 600_000 },
     );
     if (installResult.status !== 0) {

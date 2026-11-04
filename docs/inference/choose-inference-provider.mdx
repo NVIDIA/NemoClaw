@@ -104,7 +104,8 @@ The documented support applies to the NemoClaw adapter rather than every compati
 ## Routed Inference
 
 Use [Model Router](../hosted-inference/set-up-model-router) when you want a host-side router to select from a configured model pool.
-The router registers as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+OpenClaw uses the attached native provider endpoint with an opaque credential reference.
+The default policy sends text to Lightning and images to SuperVL, unless a compatible explicit selection is supplied.
 
 ## Next Step
 

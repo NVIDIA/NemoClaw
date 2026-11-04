@@ -64,3 +64,23 @@ it.each([
   });
   expect(config.models.providers.inference.apiKey).toBe("unused");
 });
+
+it("registers compatible explicit routed selections on the same native provider (#14066)", () => {
+  const config = buildConfig({
+    ...baseOpenClawGenerationEnv(),
+    NEMOCLAW_MODEL: "nvidia-routed",
+    NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+    NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-router",
+    NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:4000/v1",
+    NEMOCLAW_INFERENCE_INPUTS: "text,image",
+  });
+  expect(
+    config.models.providers.inference.models.map(
+      ({ id, input }: { id: string; input: string[] }) => ({ id, input }),
+    ),
+  ).toEqual([
+    { id: "nvidia-routed", input: ["text", "image"] },
+    { id: "nvidia/nemotron-3.5-lightning-30b-a3b", input: ["text"] },
+    { id: "nvidia/nemotron-3.5-super-vl-120b-a12b", input: ["text", "image"] },
+  ]);
+});
