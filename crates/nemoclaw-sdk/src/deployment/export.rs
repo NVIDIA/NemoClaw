@@ -495,9 +495,21 @@ mod tests {
                     "{name}: {kind}.{field} drift was exported"
                 );
             }
+            // Disposable Docker objects are reconciled on apply and need no
+            // observation here; export_observations requires their bindings.
             let mut missing = observations.clone();
-            missing.pop_first();
-            assert!(exported(document.clone(), &generations, &missing).is_err());
+            missing.retain(|address, _| plan::disposable(address));
+            missing.extend(
+                observations
+                    .iter()
+                    .filter(|(address, _)| !plan::disposable(address))
+                    .skip(1)
+                    .map(|(address, row)| (address.clone(), row.clone())),
+            );
+            assert!(
+                exported(document.clone(), &generations, &missing).is_err(),
+                "{name}: a missing observation was exported"
+            );
             exported_examples += 1;
         }
         assert!(exported_examples > 20, "examples were not found");
@@ -539,10 +551,9 @@ mod tests {
         let mut document =
             Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
                 .unwrap();
-        let mut second = document.spec.sandboxes[0].clone();
-        second.name = "second".into();
+        let mut second = document.spec.sandboxes["assistant"].clone();
         second.image.ref_ = format!("fixture/second@sha256:{}", "b".repeat(64));
-        document.spec.sandboxes.push(second);
+        document.spec.sandboxes.insert("second".into(), second);
         let generations = ["workspace", "provider", "sandbox"]
             .map(|kind| (kind.into(), "a".repeat(32)))
             .into();
@@ -698,7 +709,7 @@ mod tests {
                         "credential":{"env":"SEARCH_KEY"}}
                 }))
                 .unwrap();
-                let sandbox = &mut document.spec.sandboxes[0];
+                let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
                 sandbox.agent.integration_refs = vec!["search".into()];
                 match scope {
                     "deployment" => document.spec.integrations = definitions,
@@ -751,8 +762,9 @@ mod tests {
         let mut document =
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
                 .unwrap();
-        document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
-        document.spec.inference_providers[0].credential = Some(SecretRef {
+        let provider = document.spec.inference_providers.get_mut("local").unwrap();
+        provider.endpoint = "https://models.example/v1".into();
+        provider.credential = Some(SecretRef {
             env: "OLD_KEY".into(),
         });
         let expected = provider_row(&document);
@@ -770,11 +782,11 @@ mod tests {
         observed.insert("credential_env".into(), "NEW_INFERENCE_KEY".into());
         export_provider(&mut document, &expected, &observed).unwrap();
         assert_eq!(
-            document.spec.inference_providers[0].endpoint,
+            document.spec.inference_providers["local"].endpoint,
             "https://models.example/v1"
         );
         assert_eq!(
-            document.spec.inference_providers[0]
+            document.spec.inference_providers["local"]
                 .credential
                 .as_ref()
                 .unwrap()
@@ -815,12 +827,12 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        value["spec"]["inferenceProviders"].as_array_mut().unwrap().push(serde_json::json!({"name":"hosted","provider":"openai","endpoint":"https://hosted.example/v1","credential":{"env":"OLD_KEY"}}));
-        let inference = &mut value["spec"]["sandboxes"][0]["agent"]["inference"];
+        value["spec"]["inferenceProviders"]["hosted"] = serde_json::json!({"provider":"openai","endpoint":"https://hosted.example/v1","credential":{"env":"OLD_KEY"}});
+        let inference = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"];
         inference["default"] = serde_json::json!("primary");
         inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart"}}));
         let mut document = Document::parse(value.to_string().as_bytes()).unwrap();
-        let original = document.spec.inference_providers[0].clone();
+        let original = document.spec.inference_providers["local"].clone();
         let record = Record::new(document.clone()).unwrap();
         let expected = compile::targets(&document, &record.generations)
             .unwrap()
@@ -834,9 +846,9 @@ mod tests {
         let mut observed = expected.clone();
         observed.insert("credential_env".into(), "NEW_KEY".into());
         export_provider(&mut document, &expected, &observed).unwrap();
-        assert_eq!(&document.spec.inference_providers[0], &original);
+        assert_eq!(document.spec.inference_providers["local"], original);
         assert_eq!(
-            document.spec.inference_providers[1]
+            document.spec.inference_providers["hosted"]
                 .credential
                 .as_ref()
                 .unwrap()

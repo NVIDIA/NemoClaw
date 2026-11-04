@@ -138,6 +138,17 @@ impl Backend for ManagedBackend {
                         other?;
                     }
                 }
+                // Apply creates the gateway network with the storage, after the
+                // first plan has bound the deployment, so check its subnet here.
+                if kind == GATEWAY_STORAGE_KIND {
+                    let spec = configured_specification(kind, desired)?;
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        self.engine.check_planned_network(&spec),
+                    )
+                    .await
+                    .map_err(|_| Error::State("runtime prerequisite observation timed out"))??;
+                }
             }
             return Ok(());
         }

@@ -38,21 +38,17 @@ fn schema_failure_names_the_service_field_constraint_and_source_position() {
 #[test]
 fn schema_failure_identifies_array_indices_and_expected_type_without_values() {
     let mut input = source("fabric-openclaw.yaml");
-    let mut second = input["spec"]["sandboxes"][0].clone();
-    second["name"] = json!("second");
-    second["agent"]["inference"]["routes"] = json!("PRIVATE_SENTINEL");
-    input["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(second);
+    let mut second = input["spec"]["sandboxes"]["assistant"].clone();
+    second["agent"]["inference"]["routes"][0]["overrides"] = json!("PRIVATE_SENTINEL");
+    input["spec"]["sandboxes"]["second"] = second;
     let error = Document::parse(input.to_string().as_bytes())
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("spec.sandboxes[1].agent.inference.routes"),
+        error.contains("spec.sandboxes.second.agent.inference.routes[0].overrides"),
         "{error}"
     );
-    assert!(error.contains("must be array"), "{error}");
+    assert!(error.contains("must be object"), "{error}");
     assert!(!error.contains("PRIVATE_SENTINEL"));
 }
 
@@ -119,7 +115,7 @@ fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
         assert!(!error.contains("ZXhwbG9yZS10MTA="));
     }
     let mut literal = input;
-    literal["spec"]["sandboxes"][0]["harness"]["settings"] =
+    literal["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         json!({"opaque": "!!binary literal text"});
     Document::parse(literal.to_string().as_bytes()).unwrap();
 }
@@ -127,8 +123,9 @@ fn explicit_core_tags_are_rejected_without_rejecting_tag_text_inside_strings() {
 #[test]
 fn flow_document_columns_count_characters_and_do_not_include_values() {
     let mut input = source("fabric-openclaw.yaml");
-    input["spec"]["inferenceProviders"][0]["endpoint"] = json!("http://é.example.com/v1");
-    input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"] = json!("PRIVATE_SENTINEL");
+    input["spec"]["inferenceProviders"]["local"]["endpoint"] = json!("http://é.example.com/v1");
+    input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"] =
+        json!("PRIVATE_SENTINEL");
     let text = input.to_string();
     let offset = text.find("\"routes\":\"PRIVATE_SENTINEL\"").unwrap() + "\"routes\":".len();
     let column = text[..offset].chars().count() + 1;
@@ -158,13 +155,13 @@ fn collection_tags_are_rejected_and_quoted_or_block_tag_text_is_preserved() {
         );
     }
     let mut literal = input;
-    literal["spec"]["sandboxes"][0]["harness"]["settings"] =
+    literal["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         json!({"opaque": "!!binary literal text\n!custom still text"});
     let text = serde_saphyr::to_string(&literal).unwrap();
     let document = Document::parse(text.as_bytes()).unwrap();
     assert_eq!(
-        serde_json::to_value(document).unwrap()["spec"]["sandboxes"][0]["harness"]["settings"],
-        literal["spec"]["sandboxes"][0]["harness"]["settings"]
+        serde_json::to_value(document).unwrap()["spec"]["sandboxes"]["assistant"]["harness"]["settings"],
+        literal["spec"]["sandboxes"]["assistant"]["harness"]["settings"]
     );
 }
 

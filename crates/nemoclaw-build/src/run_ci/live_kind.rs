@@ -6,15 +6,20 @@
 //! The pinned kind executable is downloaded by checksum. The cluster gets
 //! the pinned Agent Sandbox release, as a platform would provide it; the
 //! SDK under test installs nothing cluster-wide. The tests verify the native
-//! bundle and run its OpenTofu and providers without a Helm executable.
+//! bundle and run its OpenTofu and providers without a Helm executable. The
+//! kind case pulls its agent image from a registry this run owns, with a
+//! login, so it needs the pull Secret the case creates.
 
 use super::*;
+use nemoclaw_build::ci::live;
 
-/// Agent Sandbox release the tests run against, as a platform would.
+/// Agent Sandbox release the tests run against, as a platform would: the one
+/// the pinned OpenShell's own Kubernetes tests use. Its core manifest has been
+/// `sandbox.yaml` since v0.5.1.
 const AGENT_SANDBOX_URL: &str =
-    "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml";
+    "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.3/sandbox.yaml";
 const AGENT_SANDBOX_SHA256: &str =
-    "ccfe3649de8b33f0ee0ec635e2c7b40e1c468ad9fde6aac7c7379501327d9c4c";
+    "725fafdabe6aac202a89dc57f1cfe0e2e92f3164c8c2bd343fffca52f7039d96";
 
 fn tool_directory(name: &str) -> PathBuf {
     Path::new(".tools").join(name)
@@ -66,7 +71,7 @@ pub(super) async fn run_live_kind(
     platform: &str,
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
@@ -150,13 +155,16 @@ pub(super) async fn run_live_kind(
     let prefix = format!("{name}-agent");
     let tag = format!("{prefix}:{target}");
     let metadata = inputs.path().join("agent.metadata.json");
-    let cleanup = images.is_none().then(|| ImagesCleanup(tag.clone()));
+    let cleanup = matches!(images, live_images::Source::Build).then(|| ImagesCleanup(tag.clone()));
     let (id, node_image) = match images {
-        Some(archive) => (
+        live_images::Source::Archive(archive) => (
             load_archived_agent(&kind, &name, archive, inputs.path())?,
             format!("docker.io/library/{}:{target}", live_images::SHARED),
         ),
-        None => {
+        live_images::Source::Commit(commit) => {
+            pull_pushed_agent(commit, platform, &node_container, &metadata).await?
+        }
+        live_images::Source::Build => {
             live_images::build_agent(platform, &prefix)?;
             let id = String::from_utf8(
                 Command::new("docker")
@@ -183,6 +191,34 @@ pub(super) async fn run_live_kind(
         &node_image,
         &image,
     ]))?;
+    // The run's own registry, holding the agent image under a new index
+    // digest; the case pulls it from there.
+    let registry = kind_registry::Registry::start(&inputs.path().join("registry")).await?;
+    let pushed_metadata = inputs.path().join("registry/agent.metadata.json");
+    let pushed = registry
+        .push(&node_container, &image, &metadata, &pushed_metadata)
+        .await?;
+
+    // The kind HCL E2E case, bound to this cluster and agent image. Its
+    // namespaces are new, and the cluster is deleted afterward.
+    let hcl = inputs.path().join("hcl");
+    let case = inputs.path().join(format!("{KIND_CASE}.yaml"));
+    let mut namespace = [0u8; 6];
+    getrandom::fill(&mut namespace).map_err(|_| "cannot name the case's namespace")?;
+    fs::write(
+        &case,
+        kind_case(
+            &fs::read_to_string(
+                Path::new("crates/nemoclaw-e2e/cases").join(format!("{KIND_CASE}.yaml")),
+            )?,
+            &live::uuid()?,
+            &format!("https://127.0.0.1:{}", live::free_port()?),
+            &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
+            &format!("kind-{name}"),
+            &pushed,
+            harness,
+        )?,
+    )?;
 
     let mut command = match archive {
         Some(archive) => archived(Step::LiveKind, archive, configure)?,
@@ -199,15 +235,131 @@ pub(super) async fn run_live_kind(
     command
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
-        .env("NEMOCLAW_TEST_KIND_NODE", &node_container)
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)
-        .env("NEMOCLAW_TEST_AGENT_IMAGE", &image)
-        .env("NEMOCLAW_TEST_AGENT_HARNESS", harness)
-        .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata);
+        .env("NEMOCLAW_TEST_AGENT_METADATA", &pushed_metadata)
+        .env("NEMOCLAW_HCL_CASE", KIND_CASE)
+        .env("NEMOCLAW_HCL_DOCUMENT", &case)
+        .env("NEMOCLAW_HCL_RUN", &hcl)
+        .env("TF_VAR_kubeconfig", &kubeconfig)
+        .env(
+            "TF_VAR_pull_credentials",
+            format!(
+                r#"{{ username = "{}", password = "{}" }}"#,
+                kind_registry::USER,
+                kind_registry::PASSWORD
+            ),
+        )
+        // Only the image pull above needs the registry.
+        .env_remove(REGISTRY_USERNAME)
+        .env_remove(REGISTRY_PASSWORD);
     let result = run(&mut command);
+    drop(registry);
     drop(cluster);
     drop(cleanup);
     result
+}
+
+/// The HCL E2E case that live-kind runs.
+const KIND_CASE: &str = "kind-openshift-agents";
+
+/// The kind case bound to one run: its UID, which is also its token audience,
+/// gateway endpoint, namespace (which also names the stub model's and the
+/// issuer's), kubeconfig context, agent image in the run's registry, and
+/// harness.
+fn kind_case(
+    template: &str,
+    uid: &str,
+    endpoint: &str,
+    namespace: &str,
+    context: &str,
+    image: &str,
+    harness: &str,
+) -> Result<String> {
+    let zero = format!("nc-registry:5000/agent@sha256:{}", "0".repeat(64));
+    Ok(live::bind_case(
+        template,
+        &[
+            ("3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36", uid),
+            ("https://127.0.0.1:17701", endpoint),
+            ("nc-hcl-kind", namespace),
+            ("kind-nemoclaw", context),
+            (&zero, image),
+            ("nvidia.fabric.openclaw", harness),
+        ],
+    )?)
+}
+
+/// The registry credentials a pull of pushed images uses, as for
+/// `images export-metadata --registry`.
+const REGISTRY_USERNAME: &str = "NEMOCLAW_REGISTRY_USERNAME";
+const REGISTRY_PASSWORD: &str = "NEMOCLAW_REGISTRY_PASSWORD";
+
+/// Pull the agent image `commit` pushed for this platform straight into the
+/// node, and write its metadata bundle from the registry. A Docker save of a
+/// pulled image lacks its config, so neither goes through the host engine.
+/// Returns the image's digest and its name on the node.
+async fn pull_pushed_agent(
+    commit: &str,
+    platform: &str,
+    node: &str,
+    metadata: &Path,
+) -> Result<(String, String)> {
+    let arch = platform.trim_start_matches("linux_");
+    let reference = nemoclaw_build::ci::commit_image(live_images::agent().0, commit, arch);
+    let digest = String::from_utf8(
+        Command::new("docker")
+            .args([
+                "buildx",
+                "imagetools",
+                "inspect",
+                &reference,
+                "--format",
+                "{{.Manifest.Digest}}",
+            ])
+            .stdin(Stdio::null())
+            .output()?
+            .stdout,
+    )?
+    .trim()
+    .to_owned();
+    if !digest.starts_with("sha256:") {
+        return Err(format!("cannot resolve {reference}; sign in to ghcr.io first").into());
+    }
+    let credentials = std::env::var(REGISTRY_USERNAME)
+        .ok()
+        .zip(std::env::var(REGISTRY_PASSWORD).ok());
+    let bundle = nemoclaw_build::images::registry_metadata(
+        &format!("{}@{digest}", nemoclaw_build::ci::COMMIT_IMAGES),
+        credentials.clone(),
+    )
+    .await?;
+    nemoclaw_build::images::write_bundle(&bundle, metadata)?;
+    // The credentials reach ctr through the environment, not its arguments.
+    let mut pull = Command::new("docker");
+    pull.arg("exec");
+    let script = match &credentials {
+        Some((username, password)) => {
+            pull.env(
+                "NEMOCLAW_PULL_CREDENTIALS",
+                format!("{username}:{password}"),
+            )
+            .args(["-e", "NEMOCLAW_PULL_CREDENTIALS"]);
+            r#"exec ctr -n k8s.io images pull --platform "$1" --user "$NEMOCLAW_PULL_CREDENTIALS" "$2" > /dev/null"#
+        }
+        None => r#"exec ctr -n k8s.io images pull --platform "$1" "$2" > /dev/null"#,
+    };
+    pull.args([
+        node,
+        "sh",
+        "-c",
+        script,
+        "sh",
+        &format!("linux/{arch}"),
+        &reference,
+    ])
+    .stdin(Stdio::null());
+    run(&mut pull)?;
+    Ok((digest, reference))
 }
 
 /// Import the saved images into the node without a host Docker load or re-export.
@@ -249,6 +401,27 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn the_kind_case_binds_its_cluster_namespace_and_image() {
+        let template = include_str!("../../../nemoclaw-e2e/cases/kind-openshift-agents.yaml");
+        let bound = kind_case(
+            template,
+            "u-1",
+            "https://127.0.0.1:1",
+            "nc-n",
+            "kind-c",
+            "nc-registry-1:5000/agent@sha256:1",
+            "h",
+        )
+        .unwrap();
+        assert!(bound.contains("      namespace: nc-n\n"));
+        assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
+        assert!(bound.contains("https://issuer-oidc.nc-n-issuer.svc.cluster.local:8443"));
+        assert!(bound.contains("        audience: u-1\n"));
+        assert!(bound.contains("        ref: nc-registry-1:5000/agent@sha256:1\n"));
+        assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
+    }
+
+    #[test]
     fn archived_agent_reaches_kind_without_loading_or_saving_host_images() {
         let root = tempfile::tempdir().unwrap();
         let config = br#"{"os":"linux","architecture":"arm64"}"#;
@@ -256,7 +429,7 @@ mod tests {
             |bytes: &[u8]| format!("sha256:{}", nemoclaw_build::hex(&Sha256::digest(bytes)));
         let manifest = serde_json::json!({"schemaVersion": 2, "config": {"digest": digest(config)}, "layers": []}).to_string();
         let id = digest(manifest.as_bytes());
-        let index = serde_json::json!({"manifests": [{"digest": id, "annotations": {"io.containerd.image.name": "docker.io/library/nc-live-images:pi"}}]}).to_string();
+        let index = serde_json::json!({"manifests": [{"digest": id, "annotations": {"io.containerd.image.name": "docker.io/library/nc-live-images:openclaw"}}]}).to_string();
         let mut archive = tar::Builder::new(Vec::new());
         for (path, bytes) in [
             (

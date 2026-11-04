@@ -36,7 +36,7 @@ pub struct ResourceSource {
 impl OperationResult {
     pub(super) fn describe_sources(&mut self, document: &Document) -> Result<(), Error> {
         for provider in document.selected_providers()? {
-            if provider.key != provider.definition.name {
+            if provider.key != provider.name {
                 self.resource_sources.insert(
                     format!(
                         "{}.inference_{}",
@@ -44,7 +44,7 @@ impl OperationResult {
                         provider.key
                     ),
                     ResourceSource {
-                        name: provider.definition.name.clone(),
+                        name: provider.name.to_owned(),
                         path: provider.path.clone(),
                     },
                 );
@@ -52,6 +52,57 @@ impl OperationResult {
         }
         Ok(())
     }
+}
+
+/// Warns that a successful apply reported no service URLs or runtime IDs
+/// because reading its state failed.
+pub(super) const STATE_UNREAD: &str = "Apply succeeded, but its state wasn't read, so the result omits the sandbox service URLs and agent runtime IDs; run apply again to report them.";
+
+/// Each sandbox's agent, by sandbox name, with the runtime ID its binding
+/// records. A recorded runtime keeps the name it was started with, which
+/// `fabric-agent-ctl invoke` needs until apply replaces it.
+pub(super) fn agents(
+    document: &Document,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> BTreeMap<String, AgentRuntime> {
+    document
+        .sandboxes()
+        .map(|sandbox| {
+            let runtime = bindings
+                .get(&format!(
+                    "{}.{}",
+                    nemoclaw_fabric::agent::RESOURCE_TYPE,
+                    sandbox.name
+                ))
+                .filter(|binding| !binding.runtime_id.is_empty());
+            let agent = runtime
+                .map(|binding| binding.name.as_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&sandbox.agent.name);
+            (
+                sandbox.name.to_owned(),
+                AgentRuntime {
+                    agent: agent.to_owned(),
+                    runtime_id: runtime.map(|binding| binding.runtime_id.clone()),
+                },
+            )
+        })
+        .collect()
+}
+
+/// The URLs each bound sandbox's exposures report, by sandbox name; sandboxes
+/// without any are left out.
+pub(super) fn service_urls(
+    bindings: &BTreeMap<String, StateBinding>,
+) -> BTreeMap<String, BTreeMap<String, String>> {
+    bindings
+        .iter()
+        .filter_map(|(address, binding)| {
+            let sandbox = address.strip_prefix("openshell_sandbox.")?;
+            (!binding.service_urls.is_empty())
+                .then(|| (sandbox.to_owned(), binding.service_urls.clone()))
+        })
+        .collect()
 }
 
 pub use crate::discovery::DiscoveryObservation;
@@ -417,14 +468,13 @@ mod tests {
     fn inline_and_scoped_provider_sources_preserve_authored_names_without_values() {
         let mut input: Value =
             serde_saphyr::from_str(include_str!("../../tests/fixtures/config/local.yaml")).unwrap();
-        let mut provider = input["spec"]["inferenceProviders"][0].take();
-        provider["name"] = "responses".into();
+        let provider = input["spec"]["inferenceProviders"]["local"].take();
         input["spec"]
             .as_object_mut()
             .unwrap()
             .remove("inferenceProviders");
-        let sandbox = &mut input["spec"]["sandboxes"][0];
-        sandbox["inferenceProviders"] = json!([provider]);
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
+        sandbox["inferenceProviders"] = json!({"responses": provider});
         let route = &mut sandbox["agent"]["inference"]["routes"][0];
         route["providerRef"] = "responses".into();
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
@@ -438,8 +488,8 @@ mod tests {
                 .all(|source| source.name == "responses"
                     && source.path == "spec.sandboxes[assistant].inferenceProviders[responses]")
         );
-        let sandbox = &mut input["spec"]["sandboxes"][0];
-        let mut provider = sandbox["inferenceProviders"][0].take();
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
+        let mut provider = sandbox["inferenceProviders"]["responses"].take();
         sandbox
             .as_object_mut()
             .unwrap()

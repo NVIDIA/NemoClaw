@@ -30,9 +30,10 @@ fn document(driver: &str, managed: bool, endpoint: &str) -> Value {
         });
     }
     if matches!(driver, "kubernetes" | "openshift") {
-        input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env": "TEST_IMAGE_METADATA"});
+        input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+            json!({"env": "TEST_IMAGE_METADATA"});
     }
-    input["spec"]["inferenceProviders"][0]["endpoint"] = json!(endpoint);
+    input["spec"]["inferenceProviders"]["local"]["endpoint"] = json!(endpoint);
     input
 }
 
@@ -136,9 +137,9 @@ fn agents<'a>(input: &Value, graph: &'a Value) -> Vec<&'a Value> {
     assert_eq!(sandboxes.len(), 3);
     sandboxes
         .iter()
-        .map(|sandbox| {
-            let row = &rows[&sandbox.name];
-            assert_eq!(row["name"], sandbox.agent.name.as_str(), "{}", sandbox.name);
+        .map(|(name, sandbox)| {
+            let row = &rows[name];
+            assert_eq!(row["name"], sandbox.agent.name.as_str(), "{name}");
             row
         })
         .collect()
@@ -146,7 +147,7 @@ fn agents<'a>(input: &Value, graph: &'a Value) -> Vec<&'a Value> {
 
 /// Three agents on one cluster gateway share one registration of the Service,
 /// and each agent's sandbox has its own rule for it. Each agent keeps its
-/// sandbox's agent name, whatever the order of the sandboxes.
+/// sandbox's agent name.
 #[test]
 fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_own_rules() {
     for example in [
@@ -154,7 +155,7 @@ fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_o
         "openshift/external-gateway.yaml",
     ] {
         let mut input = crate::support::example(example);
-        input["spec"]["inferenceProviders"][0]["endpoint"] = json!(SERVICE);
+        input["spec"]["inferenceProviders"]["inference"]["endpoint"] = json!(SERVICE);
         let graph = compile(&parse(&input), &generations(), "0.1.0").unwrap();
         let inference = only(&graph, "openshell_inference");
         assert_eq!(
@@ -162,7 +163,7 @@ fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_o
             json!({
                 "type": "inference_server",
                 "endpoint": SERVICE,
-                "credential_env": input["spec"]["inferenceProviders"][0]["credential"]["env"],
+                "credential_env": input["spec"]["inferenceProviders"]["inference"]["credential"]["env"],
                 "credential_source": ""
             }),
             "{example}"
@@ -188,12 +189,6 @@ fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_o
                 assert_eq!(model["base_url"], SERVICE, "{example}");
             }
         }
-        input["spec"]["sandboxes"].as_array_mut().unwrap().reverse();
-        assert_eq!(
-            compile(&parse(&input), &generations(), "0.1.0").unwrap(),
-            graph,
-            "{example}"
-        );
     }
     // This example's explicit sandbox policies name its hosted endpoint, so it
     // keeps that endpoint and only its agent names are checked.
@@ -206,12 +201,12 @@ fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_o
 /// place a document can declare an inference provider.
 fn keyed_providers(input: &Value) -> Vec<(&'static str, Value)> {
     fn sandbox(document: &mut Value) -> &mut Value {
-        &mut document["spec"]["sandboxes"][0]
+        &mut document["spec"]["sandboxes"]["assistant"]
     }
-    let mut provider = input["spec"]["inferenceProviders"][0].clone();
+    let mut provider = input["spec"]["inferenceProviders"]["local"].clone();
     provider["credential"] = json!({"env": "QWEN_INFERENCE_KEY"});
     let mut shared = input.clone();
-    shared["spec"]["inferenceProviders"][0] = provider.clone();
+    shared["spec"]["inferenceProviders"]["local"] = provider.clone();
     let mut bare = input.clone();
     bare["spec"]
         .as_object_mut()
@@ -220,9 +215,10 @@ fn keyed_providers(input: &Value) -> Vec<(&'static str, Value)> {
     let mut route = sandbox(&mut bare)["agent"]["inference"]["routes"][0].clone();
     route.as_object_mut().unwrap().remove("providerRef");
     route["provider"] = provider.clone();
+    route["provider"]["name"] = json!("local");
     let inference = json!({"routes": [route]});
     let mut scoped = bare.clone();
-    sandbox(&mut scoped)["inferenceProviders"] = json!([provider]);
+    sandbox(&mut scoped)["inferenceProviders"] = json!({"local": provider});
     let mut inline = bare.clone();
     sandbox(&mut inline)["agent"]["inference"] = inference.clone();
     let named = |mut document: Value, in_sandbox: bool| {

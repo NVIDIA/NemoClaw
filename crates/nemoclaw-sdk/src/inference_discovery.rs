@@ -138,7 +138,7 @@ pub fn observe_credentials(
 pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Error> {
     document.validate()?;
     let mut requests = Vec::new();
-    for sandbox in &document.spec.sandboxes {
+    for sandbox in document.sandboxes() {
         for provider in document.sandbox_inference_providers(sandbox)? {
             let Some(request) = EndpointRequest::for_external_provider(provider.definition)? else {
                 continue;

@@ -17,16 +17,43 @@ fn docker() -> Command {
     command
 }
 
-/// The agent image the live tests run, and its Fabric harness: Pi, the
-/// smallest agent image, until OpenClaw can start in an OpenShell sandbox
-/// again (#13372).
-pub(super) fn agent() -> (&'static str, &'static str) {
-    ("pi", "nvidia.fabric.pi")
+/// Where a live step gets its images.
+#[derive(Clone, Copy)]
+pub(super) enum Source<'a> {
+    /// Build them from the checkout.
+    Build,
+    /// Load a `ci live-images` archive.
+    Archive(&'a Path),
+    /// Pull the images a `v1` commit pushed to the per-commit package, which
+    /// `changes live-images` finds when no image input changed since.
+    Commit(&'a str),
 }
 
-/// The platform's agent image, the reference dummy, then the two proxy images.
+/// The agent image the live tests run, and its Fabric harness.
+pub(super) fn agent() -> (&'static str, &'static str) {
+    nemoclaw_build::ci::LIVE_AGENT
+}
+
+/// The platform's agent image, Hermes, Deep Agents Code, then the reference
+/// dummy.
 pub(super) fn names() -> [&'static str; 4] {
-    [agent().0, DUMMY, "proxy-a", "proxy-b"]
+    [agent().0, HERMES, DEEPAGENTS_CODE, DUMMY]
+}
+
+/// The Deep Agents Code agent image, whose terminal the interface test opens.
+pub(super) const DEEPAGENTS_CODE: &str = nemoclaw_build::ci::LIVE_DEEPAGENTS_CODE;
+
+/// Build the platform's Deep Agents Code image as `PREFIX:deepagents-code`.
+pub(super) fn build_deepagents_code(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, DEEPAGENTS_CODE)
+}
+
+/// The Hermes agent image, which the Docker live suite's interface test runs.
+pub(super) const HERMES: &str = nemoclaw_build::ci::LIVE_HERMES;
+
+/// Build the platform's Hermes image as `PREFIX:hermes`.
+pub(super) fn build_hermes(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, HERMES)
 }
 
 /// The platform's archive images that `used` does not name.
@@ -78,42 +105,15 @@ fn timed_build(tag: &str, build: impl FnOnce() -> Result<()>) -> Result<()> {
     result
 }
 
-/// Two proxy images with distinct digests, for the image-change check: the
-/// Bake proxy target, with a different label each.
-pub(super) fn build_proxies(platform: &str, prefix: &str) -> Result<()> {
-    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    for variant in ["a", "b"] {
-        let tag = format!("{prefix}:proxy-{variant}");
-        timed_build(&tag, || {
-            run(docker()
-                .env("AGENT_PLATFORM", &docker_platform)
-                .args([
-                    "buildx",
-                    "bake",
-                    "ollama-proxy",
-                    "--load",
-                    "--progress",
-                    "plain",
-                ])
-                .arg("--set")
-                .arg(format!("ollama-proxy.tags={tag}"))
-                .arg("--set")
-                .arg(format!(
-                    "ollama-proxy.labels.org.nemoclaw.test=proxy-{variant}"
-                )))
-        })?;
-    }
-    Ok(())
-}
-
 /// Build the platform's images under the shared names and save them to [`ARCHIVE`].
 pub(super) fn build(platform: &str) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the live images are built on Linux only".into());
     }
     build_agent(platform, SHARED)?;
+    build_hermes(platform, SHARED)?;
+    build_deepagents_code(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
-    build_proxies(platform, SHARED)?;
     let tags = names().map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;
     let start = Instant::now();
@@ -272,23 +272,61 @@ pub(super) fn load(
     Ok(())
 }
 
+fn pull_one(commit: &str, platform: &str, prefix: &str, name: &str) -> Result<()> {
+    let arch = platform.trim_start_matches("linux_");
+    let pushed = nemoclaw_build::ci::commit_image(name, commit, arch);
+    run(docker().args(["pull", "--quiet", &pushed]))?;
+    run(docker().args(["tag", &pushed, &format!("{prefix}:{name}")]))?;
+    // Removing the pushed name keeps the image, which the new name holds.
+    let _ = docker()
+        .args(["image", "rm", &pushed])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    Ok(())
+}
+
+/// Pull the images `commit` pushed for this platform instead of building
+/// them, and name each `PREFIX:NAME`, recording each name in `owned` before
+/// the next.
+pub(super) fn pull(
+    commit: &str,
+    platform: &str,
+    prefix: &str,
+    owned: &mut Vec<String>,
+) -> Result<()> {
+    for name in nemoclaw_build::ci::LIVE_PULLED {
+        owned.push(format!("{prefix}:{name}"));
+        pull_one(commit, platform, prefix, name)?;
+    }
+    Ok(())
+}
+
 /// An image derived from the reference image, as a downstream build would
-/// make one: the base plus one executable. Docker's default builder sees
-/// local images, which a container builder doesn't.
+/// make one: the base plus one executable.
 pub(super) const DERIVED: &str = "dummy-derived";
 pub(super) fn build_derived(prefix: &str) -> Result<()> {
-    let context = std::env::temp_dir().join(format!("nemoclaw-derived-{}", std::process::id()));
-    std::fs::create_dir_all(&context)?;
-    std::fs::write(
-        context.join("Dockerfile"),
-        format!(
+    build_layer(
+        &format!("{prefix}:{DERIVED}"),
+        &format!(
             "FROM {prefix}:{DUMMY}\nCOPY --chmod=755 nemoclaw-derived-check /usr/local/bin/nemoclaw-derived-check\n"
         ),
-    )?;
-    std::fs::write(
-        context.join("nemoclaw-derived-check"),
-        "#!/bin/sh\necho derived-image-ok\n",
-    )?;
+        &[("nemoclaw-derived-check", "#!/bin/sh\necho derived-image-ok\n")],
+    )
+    .map_err(|_| "cannot build the derived reference image".into())
+}
+
+/// Build `tag` from `dockerfile` on a local image, with `files` in its
+/// context. Docker's default builder sees local images, which a container
+/// builder doesn't.
+fn build_layer(tag: &str, dockerfile: &str, files: &[(&str, &str)]) -> Result<()> {
+    let context = tempfile::Builder::new()
+        .prefix("nemoclaw-layer-")
+        .tempdir()?;
+    std::fs::write(context.path().join("Dockerfile"), dockerfile)?;
+    for (name, contents) in files {
+        std::fs::write(context.path().join(name), contents)?;
+    }
     let status = Command::new("docker")
         .args([
             "buildx",
@@ -299,14 +337,13 @@ pub(super) fn build_derived(prefix: &str) -> Result<()> {
             "--quiet",
             "--tag",
         ])
-        .arg(format!("{prefix}:{DERIVED}"))
-        .arg(&context)
+        .arg(tag)
+        .arg(context.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .status();
-    let _ = std::fs::remove_dir_all(&context);
-    if !status?.success() {
-        return Err("cannot build the derived reference image".into());
+        .status()?;
+    if !status.success() {
+        return Err(format!("cannot build {tag}").into());
     }
     Ok(())
 }
@@ -318,7 +355,7 @@ mod tests {
     #[test]
     fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
         let target = agent().0;
-        assert_eq!(unused(&[target]), [DUMMY, "proxy-a", "proxy-b"]);
+        assert_eq!(unused(&[target]), [HERMES, DEEPAGENTS_CODE, DUMMY]);
         assert!(unused(&names()).is_empty());
     }
 }

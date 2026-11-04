@@ -20,6 +20,7 @@ fn express() -> JourneyDefinition {
         "adapter:nvidia.fabric.openclaw:/agent_id",
         "adapter:nvidia.fabric.openclaw:/channel_config",
         "adapter:nvidia.fabric.openclaw:/connect_timeout_seconds",
+        "adapter:nvidia.fabric.openclaw:/interfaces",
         "adapter:nvidia.fabric.openclaw:/openclaw_command",
         "adapter:nvidia.fabric.openclaw:/port_range",
         "adapter:nvidia.fabric.openclaw:/read_timeout_seconds",
@@ -124,7 +125,7 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
     let resolved = state
         .resolve_with_observations(&capabilities, &observations)
         .unwrap();
-    let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
+    let model = "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model";
     assert!(
         resolved
             .question(model)

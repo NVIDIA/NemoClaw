@@ -1,7 +1,7 @@
 {
   "data": {
     "fabric_harnesses": {
-      "sandbox_0": {
+      "sandbox_assistant": {
         "engine": "",
         "image": "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0",
         "lifecycle": {
@@ -28,7 +28,7 @@
   "output": {
     "value": {
       "gateway": "${data.openshell_gateway.current.observation_json}",
-      "sandbox_0": "${data.fabric_harnesses.sandbox_0.observation_json}",
+      "sandbox_assistant": "${data.fabric_harnesses.sandbox_assistant.observation_json}",
       "target_0": "${data.host_engine.target_0.hardware_json}"
     }
   }

@@ -246,11 +246,11 @@ spec:
               size: 6722759
               sha256: ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003
   inferenceProviders:
-    - name: qwen
+    qwen:
       provider: openai
       serviceRef: qwen
   sandboxes:
-    - name: assistant
+    assistant:
       network:
         tier: isolated
       harness:

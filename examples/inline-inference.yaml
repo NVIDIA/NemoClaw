@@ -15,7 +15,7 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17681
   sandboxes:
-    - name: assistant
+    assistant:
       harness:
         kind: nvidia.fabric.openclaw
       agent:

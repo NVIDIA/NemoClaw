@@ -19,8 +19,45 @@ fn document() -> Document {
         }
     });
     value["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// The same target without a kubeconfig and context: clients use the
+/// service account of the pod that runs NemoClaw.
+fn pod_document() -> Document {
+    let mut value = serde_json::to_value(document()).unwrap();
+    let kubernetes = value["spec"]["gateway"]["kubernetes"]
+        .as_object_mut()
+        .unwrap();
+    kubernetes.remove("kubeconfig");
+    kubernetes.remove("context");
+    Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// Without a kubeconfig, the Helm provider's client falls back to the pod's
+/// service account, so its configuration names no file and no context.
+#[test]
+fn a_target_without_kubeconfig_gives_helm_no_kubeconfig() {
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let graph = compile_runtime(&pod_document(), &generations, "0.1.0").unwrap();
+    let helm = &graph["provider"]["helm"];
+    assert_eq!(helm["helm_driver"], "secret");
+    assert!(helm["kubernetes"].get("config_path").is_none(), "{helm}");
+    assert!(helm["kubernetes"].get("config_context").is_none(), "{helm}");
+    assert!(
+        graph
+            .get("variable")
+            .and_then(|variables| variables.get("nemoclaw_kubeconfig"))
+            .is_none()
+    );
+    assert_eq!(
+        graph["terraform"]["required_providers"]["helm"]["version"],
+        "= 3.3.0"
+    );
 }
 
 #[test]
@@ -308,7 +345,7 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
             .get("nemoclaw_inference_capabilities")
             .is_none()
     );
-    let image = &agents["data"]["fabric_harnesses"]["sandbox_0"];
+    let image = &agents["data"]["fabric_harnesses"]["sandbox_assistant"];
     assert_eq!(image["engine"], "");
     assert_eq!(image["metadata_env"], "TEST_IMAGE_METADATA");
     assert!(image.get("architecture").is_none());
@@ -335,6 +372,7 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
         document(),
         Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap(),
         oidc_document(),
+        pod_document(),
     ] {
         for target in runtime_targets(&document, &generations)
             .unwrap()
@@ -345,7 +383,6 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
             assert_eq!(spec.row().unwrap(), target.values);
             assert_eq!(spec.kind, target.kind);
             let kubernetes = spec.settings.kubernetes.as_ref().unwrap();
-            assert_eq!(kubernetes.context, "test-cluster");
             assert_eq!(
                 document
                     .spec
@@ -372,9 +409,47 @@ fn kubernetes_attributes_reproduce_each_resource_specification() {
                 row.insert(attribute.into(), invalid.into());
                 assert!(Spec::from_row(&target.kind, &row).is_err(), "{attribute}");
             }
+            // A kubeconfig and its context are named together or not at all.
+            for attribute in ["kubeconfig_env", "context"] {
+                let mut row = target.values.clone();
+                let one_sided = if row[attribute].is_empty() {
+                    "TEST_KUBECONFIG"
+                } else {
+                    ""
+                };
+                row.insert(attribute.into(), one_sided.into());
+                assert!(Spec::from_row(&target.kind, &row).is_err(), "{attribute}");
+            }
             assert!(Spec::from_row("managed_gateway", &target.values).is_err());
         }
     }
+}
+
+/// The provider checks each configured attribute alone before it plans, so
+/// every attribute a target compiles to must pass that check.
+#[test]
+fn every_compiled_kubernetes_attribute_passes_the_providers_check() {
+    use nemoclaw_sdk::kubernetes::check_attribute;
+    let generations = ["kubernetes_gateway", "kubernetes_storage"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    for document in [document(), pod_document()] {
+        for target in runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| target.kind.starts_with("kubernetes_"))
+        {
+            for (attribute, value) in &target.values {
+                assert_eq!(
+                    check_attribute(attribute, value),
+                    Ok(()),
+                    "{}.{attribute} = {value:?}",
+                    target.kind
+                );
+            }
+        }
+    }
+    assert!(check_attribute("kubeconfig_env", "lowercase").is_err());
 }
 
 fn oidc_document() -> Document {

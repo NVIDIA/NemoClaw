@@ -7,10 +7,9 @@
 //! without a UID, which an API server never does, or serves a client TLS Secret
 //! that lacks a key. The call must report the failure's error class and send no
 //! write, and the cluster objects and recorded state must stay as they were,
-//! with three exceptions that the tests name: the cluster binding that the first
-//! `ensure` of storage saves before it reads the prerequisites, the one object
-//! whose create reply lost its UID, and the client files that `connect` writes
-//! before the next read.
+//! with two exceptions that the tests name: the one object whose create reply
+//! lost its UID, and the client files that `connect` writes before the next
+//! read.
 #![cfg(unix)]
 
 use crate::kube_api::{Objects, collection};
@@ -22,21 +21,13 @@ use crate::kube_faults::{
 };
 use nemoclaw_sdk::{
     ObservationError,
-    kubernetes::{
-        AUTH_KIND, GATEWAY_KIND, STORAGE_KIND,
-        operations::Operations,
-        receipt::{ClusterIdentity, Receipt},
-    },
+    kubernetes::{AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, operations::Operations, receipt::Receipt},
 };
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
 const NAMESPACE_PATH: &str = "/api/v1/namespaces/agents";
 const SECRETS_PATH: &str = "/api/v1/namespaces/agents/secrets";
-const CRD_PATH: &str =
-    "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/sandboxes.agents.x-k8s.io";
-const CONTROLLER_PATH: &str =
-    "/apis/apps/v1/namespaces/agent-sandbox-system/deployments/agent-sandbox-controller";
 
 fn statefulset_path() -> String {
     format!("/apis/apps/v1/namespaces/agents/statefulsets/{NAME}")
@@ -89,9 +80,6 @@ struct Applied {
     objects: Objects,
     /// The state directory; the receipt is `state/receipt.json`.
     state: PathBuf,
-    /// The server address the first apply recorded in the receipt. Later calls
-    /// reach a different fake server and must still present this address.
-    server: String,
     provider: &'static str,
     _directory: tempfile::TempDir,
 }
@@ -128,7 +116,7 @@ async fn applied(provider: &'static str, kinds: &[&str]) -> Applied {
     let directory = tempfile::tempdir().unwrap();
     let state = directory.path().join("state");
     let fixture = objects.serve().await;
-    let operations = platform::operations(client(&fixture), &fixture.endpoint, &state);
+    let operations = platform::operations(client(&fixture), &state);
     for kind in kinds {
         match *kind {
             AUTH_KIND if provider == "openshift" => assign_openshift_range(&objects),
@@ -146,7 +134,6 @@ async fn applied(provider: &'static str, kinds: &[&str]) -> Applied {
     Applied {
         objects,
         state,
-        server: fixture.endpoint.clone(),
         provider,
         _directory: directory,
     }
@@ -158,9 +145,9 @@ async fn fully_applied(provider: &'static str) -> Applied {
 }
 
 impl Applied {
-    /// Operations over `client`, presenting the server address of the first apply.
+    /// Operations over `client` with the applied state directory.
     fn operations(&self, client: kube::Client) -> Operations {
-        platform::operations(client, &self.server, &self.state)
+        platform::operations(client, &self.state)
     }
 }
 
@@ -264,66 +251,35 @@ async fn assert_incomplete(applied: &Applied, call: Call, path: &str, written: &
     before.assert_unchanged(&applied.objects, &applied.state, &context);
 }
 
-/// The receipt a first apply holds once it has bound the cluster.
-fn bound(server: &str) -> Receipt {
-    let mut receipt = Receipt::new(OWNER, NAME);
-    receipt.cluster = Some(ClusterIdentity {
-        server: server.into(),
-        system_uid: "system-1".into(),
-    });
-    receipt
-}
-
-/// Start state: first apply. The receipt is bound after the identity read and
-/// before the prerequisite reads, so a failed prerequisite read (`binds`) leaves
-/// the binding and nothing else, and a failed identity read leaves no receipt.
-/// Nothing is created in the cluster either way.
-async fn assert_prerequisite_read_fails(path: &str, injections: &[Injection], binds: bool) {
-    for &injection in injections {
+/// Start state: first apply. Storage reads the target namespace before it
+/// binds or creates anything, so a failed read leaves no receipt and changes
+/// nothing in the cluster.
+#[tokio::test]
+async fn failed_first_apply_namespace_reads_are_reported_by_class_and_bind_nothing() {
+    for injection in FAULTS {
         let applied = applied("kubernetes", &[]).await;
         let before = applied.objects.0.lock().unwrap().clone();
         let call = Call::Ensure(STORAGE_KIND);
-        let context = fail_read(&applied, path, Site::First, call, injection).await;
+        let context = fail_read(&applied, NAMESPACE_PATH, Site::First, call, injection).await;
         assert_eq!(*applied.objects.0.lock().unwrap(), before, "{context}");
         assert_eq!(
             Receipt::load(&applied.state, OWNER, NAME).unwrap(),
-            binds.then(|| bound(&applied.server)),
-            "{context}: the receipt differs from the cluster binding it should hold"
+            None,
+            "{context}: a failed namespace read left a receipt"
         );
     }
 }
 
+/// Start state: nothing applied, and an existing namespace answered without a
+/// UID, so there is nothing to bind.
 #[tokio::test]
-async fn failed_agent_sandbox_crd_reads_are_reported_by_class_and_leave_only_the_cluster_binding() {
-    assert_prerequisite_read_fails(CRD_PATH, &FAULTS, true).await;
-}
-
-#[tokio::test]
-async fn failed_agent_sandbox_controller_reads_are_reported_by_class_and_leave_only_the_cluster_binding()
- {
-    assert_prerequisite_read_fails(CONTROLLER_PATH, &FAULTS, true).await;
-}
-
-/// Start state: first apply. Storage reports every failure other than 401 and
-/// 403 as Transport (`storage.rs`), where the other reads report a 500 as Query.
-#[tokio::test]
-async fn a_server_error_on_the_cluster_identity_or_storage_class_read_is_a_transport_failure() {
-    let server_error: [Injection; 1] = [(Fault::Status(500), &[ObservationError::Transport])];
-    for (path, binds) in [
-        ("/api/v1/namespaces/kube-system", false),
-        ("/apis/storage.k8s.io/v1/storageclasses", true),
-    ] {
-        assert_prerequisite_read_fails(path, &server_error, binds).await;
-    }
-}
-
-/// Start state: nothing applied. The identity is incomplete, so nothing binds.
-#[tokio::test]
-async fn a_cluster_identity_answer_without_a_uid_is_incomplete_and_binds_nothing() {
+async fn an_existing_namespace_answered_without_a_uid_is_incomplete_and_binds_nothing() {
     let applied = applied("kubernetes", &[]).await;
-    let path = "/api/v1/namespaces/kube-system";
-    drop_uid(&applied.objects, path);
-    assert_incomplete(&applied, Call::Ensure(STORAGE_KIND), path, &[]).await;
+    applied
+        .objects
+        .insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "agents"}}));
+    drop_uid(&applied.objects, NAMESPACE_PATH);
+    assert_incomplete(&applied, Call::Ensure(STORAGE_KIND), NAMESPACE_PATH, &[]).await;
 }
 
 /// Start states: first apply (the Namespace is the first create) and storage
@@ -366,11 +322,10 @@ async fn a_created_object_reply_without_a_uid_is_incomplete_and_is_not_recorded(
                     .all(|(key, object)| after.get(key) == Some(object)),
             "{context}: expected the created object only and no change to an existing one"
         );
-        // A first create follows the cluster binding; a later one leaves the receipt as it was.
-        let expected = receipt.unwrap_or_else(|| bound(&applied.server));
+        // A failed first create leaves no receipt; a later one leaves it as it was.
         assert_eq!(
             Receipt::load(&applied.state, OWNER, NAME).unwrap(),
-            Some(expected),
+            receipt,
             "{context}: the receipt recorded the created object"
         );
     }

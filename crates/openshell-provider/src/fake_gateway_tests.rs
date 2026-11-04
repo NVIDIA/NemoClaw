@@ -900,6 +900,86 @@ async fn forwarded(directory: &std::path::Path) -> (Fixture, Forward) {
     (fixture, forward)
 }
 
+/// A certificate authority unrelated to the fixture gateway's, and a client
+/// certificate it signed, written to `directory` as `[ca, tls.crt, tls.key]`.
+fn unrelated_tls(directory: &std::path::Path) -> [String; 3] {
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+        KeyUsagePurpose,
+    };
+    let key = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    let ca = params.self_signed(&key).unwrap().pem();
+    let issuer = Issuer::new(params, key);
+    let key = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(vec!["127.0.0.1".into()]).unwrap();
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let certificate = params.signed_by(&key, &issuer).unwrap().pem();
+    [
+        ("ca", ca),
+        ("tls.crt", certificate),
+        ("tls.key", key.serialize_pem()),
+    ]
+    .map(|(name, content)| {
+        let path = directory.join(name);
+        std::fs::write(&path, content).unwrap();
+        path.to_str().unwrap().to_owned()
+    })
+}
+
+/// A TLS failure names which side refused which certificate: a CA that did
+/// not sign the gateway's certificate, or a client certificate the gateway
+/// does not accept. Neither reaches the gateway's API.
+#[tokio::test]
+async fn a_tls_failure_names_the_refused_certificate() {
+    let directory = tempfile::tempdir().unwrap();
+    let (fixture, forward) = forwarded(directory.path()).await;
+    let unrelated = tempfile::tempdir().unwrap();
+    let [other_ca, other_certificate, other_key] = unrelated_tls(unrelated.path());
+    let [ca, certificate, key] = forward.tls.clone();
+    let rows = fixture_rows("hermes-auth");
+    let (_, workspace) = rows.iter().find(|(kind, _)| *kind == "workspace").unwrap();
+    // The fixture's certificate names 127.0.0.1, not localhost.
+    let elsewhere = forward.endpoint.replace("127.0.0.1", "localhost");
+    for (case, endpoint, tls, expected) in [
+        (
+            "an untrusted server certificate",
+            forward.endpoint.clone(),
+            [other_ca, certificate.clone(), key.clone()],
+            "the gateway's TLS server certificate is not signed by the configured certificate authority",
+        ),
+        (
+            "a server certificate for another host",
+            elsewhere,
+            [ca.clone(), certificate, key],
+            "the gateway's TLS server certificate does not name the endpoint's host",
+        ),
+        (
+            "a refused client certificate",
+            forward.endpoint.clone(),
+            [ca, other_certificate, other_key],
+            "the gateway refused the TLS client certificate",
+        ),
+    ] {
+        let client = Forward {
+            endpoint,
+            tls,
+            ..forward.clone()
+        }
+        .client()
+        .await;
+        let error = client.ensure("workspace", workspace).await.error();
+        assert_eq!(
+            error.as_ref().map(ToString::to_string).as_deref(),
+            Some(expected),
+            "{case}: {error:?}"
+        );
+    }
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+}
+
 /// A provider's credential variable through a managed Kubernetes gateway
 /// resolves from this process's environment, as it does on a direct
 /// connection. The forward holds only the gateway's own credentials.

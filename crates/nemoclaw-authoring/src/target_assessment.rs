@@ -34,12 +34,12 @@ pub struct DiscoveryAssessment {
 
 /// Read the target from SDK-valid desired state.
 pub(crate) fn target_of(document: &Document) -> Result<Target, Diagnostics> {
-    let [_] = document.spec.sandboxes.as_slice() else {
+    if crate::journey_definition::only_sandbox(document).is_none() {
         return Err(diagnostic(
             "sandbox",
             "guided discovery requires one sandbox",
         ));
-    };
+    }
     Ok(Target {
         engine: match &document.spec.gateway {
             Gateway::Managed(gateway) => gateway.engine.clone(),

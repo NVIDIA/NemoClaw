@@ -63,21 +63,25 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         );
     }
     for name in ["Spec", "Sandbox"] {
-        property(
-            &mut defs[name],
-            "inferences",
-            json!({"propertyNames": {"pattern": c::SLUG}}),
-        );
-        property(
-            &mut defs[name],
-            "harnesses",
-            json!({"propertyNames": {"pattern": c::SLUG}}),
-        );
+        for collection in ["inferences", "harnesses", "inferenceProviders"] {
+            property(
+                &mut defs[name],
+                collection,
+                json!({"propertyNames": {"pattern": c::SLUG}}),
+            );
+        }
     }
     property(
         &mut defs["Spec"],
         "services",
         json!({"propertyNames": {"pattern": c::SLUG}}),
+    );
+    // OpenShell validates exposure names at creation; NemoClaw only bounds
+    // the count it would reject (32 per sandbox).
+    property(
+        &mut defs["Sandbox"],
+        "serviceExposures",
+        json!({"maxProperties": 32}),
     );
     property(
         &mut defs["Agent"],
@@ -93,14 +97,18 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "integrationRefs",
         json!({"uniqueItems": true, "items": {"type": "string", "pattern": c::SLUG}}),
     );
-    for name in ["Metadata", "InferenceProvider", "Sandbox", "Agent"] {
+    for name in ["Metadata", "InlineInferenceProvider", "Agent"] {
         property(
             defs.get_mut(name).unwrap(),
             "name",
             json!({"pattern": c::SLUG}),
         );
     }
-    property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
+    property(
+        &mut defs["Metadata"],
+        "uid",
+        json!({"pattern": if normalized { c::UUID } else { c::UUID_INPUT }}),
+    );
     // Integration kinds are inlined in Integration's variants.
     for variant in defs["Integration"]["oneOf"]
         .as_array_mut()
@@ -126,7 +134,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 "pattern": c::ENV,
                 "not": {"anyOf": [
                     {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"}
                 ]},
                 "x-nemoclaw-error": format!("{kind} reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls")
             }),
@@ -160,7 +168,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "uniqueItems": true,
             "items": {
                 "type": "string", "minLength": 1, "maxLength": 253,
-                "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])"
+                "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$"
             },
             "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
         }),
@@ -176,7 +184,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 "not": {"anyOf": [
                     reserved,
                     {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"}
                 ]}
             },
             "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
@@ -192,7 +200,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         authentication,
         "caConfigMap",
         json!({
-            "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])",
+            "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
             "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         }),
     );
@@ -216,7 +224,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     property(
         &mut defs["Spec"],
         "sandboxes",
-        json!({"minItems":1,"maxItems":32}),
+        json!({"minProperties":1,"maxProperties":32,"propertyNames": {"pattern": c::SLUG}}),
     );
     defs["Sandbox"]["allOf"] = json!([]);
     optional_string(
@@ -266,7 +274,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             {"required": ["harnessRef"], "not": {"required": ["harness"]}}
         ]}));
     let native_identifier =
-        json!({"minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f]+$(?![\\s\\S])"});
+        json!({"minLength":1,"maxLength":256,"pattern":"^[^\\x00-\\x1f\\x7f]+$"});
     let allow = &mut defs["AgentTools"]["properties"]["allow"];
     allow["items"] = json!({"type":"string"});
     allow["items"]
@@ -380,19 +388,29 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         }
     }
 
-    let provider = &mut defs["InferenceProvider"];
-    property(provider, "serviceRef", json!({"pattern": c::SLUG}));
-    provider["if"] = json!({"required": ["serviceRef"]});
-    provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
-    provider["else"] =
-        json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
-    provider["allOf"] = json!([
-        {"if": {"required":["api"]}, "then": {
-            "if": at("api", json!({"const":"anthropic-messages"}), true),
-            "then": at("provider", json!({"const":"anthropic"}), false),
-            "else": at("provider", json!({"const":"openai"}), false)
-        }}
-    ]);
+    // A client certificate is presented with its key.
+    defs["TLS"]["dependentRequired"] = json!({"certificate": ["key"], "key": ["certificate"]});
+    // A kubeconfig is used with its context, and its exec plugin's variables
+    // need it; without both, clients use the pod's service account.
+    defs["ManagedKubernetes"]["dependentRequired"] = json!({
+        "kubeconfig": ["context"], "context": ["kubeconfig"], "environment": ["kubeconfig"]
+    });
+
+    // An inline definition flattens the same connection fields beside its name.
+    for name in ["InferenceProvider", "InlineInferenceProvider"] {
+        let provider = &mut defs[name];
+        property(provider, "serviceRef", json!({"pattern": c::SLUG}));
+        provider["if"] = json!({"required": ["serviceRef"]});
+        provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
+        provider["else"] = json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
+        provider["allOf"] = json!([
+            {"if": {"required":["api"]}, "then": {
+                "if": at("api", json!({"const":"anthropic-messages"}), true),
+                "then": at("provider", json!({"const":"anthropic"}), false),
+                "else": at("provider", json!({"const":"openai"}), false)
+            }}
+        ]);
+    }
     defs["AgentExecution"]["minProperties"] = json!(1);
     crate::services::constrain_schema(defs, normalized);
 
@@ -412,8 +430,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     // a default; image metadata stands in for engine inspection only there.
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
-        "then": at("spec/sandboxes/[]/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
-        "else": at("spec/sandboxes/[]/image", forbid(&["metadata"]), false)
+        "then": at("spec/sandboxes/*/image", json!({"required": ["ref", "metadata"], "properties": {"ref": {"pattern": c::IMAGE}}}), true),
+        "else": at("spec/sandboxes/*/image", forbid(&["metadata"]), false)
     }));
     root["allOf"].as_array_mut().unwrap().push(json!({
         "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
@@ -431,7 +449,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+        "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
@@ -440,7 +458,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
         "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
         "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
-        "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
+        "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
         "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
     ]);
 }

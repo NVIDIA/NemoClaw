@@ -7,16 +7,16 @@ use serde_json::json;
 fn closed_selectors_reject_unknown_values_and_harnesses_reject_malformed_identifiers() {
     assert!(serde_json::from_value::<Harness>(json!({"kind":" \t"})).is_err());
     assert!(serde_json::from_value::<Runtime>(json!({"provider":"unknown"})).is_err());
-    assert!(
-        serde_json::from_value::<InferenceProvider>(json!({"name":"model", "provider":"unknown"}))
-            .is_err()
-    );
+    assert!(serde_json::from_value::<InferenceProvider>(json!({"provider":"unknown"})).is_err());
 }
 
 #[test]
 fn required_selectors_are_not_silently_defaulted() {
     assert!(serde_json::from_value::<Harness>(json!({})).is_err());
-    assert!(serde_json::from_value::<InferenceProvider>(json!({"name":"model"})).is_err());
+    assert!(
+        serde_json::from_value::<InferenceProvider>(json!({"endpoint":"https://example.com/v1"}))
+            .is_err()
+    );
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn the_runtime_is_chosen_once_on_the_gateway() {
     }
     // A sandbox no longer selects its own runtime.
     let mut input = base;
-    input["spec"]["sandboxes"][0]["runtime"] = json!({"provider": "docker"});
+    input["spec"]["sandboxes"]["assistant"]["runtime"] = json!({"provider": "docker"});
     assert!(!validator.is_valid(&input));
     assert!(Document::parse(input.to_string().as_bytes()).is_err());
 }
@@ -164,7 +164,8 @@ fn opaque_fabric_identifiers_preserve_owner_valid_long_and_control_values() {
         assert_eq!(catalog.adapters[0].adapter_id(), id);
         let mut input: serde_json::Value =
             serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-        input["spec"]["sandboxes"][0]["harness"]["kind"] = json!(catalog.adapters[0].adapter_id());
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+            json!(catalog.adapters[0].adapter_id());
         assert!(
             validator.is_valid(&input),
             "schema rejected Fabric identifier"
@@ -174,7 +175,7 @@ fn opaque_fabric_identifiers_preserve_owner_valid_long_and_control_values() {
         let restored = Document::parse(encoded.as_bytes()).unwrap();
         assert_eq!(
             restored
-                .sandbox_harness(&restored.spec.sandboxes[0])
+                .sandbox_harness(restored.sandbox("assistant").unwrap())
                 .unwrap()
                 .kind
                 .as_str(),

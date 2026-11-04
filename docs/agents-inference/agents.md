@@ -42,7 +42,8 @@ An agent's model choices do not restrict other processes within its sandbox beyo
 
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
-`ID` is the agent's `runtime_id`, recorded in the deployment's OpenTofu state; the [OpenClaw example](#run-one-headless-openclaw-request) reads it.
+`NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.
+Plan and apply print this command for each agent with both filled in, and JSON results report them under `agents`; see [invoke an agent](interfaces.md#invoke-an-agent).
 Use `--input -` to read the value from stdin instead; see the [bridge commands](../../internal-docs/design/fabric-management.md#bridge-commands).
 Fabric receives the value unchanged; the bundled adapters use a string as the prompt and send any other value as its JSON text.
 A request can incur inference charges and affect retained agent history.

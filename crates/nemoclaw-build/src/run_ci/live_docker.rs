@@ -6,7 +6,6 @@
 use super::*;
 use nemoclaw_build::ci::live::{self, GatewayInputs};
 
-const ENGINE: &str = "unix:///var/run/docker.sock";
 const UID_LABEL: &str = "nemoclaw.nvidia.com/uid";
 
 fn docker() -> Command {
@@ -33,6 +32,27 @@ fn by_digest(repository: &str, tag: &str) -> Result<String> {
         &format!("{repository}:{tag}"),
     ])?;
     Ok(format!("{repository}@{id}"))
+}
+
+/// Where the pinned OpenShell CLI is installed, by its archive's checksum.
+fn openshell_path(pins: &Pins, platform: &str) -> Result<PathBuf> {
+    let artifact = artifact(pins, platform, "openshell")?;
+    Ok(std::path::absolute(
+        Path::new(".tools")
+            .join(format!("openshell-{}", &artifact.sha256[..12]))
+            .join("openshell"),
+    )?)
+}
+
+/// Install the pinned OpenShell CLI, verified by checksum, unless it is there.
+pub(super) async fn install_openshell(pins: &Pins, platform: &str) -> Result<()> {
+    let path = openshell_path(pins, platform)?;
+    if !path.is_file() {
+        let bytes = download(artifact(pins, platform, "openshell")?).await?;
+        let directory = path.parent().ok_or("the OpenShell CLI has no directory")?;
+        ci::install_openshell(&bytes, directory)?;
+    }
+    Ok(())
 }
 
 fn ollama_base() -> Result<String> {
@@ -169,7 +189,7 @@ fn prepare(
     platform: &str,
     bundle: &Path,
     inputs: &Path,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
     owned: &mut Owned,
 ) -> Result<Vec<(String, String)>> {
     if !platform.starts_with("linux_") {
@@ -198,17 +218,25 @@ fn prepare(
     let (target, harness) = live_images::agent();
     let names = live_images::names();
     match images {
-        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
-        None => {
+        live_images::Source::Archive(archive) => {
+            live_images::load(archive, &prefix, &names, &mut owned.images)?
+        }
+        live_images::Source::Commit(commit) => {
+            live_images::pull(commit, platform, &prefix, &mut owned.images)?
+        }
+        live_images::Source::Build => {
             owned
                 .images
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
+            live_images::build_hermes(platform, &prefix)?;
+            live_images::build_deepagents_code(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
-            live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
+    let hermes = by_digest(&prefix, live_images::HERMES)?;
+    let deepagents_code = by_digest(&prefix, live_images::DEEPAGENTS_CODE)?;
     // The lifecycle runs an image derived from the reference image, so it
     // also checks that derived images deploy.
     live_images::build_derived(&prefix)?;
@@ -261,13 +289,6 @@ fn prepare(
         owned.uids.push(uid);
         Ok(path)
     };
-    // The dummy reports native health, so its whole lifecycle completes.
-    let lifecycle = document_for(
-        "live-dummy",
-        &dummy,
-        "org.nemoclaw.dummy",
-        serde_json::json!({"reply": "dummy-reply"}).as_object(),
-    )?;
     let mut document = |name: &str| document_for(name, &agent, harness, None);
     // Each gateway test refuses resources from an earlier run, so each gets
     // fresh documents: recovery, an isolation pair, and profile revisions.
@@ -275,20 +296,48 @@ fn prepare(
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
+    // OpenClaw's, Hermes's and Deep Agents Code's interfaces share one gateway
+    // and model stand-in.
+    let interfaces = {
+        let uid = live::uuid()?;
+        let subnet = live::free_subnet(&used, &subnets)?;
+        subnets.push(subnet.clone());
+        let path = inputs.join("live-interfaces.yaml");
+        fs::write(
+            &path,
+            live::interfaces_document(&live::InterfacesInputs {
+                name: "live-interfaces",
+                uid: &uid,
+                port: live::free_port()?,
+                subnet: &subnet,
+                openclaw: &agent,
+                hermes: &hermes,
+                deepagents_code: &deepagents_code,
+                model_port: live::free_port()?,
+            }),
+        )?;
+        owned.uids.push(uid);
+        path
+    };
+    // The dummy reports native health, so its whole HCL E2E lifecycle
+    // completes. Its case is bound to this run like the documents above.
+    let dummy_case = {
+        let uid = live::uuid()?;
+        let subnet = live::free_subnet(&used, &subnets)?;
+        subnets.push(subnet.clone());
+        let path = inputs.join(format!("{DUMMY_CASE}.yaml"));
+        let template = fs::read_to_string(
+            Path::new("crates/nemoclaw-e2e/cases").join(format!("{DUMMY_CASE}.yaml")),
+        )?;
+        let port = format!("http://127.0.0.1:{}", live::free_port()?);
+        fs::write(&path, dummy_case(&template, &uid, &port, &subnet, &dummy)?)?;
+        owned.uids.push(uid);
+        path
+    };
     let path = |path: &Path| path.display().to_string();
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
-        ("NEMOCLAW_TEST_CACHE_ENGINE".into(), ENGINE.into()),
-        ("NEMOCLAW_TEST_CACHE_IMAGE".into(), agent.clone()),
-        (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE".into(),
-            by_digest(&prefix, "proxy-a")?,
-        ),
-        (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE".into(),
-            by_digest(&prefix, "proxy-b")?,
-        ),
         (
             "NEMOCLAW_TEST_GATEWAY_STATE".into(),
             path(&inputs.join("recovery-state")),
@@ -298,7 +347,17 @@ fn prepare(
             "NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT".into(),
             path(&second),
         ),
-        ("NEMOCLAW_TEST_DUMMY_DOCUMENT".into(), path(&lifecycle)),
+        ("NEMOCLAW_HCL_CASE".into(), DUMMY_CASE.into()),
+        ("NEMOCLAW_HCL_DOCUMENT".into(), path(&dummy_case)),
+        ("NEMOCLAW_HCL_RUN".into(), path(&inputs.join("hcl"))),
+        (
+            "NEMOCLAW_TEST_INTERFACES_DOCUMENT".into(),
+            path(&interfaces),
+        ),
+        (
+            "NEMOCLAW_TEST_OPENSHELL".into(),
+            path(&openshell_path(pins, platform)?),
+        ),
     ]
     .into_iter()
     .chain([(
@@ -306,6 +365,29 @@ fn prepare(
         [path(&recovery), path(&first), path(&profiles)].join("\n"),
     )])
     .collect())
+}
+
+/// The HCL E2E case that `hcl_live::case` runs in this suite.
+const DUMMY_CASE: &str = "docker-dummy";
+
+/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image.
+fn dummy_case(
+    template: &str,
+    uid: &str,
+    endpoint: &str,
+    subnet: &str,
+    image: &str,
+) -> Result<String> {
+    let zero = format!("nc-live-dummy@sha256:{}", "0".repeat(64));
+    Ok(live::bind_case(
+        template,
+        &[
+            ("0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10", uid),
+            ("http://127.0.0.1:17697", endpoint),
+            ("172.30.122.0/24", subnet),
+            (&zero, image),
+        ],
+    )?)
 }
 
 /// Internal: the three gateway documents, in [`GATEWAY_TESTS`] order.
@@ -324,7 +406,7 @@ pub(super) fn run_live_docker(
     platform: &str,
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
@@ -407,6 +489,27 @@ pub(super) fn run_live_docker(
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    fn the_dummy_case_binds_its_identity_gateway_and_image() {
+        let template = include_str!("../../../nemoclaw-e2e/cases/docker-dummy.yaml");
+        let bound = super::dummy_case(
+            template,
+            "u-1",
+            "http://127.0.0.1:1",
+            "172.30.9.0/24",
+            "i@1",
+        )
+        .unwrap();
+        for line in [
+            "  uid: u-1",
+            "    networkCIDR: 172.30.9.0/24",
+            "        ref: i@1",
+        ] {
+            assert!(bound.lines().any(|bound| bound == line), "{line}");
+        }
+        assert!(nemoclaw_build::ci::live::bind_case("uid: x", &[("y", "z")]).is_err());
+    }
+
     use super::*;
 
     /// A Docker CLI over `kind id key=value [running]` lines. Like Docker, it

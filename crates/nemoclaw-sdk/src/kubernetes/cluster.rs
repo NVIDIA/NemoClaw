@@ -3,9 +3,10 @@
 //! Objects a deployment creates, recognised by the UID recorded at creation.
 //!
 //! An object is ours only if its UID matches the recorded one and it carries
-//! the deployment's owner label. Nothing that already exists is adopted, and
-//! deletes send the recorded UID as a precondition, so a replacement made by
-//! someone else is never removed.
+//! the deployment's owner label. Apart from the target namespace, which is
+//! bound by UID alone, nothing that already exists is adopted, and deletes
+//! send the recorded UID as a precondition, so a replacement made by someone
+//! else is never removed.
 
 use crate::ObservationError;
 use kube::{
@@ -15,6 +16,9 @@ use kube::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Why an object at an address this deployment wants is refused.
+pub const NOT_ADOPTED: &str = "already exists, and this deployment does not adopt it";
 
 /// Label holding the deployment's `metadata.uid`.
 pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
@@ -50,6 +54,20 @@ impl Owned {
             name: text("/metadata/name"),
             uid: uid.into(),
         }
+    }
+
+    /// The object's kind and address, such as `Secret agents/key`.
+    pub fn address(&self) -> String {
+        if self.namespace.is_empty() {
+            format!("{} {}", self.kind, self.name)
+        } else {
+            format!("{} {}/{}", self.kind, self.namespace, self.name)
+        }
+    }
+
+    /// A binding mismatch that names this object.
+    pub fn changed(&self, what: &str) -> ObservationError {
+        ObservationError::BindingChanged(format!("{} {what}", self.address()).into())
     }
 }
 
@@ -107,8 +125,8 @@ impl Cluster {
             .map_err(failure)
     }
 
-    /// Create `object` with the owner and generation labels. Fails with
-    /// `BindingMismatch` if an object already exists at that address.
+    /// Create `object` with the owner and generation labels. Fails with a
+    /// binding mismatch naming the object if one already exists at that address.
     pub async fn create(&self, mut object: Value) -> Result<Owned, ObservationError> {
         let labels = object
             .pointer_mut("/metadata")
@@ -126,32 +144,48 @@ impl Cluster {
             .api(&address.api_version, &address.kind, &address.namespace)
             .create(&PostParams::default(), &object)
             .await
-            .map_err(failure)?;
+            .map_err(|error| match error {
+                kube::Error::Api(status) if status.code == 409 => address.changed(NOT_ADOPTED),
+                error => failure(error),
+            })?;
         let uid = created.metadata.uid.ok_or(ObservationError::Incomplete)?;
         Ok(Owned { uid, ..address })
     }
 
-    /// The object, if it is still the one recorded in `owned`.
-    pub async fn verify(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
+    /// The object, if it still has the UID recorded in `owned`, whoever
+    /// labelled it. The bound namespace is checked this way.
+    pub async fn verify_uid(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
         let object = self
             .get(owned)
             .await?
-            .ok_or(ObservationError::BindingMismatch)?;
-        let ours = object.metadata.uid.as_deref() == Some(owned.uid.as_str())
-            && object
-                .metadata
-                .labels
-                .as_ref()
-                .and_then(|labels| labels.get(OWNER_LABEL))
-                == Some(&self.owner);
-        if !ours {
-            return Err(ObservationError::BindingMismatch);
+            .ok_or_else(|| owned.changed("is missing"))?;
+        let uid = object.metadata.uid.as_deref().unwrap_or("");
+        if uid != owned.uid {
+            return Err(owned.changed(&format!(
+                "was replaced: recorded UID {}, found {uid}",
+                owned.uid
+            )));
         }
         Ok(object)
     }
 
-    /// Delete the recorded object. Succeeds if it is already gone; fails with
-    /// `BindingMismatch` if another object has taken its address.
+    /// The object, if it is still the one recorded in `owned`.
+    pub async fn verify(&self, owned: &Owned) -> Result<DynamicObject, ObservationError> {
+        let object = self.verify_uid(owned).await?;
+        let labelled = object
+            .metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get(OWNER_LABEL))
+            == Some(&self.owner);
+        if !labelled {
+            return Err(owned.changed("no longer carries this deployment's owner label"));
+        }
+        Ok(object)
+    }
+
+    /// Delete the recorded object. Succeeds if it is already gone; fails with a
+    /// binding mismatch naming the object if another object has taken its address.
     pub async fn delete(&self, owned: &Owned) -> Result<(), ObservationError> {
         let parameters = DeleteParams {
             preconditions: Some(Preconditions {
@@ -167,6 +201,9 @@ impl Cluster {
         {
             Ok(_) => Ok(()),
             Err(kube::Error::Api(status)) if status.code == 404 => Ok(()),
+            Err(kube::Error::Api(status)) if status.code == 409 => {
+                Err(owned.changed("was replaced, so it is kept"))
+            }
             Err(error) => Err(failure(error)),
         }
     }

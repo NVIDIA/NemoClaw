@@ -97,7 +97,7 @@ data ollama_runtime (version 0)
     gpu_memory_utilization: number, optional
       > Optional fraction of observed dedicated GPU memory.
     host_reserve_gib: number, optional
-      > Host memory reserve excluded from serving.
+      > Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile.
     min_available_gib: number, optional
       > Available-memory threshold used by the bounded runtime watchdog.
     min_free_gib: number, optional

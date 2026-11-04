@@ -4,7 +4,7 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    Capabilities, JourneyQuestionKind, JourneyState, discovery_queries,
+    Capabilities, JourneyQuestionKind, JourneyState, credential_queries, discovery_queries,
     inference_request_for_document,
 };
 use nemoclaw_discovery::Direct;
@@ -53,7 +53,7 @@ pub(crate) async fn run(
     state: JourneyState,
     cancel: &CancellationToken,
     discover: bool,
-) -> Result<Option<Document>, Box<dyn std::error::Error>> {
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::enter()?;
     let area = crossterm::terminal::size().map(|(width, height)| Rect::new(0, 0, width, height))?;
     let brand =
@@ -73,10 +73,13 @@ pub(crate) async fn run(
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
-        // Learn what this machine can run before the first question, so early
-        // choices can use it. Each read is attempted once, even when it fails.
-        if discover {
-            let queries = local_engine_probe(&wizard);
+        // Ask the target what the journey needs at this point: this machine's
+        // engines before the first question, the model catalog at its
+        // question, and credentials at review. The answers depend only on the
+        // state and observations, which change only when a render is pending.
+        // Each read is attempted once, even when it fails.
+        if discover && needs_render {
+            let queries = target_probe(&wizard);
             if !queries.is_empty() {
                 terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
                 if !ask_target(
@@ -91,32 +94,14 @@ pub(crate) async fn run(
                 {
                     return Ok(None);
                 }
-                needs_render = true;
             }
-        }
-        // Resolver failures are rendered by the view; keep the loop alive so
-        // the user can go back instead of exiting the TUI.
-        if discover && let Some(query) = model_catalog_probe(&wizard) {
-            if !ask_target(
-                &mut wizard,
-                read_target,
-                vec![query],
-                cancel,
-                &mut queued_events,
-                poll_pending_event,
-            )
-            .await?
-            {
-                return Ok(None);
-            }
-            needs_render = true;
         }
         if needs_render {
             terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
             needs_render = false;
         }
         if wizard.accepted {
-            return Ok(Some(wizard.document()?));
+            return Ok(Some(wizard.saved_yaml()?));
         }
         let event = if let Some(event) = queued_events.pop_front() {
             event
@@ -311,6 +296,32 @@ pub(super) fn local_engine_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> 
         .map(DiscoveryQuery::Engine)
         .collect();
     wizard.observations().missing(&queries)
+}
+
+/// Every read the journey needs from the target now and has not made.
+fn target_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
+    let mut queries = local_engine_probe(wizard);
+    queries.extend(model_catalog_probe(wizard));
+    queries.extend(credential_probe(wizard));
+    queries
+}
+
+/// The current document's credential references, once the journey is at
+/// review and each has not been checked. Review is where availability shows.
+pub(super) fn credential_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
+    if !wizard.reviewing() {
+        return Vec::new();
+    }
+    let Some(document) = wizard
+        .resolution()
+        .ok()
+        .and_then(|resolution| resolution.assessment().document().cloned())
+    else {
+        return Vec::new();
+    };
+    wizard
+        .observations()
+        .missing(&credential_queries(&document))
 }
 
 /// The model catalog of the route being asked about, once the journey is at its

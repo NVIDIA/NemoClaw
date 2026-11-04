@@ -16,6 +16,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+async-trait.workspace = true
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 tar.workspace = true
 openshell-core.workspace = true
@@ -27,6 +28,7 @@ http.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 rustls.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 similar = "3.2.0"
 tempfile.workspace = true

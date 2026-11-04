@@ -19,7 +19,7 @@ Empty or zero selects a default only where stated.
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
-- Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.
+- Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.
 - Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.
 - Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.
 - The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.
@@ -28,7 +28,7 @@ Empty or zero selects a default only where stated.
 - Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.
 - Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.
 - The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.
-- The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
+- The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.
 - Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation.
 
 ## Document
@@ -56,7 +56,7 @@ Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agent`
+- `spec.sandboxes.{key}.agent`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -76,7 +76,7 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agent.auth`
+- `spec.sandboxes.{key}.agent.auth`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -91,8 +91,8 @@ Guide: [Agent runtimes](../agents-inference/agents.md).
 Paths:
 
 - `spec.harnesses.{key}.execution`
-- `spec.sandboxes[].harness.execution`
-- `spec.sandboxes[].harnesses.{key}.execution`
+- `spec.sandboxes.{key}.harness.execution`
+- `spec.sandboxes.{key}.harnesses.{key}.execution`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -106,11 +106,11 @@ Guide: [Agent runtimes](../agents-inference/agents.md).
 
 Paths:
 
-- `spec.sandboxes[].agent.tools`
+- `spec.sandboxes.{key}.agent.tools`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\u0000-\u001f\u007f]+$(?![\s\S])`; minimum characters 1; maximum characters 256. |
+| `allow` | array of string | Yes | — | Native tool identifiers. Fabric validates availability and semantics. Constraints: minimum items 1; maximum items 128; items: pattern `^[^\x00-\x1f\x7f]+$`; minimum characters 1; maximum characters 256. |
 
 ## ApiAuthStyle
 
@@ -121,8 +121,8 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 Paths:
 
 - `spec.integrations.{key}.authStyle`
-- `spec.sandboxes[].agent.integrations.{key}.authStyle`
-- `spec.sandboxes[].integrations.{key}.authStyle`
+- `spec.sandboxes.{key}.agent.integrations.{key}.authStyle`
+- `spec.sandboxes.{key}.integrations.{key}.authStyle`
 
 Accepted input: string.
 
@@ -136,11 +136,25 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
-- `spec.sandboxes[].agent.auth.method`
+- `spec.sandboxes.{key}.agent.auth.method`
 
 Accepted input: string.
 
 Constraints: `"api-key"`.
+
+## AuthorizationMode
+
+OpenShell's service authorization modes.
+
+Guide: [Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+
+Paths:
+
+- `spec.sandboxes.{key}.serviceExposures.{key}.authorizationMode`
+
+Accepted input: string.
+
+Constraints: `"STRIP"` or `"BEARER_PASSTHROUGH"`.
 
 ## Compatibility
 
@@ -155,7 +169,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `architecture` | string | Yes | — | Execution host CPU architecture. Constraints: `"arm64"` or `"amd64"`. |
-| `gpu` | string | Yes | — | GPU name that must equal the observed device name. Constraints: minimum characters 1. |
+| `gpu` | string | Yes | — | GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory. Constraints: minimum characters 1. |
 | `imageLabels` | map of string | Yes | — | Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1. Constraints: keys: pattern `^org\.nemoclaw\.`; values: minimum characters 1; maximum characters 256. |
 | `minDriverMajor` | integer | Yes | — | Minimum NVIDIA driver major version. Constraints: minimum 1; maximum 10000. |
 | `minHostMemoryGiB` | integer | Yes | — | Minimum total host memory in GiB. Constraints: minimum 1; maximum 4096. |
@@ -236,8 +250,8 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `path` | any JSON value | No | — | HTTP GET path on the container's listener. Success requires HTTP 200; redirects are not followed. |
-| `runtimeStatus` | any JSON value | No | — | Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report. |
+| `path` | string | No | — | HTTP GET path on the container's listener. Success requires HTTP 200; redirects are not followed. |
+| `runtimeStatus` | string | No | — | Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report. |
 | `timeoutSeconds` | integer | No | — | Startup wait in seconds, 1–3600. Omission selects 300. Constraints: minimum 1; maximum 3600. |
 
 ## DedicatedHardware
@@ -265,7 +279,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit`
+- `spec.sandboxes.{key}.network.policy.explicit`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -283,7 +297,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy`
+- `spec.sandboxes.{key}.network.policy`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -347,11 +361,11 @@ Paths:
 - `spec.gateway.tls.ca`
 - `spec.gateway.tls.certificate`
 - `spec.gateway.tls.key`
-- `spec.sandboxes[].image.metadata`
+- `spec.sandboxes.{key}.image.metadata`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `env` | string | Yes | — | Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `env` | string | Yes | — | Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## Gateway
 
@@ -394,7 +408,7 @@ An existing gateway managed outside this deployment.
 | `engine` | string | No | — | Engine containing Docker or Podman sandbox images, used only for image metadata inspection. Required for their deployment planning; omission permits retained-state teardown. Kubernetes and OpenShift use image.metadata instead. |
 | `management` | string | Yes | — | Whether this deployment manages the gateway. Constraints: `"external"`. |
 | `runtime` | [Runtime](#runtime) | No | — | Compute driver the existing gateway runs; omission selects Docker. Planning checks it against the driver the gateway reports. |
-| `tls` | [TLS](#tls) | No | — | Optional mutual TLS references for an external HTTPS gateway. |
+| `tls` | [TLS](#tls) | No | — | Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS. |
 
 ## Grant
 
@@ -404,7 +418,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -434,8 +448,8 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 Paths:
 
 - `spec.harnesses.{key}`
-- `spec.sandboxes[].harness`
-- `spec.sandboxes[].harnesses.{key}`
+- `spec.sandboxes.{key}.harness`
+- `spec.sandboxes.{key}.harnesses.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -452,7 +466,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 
 Paths:
 
-- `spec.sandboxes[].image`
+- `spec.sandboxes.{key}.image`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -483,8 +497,8 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 Paths:
 
 - `spec.inferences.{key}`
-- `spec.sandboxes[].agent.inference`
-- `spec.sandboxes[].inferences.{key}`
+- `spec.sandboxes.{key}.agent.inference`
+- `spec.sandboxes.{key}.inferences.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -499,11 +513,11 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[].api`
+- `spec.inferenceProviders.{key}.api`
 - `spec.inferences.{key}.routes[].provider.api`
-- `spec.sandboxes[].agent.inference.routes[].provider.api`
-- `spec.sandboxes[].inferenceProviders[].api`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.api`
+- `spec.sandboxes.{key}.agent.inference.routes[].provider.api`
+- `spec.sandboxes.{key}.inferenceProviders.{key}.api`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].provider.api`
 
 Accepted input: string.
 
@@ -517,18 +531,35 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 
 Paths:
 
-- `spec.inferenceProviders[]`
-- `spec.inferences.{key}.routes[].provider`
-- `spec.sandboxes[].agent.inference.routes[].provider`
-- `spec.sandboxes[].inferenceProviders[]`
-- `spec.sandboxes[].inferences.{key}.routes[].provider`
+- `spec.inferenceProviders.{key}`
+- `spec.sandboxes.{key}.inferenceProviders.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
 | `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
 | `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
-| `name` | string | Yes | — | Provider name referenced by model choices. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+| `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
+| `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
+
+## InlineInferenceProvider
+
+Inference definition owned by one route, with the fields of an inferenceProviders entry and its own name.
+
+Guide: [Inference configuration](../agents-inference/inference.md).
+
+Paths:
+
+- `spec.inferences.{key}.routes[].provider`
+- `spec.sandboxes.{key}.agent.inference.routes[].provider`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].provider`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `api` | [InferenceApi](#inferenceapi) | No | — | Request API. Omission selects anthropic-messages for Anthropic providers and openai-completions for OpenAI providers. NemoClaw uses it to read the endpoint's model catalog; agents use the protocol their adapter selects for the provider. |
+| `credential` | [SecretRef](#secretref) | No | — | Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef. |
+| `endpoint` | string | Without serviceRef | — | Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef. |
+| `name` | string | Yes | — | Provider name. Must not shadow an enclosing definition. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `provider` | string | Yes | — | OpenShell provider implementation. Must match the selected API family. Constraints: `"openai"` or `"anthropic"`. |
 | `serviceRef` | string | No | — | Name of a managed service in spec.services. Excludes endpoint and credential. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
@@ -564,8 +595,8 @@ Guide: [Agent runtimes](../agents-inference/agents.md).
 Paths:
 
 - `spec.integrations.{key}`
-- `spec.sandboxes[].agent.integrations.{key}`
-- `spec.sandboxes[].integrations.{key}`
+- `spec.sandboxes.{key}.agent.integrations.{key}`
+- `spec.sandboxes.{key}.integrations.{key}`
 
 Accepted input: object.
 
@@ -606,13 +637,13 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `caConfigMap` | string | No | — | Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer. Constraints: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])`; minimum characters 1; maximum characters 253. |
+| `caConfigMap` | string | No | — | Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer. Constraints: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
 | `profile` | string | Yes | — | `development` generates a scoped local issuer for isolated qualification; `oidc` uses an existing OIDC issuer, configured in spec.gateway.config's openshell.gateway.oidc table. Constraints: `"development"` or `"oidc"`. |
 | `token` | [SecretRef](#secretref) | No | — | Environment reference holding the bearer token NemoClaw sends to the gateway. Required for `oidc`; your identity provider's tooling obtains and refreshes it. |
 
 ## ManagedKubernetes
 
-Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.
+Existing-cluster target for a managed development gateway: an explicit kubeconfig and context, or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -623,11 +654,11 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authentication` | [KubernetesAuthentication](#kubernetesauthentication) | Yes | — | How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer. |
-| `context` | string | Yes | — | Exact kubeconfig context used for every cluster operation. Constraints: pattern `^[^\x00-\x20\x7f]+$(?![\s\S])`; minimum characters 1; maximum characters 253. |
-| `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
-| `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])`; minimum characters 1; maximum characters 253. |
-| `kubeconfig` | [FileRef](#fileref) | Yes | — | Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
-| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])`; minimum characters 1; maximum characters 63. |
+| `context` | string | No | — | Exact kubeconfig context used for every cluster operation. Requires kubeconfig. Constraints: pattern `^[^\x00-\x20\x7f]+$`; minimum characters 1; maximum characters 253. |
+| `environment` | array of string | No | — | Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state. Constraints: maximum items 32; items: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `imagePullSecrets` | array of string | No | — | Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images. Constraints: maximum items 32; items: pattern `^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`; minimum characters 1; maximum characters 253. |
+| `kubeconfig` | [FileRef](#fileref) | No | — | Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved. |
+| `namespace` | string | Yes | — | Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`; minimum characters 1; maximum characters 63. |
 
 ## Manifest
 
@@ -661,7 +692,7 @@ Paths:
 | `freeGateGiB` | integer | No | `12` | Available-memory gate in GiB for minFreeGiB. Must be at least minAvailableGiB after defaults. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
 | `gpuMemoryGiB` | integer | No | — | Total GPU budget in GiB without a recipe. Must be omitted or zero with a recipe, which supplies its own byte budget. Constraints: minimum 0; maximum 96. Omitted or zero stays zero in the document. Without a recipe or gpuMemoryUtilization, the backend uses 16 GiB. A recipe supplies resources.gpuMemoryBytes; gpuMemoryUtilization requires zero here. |
 | `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively. Constraints: minimum 0.05; maximum 0.95. |
-| `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
+| `hostReserveGiB` | integer | No | `32` | Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe. Constraints: `0` or minimum 6; maximum 64. Omitted or zero selects the default. |
 | `kvCacheGiB` | integer | No | `8` | KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag. Constraints: minimum 0. Omitted or zero selects 8 GiB, except gpuMemoryUtilization keeps zero and lets vLLM allocate its cache. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold in GiB that contributes a low-memory sample. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold in GiB, used when available memory is below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
@@ -681,7 +712,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Lowercase deployment name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `uid` | string | Yes | — | Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Constraints: pattern `^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`. |
+| `uid` | string | Yes | — | Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Either case is accepted; NemoClaw stores it lowercase. Constraints: pattern `^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`. |
 
 ## Model
 
@@ -706,7 +737,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network`
+- `spec.sandboxes.{key}.network`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -730,7 +761,7 @@ Paths:
 | `freeGateGiB` | integer | No | `12` | Available-memory gate for the free-memory threshold. Constraints: `0` or minimum 6; maximum 24. Omitted or zero selects the default. |
 | `gpuMemoryGiB` | integer | No | `0` | Fixed serving budget in GiB when utilization is omitted. Omission or zero selects 16 GiB. Constraints: `0` or minimum 0; maximum 96. Omitted or zero stays zero in the document. Without gpuMemoryUtilization, the installer uses 16 GiB. |
 | `gpuMemoryUtilization` | number | No | — | Optional fraction of observed dedicated GPU memory. Constraints: minimum 0.05; maximum 0.95. |
-| `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. Constraints: `0` or minimum 28; maximum 64. Omitted or zero selects the default. |
+| `hostReserveGiB` | integer | No | `32` | Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile. Constraints: `0` or minimum 6; maximum 64. Omitted or zero selects the default. |
 | `minAvailableGiB` | integer | No | `8` | Available-memory threshold used by the bounded runtime watchdog. Constraints: `0` or minimum 6; maximum 16. Omitted or zero selects the default. |
 | `minFreeGiB` | integer | No | `3` | Free-memory threshold used below freeGateGiB. Constraints: `0` or minimum 2; maximum 8. Omitted or zero selects the default. |
 
@@ -775,8 +806,8 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 Paths:
 
 - `spec.inferences.{key}.routes[].overrides`
-- `spec.sandboxes[].agent.inference.routes[].overrides`
-- `spec.sandboxes[].inferences.{key}.routes[].overrides`
+- `spec.sandboxes.{key}.agent.inference.routes[].overrides`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].overrides`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -796,8 +827,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -811,14 +842,14 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -832,8 +863,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.binaries[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.binaries[]`
+- `spec.sandboxes.{key}.network.grants.{key}.binaries[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.binaries[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -847,8 +878,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[]`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -856,7 +887,7 @@ Paths:
 | `allow_encoded_slash` | boolean | No | — | Allow encoded slash path segments when required by the upstream API. |
 | `allowed_ips` | array of string | No | — | Resolved IP addresses or CIDRs allowed by OpenShell destination validation. |
 | `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. Constraints: minimum items 1. |
-| `enforcement` | string | No | — | enforce or audit; omission follows OpenShell defaults. Constraints: `"enforce"` or `"audit"`. |
+| `enforcement` | string | No | — | enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules. Constraints: `"enforce"` or `"audit"`. |
 | `host` | string | No | — | Destination hostname or DNS glob; may be omitted with allowed_ips. |
 | `json_rpc` | [PolicyJsonRpc](#policyjsonrpc) | No | — | JSON-RPC inspection limits. |
 | `mcp` | [PolicyMcp](#policymcp) | No | — | MCP method and tool inspection settings. |
@@ -877,7 +908,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.filesystem_policy`
+- `spec.sandboxes.{key}.network.policy.explicit.filesystem_policy`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -893,8 +924,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].json_rpc`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].json_rpc`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].json_rpc`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -908,7 +939,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.landlock`
+- `spec.sandboxes.{key}.network.policy.explicit.landlock`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -922,10 +953,10 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[]`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[]`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -942,8 +973,8 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].mcp`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].mcp`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].mcp`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].mcp`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -960,7 +991,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.process`
+- `spec.sandboxes.{key}.network.policy.explicit.process`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -975,7 +1006,7 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -991,14 +1022,14 @@ Guide: [Sandbox policy](../security/sandbox-network.md).
 
 Paths:
 
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.grants.{key}.endpoints[].rules[].allow.tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
-- `spec.sandboxes[].network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.grants.{key}.endpoints[].rules[].allow.tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].deny_rules[].tool`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.params.{key}`
+- `spec.sandboxes.{key}.network.policy.explicit.network_policies.{key}.endpoints[].rules[].allow.tool`
 
 Accepted input: string or [PolicyAnyMatcher](#policyanymatcher).
 
@@ -1029,10 +1060,10 @@ Paths:
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `gpuMemoryBytes` | integer | Yes | — | Total serving GPU budget in bytes, including model, caches, and other allocations. Constraints: minimum 4294967296; maximum 4398046511104. |
+| `gpuMemoryBytes` | integer | Yes | — | Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory. Constraints: minimum 4294967296; maximum 4398046511104. |
 | `preparationMemoryGiB` | integer | Yes | — | Preparation memory requirement in GiB, in addition to the service host reserve. Constraints: minimum 1; maximum 4096. |
 | `preparedBytes` | integer | Yes | — | Maximum total prepared-data bytes. Constraints: minimum 1; maximum 1099511627776. |
-| `startupHeadroomGiB` | integer | Yes | — | Additional available-memory headroom in GiB required at startup. Constraints: minimum 0; maximum 4096. |
+| `startupHeadroomGiB` | integer | Yes | — | Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU. Constraints: minimum 0; maximum 4096. |
 
 ## Reuse
 
@@ -1058,14 +1089,14 @@ Guide: [Inference configuration](../agents-inference/inference.md).
 Paths:
 
 - `spec.inferences.{key}.routes[]`
-- `spec.sandboxes[].agent.inference.routes[]`
-- `spec.sandboxes[].inferences.{key}.routes[]`
+- `spec.sandboxes.{key}.agent.inference.routes[]`
+- `spec.sandboxes.{key}.inferences.{key}.routes[]`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `name` | string | Yes | — | Unique lowercase name for this model choice. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `overrides` | [Overrides](#overrides) | Yes | — | Model selection, shared limits, and optional native settings. |
-| `provider` | [InferenceProvider](#inferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
+| `provider` | [InlineInferenceProvider](#inlineinferenceprovider) | No | — | Inline inference definition owned by this route. Excludes providerRef and must not shadow an enclosing definition. |
 | `providerRef` | string | No | — | Name of an enclosing inference provider. Exactly one of providerRef or provider is required. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## Runtime
@@ -1090,7 +1121,7 @@ Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-an
 
 Paths:
 
-- `spec.sandboxes[]`
+- `spec.sandboxes.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1100,11 +1131,11 @@ Paths:
 | `harnessRef` | string | No | — | Name of a visible harness configuration. Excludes inline harness. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `image` | [Image](#image) | For Kubernetes sandboxes | — | Kubernetes requires an explicit immutable agent image compatible with the gateway's runtime user and group IDs. For other drivers, omission selects the generic SDK agent image pin; verify that it contains the selected Fabric adapter. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes. Names must not shadow deployment definitions. |
+| `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions visible to this sandbox's routes through providerRef. Names must not shadow deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `name` | string | Yes | — | Lowercase sandbox name. Constraints: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
+| `serviceExposures` | map of [ServiceExposure](#serviceexposure) | No | — | OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox. Constraints: maximum entries 32. |
 
 ## SearchProvider
 
@@ -1115,8 +1146,8 @@ Guide: [Agent runtimes](../agents-inference/agents.md).
 Paths:
 
 - `spec.integrations.{key}.provider`
-- `spec.sandboxes[].agent.integrations.{key}.provider`
-- `spec.sandboxes[].integrations.{key}.provider`
+- `spec.sandboxes.{key}.agent.integrations.{key}.provider`
+- `spec.sandboxes.{key}.integrations.{key}.provider`
 
 Accepted input: string.
 
@@ -1132,18 +1163,18 @@ Paths:
 
 - `spec.gateway.credential`
 - `spec.gateway.kubernetes.authentication.token`
-- `spec.inferenceProviders[].credential`
+- `spec.inferenceProviders.{key}.credential`
 - `spec.inferences.{key}.routes[].provider.credential`
 - `spec.integrations.{key}.credential`
-- `spec.sandboxes[].agent.inference.routes[].provider.credential`
-- `spec.sandboxes[].agent.integrations.{key}.credential`
-- `spec.sandboxes[].inferenceProviders[].credential`
-- `spec.sandboxes[].inferences.{key}.routes[].provider.credential`
-- `spec.sandboxes[].integrations.{key}.credential`
+- `spec.sandboxes.{key}.agent.inference.routes[].provider.credential`
+- `spec.sandboxes.{key}.agent.integrations.{key}.credential`
+- `spec.sandboxes.{key}.inferenceProviders.{key}.credential`
+- `spec.sandboxes.{key}.inferences.{key}.routes[].provider.credential`
+- `spec.sandboxes.{key}.integrations.{key}.credential`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `env` | string | Yes | — | Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
+| `env` | string | Yes | — | Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls. Constraints: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
 
 ## ServiceAuthentication
 
@@ -1202,8 +1233,8 @@ Managed Ollama daemon and selected model.
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
 | `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
-| `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
-| `publication` | [ServicePublication](#servicepublication) | No | — | Private inference address for an explicitly placed service. |
+| `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |
+| `publication` | [ServicePublication](#servicepublication) | With placement | — | Private inference address reachable by OpenShell. Required with placement. |
 | `serving` | [OllamaServing](#ollamaserving) | No | — | Ollama serving limits. |
 | `updatePolicy` | [ServiceUpdatePolicy](#serviceupdatepolicy) | No | `"Preserve"` | Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed. |
 
@@ -1249,7 +1280,7 @@ Image-owned container with explicit launch settings and bounded readiness.
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
-| `command` | any JSON value | No | — | Optional argument list for the image entrypoint, without implicit shell expansion. |
+| `command` | array of string | No | — | Optional argument list for the image entrypoint, without implicit shell expansion. |
 | `container` | [ContainerExecution](#containerexecution) | No | — | Execution limits. These do not replace the image's model-memory policy. |
 | `data` | [ContainerData](#containerdata) | No | — | Disposable application data. Omission provides /data; destroy removes this volume. Typed model services retain their own storage policy. |
 | `environment` | map of string | No | — | Literal application settings, visible in configuration, plans/state, exports, and Docker inspection. No host-variable expansion or protected credential delivery. Constraints: keys: pattern `^[A-Z_][A-Z0-9_]{0,127}$`. |
@@ -1260,6 +1291,21 @@ Image-owned container with explicit launch settings and bounded readiness.
 | `publication` | [ContainerPublication](#containerpublication) | No | — | Optional loopback or private IPv4 TCP publication. Omission publishes no port. |
 | `readiness` | [ContainerReadiness](#containerreadiness) | No | — | HTTP, managed-runtime status, or image HEALTHCHECK readiness on every apply. |
 | `user` | string | No | `"65532:65532"` | Numeric UID:GID. Omission selects 65532:65532; root requires an explicit 0:0 for images that need it. Constraints: pattern `^[0-9]{1,9}:[0-9]{1,9}$`. |
+
+## ServiceExposure
+
+One OpenShell service exposure: a loopback port the gateway makes reachable.
+
+Guide: [Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway).
+
+Paths:
+
+- `spec.sandboxes.{key}.serviceExposures.{key}`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authorizationMode` | [AuthorizationMode](#authorizationmode) | No | — | How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP. |
+| `targetPort` | integer | Yes | — | Loopback TCP port the service listens on inside the sandbox. Constraints: minimum 1; maximum 65535. |
 
 ## ServiceHardware
 
@@ -1380,7 +1426,7 @@ Paths:
 |---|---|---|---|---|
 | `chunkedPrefill` | boolean | No | `false` | Enable chunked prefill. |
 | `compilation` | [Compilation](#compilation) | No | — | Optional typed compilation settings. Omission selects compilation mode 0 for recipe serving. |
-| `environment` | map of string | No | `{}` | Literal VLLM_* environment values for serving. Do not place credentials here. Constraints: keys: pattern `^VLLM_[A-Z0-9_]*$`; values: pattern `^[^\u0000]*$`; maximum characters 4096. |
+| `environment` | map of string | No | `{}` | Literal VLLM_* environment values for serving. Do not place credentials here. Constraints: keys: pattern `^VLLM_[A-Z0-9_]*$`; values: pattern `^[^\x00]*$`; maximum characters 4096. |
 | `kvCacheDtype` | string | No | `""` | KV cache dtype understood by the pinned vLLM image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
 | `lazyLoading` | boolean | No | `false` | Enable the lazy safetensors loading strategy. |
 | `mambaCacheDtype` | string | No | `""` | Mamba SSM cache dtype understood by the pinned vLLM image. Empty omits the flag. Constraints: maximum characters 256; `""` or pattern `^[a-zA-Z0-9._/][a-zA-Z0-9._/-]*$`. |
@@ -1403,16 +1449,16 @@ Paths:
 |---|---|---|---|---|
 | `gateway` | [Gateway](#gateway) | Yes | — | OpenShell gateway connection or managed gateway settings. |
 | `harnesses` | map of [Harness](#harness) | No | — | Named harness configurations available through harnessRef. Selecting a definition reuses configuration; runtime processes belong to each sandbox. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
-| `inferenceProviders` | array of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes. Unselected definitions create no resources or credential requirements. |
+| `inferenceProviders` | map of [InferenceProvider](#inferenceprovider) | No | — | Named inference definitions available to sandbox routes through providerRef. Unselected definitions create no resources or credential requirements. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions shared by agents through integrationRefs. Definitions alone grant no access. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `registries` | array of [Registry](#registry) | No | — | Registries whose images NemoClaw pulls through Docker with the logins of the machine running OpenTofu, from its Docker configuration file. Lists addresses only; credentials stay in that file or its credential store. Constraints: maximum items 32. |
-| `sandboxes` | array of [Sandbox](#sandbox) | Yes | — | One to 32 uniquely named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum items 1; maximum items 32. |
+| `sandboxes` | map of [Sandbox](#sandbox) | Yes | — | One to 32 named sandboxes. Each runs one agent through its selected Fabric adapter. Declaration order does not select a default sandbox or agent. Constraints: minimum entries 1; maximum entries 32; keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `services` | map of [ServiceDefinition](#servicedefinition) | No | — | Named managed container services to install, verify once, and remove during destroy. Inference providers may consume their connection through serviceRef. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 
 ## TLS
 
-Gateway mutual TLS file references. All three references are required when TLS is declared.
+Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.
 
 Guide: [Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials).
 
@@ -1423,8 +1469,8 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `ca` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local CA certificate file. |
-| `certificate` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local client certificate file. |
-| `key` | [FileRef](#fileref) | Yes | — | Environment variable whose value names the local client private-key file. |
+| `certificate` | [FileRef](#fileref) | No | — | Environment variable whose value names the local client certificate file. Requires key. |
+| `key` | [FileRef](#fileref) | No | — | Environment variable whose value names the local client private-key file. Requires certificate. |
 
 ## Tool
 

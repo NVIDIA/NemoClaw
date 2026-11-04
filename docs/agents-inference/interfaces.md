@@ -60,6 +60,22 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## Invoke an Agent
 
 After [selecting the gateway and workspace](#select-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
+Plan and apply print the command for each agent, with its current runtime ID:
+
+```text
+Agents:
+  In each terminal, select this deployment's gateway and workspace:
+    unset OPENSHELL_GATEWAY
+    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
+  claw: agent main, runtime RUNTIME_ID
+    Invoke:   openshell sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
+  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents.md.
+```
+
+JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
+A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
+An agent without a recorded runtime, such as before the first apply, is listed with `no runtime recorded` and has no `runtimeId`.
 [Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
 The selected Fabric adapter owns how the harness handles the request.
 

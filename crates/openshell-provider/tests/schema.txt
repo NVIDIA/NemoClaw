@@ -54,13 +54,13 @@ resource openshell_inference (version 2)
 resource openshell_kubernetes_auth (version 0)
   authentication_profile: string, required
   compute_driver: string, required
-  context: string, required
+  context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
   gateway_values: string, computed
   generation: string, optional, computed
   id: string, computed
-  kubeconfig_env: string, required
+  kubeconfig_env: string, optional, computed
   name: string, required
   namespace: string, required
   oidc: string, optional
@@ -71,12 +71,12 @@ resource openshell_kubernetes_auth (version 0)
 resource openshell_kubernetes_gateway (version 0)
   authentication_profile: string, required
   compute_driver: string, required
-  context: string, required
+  context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
-  kubeconfig_env: string, required
+  kubeconfig_env: string, optional, computed
   name: string, required
   namespace: string, required
   oidc: string, optional
@@ -86,12 +86,12 @@ resource openshell_kubernetes_gateway (version 0)
 resource openshell_kubernetes_storage (version 0)
   authentication_profile: string, required
   compute_driver: string, required
-  context: string, required
+  context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
-  kubeconfig_env: string, required
+  kubeconfig_env: string, optional, computed
   name: string, required
   namespace: string, required
   oidc: string, optional
@@ -162,7 +162,7 @@ resource openshell_sandbox (version 2)
           allowed_ips: list(string), optional
             > Resolved IP addresses or CIDRs allowed by OpenShell destination validation.
           enforcement: string, optional
-            > enforce or audit; omission follows OpenShell defaults.
+            > enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.
           host: string, optional
             > Destination hostname or DNS glob; may be omitted with allowed_ips.
           path: string, optional
@@ -254,7 +254,7 @@ resource openshell_sandbox (version 2)
         allowed_ips: list(string), optional
           > Resolved IP addresses or CIDRs allowed by OpenShell destination validation.
         enforcement: string, optional
-          > enforce or audit; omission follows OpenShell defaults.
+          > enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.
         host: string, optional
           > Destination hostname or DNS glob; may be omitted with allowed_ips.
         path: string, optional
@@ -412,6 +412,9 @@ data openshell_gateway (version 0)
 data openshell_gateway_prerequisites (version 0)
   available: bool, computed
   compute_driver: string, required
+  endpoint: string, optional
   engine: string, required
+  name: string, optional
   observation_json: string, computed
+  owner: string, optional
   status: string, computed

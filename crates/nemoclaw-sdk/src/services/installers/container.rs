@@ -32,6 +32,7 @@ pub struct Service {
     pub image: String,
     /// Optional argument list for the image entrypoint, without implicit shell expansion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Vec<String>")]
     pub command: Option<Vec<String>>,
     /// Literal nonsecret configuration files uploaded before startup with mode 0444. Contents are retained in plans and state; these are not secret files or immutable mounts.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

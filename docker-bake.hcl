@@ -17,17 +17,18 @@ variable "AGENT_PLATFORM" {
 
 variable "HARNESSES" {
   default = {
-    deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
-    claude         = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude", extra = "claude" }
-    codex          = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
-    mini-swe-agent = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
-    nooa           = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa" }
-    nooa-bench     = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent", extra = "nooa" }
-    remote-agent   = { stage = "generic", adapter = "remote-agent", adapter_id = "nvidia.fabric.remote-agent", extra = "remote-agent" }
-    openclaw       = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw", extra = "openclaw" }
-    hermes         = { stage = "hermes", adapter = "hermes", adapter_id = "nvidia.fabric.hermes", extra = "hermes-agent" }
-    pi             = { stage = "pi", adapter = "", adapter_id = "nvidia.fabric.pi", extra = "" }
-    opencode       = { stage = "opencode", adapter = "", adapter_id = "nvidia.fabric.opencode", extra = "" }
+    deepagents      = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
+    claude          = { stage = "generic", adapter = "claude", adapter_id = "nvidia.fabric.claude", extra = "claude" }
+    codex           = { stage = "generic", adapter = "codex", adapter_id = "nvidia.fabric.codex", extra = "codex" }
+    mini-swe-agent  = { stage = "generic", adapter = "mini-swe-agent", adapter_id = "nvidia.fabric.mini-swe-agent", extra = "mini-swe-agent" }
+    nooa            = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa", extra = "nooa" }
+    nooa-bench      = { stage = "generic", adapter = "nooa", adapter_id = "nvidia.fabric.nooa.bench-agent", extra = "nooa" }
+    remote-agent    = { stage = "generic", adapter = "remote-agent", adapter_id = "nvidia.fabric.remote-agent", extra = "remote-agent" }
+    openclaw        = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw", extra = "openclaw" }
+    hermes          = { stage = "hermes", adapter = "hermes", adapter_id = "nvidia.fabric.hermes", extra = "hermes-agent" }
+    pi              = { stage = "pi", adapter = "", adapter_id = "nvidia.fabric.pi", extra = "" }
+    opencode        = { stage = "opencode", adapter = "", adapter_id = "nvidia.fabric.opencode", extra = "" }
+    deepagents-code = { stage = "deepagents-code", adapter = "", adapter_id = "nvidia.fabric.langchain.deepagents-code", extra = "" }
   }
 }
 

@@ -49,6 +49,7 @@ Start with the failed phase; apply readiness, endpoint reachability, and a nativ
 | Plan would remove or replace a resource | Check [update constraints](../build-deploy/usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
 | Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker model container. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](../agents-inference/inference.md#set-container-limits-and-update-policy) |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
+| Kubernetes or OpenShift apply fails when Helm's wait times out | Read the gateway's log as [Diagnose a Kubernetes Gateway Startup Failure](#diagnose-a-kubernetes-gateway-startup-failure) shows |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](../agents-inference/interfaces.md#diagnose-failures) |
@@ -94,6 +95,42 @@ After correcting the image or configuration problem, reapply using the retained 
 If retiring the deployment, preview and [destroy](../build-deploy/usage.md#destroy) it with the same state directory.
 Gateway readiness is omitted during teardown, so failed bootstrap with saved bindings can be cleaned up before a successful reapply.
 If OpenShell resources were already created, their refresh and deletion still require a reachable gateway; restore it before destroying them.
+
+### Diagnose a Kubernetes Gateway Startup Failure
+
+When a managed Kubernetes or OpenShift gateway can't start, apply fails when Helm's 10-minute wait times out.
+Read the gateway's log with the deployment's context and namespace.
+The gateway runs in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets:
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" get statefulsets
+deployment_release=REPLACE_WITH_STATEFULSET_NAME
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  logs "pod/$deployment_release-0"
+```
+
+With the `development` profile, a log that ends with `OIDC discovery request failed: error sending request for url (https://<release>-oidc.<namespace>.svc.cluster.local:8443/.well-known/openid-configuration)` shows that the gateway's request to its development issuer failed.
+Check that the issuer's pod is ready, then read the DNS search list of the namespace's pods; the gateway restarts too often to run a command in, and pods on the same node share the list:
+
+```sh
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" get pods
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  exec "deploy/$deployment_release-oidc" -- cat /etc/resolv.conf
+```
+
+A pod resolves a name with fewer dots than `ndots` by trying each search domain before the name itself.
+If a search domain has a wildcard DNS record, the lookup in that domain returns an address before the resolver tries the name itself, so `<service>.<namespace>.svc.cluster.local` resolves to the wildcard record's address instead of the Service's.
+On a single-node cluster from the Agent-based Installer, the `forcedns` script in MachineConfig `50-master-dnsmasq-configuration` adds the cluster domain to the node's search list, so a cluster named under a wildcard DNS service such as nip.io has this problem; the installer's `dns-wildcard-not-configured` validation flags such a domain before installation.
+Ask the platform operator to remove the domain from the nodes' search list, for example with a MachineConfig, which by default reboots each node it changes; a single-node cluster is unavailable while its node restarts.
+When installing a cluster, name it under a domain without a wildcard record instead.
+If the node didn't restart, delete the gateway's pod so its StatefulSet recreates it with the new list:
+
+```sh
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  delete pod "$deployment_release-0"
+```
 
 ## Inference and Agent Readiness
 

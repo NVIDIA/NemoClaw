@@ -157,7 +157,7 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
         compute_driver: ComputeDriver::Docker,
     };
     assert_eq!(queries[3], DiscoveryQuery::Engine(platform.clone()));
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandbox("assistant").unwrap();
     assert_eq!(
         queries[4],
         DiscoveryQuery::Fabric(FabricRequest {

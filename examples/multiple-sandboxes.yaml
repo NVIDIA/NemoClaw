@@ -14,11 +14,11 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: alice
+    alice:
       network:
         tier: isolated
       harness:
@@ -26,7 +26,7 @@ spec:
       agent:
         name: alice
         inferenceRef: chat
-    - name: bob
+    bob:
       network:
         tier: isolated
       harness:
@@ -34,7 +34,7 @@ spec:
       agent:
         name: bob
         inferenceRef: chat
-    - name: research
+    research:
       image:
         ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
       network:
@@ -44,7 +44,7 @@ spec:
       agent:
         name: researcher
         inferenceRef: chat
-    - name: review
+    review:
       image:
         ref: nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd
       network:
@@ -54,7 +54,7 @@ spec:
       agent:
         name: reviewer
         inferenceRef: chat
-    - name: coding
+    coding:
       image:
         ref: nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e
       network:

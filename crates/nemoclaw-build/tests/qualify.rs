@@ -83,6 +83,29 @@ fn each_assembly_problem_is_named() {
     assert!(!check_assembly("not facts").is_empty());
 }
 
+/// Facts for a Hermes image that carries what Hermes's own interfaces need.
+fn hermes_facts() -> String {
+    facts().replace(r#""harness":"agent""#, r#""harness":"hermes""#)
+        + "=== hermes interfaces\naiohttp\ndashboard\ntui\n"
+}
+
+#[test]
+fn a_hermes_image_carries_what_hermes_interfaces_need() {
+    assert_eq!(check_assembly(&hermes_facts()), Vec::<String>::new());
+    for (missing, problem) in [
+        ("aiohttp\n", "aiohttp"),
+        ("dashboard\n", "dashboard"),
+        ("tui\n", "TUI"),
+    ] {
+        let changed = hermes_facts().replace(missing, "");
+        let problems = check_assembly(&changed);
+        assert!(
+            problems.iter().any(|found| found.contains(problem)),
+            "{missing} -> {problems:?}"
+        );
+    }
+}
+
 /// The reference runtime runs as an OpenShell sandbox would run it: offline,
 /// read-only, with only its sandbox storage writable, serving through Fabric's
 /// `fabric-agent-ctl`. Nothing is mounted: Fabric's adapters are Fabric's to test.

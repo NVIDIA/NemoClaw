@@ -37,6 +37,19 @@ pub fn free_port() -> Result<u16, String> {
         .map_err(|_| "cannot find a free loopback port".into())
 }
 
+/// An HCL E2E case's template bound to one run: each placeholder, a value the
+/// checked-in case holds, replaced everywhere by this run's value.
+pub fn bind_case(template: &str, values: &[(&str, &str)]) -> Result<String, String> {
+    values
+        .iter()
+        .try_fold(template.to_owned(), |bound, (placeholder, value)| {
+            bound
+                .contains(placeholder)
+                .then(|| bound.replace(placeholder, value))
+                .ok_or_else(|| format!("the case template has no {placeholder}"))
+        })
+}
+
 pub struct GatewayInputs<'a> {
     pub name: &'a str,
     pub uid: &'a str,
@@ -84,11 +97,11 @@ spec:
     endpoint: http://127.0.0.1:{port}
     networkCIDR: {subnet}
   inferenceProviders:
-    - name: hosted
+    hosted:
       provider: openai
       endpoint: https://inference.example.test/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: {image}
       network:
@@ -101,6 +114,118 @@ spec:
           routes:
             - name: primary
               providerRef: hosted
+              overrides:
+                model: fixture-model
+"
+    )
+}
+
+/// The variable holding the model key the interface live test supplies.
+pub const INTERFACES_MODEL_KEY: &str = "NEMOCLAW_TEST_INTERFACES_MODEL_KEY";
+
+pub struct InterfacesInputs<'a> {
+    pub name: &'a str,
+    pub uid: &'a str,
+    pub port: u16,
+    pub subnet: &'a str,
+    pub openclaw: &'a str,
+    pub hermes: &'a str,
+    pub deepagents_code: &'a str,
+    /// Where the test serves its model stand-in, on the host.
+    pub model_port: u16,
+}
+
+/// A managed Docker gateway with OpenClaw's dashboard, Hermes's API server and
+/// dashboard, and Deep Agents Code's terminal enabled. The model endpoint is
+/// the test's stand-in on the gateway network's host address, with a key the
+/// test supplies. Every sandbox takes its image's default policy. The gateway
+/// allows driver configuration, so the test can mount a volume on a sandbox.
+pub fn interfaces_document(inputs: &InterfacesInputs<'_>) -> String {
+    let InterfacesInputs {
+        name,
+        uid,
+        port,
+        subnet,
+        openclaw,
+        hermes,
+        deepagents_code,
+        model_port,
+    } = inputs;
+    let host = subnet
+        .strip_suffix(".0/24")
+        .map(|prefix| format!("{prefix}.1"))
+        .expect("a /24 subnet");
+    // JSON is a YAML flow mapping, so serializing cannot produce malformed YAML.
+    format!(
+        "apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: {name}
+  uid: {uid}
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    engine: unix:///var/run/docker.sock
+    endpoint: http://127.0.0.1:{port}
+    networkCIDR: {subnet}
+    config:
+      openshell.drivers.docker:
+        allow_driver_config: true
+  inferenceProviders:
+    model:
+      provider: openai
+      endpoint: http://{host}:{model_port}/v1
+      credential:
+        env: {INTERFACES_MODEL_KEY}
+  sandboxes:
+    claw:
+      image:
+        ref: {openclaw}
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        settings: {{\"interfaces\": {{\"dashboard\": {{\"port\": 18789}}}}}}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
+    coder:
+      image:
+        ref: {deepagents_code}
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.langchain.deepagents-code
+        settings: {{\"approval_mode\": \"auto\", \"interfaces\": {{\"terminal\": {{}}}}}}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
+    hermes:
+      image:
+        ref: {hermes}
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        settings: {{\"interfaces\": {{\"api\": {{\"port\": 8642}}, \"dashboard\": {{\"port\": 9119}}}}}}
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
               overrides:
                 model: fixture-model
 "

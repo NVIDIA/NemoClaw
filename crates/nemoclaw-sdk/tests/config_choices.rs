@@ -11,7 +11,6 @@ use nemoclaw_sdk::{
 
 fn provider() -> InferenceProvider {
     InferenceProvider {
-        name: "test".into(),
         provider: InferenceProviderKind::Openai,
         api: None,
         endpoint: String::new(),

@@ -14,3 +14,5 @@ These Rust implementations remain Apache-2.0; this credit identifies the source 
 The runtime does not embed the recipe scripts.
 
 2026-09-29: moved these policies from the SDK into the inference runtime crate without changing their upstream attribution.
+
+2026-10-28: on dedicated-memory GPUs, the host-reserve minimum is 6 GiB, set from a measured model load instead of the recipe's 28 GiB (#13833). Unified-memory profiles and recipes keep 28 GiB.

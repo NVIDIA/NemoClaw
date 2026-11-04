@@ -467,7 +467,7 @@ fn remote_service_is_independent_of_the_external_sandbox_gateway() {
             .remove(field);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
     }
-    for cidr in ["172.30.119.8/24", "10.0.0.0/24"] {
+    for cidr in ["172.30.119.8/24", "10.0.0.0/24", "172.030.119.0/24"] {
         let mut invalid = value.clone();
         invalid["spec"]["services"]["qwen"]["placement"]["networkCIDR"] = json!(cidr);
         assert!(Document::parse(serde_json::to_vec(&invalid).unwrap().as_slice()).is_err());
@@ -675,4 +675,88 @@ fn portable_container_memory_limits_cover_shared_memory_and_recipe_preparation_o
             Document::parse(input.to_string().as_bytes()).unwrap();
         }
     }
+}
+
+/// Managed resources, by address, whose configuration differs between two graphs,
+/// including resources only one of them declares.
+fn changed_resources(before: &Value, after: &Value) -> BTreeSet<String> {
+    let mut changed = BTreeSet::new();
+    for graph in [before, after] {
+        for (kind, instances) in graph["resource"].as_object().unwrap() {
+            for name in instances.as_object().unwrap().keys() {
+                if before["resource"][kind][name] != after["resource"][kind][name] {
+                    changed.insert(format!("{kind}.{name}"));
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// Changing only a model service's image pin, or only the managed gateway's
+/// listen port in the runtime graph, changes only the process that uses it
+/// and the image it acquires. Retained storage compiles identically, so
+/// OpenTofu keeps it. Whether a change replaces the container is the Docker
+/// provider's; the SDK still rejects retargeting an established deployment's
+/// public endpoint.
+#[test]
+fn an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let generations: Generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "managed_gateway",
+        "inference_service",
+    ]
+    .into_iter()
+    .map(|k| (k.into(), "b".repeat(32)))
+    .collect();
+    let before = compile_runtime(&document, &generations, "0.1.0").unwrap();
+    let changed = |path: &[&str], value: Value| {
+        let mut input = serde_json::to_value(&document).unwrap();
+        let mut field = &mut input;
+        for key in path {
+            field = &mut field[*key];
+        }
+        *field = value;
+        compile_runtime(
+            &Document::parse(input.to_string().as_bytes()).unwrap(),
+            &generations,
+            "0.1.0",
+        )
+        .unwrap()
+    };
+    let image = changed(
+        &["spec", "services", "qwen", "image"],
+        json!(format!("fixture-runtime@sha256:{}", "c".repeat(64))),
+    );
+    let port = changed(
+        &["spec", "gateway", "endpoint"],
+        json!("http://127.0.0.1:17682"),
+    );
+    let images = |graph: &Value| -> BTreeSet<String> {
+        graph["resource"]["docker_image"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|name| format!("docker_image.{name}"))
+            .collect()
+    };
+    let mut expected: BTreeSet<String> = images(&before)
+        .symmetric_difference(&images(&image))
+        .cloned()
+        .collect();
+    assert_eq!(
+        expected.len(),
+        2,
+        "the old image is released and the new one acquired"
+    );
+    expected.insert("docker_container.inference_service_inference_qwen".into());
+    assert_eq!(changed_resources(&before, &image), expected);
+    assert_eq!(
+        changed_resources(&before, &port),
+        BTreeSet::from(["docker_container.managed_gateway_runtime".to_owned()])
+    );
 }

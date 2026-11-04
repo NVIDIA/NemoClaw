@@ -218,11 +218,14 @@ fn secret_values(overrides: &BTreeMap<String, String>) -> Vec<String> {
     let mut secrets = Vec::new();
     for (name, value) in overrides.iter().filter(|(_, value)| !value.is_empty()) {
         // The diagnostics directory is named in errors so users can find
-        // Fabric's message; it is a path in the caller's own state.
+        // Fabric's message; it is a path in the caller's own state. A pod's
+        // API server address is not a credential, and credential references
+        // cannot use its names.
         if !matches!(
             name.as_str(),
             "TF_IN_AUTOMATION" | "TF_INPUT" | "TF_CLI_CONFIG_FILE" | "CHECKPOINT_DISABLE"
         ) && name != nemoclaw_backend::DIAGNOSTICS_ENV
+            && !crate::kubernetes::POD_VARIABLES.contains(&name.as_str())
         {
             secrets.push(value.clone());
         }
@@ -382,6 +385,8 @@ mod environment_tests {
             ("GITHUB_TOKEN", "x"),
             ("TF_LOG", "trace"),
             ("KUBECONFIG", "/other"),
+            ("KUBERNETES_SERVICE_HOST", "10.96.0.1"),
+            ("KUBERNETES_SERVICE_PORT", "443"),
         ]));
         assert_eq!(
             names(&environment),
@@ -418,6 +423,24 @@ mod environment_tests {
             ),
         ]));
         assert_eq!(secrets, ["a-long-credential"]);
+    }
+
+    /// A pod's API server address is not a credential, and its three-digit
+    /// port must not withhold every child diagnostic; other values passed
+    /// beside it still are secrets.
+    #[test]
+    fn the_pods_api_server_address_is_not_a_secret() {
+        let secrets = secret_values(&BTreeMap::from([
+            ("KUBERNETES_SERVICE_HOST".into(), "10.96.0.1".into()),
+            ("KUBERNETES_SERVICE_PORT".into(), "443".into()),
+            ("CUSTOM_CREDENTIAL".into(), "a-long-credential".into()),
+        ]));
+        assert_eq!(secrets, ["a-long-credential"]);
+        assert!(!has_short_secret(&secrets));
+        assert_eq!(
+            secret_values(&BTreeMap::from([("SHORT_CREDENTIAL".into(), "443".into())])),
+            ["443"]
+        );
     }
 }
 
@@ -669,9 +692,12 @@ async fn progress_arrives_before_exit_and_cancellation_still_works() {
     let progress = std::sync::Arc::new(move |event| {
         send.send(event).unwrap();
     });
+    // The shell replaces itself with sleep: an interrupt that reaches a forked
+    // sleep before it starts doesn't stop it, so the shell would wait out the
+    // cancellation grace period instead of exiting.
     let task = tokio::spawn(async move {
         run_with_progress(directory.path(), Path::new("/bin/sh"),
-            &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox"},"action":"create"}}'; sleep 100"#],
+            &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox"},"action":"create"}}'; exec sleep 100"#],
             &Default::default(), &stop, Some(progress)).await
     });
     let event = tokio::time::timeout(Duration::from_secs(2), receive.recv()).await;

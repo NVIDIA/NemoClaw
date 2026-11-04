@@ -28,8 +28,12 @@ mod support;
 mod transport;
 mod travel_team;
 
+#[path = "agent_runtimes.rs"]
+mod agent_runtimes;
 #[path = "agent_tools.rs"]
 mod agent_tools;
+#[path = "application_container.rs"]
+mod application_container;
 #[path = "compile.rs"]
 mod compile;
 #[path = "config.rs"]
@@ -86,6 +90,8 @@ mod inference_references;
 mod inference_settings;
 #[path = "inline_recipe.rs"]
 mod inline_recipe;
+#[path = "interface_access.rs"]
+mod interface_access;
 #[path = "interfaces.rs"]
 mod interfaces;
 #[path = "json_schema.rs"]
@@ -94,6 +100,8 @@ mod json_schema;
 mod kubernetes_auth;
 #[path = "kubernetes_cluster.rs"]
 mod kubernetes_cluster;
+#[path = "kubernetes_cluster_access.rs"]
+mod kubernetes_cluster_access;
 #[path = "kubernetes_compile.rs"]
 mod kubernetes_compile;
 #[path = "kubernetes_connect.rs"]
@@ -129,8 +137,6 @@ mod managed_auth;
 mod managed_gateway_config;
 #[path = "managed_hermes.rs"]
 mod managed_hermes;
-#[path = "managed_live.rs"]
-mod managed_live;
 #[path = "managed_podman.rs"]
 mod managed_podman;
 #[path = "model_selection.rs"]
@@ -161,6 +167,8 @@ mod reference_combinations;
 mod reference_diagnostics;
 #[path = "refresh.rs"]
 mod refresh;
+#[path = "replacement_cleanup.rs"]
+mod replacement_cleanup;
 #[path = "resource_management.rs"]
 mod resource_management;
 #[path = "runtime_boundaries.rs"]
@@ -171,6 +179,8 @@ mod runtime_compile;
 mod sandbox_admission;
 #[path = "service_references.rs"]
 mod service_references;
+#[path = "service_urls.rs"]
+mod service_urls;
 #[path = "spark_examples.rs"]
 mod spark_examples;
 #[path = "ssh_live.rs"]

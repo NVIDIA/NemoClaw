@@ -19,7 +19,8 @@ impl SelectionView<'_> {
         ))
     }
 
-    fn route_provider(&self) -> Option<(usize, usize)> {
+    /// The selected route and the name of the external deployment provider it references.
+    fn route_provider(&self) -> Option<(usize, String)> {
         let route = self.position.selected_route?;
         let reference = self
             .values
@@ -28,29 +29,27 @@ impl SelectionView<'_> {
                 routes_path(self.values)?
             ))?
             .as_str()?;
-        let providers = self
-            .values
-            .pointer("/spec/inferenceProviders")?
-            .as_array()?;
-        let provider = providers
-            .iter()
-            .position(|item| item.get("name").and_then(Value::as_str) == Some(reference))?;
-        (providers[provider].get("serviceRef").is_none()).then_some((route, provider))
+        self.provider(reference)?
+            .get("serviceRef")
+            .is_none()
+            .then(|| (route, reference.to_owned()))
+    }
+
+    fn provider(&self, name: &str) -> Option<&Value> {
+        self.values.pointer("/spec/inferenceProviders")?.get(name)
     }
 
     fn provider_path(&self) -> Option<String> {
         self.route_provider()
-            .map(|(_, provider)| format!("/spec/inferenceProviders/{provider}"))
+            .map(|(_, provider)| format!("/spec/inferenceProviders/{}", escape_pointer(&provider)))
     }
 
     fn current_preset(&self) -> Option<ProviderPreset> {
-        let (route, provider_index) = self.route_provider()?;
+        let (route, name) = self.route_provider()?;
         if let Some(preset) = self.decisions.selected_presets.get(&route).copied() {
             return Some(preset);
         }
-        let provider = self
-            .values
-            .pointer(&format!("/spec/inferenceProviders/{provider_index}"))?;
+        let provider = self.provider(&name)?;
         let kind: InferenceProviderKind =
             serde_json::from_value(provider.get("provider")?.clone()).ok()?;
         let endpoint = provider.get("endpoint")?.as_str()?;
@@ -67,10 +66,8 @@ impl SelectionView<'_> {
     fn catalog_preset(&self) -> Option<ProviderPreset> {
         let preset = self.current_preset()?;
         let profile = preset.profile();
-        let (_, index) = self.route_provider()?;
-        let provider = self
-            .values
-            .pointer(&format!("/spec/inferenceProviders/{index}"))?;
+        let (_, name) = self.route_provider()?;
+        let provider = self.provider(&name)?;
         // Editing the endpoint can leave the earlier preset decision in the
         // journey. A vendor catalog must not follow it to a different server.
         (provider.get("endpoint")?.as_str()? == profile.endpoint
@@ -91,7 +88,7 @@ impl JourneyState {
     pub(super) fn route_model_path(&self) -> Option<String> {
         self.selection().route_model_path()
     }
-    pub(super) fn route_provider(&self) -> Option<(usize, usize)> {
+    pub(super) fn route_provider(&self) -> Option<(usize, String)> {
         self.selection().route_provider()
     }
     pub(super) fn current_preset(&self) -> Option<ProviderPreset> {

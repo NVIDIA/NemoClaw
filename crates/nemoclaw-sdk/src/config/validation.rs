@@ -45,14 +45,13 @@ impl Document {
         }
         validate_endpoint(gateway.endpoint(), true)?;
         self.validate_harness_references()?;
-        let selected_providers = self.selected_inference_providers()?;
+        let selected_providers = self.selected_providers()?;
         crate::services::validate(self)?;
         self.validate_inference_references()?;
         for definition in self.provider_definitions() {
             self.validate_provider(definition)?;
         }
-        let mut sandbox_names = std::collections::BTreeSet::new();
-        for sandbox in &self.spec.sandboxes {
+        for sandbox in self.sandboxes() {
             require(
                 self.spec.gateway.runtime().provider.is_kubernetes()
                     || sandbox.image.metadata.is_none(),
@@ -61,10 +60,6 @@ impl Document {
             if let Some(metadata) = &sandbox.image.metadata {
                 schema::validate_definition("FileRef", metadata)?;
             }
-            require(
-                sandbox_names.insert(&sandbox.name),
-                "sandbox names must be unique",
-            )?;
             sandbox.network.validate()?;
             let web_search = self.web_search(sandbox)?;
             crate::image_runtime::policy_input(self, sandbox)?;
@@ -159,11 +154,8 @@ impl super::ManagedGateway {
                 && crate::config::validate_engine_endpoint(&self.engine).is_ok(),
             "managed gateway requires a local engine socket and an unprivileged loopback HTTP port without credentials",
         )?;
-        let net = self.network_cidr.parse::<ipnet::Ipv4Net>().ok();
         require(
-            net.is_some_and(|n| {
-                n.addr().is_private() && n.prefix_len() == 24 && n.addr() == n.network()
-            }),
+            crate::config::private_network(&self.network_cidr).is_some(),
             "managed gateway requires a private IPv4 /24 network",
         )
     }

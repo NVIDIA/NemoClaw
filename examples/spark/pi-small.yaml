@@ -42,11 +42,11 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       serviceRef: local
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-fabric@sha256:ac526ed31206c90557c7ac313400586e5347bee2c142efa4708256b122a81284
       network:

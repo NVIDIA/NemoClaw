@@ -232,6 +232,7 @@ fn guide(name: &str) -> &'static str {
             "[Managed models](../agents-inference/models.md)"
         }
         "InferenceProvider"
+        | "InlineInferenceProvider"
         | "Inference"
         | "Route"
         | "Overrides"
@@ -244,6 +245,9 @@ fn guide(name: &str) -> &'static str {
         "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
         | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
         | "ToolDisclosure" => "[Agent runtimes](../agents-inference/agents.md)",
+        "ServiceExposure" | "AuthorizationMode" => {
+            "[Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway)"
+        }
         "ImagePullPolicy" => {
             "[Container image downloads](../build-deploy/usage.md#control-container-image-downloads)"
         }
@@ -309,6 +313,8 @@ fn constraints(schema: &Value) -> String {
         ("maxLength", "maximum characters"),
         ("minItems", "minimum items"),
         ("maxItems", "maximum items"),
+        ("minProperties", "minimum entries"),
+        ("maxProperties", "maximum entries"),
     ] {
         if let Some(value) = schema.get(key) {
             parts.push(format!("{label} {value}"));

@@ -15,7 +15,7 @@ pub fn inference_request_for_document(
     document: &Document,
     route_name: Option<&str>,
 ) -> Result<Option<EndpointRequest>, Diagnostics> {
-    let [sandbox] = document.spec.sandboxes.as_slice() else {
+    let Some(sandbox) = crate::journey_definition::only_sandbox(document) else {
         return Err(crate::diagnostics::diagnostic(
             "sandbox",
             "Inference discovery requires one sandbox.",
@@ -66,10 +66,19 @@ pub fn discovery_queries(
             DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => true,
         })
         .collect();
-    queries.extend(document.credential_names().into_iter().map(|reference| {
-        DiscoveryQuery::Credential(CredentialRequest {
-            reference: reference.into(),
-        })
-    }));
+    queries.extend(credential_queries(document));
     Ok(queries)
+}
+
+/// One availability check for each credential reference in `document`.
+pub fn credential_queries(document: &Document) -> Vec<DiscoveryQuery> {
+    document
+        .credential_names()
+        .into_iter()
+        .map(|reference| {
+            DiscoveryQuery::Credential(CredentialRequest {
+                reference: reference.into(),
+            })
+        })
+        .collect()
 }

@@ -20,8 +20,8 @@ use crate::{
     diagnostics::diagnostic,
     identity::new_deployment_uid,
     journey_definition::{
-        HARNESS, INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field,
-        adapter_schema, native_field,
+        INFERENCE_PRESET, JourneyDefinition, JourneyScope, NAME, adapter_field, adapter_schema,
+        harness_question, is_harness_question, native_field, sandbox_path,
     },
     sdk_schema::{
         finite_choices, sdk_discriminator, sdk_exclusive_required_fields, sdk_field_possible,
@@ -31,7 +31,6 @@ use crate::{
 };
 
 const ROUTE_SELECTION: &str = "route:selection";
-const ROUTES: &str = "/spec/sandboxes/0/agent/inference/routes";
 const RUNTIME_PROVIDER: &str = "/spec/gateway/runtime/provider";
 const GATEWAY_ENGINE_PATH: &str = "/spec/gateway/engine";
 
@@ -88,14 +87,13 @@ impl QuestionTarget {
         if path == NAME {
             return Self::DeploymentName;
         }
-        if path == HARNESS {
+        if is_harness_question(&path) {
             return Self::Harness;
         }
         let segments = path.split('/').collect::<Vec<_>>();
-        let provider_field = segments.len() == 5
-            && segments[1] == "spec"
-            && segments[2] == "inferenceProviders"
-            && segments[3].parse::<usize>().is_ok();
+        // A field of a deployment provider, keyed by the provider's name.
+        let provider_field =
+            segments.len() == 5 && segments[1] == "spec" && segments[2] == "inferenceProviders";
         let role = if path == RUNTIME_PROVIDER {
             SdkFieldRole::RuntimeProvider
         } else if path == "/spec/gateway/management" {
@@ -120,6 +118,7 @@ pub struct JourneyQuestion {
     target: QuestionTarget,
     reason: JourneyQuestionReason,
     reopened_because: Option<String>,
+    note: Option<String>,
     required: bool,
     choices: Vec<Value>,
     kind: JourneyQuestionKind,
@@ -139,6 +138,10 @@ impl JourneyQuestion {
     /// The earlier answer that caused an accepted decision to reopen.
     pub fn reopened_because(&self) -> Option<&str> {
         self.reopened_because.as_deref()
+    }
+    /// Why the question has no suggestion, when the target observations explain it.
+    pub fn note(&self) -> Option<&str> {
+        self.note.as_deref()
     }
     pub fn required(&self) -> bool {
         self.required
@@ -176,8 +179,10 @@ impl JourneyQuestion {
 pub struct JourneyResolution {
     questions: Vec<JourneyQuestion>,
     omitted: Vec<String>,
+    kept: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
+    credentials: Vec<String>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
     target_required: bool,
@@ -197,12 +202,21 @@ impl JourneyResolution {
     pub fn omitted(&self) -> &[String] {
         &self.omitted
     }
+    /// Supplied values that omission guidance kept without asking, by question ID.
+    pub fn kept(&self) -> &[(String, Value)] {
+        &self.kept
+    }
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
     /// Informational authoring notes; these do not establish compatibility.
     pub fn information(&self) -> &[String] {
         &self.information
+    }
+    /// The availability of each credential reference checked here, for review.
+    /// A reference that was never checked has no entry.
+    pub fn credentials(&self) -> &[String] {
+        &self.credentials
     }
     pub fn unverified(&self) -> &[String] {
         &self.unverified
@@ -317,7 +331,54 @@ impl JourneyState {
 
     /// Recompute the applicable questions from this run without changing it.
     pub fn resolve(&self, capabilities: &Capabilities) -> Result<JourneyResolution, Diagnostics> {
-        resolver::QuestionResolver::new(self, capabilities).resolve()
+        // An answer resolves the journey before and after it changes, and the
+        // frontend resolves the answered journey again for the next question.
+        // A resolution depends only on the run and the capabilities, and
+        // comparing runs costs far less than resolving one, so keep the latest.
+        const CAPACITY: usize = 4;
+        type Resolved = (JourneyState, u64, Result<JourneyResolution, Diagnostics>);
+        thread_local! {
+            static RECENT: std::cell::RefCell<std::collections::VecDeque<Resolved>> =
+                Default::default();
+        }
+        let known = RECENT.with_borrow(|recent| {
+            recent
+                .iter()
+                .rev()
+                .find(|(state, identity, _)| {
+                    *identity == capabilities.identity && state.same_run(self)
+                })
+                .map(|(_, _, resolution)| resolution.clone())
+        });
+        if let Some(resolution) = known {
+            return resolution;
+        }
+        let resolution = resolver::QuestionResolver::new(self, capabilities).resolve();
+        RECENT.with_borrow_mut(|recent| {
+            if recent.len() == CAPACITY {
+                recent.pop_front();
+            }
+            recent.push_back((self.clone(), capabilities.identity, resolution.clone()));
+        });
+        resolution
+    }
+
+    /// Whether two runs resolve alike: every field is equal. Answers change
+    /// the decisions, so they are compared first; the definition rarely
+    /// differs and is the largest.
+    fn same_run(&self, other: &Self) -> bool {
+        let Self {
+            definition,
+            authored,
+            decisions,
+            position,
+            answered_engines,
+        } = self;
+        *decisions == other.decisions
+            && *position == other.position
+            && *answered_engines == other.answered_engines
+            && *authored == other.authored
+            && *definition == other.definition
     }
 
     pub fn current_route(&self) -> Option<&str> {

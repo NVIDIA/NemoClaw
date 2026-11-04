@@ -16,11 +16,11 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-prototype-fabric@sha256:b362c65247df2db9fd50f4699df5f2e067f68aabf3e7d2a6800b3ec03a9674f9
       network:

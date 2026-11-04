@@ -62,6 +62,12 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// A binding mismatch whose detail names the object and what changed.
+    /// The detail holds only names and UIDs, never secret values.
+    BindingChanged(Box<str>),
+    /// The kubeconfig has no context with the configured name. Holds only
+    /// that name, never the kubeconfig's contents.
+    MissingContext(Box<str>),
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
@@ -134,6 +140,13 @@ impl fmt::Display for ObservationError {
             Self::Incomplete => f.write_str("observation is incomplete"),
             Self::BindingMismatch => {
                 f.write_str("observed ownership, generation, or durable identity changed")
+            }
+            Self::BindingChanged(detail) => write!(
+                f,
+                "observed ownership, generation, or durable identity changed: {detail}"
+            ),
+            Self::MissingContext(context) => {
+                write!(f, "the kubeconfig has no context named {context}")
             }
         }
     }

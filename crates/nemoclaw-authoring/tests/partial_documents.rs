@@ -7,7 +7,7 @@ use nemoclaw_sdk::config::Document;
 #[test]
 fn sparse_input_reports_missing_values_without_constructing_a_document() {
     let partial = PartialDocument::from_yaml(
-        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    - harness:\n        kind: nvidia.fabric.openclaw\n",
+        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nspec:\n  sandboxes:\n    assistant:\n      harness:\n        kind: nvidia.fabric.openclaw\n",
     )
     .unwrap();
     let assessment = partial.assess();
@@ -29,7 +29,7 @@ fn sparse_input_reports_missing_values_without_constructing_a_document() {
 #[test]
 fn supplied_invalid_name_is_distinct_from_missing_values() {
     let partial = PartialDocument::from_yaml(
-        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nmetadata:\n  name: Bad Name\nspec:\n  sandboxes:\n    - harness:\n        kind: nvidia.fabric.openclaw\n",
+        b"apiVersion: nemoclaw.nvidia.com/v1alpha1\nkind: NemoClawConfig\nmetadata:\n  name: Bad Name\nspec:\n  sandboxes:\n    assistant:\n      harness:\n        kind: nvidia.fabric.openclaw\n",
     )
     .unwrap();
     let assessment = partial.assess();
@@ -64,7 +64,7 @@ fn inference_form_is_pending_when_absent_and_invalid_when_both_forms_are_supplie
     let original = Document::parse(yaml.as_slice()).unwrap();
     let mut value = serde_json::to_value(original).unwrap();
     let agent = value
-        .pointer_mut("/spec/sandboxes/0/agent")
+        .pointer_mut("/spec/sandboxes/assistant/agent")
         .unwrap()
         .as_object_mut()
         .unwrap();
@@ -72,11 +72,12 @@ fn inference_form_is_pending_when_absent_and_invalid_when_both_forms_are_supplie
     let partial = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let assessment = partial.assess();
     assert!(assessment.issues().iter().any(|issue| {
-        issue.path() == "/spec/sandboxes/0/agent" && issue.kind() == PartialIssueKind::Deferred
+        issue.path() == "/spec/sandboxes/assistant/agent"
+            && issue.kind() == PartialIssueKind::Deferred
     }));
 
     let agent = value
-        .pointer_mut("/spec/sandboxes/0/agent")
+        .pointer_mut("/spec/sandboxes/assistant/agent")
         .unwrap()
         .as_object_mut()
         .unwrap();
@@ -85,6 +86,7 @@ fn inference_form_is_pending_when_absent_and_invalid_when_both_forms_are_supplie
     let partial = PartialDocument::from_yaml(value.to_string().as_bytes()).unwrap();
     let assessment = partial.assess();
     assert!(assessment.issues().iter().any(|issue| {
-        issue.path() == "/spec/sandboxes/0/agent" && issue.kind() == PartialIssueKind::Invalid
+        issue.path() == "/spec/sandboxes/assistant/agent"
+            && issue.kind() == PartialIssueKind::Invalid
     }));
 }

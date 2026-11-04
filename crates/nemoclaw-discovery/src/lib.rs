@@ -11,7 +11,10 @@ mod facts;
 pub mod gateway;
 mod local;
 
-pub use engine::{Direct, Engine, Engines, gateway_engine_info, is_missing, optional, remote};
+pub use engine::{
+    Direct, Engine, Engines, GATEWAY_PORT_TAKEN, check_gateway_port, gateway_engine_info,
+    is_missing, optional, remote,
+};
 pub use facts::{
     observe_engine, observe_engine_facts, observe_gateway_prerequisites, observe_hardware,
     observe_host,

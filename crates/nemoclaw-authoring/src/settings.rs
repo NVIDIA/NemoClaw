@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SettingQuestion {
     pub path: String,
+    pub prerequisites: Vec<String>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub required: bool,
@@ -116,6 +117,7 @@ pub(crate) fn collect(
                 // Ambiguous unions stay one typed JSON question; never guess a branch.
                 fields.push(SettingQuestion {
                     path: path.into(),
+                    prerequisites: Vec::new(),
                     title: schema["title"].as_str().map(Into::into),
                     description: Some(
                         schema["description"]
@@ -175,6 +177,7 @@ pub(crate) fn collect(
                 if shared.is_empty() {
                     fields.push(SettingQuestion {
                         path: String::new(),
+                        prerequisites: Vec::new(),
                         title: Some("Adapter settings".into()),
                         description: Some(
                             "Enter a JSON object matching the adapter's advertised alternatives."
@@ -241,7 +244,15 @@ pub(crate) fn collect(
         .as_object()
         .filter(|_| path.is_empty() || required || !values.is_null())
     {
-        for (name, child) in properties {
+        let controllers = schema["if"]["properties"].as_object();
+        let mut ordered = properties.iter().collect::<Vec<_>>();
+        // Resolve a condition's inputs before asking the fields it can require.
+        ordered.sort_by_key(|(name, _)| {
+            !controllers.is_some_and(|controllers| controllers.contains_key(*name))
+        });
+        let mut groups = Vec::new();
+        for (name, child) in ordered {
+            let start = fields.len();
             let child_path = format!("{path}/{}", name.replace('~', "~0").replace('/', "~1"));
             let child_required = effective["required"]
                 .as_array()
@@ -255,6 +266,20 @@ pub(crate) fn collect(
                 fields,
                 depth + 1,
             )?;
+            groups.push((
+                controllers.is_some_and(|controllers| controllers.contains_key(name)),
+                start..fields.len(),
+            ));
+        }
+        let inputs = groups
+            .iter()
+            .filter(|(controller, _)| *controller)
+            .flat_map(|(_, range)| fields[range.clone()].iter().map(|field| field.path.clone()))
+            .collect::<Vec<_>>();
+        for (_, range) in groups.into_iter().filter(|(controller, _)| !controller) {
+            for field in &mut fields[range] {
+                field.prerequisites.extend(inputs.iter().cloned());
+            }
         }
     } else if !path.is_empty() {
         let mut field_schema = schema.clone();
@@ -298,6 +323,7 @@ pub(crate) fn collect(
             .collect();
         fields.push(SettingQuestion {
             path: path.into(),
+            prerequisites: Vec::new(),
             title: effective["title"].as_str().map(Into::into),
             description: effective["description"].as_str().map(Into::into),
             required,

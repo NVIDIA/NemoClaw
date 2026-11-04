@@ -48,7 +48,7 @@ impl Fixture {
                 "cargo",
                 r#"#!/bin/sh
 if [ "$1 $2" = 'nextest --version' ]; then
-    printf 'cargo-nextest 0.9.148\n'
+    printf 'cargo-nextest 0.9.150\n'
     exit 0
 fi
 printf '%s\n' "$@" > arguments
@@ -82,9 +82,29 @@ exit "${CARGO_RESULT:-0}"
             fs::write(&path, script).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // The live-docker step installs the pinned OpenShell CLI unless it is
+        // already where the pin puts it. Seed it there, as an earlier run
+        // would have; fixtures must never download it, so its pin points
+        // nowhere they can reach and a step that tries fails at once.
+        let mut pins: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../../versions.json")).unwrap();
+        for artifacts in pins["platforms"].as_object_mut().unwrap().values_mut() {
+            if let Some(openshell) = artifacts.get_mut("openshell") {
+                let checksum = openshell["sha256"].as_str().unwrap();
+                let cli = root
+                    .path()
+                    .join(".tools")
+                    .join(format!("openshell-{}", &checksum[..12]))
+                    .join("openshell");
+                fs::create_dir_all(cli.parent().unwrap()).unwrap();
+                fs::write(&cli, "#!/bin/sh\n").unwrap();
+                fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+                openshell["url"] = "http://offline.invalid/openshell.tar.gz".into();
+            }
+        }
         fs::write(
             root.path().join("versions.json"),
-            include_bytes!("../../../versions.json"),
+            serde_json::to_vec_pretty(&pins).unwrap(),
         )
         .unwrap();
         Self(root)
@@ -128,10 +148,7 @@ printf '%s\n' "$*" >> docker.log
 if [ -n "$DOCKER_FAIL_IMAGE" ]; then
     case "$1 $2" in
         'buildx bake')
-            [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1
-            for argument; do
-                [ "$argument" = "ollama-proxy.tags=nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
-            done ;;
+            [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1 ;;
         'buildx build')
             for argument; do
                 [ "$argument" = "nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
@@ -216,6 +233,11 @@ fi
         for (path, content) in [
             ("dist/linux_arm64/manifest.json", "{}"),
             ("image/ollama/Dockerfile", "FROM ollama/ollama@sha256:0\n"),
+            // The HCL E2E case the suite binds to its run.
+            (
+                "crates/nemoclaw-e2e/cases/docker-dummy.yaml",
+                include_str!("../../nemoclaw-e2e/cases/docker-dummy.yaml"),
+            ),
         ] {
             let file = self.0.path().join(path);
             fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -229,7 +251,7 @@ fi
             "dist/linux_arm64/bin/nemoclaw",
             "dist/linux_arm64/libexec/tofu",
             ".tools/protoc-36.2/bin/protoc",
-            ".tools/nextest-0.9.148/cargo-nextest",
+            ".tools/nextest-0.9.150/cargo-nextest",
             "target/debug/terraform-provider-openshell",
             "target/debug/terraform-provider-fabric",
             "target/debug/terraform-provider-vllm",
@@ -373,7 +395,7 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
         assert!(!unpacked.path().join(&path).exists(), "{path}");
     }
     for path in [
-        ".tools/nextest-0.9.148/cargo-nextest",
+        ".tools/nextest-0.9.150/cargo-nextest",
         "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);
@@ -444,7 +466,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 }
 
 #[test]
-fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compressed() {
+fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     let output = fixture.run(&["live-images"]);
@@ -454,9 +476,10 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds Pi and the reference dummy, under the shared prefix the live
-    // steps load: each exports its catalog, then builds its labeled stage.
-    for name in ["pi", "dummy"] {
+    // ARM64 builds OpenClaw, Hermes, Deep Agents Code and the reference
+    // dummy, under the shared prefix the live steps load: each exports its
+    // catalog, then builds its labeled stage.
+    for name in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         assert!(
             log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
             "{log}"
@@ -468,25 +491,13 @@ fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compr
             "{log}"
         );
     }
-    // Both proxies build from the Bake target, differing only in a label.
-    for variant in ["a", "b"] {
-        assert!(
-            log.lines()
-                .any(|line| line.starts_with("buildx bake ollama-proxy --load")
-                    && line.contains(&format!("ollama-proxy.tags=nc-live-images:proxy-{variant}"))
-                    && line.contains(&format!(
-                        "ollama-proxy.labels.org.nemoclaw.test=proxy-{variant}"
-                    ))),
-            "{log}"
-        );
-    }
     assert!(!log.contains("buildx build"), "{log}");
     assert!(!log.lines().any(|line| line.starts_with("save ")), "{log}");
     let archive =
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:pi docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a docker.io/library/nc-live-images:proxy-b",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:deepagents-code docker.io/library/nc-live-images:dummy",
         "{archive}"
     );
 }
@@ -498,7 +509,7 @@ fn live_images_report_each_build_duration() {
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
-    for image in ["pi", "dummy", "proxy-a", "proxy-b"] {
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         let tag = format!("nc-live-images:{image}");
         let start = report
             .find(&format!("Building live image {tag}\n"))
@@ -522,7 +533,7 @@ fn live_images_report_each_build_duration() {
 
 #[test]
 fn live_images_report_failed_build_duration_and_stop() {
-    let images = ["pi", "dummy", "proxy-a", "proxy-b"];
+    let images = ["openclaw", "hermes", "deepagents-code", "dummy"];
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
@@ -596,7 +607,7 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
     );
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
-    for image in ["pi", "dummy", "proxy-a", "proxy-b"] {
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         assert!(
             log.lines().any(|line| line
                 .strip_prefix(&format!("tag nc-live-images:{image} nc-live-"))
@@ -741,5 +752,85 @@ fn lifecycle_preserves_ci_profiles_and_explicit_worker_overrides() {
         assert!(!arguments.contains("--test-threads"), "{arguments}");
         let inherited = fs::read_to_string(fixture.0.path().join("test-threads-env")).unwrap();
         assert_eq!(inherited.trim(), override_value.unwrap_or("unset"));
+    }
+}
+
+#[test]
+fn live_docker_pulls_a_v1_commits_images_instead_of_building() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_live_inputs();
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let output = fixture.run(&["live-docker", "--images-commit", commit]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fixture.docker_log();
+    let package = "ghcr.io/nvidia/nemoclaw/v1-ci";
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+        let pulled = format!("pull --quiet {package}:{image}-{commit}-");
+        assert!(
+            log.lines().any(|line| line.starts_with(&pulled)),
+            "{image} not pulled: {log}"
+        );
+    }
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+        assert!(
+            log.lines().any(
+                |line| line.starts_with(&format!("tag {package}:{image}-{commit}-"))
+                    && line.ends_with(&format!(":{image}"))
+                    && line.contains(" nc-live-")
+            ),
+            "{image} not named for this run: {log}"
+        );
+    }
+    // No agent builds and no archive: only the derived reference image, one
+    // layer on the pulled one.
+    assert!(
+        !log.contains("buildx bake") && !log.lines().any(|line| line.starts_with("load")),
+        "{log}"
+    );
+    let builds: Vec<_> = log
+        .lines()
+        .filter(|line| line.contains("buildx build"))
+        .collect();
+    assert_eq!(builds.len(), 1, "{log}");
+    assert!(
+        builds[0].starts_with("buildx build --builder default")
+            && builds[0].contains(":dummy-derived "),
+        "dummy-derived not derived: {log}"
+    );
+}
+
+#[test]
+fn live_images_commit_is_a_full_commit_for_the_live_steps_only() {
+    let fixture = Fixture::new();
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    for (args, message) in [
+        (
+            vec!["lifecycle", "--images-commit", commit],
+            "--images-commit requires ci live-docker or live-kind",
+        ),
+        (
+            vec!["live-kind", "--images-commit", "main"],
+            "--images-commit must be a full lowercase commit hash",
+        ),
+        (
+            vec![
+                "live-docker",
+                "--images-commit",
+                commit,
+                "--images",
+                "images.tar.zst",
+            ],
+            "--images and --images-commit are alternatives",
+        ),
+    ] {
+        let output = fixture.run(&args);
+        assert!(!output.status.success(), "{args:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{args:?}: {error}");
     }
 }

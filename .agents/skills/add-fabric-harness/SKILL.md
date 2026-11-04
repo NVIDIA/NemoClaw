@@ -12,13 +12,12 @@ Fabric owns each adapter: its descriptor, its behavior, and its tests.
 NemoClaw, for now, builds and publishes the agent images ([scope](../../../internal-docs/design/scope.md#upstream-boundaries)), so adding a harness means installing Fabric's adapter in an image, labeling the image with its catalog, and showing how to deploy it.
 Don't add tests of the adapter's behavior; Fabric tests its own adapters.
 
-Deliver one pull request.
-Use a Conventional Commits title such as `feat: add the OpenCode agent image`, and explain the failure, decision, and validation in its body.
+Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 
 ## 1. Gather the Inputs
 
 - **Adapter ID** from Fabric, such as `nvidia.fabric.opencode`, and a short **harness name** for the image and example, lowercase and hyphenated, such as `opencode`.
-- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: `FABRIC_REVISION` and `FABRIC_SHA256` in [the agent Dockerfile](../../../image/fabric/Dockerfile), then [regenerate the bundled catalog](../../../docs/build-deploy/build.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
+- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: `FABRIC_REVISION` and `FABRIC_SHA256` in [the agent Dockerfile](../../../image/fabric/Dockerfile), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
 - **The adapter's descriptor** (`*.fabric-adapter.json` in Fabric's source at that revision): its runner command and `requirements.binaries` name the runtime the image must carry.
 - **Its packaging:** a Python adapter with a Fabric extra, or anything else, such as a TypeScript adapter or a native agent.
 
@@ -43,7 +42,7 @@ The stage:
 
 - **Example:** `examples/fabric-<name>.yaml`, copied from a sibling example, with `harness.kind` set to the adapter ID.
 - **Lists of harnesses:** [the Bake tests](../../../crates/nemoclaw-build/tests/bake.rs) and both lists in [the SDK's configuration tests](../../../crates/nemoclaw-sdk/tests/config.rs).
-- **Contract fixture:** add `fabric_<name> => "fabric-<name>"` to [the OpenShell contract fixtures](../../../crates/openshell-provider/tests/contract/main.rs), then write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+- **Contract fixture:** write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
 
 ## 4. Document It
 

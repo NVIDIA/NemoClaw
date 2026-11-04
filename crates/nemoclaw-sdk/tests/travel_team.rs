@@ -26,8 +26,7 @@ fn expected(role: &str) -> (&'static str, f64, u64, Value, u64) {
 #[test]
 fn each_agent_matches_the_hcl_example() {
     let doc = document();
-    let mut names: Vec<_> = doc.spec.sandboxes.iter().map(|s| s.name.as_str()).collect();
-    names.sort();
+    let names: Vec<_> = doc.sandboxes().map(|s| s.name).collect();
     assert_eq!(
         names,
         [
@@ -39,8 +38,8 @@ fn each_agent_matches_the_hcl_example() {
             "transport"
         ]
     );
-    for sandbox in &doc.spec.sandboxes {
-        let (provider, temperature, max_tokens, tools, max_turns) = expected(&sandbox.name);
+    for sandbox in doc.sandboxes() {
+        let (provider, temperature, max_tokens, tools, max_turns) = expected(sandbox.name);
         let config = nemoclaw_sdk::fabric_config::for_sandbox(&doc, sandbox).unwrap();
         let model = &config["models"]["default"];
         assert_eq!(model["provider"], "custom", "{}: {model}", sandbox.name);

@@ -33,5 +33,10 @@ mod images;
 mod qualify;
 #[path = "registry_metadata.rs"]
 mod registry_metadata;
+#[path = "release_assessment.rs"]
+mod release_assessment;
+#[cfg(unix)]
+mod release_gate;
 #[path = "schema.rs"]
 mod schema;
+mod workflows;

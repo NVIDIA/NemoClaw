@@ -52,22 +52,10 @@ enum Stage {
     Teardown,
 }
 
-/// A cluster ready to host a gateway: kube-system, one default StorageClass,
-/// and an available Agent Sandbox controller.
+/// A cluster with nothing in it yet: the provider reads nothing outside the
+/// target namespace.
 fn cluster() -> Objects {
-    let objects = Objects::default();
-    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
-        "metadata": {"name": "kube-system", "uid": "system-1"}}));
-    objects.insert(json!({"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
-        "metadata": {"name": "standard", "annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}));
-    objects.insert(
-        json!({"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
-        "metadata": {"name": "sandboxes.agents.x-k8s.io"}}),
-    );
-    objects.insert(json!({"apiVersion": "apps/v1", "kind": "Deployment",
-        "metadata": {"name": "agent-sandbox-controller", "namespace": "agent-sandbox-system"},
-        "status": {"availableReplicas": 1}}));
-    objects
+    Objects::default()
 }
 
 /// What Helm's chart install leaves for the gateway resource to observe.

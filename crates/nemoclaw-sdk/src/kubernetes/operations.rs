@@ -40,8 +40,6 @@ pub struct Response {
 /// Cluster access and local paths for one deployment's operations.
 pub struct Operations {
     pub client: kube::Client,
-    /// API server URL from the kubeconfig context.
-    pub server: String,
     /// Private state directory holding the receipt.
     pub state: PathBuf,
     /// How long to wait for OpenShift to assign a new namespace its UID range.
@@ -53,28 +51,38 @@ pub const OPENSHIFT_WAIT: std::time::Duration = std::time::Duration::from_secs(3
 
 impl Operations {
     /// Operations from a provider's environment: the kubeconfig the spec
-    /// names, and the state directory the SDK passes through
-    /// [`STATE_ENV`](super::STATE_ENV).
+    /// names, or without one the pod's service account, and the state
+    /// directory the SDK passes through [`STATE_ENV`](super::STATE_ENV).
     pub async fn from_environment(spec: &Spec) -> Result<Self, ObservationError> {
         let target = spec
             .settings
             .kubernetes
             .as_ref()
             .ok_or(ObservationError::Query)?;
-        let kubeconfig: PathBuf = std::env::var_os(&target.kubeconfig.env)
-            .filter(|path| !path.is_empty())
-            .ok_or(ObservationError::Authentication)?
-            .into();
+        let kubeconfig: Option<PathBuf> = match &target.kubeconfig {
+            Some(reference) => Some(
+                std::env::var_os(&reference.env)
+                    .filter(|path| !path.is_empty())
+                    .ok_or(ObservationError::Authentication)?
+                    .into(),
+            ),
+            None => None,
+        };
         let state: PathBuf = std::env::var_os(super::STATE_ENV)
             .ok_or(ObservationError::Incomplete)?
             .into();
-        let cluster = super::ClusterTarget {
-            kubeconfig,
-            context: target.context.clone(),
+        let client = match kubeconfig {
+            Some(kubeconfig) => {
+                let cluster = super::ClusterTarget {
+                    kubeconfig,
+                    context: target.context.clone().ok_or(ObservationError::Query)?,
+                };
+                super::connect(&cluster).await?
+            }
+            None => super::connect_in_cluster()?,
         };
         Ok(Self {
-            server: super::server(&cluster)?,
-            client: super::connect(&cluster).await?,
+            client,
             state,
             openshift_wait: OPENSHIFT_WAIT,
         })
@@ -97,7 +105,6 @@ impl Operations {
         let target = self.target(spec)?;
         Ok(Storage {
             directory: self.state.clone(),
-            server: self.server.clone(),
             namespace: target.namespace.clone(),
             name: spec.name.clone(),
             owner: spec.owner.clone(),
@@ -125,14 +132,9 @@ impl Operations {
     ) -> Result<&'a Owned, ObservationError> {
         let target = self.target(spec)?;
         receipt
-            .objects
-            .iter()
-            .find(|owned| {
-                owned.api_version == "v1"
-                    && owned.kind == "Namespace"
-                    && owned.name == target.namespace
-                    && owned.namespace.is_empty()
-            })
+            .namespace
+            .as_ref()
+            .filter(|owned| owned.name == target.namespace)
             .ok_or(ObservationError::Incomplete)
     }
 
@@ -191,13 +193,13 @@ impl Operations {
             return Ok(Response::default());
         };
         let cluster = self.cluster(spec);
+        let namespace = receipt.namespace.as_ref();
+        if let Some(namespace) = namespace {
+            cluster.verify_uid(namespace).await?;
+        }
         for owned in &receipt.objects {
             cluster.verify(owned).await?;
         }
-        let namespace = receipt
-            .objects
-            .iter()
-            .find(|owned| owned.kind == "Namespace");
         Ok(Response {
             id: namespace.map(|owned| owned.uid.clone()),
             running: namespace.map(|_| receipt.storage_ready),
@@ -266,11 +268,12 @@ impl Operations {
             && !receipt.issuer.is_empty()
             && let Some(recorded) = receipt.namespace_identity
         {
-            let namespace = cluster.verify(self.namespace(spec, &receipt)?).await?;
+            let owned = self.namespace(spec, &receipt)?;
+            let namespace = cluster.verify_uid(owned).await?;
             let identity =
                 Identity::from_annotations(&namespace.metadata.annotations.unwrap_or_default());
             if identity != Some(recorded) {
-                return Err(ObservationError::BindingMismatch);
+                return Err(range_changed(owned, recorded, identity));
             }
         }
         // Ensure records the namespace identity before it writes an OpenShift
@@ -392,6 +395,25 @@ impl Operations {
         })
     }
 
+    /// Check before any change that applying `spec` would not be refused:
+    /// storage binds the target namespace, or creates it, unless it is being
+    /// deleted or another deployment created it. A deployment that already
+    /// bound a namespace keeps that one.
+    pub async fn plan(&self, spec: &Spec) -> Result<(), ObservationError> {
+        if spec.kind != STORAGE_KIND {
+            return Ok(());
+        }
+        let target = &self.target(spec)?.namespace;
+        if let Some(bound) = self.receipt(spec)?.and_then(|receipt| receipt.namespace) {
+            super::storage::same_namespace(&bound, target)?;
+            self.cluster(spec).verify_uid(&bound).await?;
+            return Ok(());
+        }
+        super::storage::bindable_namespace(&self.cluster(spec), target, &spec.owner)
+            .await
+            .map(|_| ())
+    }
+
     /// Create or repair the resource, then observe it.
     pub async fn ensure(
         &self,
@@ -410,17 +432,13 @@ impl Operations {
                 self.read(spec, prior).await?;
                 let cluster = self.cluster(spec);
                 if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
-                    let identity = namespace_identity(
-                        &cluster,
-                        self.namespace(spec, &receipt)?,
-                        self.openshift_wait,
-                    )
-                    .await?;
-                    if receipt
-                        .namespace_identity
-                        .is_some_and(|recorded| recorded != identity)
+                    let namespace = self.namespace(spec, &receipt)?;
+                    let identity =
+                        namespace_identity(&cluster, namespace, self.openshift_wait).await?;
+                    if let Some(recorded) = receipt.namespace_identity
+                        && recorded != identity
                     {
-                        return Err(ObservationError::BindingMismatch);
+                        return Err(range_changed(namespace, recorded, Some(identity)));
                     }
                     receipt.namespace_identity = Some(identity);
                     receipt.save(&self.state)?;
@@ -643,6 +661,23 @@ impl Operations {
     }
 }
 
+/// A refusal naming the namespace whose OpenShift ranges no longer match the
+/// recorded user and group.
+fn range_changed(
+    namespace: &Owned,
+    recorded: Identity,
+    found: Option<Identity>,
+) -> ObservationError {
+    let found = found.map_or_else(
+        || "no valid range".to_owned(),
+        |found| format!("UID {} and group {}", found.user, found.group),
+    );
+    namespace.changed(&format!(
+        "has a different OpenShift UID or group range: recorded UID {} and group {}, found {found}",
+        recorded.user, recorded.group
+    ))
+}
+
 /// OpenShift assigns ranges shortly after creating a namespace. Only the
 /// recorded namespace may supply the identity, and no issuer is written
 /// until the annotation is valid.
@@ -654,7 +689,7 @@ async fn namespace_identity(
     let deadline = tokio::time::Instant::now() + wait;
     loop {
         let annotations = cluster
-            .verify(namespace)
+            .verify_uid(namespace)
             .await?
             .metadata
             .annotations

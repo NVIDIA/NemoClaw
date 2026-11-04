@@ -19,10 +19,8 @@ ratatui.workspace = true
 tempfile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
-
-[dev-dependencies]
 serde-saphyr.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 
 [[bin]]
 name = "nemoclaw-onboarding"

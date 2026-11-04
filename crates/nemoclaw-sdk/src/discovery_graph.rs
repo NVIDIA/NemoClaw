@@ -89,12 +89,18 @@ fn read(
     Ok(())
 }
 
+/// Name of a sandbox's Fabric harness read. It follows the sandbox's name, not
+/// its position, so adding or removing a sandbox leaves other sandboxes' reads
+/// and the resources that use them unchanged. Sandbox names have no
+/// underscores, so the prefix keeps it apart from the other reads' names.
+pub(crate) fn harness_read(sandbox: &str) -> String {
+    format!("sandbox_{sandbox}")
+}
+
 pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), ConfigError> {
     let mut observations = Map::new();
-    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
-    sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
-    let mut sandboxes = sandboxes.into_iter();
-    let (mut targets, mut images) = (0, 0);
+    let mut sandboxes = document.sandboxes();
+    let mut targets = 0;
     for query in plan_queries(document)? {
         match &query {
             DiscoveryQuery::Gateway(_) => {
@@ -122,14 +128,25 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 )?;
                 // The openshell provider judges whether the engine can host
                 // the managed gateway; its installation types enforce the
-                // same check.
+                // same engine check. It also checks that only this
+                // deployment's gateway holds the endpoint's port.
                 let source = crate::compile::data_source_type(GATEWAY_PREREQUISITES);
+                let gateway = document
+                    .spec
+                    .gateway
+                    .as_local_managed()
+                    .expect("engine reads are planned for local managed gateways");
                 graph["data"][&source]["current"] = json!({
                     "engine": literal(&request.engine),
                     "compute_driver": request.compute_driver,
+                    "endpoint": literal(&gateway.endpoint),
+                    "name": literal(&format!("{}-gateway", document.workspace())),
+                    "owner": literal(&document.metadata.uid),
+                    // OpenTofu evaluates the message even when the condition
+                    // holds, and an available engine reports no reason.
                     "lifecycle": { "postcondition": [{
                         "condition": "${self.status != \"unavailable\"}",
-                        "error_message": "The selected engine does not meet gateway prerequisites. Correct the runtime or target configuration."
+                        "error_message": "The selected engine does not meet gateway prerequisites: ${coalesce(jsondecode(self.observation_json).reason, \"no reason was reported\")}. Correct the runtime or target configuration."
                     }] },
                 });
                 observations.insert(
@@ -144,8 +161,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 ..
             }) => {
                 let sandbox = sandboxes.next().expect("one image read per sandbox");
-                let name = format!("sandbox_{images}");
-                images += 1;
+                let name = harness_read(sandbox.name);
                 let adapter = requirements.configuration["harness"]["adapter_id"]
                     .as_str()
                     .expect("resolved adapter");
@@ -197,7 +213,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 // Named by sandbox, so adding a sandbox changes no agent's ref.
                 // A pulled image's harness is read after its pull instead.
                 if !pulled {
-                    graph["data"]["fabric_harness"][&sandbox.name] = harness;
+                    graph["data"]["fabric_harness"][sandbox.name] = harness;
                 }
             }
             DiscoveryQuery::Credential(_) => {

@@ -59,6 +59,10 @@ cargo images export-metadata nc-fabric:openclaw --output openclaw.metadata.json
 Push the image, then use the digest of the pushed index in `image.ref`.
 The bundle is checked against that digest, so it must come from the same build.
 It covers every Linux platform the index lists, so one bundle serves ARM64 and AMD64 nodes.
+When you copy the image to another registry, copy the whole index so its digest stays the same; besides its platform's image, an index from `cargo images build` lists an attestation manifest that Buildx adds.
+With `oc image mirror`, pass `--keep-manifest-list=true --filter-by-os='.*'`; by default it copies only the image for the platform `oc` runs on.
+If a copy changes the digest, write the bundle again from the copy with `--registry`, as [Build agent images](build.md#build-agent-images) describes.
+For OpenShift's internal registry, reference the copy by the address nodes pull from, `image-registry.openshift-image-registry.svc:5000/<namespace>/<name>@<digest>`, and let the deployment's service accounts pull from that namespace, for example with the `system:image-puller` role.
 Set the environment variable named in `image.metadata` to the bundle's path before each command.
 See [Build agent images](build.md#build-agent-images) for the harnesses each platform builds.
 

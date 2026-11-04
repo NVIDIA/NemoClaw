@@ -26,6 +26,10 @@ on:
         description: Also run the Docker and Kubernetes live suites, which need a Linux runner.
         type: boolean
         default: false
+      live-images-commit:
+        description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
+        type: string
+        default: ""
 permissions:
   contents: read
 defaults:
@@ -151,7 +155,8 @@ jobs:
 
   lifecycle:
     name: Lifecycle / ${{ matrix.shard }}
-    if: inputs.lifecycle
+    # The bundle job runs whenever lifecycle tests do.
+    if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
     strategy:
       fail-fast: false
@@ -184,6 +189,9 @@ jobs:
         env:
           LIFECYCLE_SHARD: ${{ matrix.shard }}
           LIFECYCLE_SHARDS: ${{ strategy.job-total }}
+          # The tofu test integration scenarios record each result and a failed
+          # scenario's redacted evidence here.
+          NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration
         run: >-
           .build/ci/nemoclaw-build ci lifecycle
           --partition "slice:${LIFECYCLE_SHARD}/${LIFECYCLE_SHARDS}"
@@ -197,6 +205,27 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+      - name: Summarize integration scenarios
+        if: always()
+        env:
+          RESULTS: ${{ runner.temp }}/hcl-integration/results.tsv
+        run: |
+          if [ -f "$RESULTS" ]; then
+            {
+              echo '| Integration scenario | Result |'
+              echo '|---|---|'
+              awk -F '\t' '{ printf "| `%s` | %s |\n", $1, $2 }' "$RESULTS"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Fixture credentials are redacted; the evidence holds only fixture data.
+      - name: Upload failed integration scenarios' evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcl-integration-evidence-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hcl-integration
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Each partition reports and enforces its own budget; this job reports the
   # platform's whole lifecycle suite in its summary, from the partitions'
@@ -234,10 +263,12 @@ jobs:
           "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
   # The live suites' images, built once per platform alongside the build and
-  # bundle jobs; both live jobs load them instead of building their own.
+  # bundle jobs; both live jobs load them instead of building their own. When
+  # no image input changed since a v1 commit that pushed them, the live jobs
+  # pull that commit's images instead.
   live-images:
     name: Build live images
-    if: inputs.live
+    if: inputs.live && inputs.live-images-commit == ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -273,9 +304,19 @@ jobs:
   live-docker:
     name: Live / Docker
     needs: [build, bundle, live-images]
-    if: inputs.live
+    # Runs after Build live images, or in its place when the plan names a v1
+    # commit's images. Its result decides the platform's Test check, so it
+    # must not be skipped when its images are pulled.
+    if: >-
+      ${{ !cancelled() && inputs.live &&
+      needs.build.result == 'success' && needs.bundle.result == 'success' &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -287,13 +328,24 @@ jobs:
           tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
           images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}
 
   live-kind:
     name: Live / Kind
     needs: [build, bundle, live-images]
-    if: inputs.live
+    # Runs after Build live images, or in its place when the plan names a v1
+    # commit's images. Its result decides the platform's Test check, so it
+    # must not be skipped when its images are pulled.
+    if: >-
+      ${{ !cancelled() && inputs.live &&
+      needs.build.result == 'success' && needs.bundle.result == 'success' &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -305,3 +357,4 @@ jobs:
           tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
           images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}

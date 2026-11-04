@@ -17,10 +17,201 @@ pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
             "authentication":{"profile":"development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let generations = Record::new(document.clone()).unwrap().generations;
     (document, generations)
+}
+
+/// The same target without a kubeconfig and context: clients use the service
+/// account of the pod that runs NemoClaw.
+fn pod_document() -> Document {
+    let (document, _) = kubernetes_context();
+    let mut value = serde_json::to_value(&document).unwrap();
+    let kubernetes = value["spec"]["gateway"]["kubernetes"]
+        .as_object_mut()
+        .unwrap();
+    kubernetes.remove("kubeconfig");
+    kubernetes.remove("context");
+    Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap()
+}
+
+/// An applied deployment keeps the cluster access it was applied with: a plan
+/// whose recorded resource used the other access is refused, in both
+/// directions.
+#[test]
+fn a_plan_cannot_switch_between_a_kubeconfig_and_the_pods_service_account() {
+    const ADDRESS: &str = "openshell_kubernetes_storage.runtime";
+    let (document, generations) = kubernetes_context();
+    let row = |document: &Document| {
+        compile::runtime_targets(document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.address == ADDRESS)
+            .unwrap()
+            .values
+    };
+    let (kubeconfig, pod) = (row(&document), row(&pod_document()));
+    let differing: Vec<&String> = kubeconfig
+        .keys()
+        .filter(|key| kubeconfig.get(*key) != pod.get(*key))
+        .collect();
+    assert_eq!(differing, ["context", "kubeconfig_env"]);
+    let bindings = BTreeMap::from([(
+        ADDRESS.into(),
+        StateBinding {
+            id: "namespace-uid".into(),
+            ..Default::default()
+        },
+    )]);
+    let plan = |action: &str, before: &Row, after: &Row| -> Plan {
+        let mut before = json!(before);
+        before["id"] = json!("namespace-uid");
+        serde_json::from_value(json!({"resource_changes": [{
+            "address": ADDRESS, "mode": "managed",
+            "change": {"actions": [action], "before": before, "after": after}
+        }]}))
+        .unwrap()
+    };
+    for (prior, desired) in [(&kubeconfig, &pod), (&pod, &kubeconfig)] {
+        let allowed = BTreeMap::from([(ADDRESS.to_owned(), desired.clone())]);
+        assert!(matches!(
+            check_plan(&plan("update", prior, desired), &allowed, &bindings),
+            Err(Error::Conflict(_))
+        ));
+    }
+    let allowed = BTreeMap::from([(ADDRESS.to_owned(), pod.clone())]);
+    assert!(check_plan(&plan("no-op", &pod, &pod), &allowed, &bindings).is_ok());
+}
+
+/// A lookup of the caller's variables as a pod sets them, beside an ambient
+/// kubeconfig that must never be used.
+fn pod_variables(name: &str) -> Option<String> {
+    match name {
+        "KUBERNETES_SERVICE_HOST" => Some("10.96.0.1".into()),
+        "KUBERNETES_SERVICE_PORT" => Some("443".into()),
+        "KUBERNETES_SERVICE_PORT_HTTPS" => Some("443".into()),
+        "KUBECONFIG" => Some("/home/agent/.kube/config".into()),
+        _ => None,
+    }
+}
+
+/// Resolves the kubeconfig and image metadata references of
+/// `kubernetes_context`.
+struct ClusterValues;
+impl Secrets for ClusterValues {
+    fn resolve(&self, name: &str) -> Result<String, crate::ObservationError> {
+        match name {
+            "TEST_KUBECONFIG" => Ok("/private/kubeconfig".into()),
+            "TEST_IMAGE_METADATA" => Ok("/absent/image-metadata.json".into()),
+            _ => Err(crate::ObservationError::Authentication),
+        }
+    }
+}
+
+/// The variables that select a cluster or its credentials.
+fn cluster_variables(environment: &BTreeMap<String, String>) -> BTreeMap<&str, &str> {
+    environment
+        .iter()
+        .filter(|(name, _)| name.starts_with("KUBE") || name.starts_with("TF_VAR_"))
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect()
+}
+
+/// Without a kubeconfig, providers find the API server through the two
+/// variables a pod sets, and receive no kubeconfig path.
+#[test]
+fn without_a_kubeconfig_providers_receive_only_the_pods_api_server_address() {
+    let temporary = tempfile::tempdir().unwrap();
+    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(ClusterValues));
+    deployment.pod_environment = pod_variables;
+    for gateway_only in [false, true] {
+        let environment = deployment
+            .provider_environment(&pod_document(), temporary.path(), gateway_only)
+            .unwrap();
+        assert_eq!(
+            cluster_variables(&environment),
+            BTreeMap::from([
+                ("KUBERNETES_SERVICE_HOST", "10.96.0.1"),
+                ("KUBERNETES_SERVICE_PORT", "443"),
+            ]),
+            "gateway only: {gateway_only}"
+        );
+    }
+}
+
+/// Outside a pod, an ambient kubeconfig is no fallback: a target without a
+/// kubeconfig stops, naming the missing in-cluster configuration, and only
+/// the two service variables are looked up. An empty one counts as unset.
+#[test]
+fn outside_a_pod_an_ambient_kubeconfig_is_never_used() {
+    thread_local! {
+        static ASKED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    fn ambient(name: &str) -> Option<String> {
+        ASKED.with(|asked| asked.borrow_mut().push(name.into()));
+        match name {
+            "KUBECONFIG" => Some("/home/agent/.kube/config".into()),
+            "HOME" => Some("/home/agent".into()),
+            _ => None,
+        }
+    }
+    fn empty_host(name: &str) -> Option<String> {
+        match name {
+            "KUBERNETES_SERVICE_HOST" => Some(String::new()),
+            _ => pod_variables(name),
+        }
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    for lookup in [ambient as fn(&str) -> Option<String>, empty_host] {
+        let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+            .with_secrets(Arc::new(ClusterValues));
+        deployment.pod_environment = lookup;
+        let error = deployment
+            .provider_environment(&pod_document(), temporary.path(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("in-cluster Kubernetes configuration is missing"),
+            "{error}"
+        );
+    }
+    let asked = ASKED.with(|asked| asked.take());
+    assert!(
+        asked
+            .iter()
+            .all(|name| name.starts_with("KUBERNETES_SERVICE_")),
+        "{asked:?}"
+    );
+}
+
+/// With a kubeconfig, providers receive its path and none of a pod's
+/// variables, even when NemoClaw itself runs in a pod.
+#[test]
+fn with_a_kubeconfig_providers_receive_no_pod_api_server_address() {
+    let temporary = tempfile::tempdir().unwrap();
+    let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+        .with_secrets(Arc::new(ClusterValues));
+    deployment.pod_environment = pod_variables;
+    let kubeconfig = std::path::absolute("/private/kubeconfig")
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    for gateway_only in [false, true] {
+        let environment = deployment
+            .provider_environment(&kubernetes_context().0, temporary.path(), gateway_only)
+            .unwrap();
+        assert_eq!(
+            cluster_variables(&environment),
+            BTreeMap::from([(
+                crate::kubernetes::gateway::KUBECONFIG_ENV,
+                kubeconfig.as_str()
+            )]),
+            "gateway only: {gateway_only}"
+        );
+    }
 }
 
 /// The listed variables reach OpenTofu with their resolved values, and an
@@ -163,7 +354,12 @@ fn kubernetes_environment_is_operation_scoped_and_stable_across_export_directori
         }
     }
     let (mut document, _) = kubernetes_context();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .credential = Some(SecretRef {
         env: "UNREAD_INFERENCE_KEY".into(),
     });
     let temporary = tempfile::tempdir().unwrap();
@@ -475,8 +671,9 @@ fn credential_references_cannot_override_opentofu_control_variables() {
     }
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.inference_providers[0].endpoint = "https://example.com/v1".into();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    let provider = document.spec.inference_providers.get_mut("local").unwrap();
+    provider.endpoint = "https://example.com/v1".into();
+    provider.credential = Some(SecretRef {
         env: "TF_CLI_CONFIG_FILE".into(),
     });
     assert!(command_environment(&document, &Values, Path::new("state")).is_err());
@@ -499,6 +696,8 @@ fn credential_references_cannot_override_helm_or_kubernetes_controls() {
         "KUBE_CONFIG_PATH",
         "KUBE_CONFIG_PATHS",
         "KUBE_INSECURE",
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
     ] {
         assert!(
             matches!(
@@ -546,7 +745,12 @@ async fn schema_commands_do_not_require_inference_credentials() {
         Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());
     let mut document =
         Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .credential = Some(SecretRef {
         env: "TEST_INFERENCE_CREDENTIAL".into(),
     });
     let cancel = CancellationToken::new();
@@ -666,14 +870,20 @@ fn gateway_observation_resolves_only_gateway_credentials() {
         }
     }))
     .unwrap();
-    document.spec.inference_providers[0].credential = Some(SecretRef {
+    document
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .credential = Some(SecretRef {
         env: "INFERENCE_TOKEN".into(),
     });
-    document.spec.sandboxes[0].integrations = serde_json::from_value(json!({
+    let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
+    sandbox.integrations = serde_json::from_value(json!({
         "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}}
     }))
     .unwrap();
-    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    sandbox.agent.integration_refs = vec!["search".into()];
     let environment = gateway_environment(&document, &GatewayValues, Path::new("state")).unwrap();
     for name in ["GATEWAY_TOKEN", "GATEWAY_CA", "GATEWAY_CERT", "GATEWAY_KEY"] {
         assert_eq!(environment[name], format!("test-{name}"));

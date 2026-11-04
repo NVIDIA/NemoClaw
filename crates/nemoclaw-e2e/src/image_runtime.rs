@@ -34,12 +34,7 @@ pub fn targets(
                 serde_json::json!(["/usr/local/bin/python3.99"]).to_string(),
             );
         } else if target.kind == "sandbox" {
-            let sandbox = document
-                .spec
-                .sandboxes
-                .iter()
-                .find(|sandbox| sandbox.name == target.values["name"])
-                .unwrap();
+            let sandbox = document.sandbox(&target.values["name"])?;
             let requirements =
                 nemoclaw_sdk::fabric_capabilities::requirements_for_sandbox(document, sandbox)?;
             let adapter = requirements.configuration["harness"]["adapter_id"]
@@ -118,7 +113,7 @@ pub async fn engine(document: &mut Document) -> transport::Fixture {
     // and the tag separately, so OpenTofu's Docker provider finds it.
     let mut references = Vec::new();
     let mut tags = Vec::new();
-    for sandbox in &document.spec.sandboxes {
+    for sandbox in document.spec.sandboxes.values() {
         let reference = &sandbox.image.ref_;
         let (name, digest) = reference.split_once('@').unwrap_or((reference, ""));
         let slash = name.rfind('/').map_or(0, |index| index + 1);

@@ -36,23 +36,36 @@ live-docker:
   test_seconds: 180
 
 # Live / Kind: at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
-# runs; slowest test 83 s.
+# runs. The slowest test, the kind-openshift-agents HCL E2E scenario, took
+# 133 s on linux_amd64 and 138 s on linux_arm64 with three agents (#14097);
+# about 30 s of each test's destroy waits out the sandbox pods' termination
+# grace period (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is
+# fixed.
+# Raised for now while #14087 finds why linux_amd64 runs vary: after the test
+# moved to the kind-openshift-agents HCL case (#14097), hcl_live::case took
+# 130.1-143.3 s on linux_amd64 in four runs, then 163.3 s and 155.6 s on
+# #14124, whose other Kubernetes tests were 10-15% slower too. Return to
+# 150 s and 270 s when #14087 is resolved.
 live-kind:
-  wall_seconds: 270
-  test_seconds: 120
+  wall_seconds: 300
+  test_seconds: 180
 
 # Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
 # two runs after providers and the fake OpenShell gateway set TCP_NODELAY.
+# Since OpenShell v0.1.5, its crypto crate makes rustls and rcgen use aws-lc,
+# which seeds its random generator from CPU jitter on first use: about 20-35 ms
+# in each provider process. The figures are the largest from the linux_amd64
+# and linux_arm64 runs of v1 and two pull requests after v0.1.5 landed.
 binaries:
-  # 5 tests: at most 17.4 s summed; slowest test 6.2 s.
+  # 5 tests: at most 24.0 s summed; slowest test 12.2 s.
   fabric-provider::contract:
-    summed_seconds: 25
-    test_seconds: 10
-  # 26 tests: at most 32.5 s summed; slowest test 4.7 s.
+    summed_seconds: 32
+    test_seconds: 16
+  # 26 tests: at most 62.7 s summed; slowest test 9.0 s.
   nemoclaw-provider::contract:
-    summed_seconds: 45
-    test_seconds: 8
-  # 62 tests: at most 74.6 s summed; slowest test 3.7 s.
+    summed_seconds: 82
+    test_seconds: 12
+  # 65 tests: at most 139.1 s summed; slowest test 5.7 s.
   openshell-provider::contract:
-    summed_seconds: 105
-    test_seconds: 6
+    summed_seconds: 180
+    test_seconds: 8

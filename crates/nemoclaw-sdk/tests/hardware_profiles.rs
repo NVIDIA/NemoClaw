@@ -83,6 +83,73 @@ fn hardware_failures_report_the_requirement_and_observation() {
 }
 
 #[test]
+fn a_dedicated_memory_service_at_the_reserve_floor_starts_when_26_gib_are_available() {
+    // A 32 GiB host: MemTotal is a little below 32 GiB.
+    let capacity = |gpu: &str, compute_capability, gpu_total, available| Capacity {
+        architecture: "amd64".into(),
+        gpu: gpu.into(),
+        driver_major: 580,
+        compute_capability,
+        total: 31 * GIB,
+        available,
+        disk_free: 500 * GIB,
+        gpu_memory: Some(GpuMemory {
+            total: gpu_total,
+            free: gpu_total - GIB,
+        }),
+        ..Default::default()
+    };
+    let required = 26 * GIB;
+
+    let mut vllm = input(json!({"profile": "h100", "architecture": "amd64"}));
+    vllm["spec"]["services"]["qwen"]["memory"]["hostReserveGiB"] = json!(6);
+    vllm["spec"]["services"]["qwen"]["memory"]["gpuMemoryGiB"] = json!(20);
+    let document = Document::parse(vllm.to_string().as_bytes()).unwrap();
+    let ServiceDefinition::Vllm(service) = &document.spec.services["qwen"] else {
+        panic!("expected vLLM")
+    };
+    let check = |available| {
+        nemoclaw_runtime::vllm::hardware_capacity::check_memory(
+            service,
+            &capacity("NVIDIA H100 80GB HBM3", 90, 80 * GIB, available),
+            true,
+        )
+    };
+    check(required).unwrap();
+    let error = check(required - 1).unwrap_err().to_string();
+    assert_eq!(
+        error,
+        format!(
+            "host available memory (bytes) requires at least {required}; observed {}",
+            required - 1
+        )
+    );
+
+    let mut ollama: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/managed-ollama-gpu.yaml")).unwrap();
+    ollama["spec"]["services"]["qwen"]["hardware"] =
+        json!({"profile": "l4", "architecture": "amd64"});
+    ollama["spec"]["services"]["qwen"]["memory"]["hostReserveGiB"] = json!(6);
+    let document = Document::parse(ollama.to_string().as_bytes()).unwrap();
+    let ServiceDefinition::Ollama(service) = &document.spec.services["qwen"] else {
+        panic!("expected Ollama")
+    };
+    let check = |available| {
+        nemoclaw_runtime::ollama::hardware_capacity::check_memory(
+            service,
+            &capacity("NVIDIA L4", 89, 24 * GIB, available),
+            true,
+        )
+    };
+    check(required).unwrap();
+    let error = check(required - 1).unwrap_err().to_string();
+    assert!(
+        error.starts_with("host available memory (bytes) requires at least"),
+        "{error}"
+    );
+}
+
+#[test]
 fn profiles_validate_gpu_identity_and_keep_hbm_separate_from_host_ram() {
     let schema = jsonschema::validator_for(&input_schema()).unwrap();
     for (profile, gpu, cc, fixed_architecture) in [

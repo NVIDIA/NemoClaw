@@ -160,18 +160,5 @@ enum CapacityService {
     Vllm(nemoclaw_runtime::vllm::Service),
 }
 
-/// Planning inspects existing model data; apply also resolves missing artifacts
-/// and requires free memory for a process that must start.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CapacityCheck {
-    Plan,
-    Apply { starting: bool },
-}
-impl CapacityCheck {
-    pub(crate) fn starting(self) -> bool {
-        matches!(self, Self::Apply { starting: true })
-    }
-}
-
 #[cfg(test)]
 mod tests;

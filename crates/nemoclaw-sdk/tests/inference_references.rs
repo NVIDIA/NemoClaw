@@ -10,14 +10,14 @@ fn input() -> Value {
     crate::support::example("fabric-openclaw.yaml")
 }
 fn shared(mut value: Value, sandbox: bool) -> Value {
-    let inference = value["spec"]["sandboxes"][0]["agent"]
+    let inference = value["spec"]["sandboxes"]["assistant"]["agent"]
         .as_object_mut()
         .unwrap()
         .remove("inference")
         .unwrap();
-    value["spec"]["sandboxes"][0]["agent"]["inferenceRef"] = json!("chat");
+    value["spec"]["sandboxes"]["assistant"]["agent"]["inferenceRef"] = json!("chat");
     let scope = if sandbox {
-        &mut value["spec"]["sandboxes"][0]
+        &mut value["spec"]["sandboxes"]["assistant"]
     } else {
         &mut value["spec"]
     };
@@ -47,7 +47,7 @@ fn inference_reference_preserves_authored_scope_and_runtime_behavior() {
         );
         let authored = serde_json::to_value(&doc).unwrap();
         assert!(
-            authored["spec"]["sandboxes"][0]["agent"]
+            authored["spec"]["sandboxes"]["assistant"]["agent"]
                 .get("inference")
                 .is_none()
         );
@@ -56,13 +56,13 @@ fn inference_reference_preserves_authored_scope_and_runtime_behavior() {
 #[test]
 fn inference_references_reject_ambiguity_shadowing_and_invisible_providers() {
     let mut missing = shared(input(), false);
-    missing["spec"]["sandboxes"][0]["agent"]["inferenceRef"] = json!("missing");
+    missing["spec"]["sandboxes"]["assistant"]["agent"]["inferenceRef"] = json!("missing");
     let mut both = shared(input(), false);
-    both["spec"]["sandboxes"][0]["agent"]["inference"] = json!({});
+    both["spec"]["sandboxes"]["assistant"]["agent"]["inference"] = json!({});
     let mut shadow = shared(input(), false);
-    shadow["spec"]["sandboxes"][0]["inferences"] = shadow["spec"]["inferences"].clone();
+    shadow["spec"]["sandboxes"]["assistant"]["inferences"] = shadow["spec"]["inferences"].clone();
     let mut invisible = shared(input(), false);
-    invisible["spec"]["sandboxes"][0]["inferenceProviders"] = invisible["spec"]
+    invisible["spec"]["sandboxes"]["assistant"]["inferenceProviders"] = invisible["spec"]
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders")
@@ -99,22 +99,19 @@ fn unused_inference_is_validated_but_adds_no_credentials_or_resources() {
 #[test]
 fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
     let mut value = input();
-    let provider = value["spec"]
+    let mut provider = value["spec"]
         .as_object_mut()
         .unwrap()
         .remove("inferenceProviders")
-        .unwrap()[0]
-        .clone();
-    let route = &mut value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0];
+        .unwrap()["local"]
+        .take();
+    provider["name"] = json!("local");
+    let route = &mut value["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0];
     route.as_object_mut().unwrap().remove("providerRef");
     route["provider"] = provider;
     let mut value = shared(value, false);
-    let mut other = value["spec"]["sandboxes"][0].clone();
-    other["name"] = json!("other");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(other);
+    let other = value["spec"]["sandboxes"]["assistant"].clone();
+    value["spec"]["sandboxes"]["other"] = other;
     let mut doc = Document::parse(value.to_string().as_bytes()).unwrap();
     doc.inference_provider_mut().unwrap().endpoint = "http://127.0.0.1:19999/v1".into();
     let authored = serde_json::to_value(&doc).unwrap();
@@ -132,8 +129,8 @@ fn shared_inline_provider_is_one_instance_and_edits_stay_in_its_definition() {
 fn shared_pi_metadata_accepts_opaque_nulls_only_inside_the_model() {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-pi.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]["model_metadata"]
-        ["custom"] = Value::Null;
+    value["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
+        ["model_metadata"]["custom"] = Value::Null;
     let mut value = shared(value, false);
     assert!(Document::parse(value.to_string().as_bytes()).is_ok());
     value["spec"]["inferences"]["chat"]["routes"][0]["overrides"]["model"] = Value::Null;

@@ -41,7 +41,38 @@ pub enum HardwareProfile {
 }
 
 impl HardwareProfile {
+    pub const ALL: [Self; 21] = [
+        Self::DgxSpark,
+        Self::RtxSpark,
+        Self::DgxStation,
+        Self::Gb200,
+        Self::Gb300,
+        Self::Gh200,
+        Self::H100,
+        Self::H200,
+        Self::A100,
+        Self::A10,
+        Self::A10g,
+        Self::A40,
+        Self::L4,
+        Self::L40,
+        Self::L40s,
+        Self::T4,
+        Self::Rtx6000Ada,
+        Self::RtxPro6000Blackwell,
+        Self::Rtx3090,
+        Self::Rtx4090,
+        Self::Rtx5090,
+    ];
+
     pub const UNIFIED_MEMORY: [Self; 2] = [Self::DgxSpark, Self::RtxSpark];
+
+    /// The first profile whose GPU family matches an observed device name.
+    pub fn for_gpu(observed: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|profile| profile.matches_gpu(observed))
+    }
 
     pub fn memory_architecture(self) -> MemoryArchitecture {
         if Self::UNIFIED_MEMORY.contains(&self) {

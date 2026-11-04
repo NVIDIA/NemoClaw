@@ -85,9 +85,10 @@ pub(super) struct PlannedChange {
 }
 /// Sandboxes to replace so each newly created agent gets a new sandbox.
 ///
-/// A Fabric sandbox runs one agent runtime in its lifetime, and a start that
-/// failed or lost its reply may have used it. So an agent created in a sandbox
-/// that already exists replaces that sandbox too, and the plan shows it.
+/// A start that failed or lost its reply may have left a runtime running, and
+/// Fabric can't tell a retry from a new start (NVIDIA/NeMo-Fabric#487). So an
+/// agent created in a sandbox that already exists replaces that sandbox too,
+/// and the plan shows it.
 pub(super) fn sandboxes_for_new_agents(plan: &Plan) -> Vec<String> {
     let managed = |change: &&ResourceChange| {
         change.mode.as_deref() != Some("data") && change.deposed.is_none()
@@ -237,7 +238,13 @@ pub(super) fn check_plan(
                     .get("exited")
                     .and_then(serde_json::Value::as_str)
                     .filter(|exited| replaced && !exited.is_empty())
-                    .map(|exited| format!("sandbox exited: {exited}"));
+                    .map(|exited| format!("sandbox exited: {exited}"))
+                    .or_else(|| {
+                        (change.address.split_once('.').map(|(kind, _)| kind)
+                            == Some(nemoclaw_fabric::agent::RESOURCE_TYPE)
+                            && change.change.before["running"] == "false")
+                            .then(|| "agent runtime is not running".to_owned())
+                    });
                 changes.push(Change {
                     resource,
                     actions: change.change.actions.clone(),
@@ -539,6 +546,22 @@ mod native_helm_tests {
         assert_eq!(
             changes[0].reason.as_deref(),
             Some("sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1")
+        );
+    }
+
+    #[test]
+    fn an_agent_restarted_because_its_runtime_stopped_reports_why() {
+        let address = "fabric_agent.assistant";
+        let allowed: BTreeMap<String, Row> = [(address.to_owned(), Row::new())].into();
+        let plan: Plan = serde_json::from_value(json!({"resource_changes":[{
+            "mode":"managed", "address":address,
+            "change":{"actions":["update"], "before":{"running":"false"}, "after":{}}
+        }]}))
+        .unwrap();
+        let changes = check_plan(&plan, &allowed, &BTreeMap::new()).unwrap();
+        assert_eq!(
+            changes[0].reason.as_deref(),
+            Some("agent runtime is not running")
         );
     }
 

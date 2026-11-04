@@ -6,7 +6,7 @@
 use super::*;
 
 /// The branch currently being visited; this is not part of desired state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct JourneyPosition {
     pub(super) selected_forms: BTreeMap<String, String>,
     pub(super) selected_route: Option<usize>,

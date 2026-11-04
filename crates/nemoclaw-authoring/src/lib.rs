@@ -24,7 +24,9 @@ mod target_assessment;
 
 pub use capabilities::Capabilities;
 pub use diagnostics::{Diagnostic, Diagnostics};
-pub use discovery_queries::{discovery_queries, inference_request_for_document};
+pub use discovery_queries::{
+    credential_queries, discovery_queries, inference_request_for_document,
+};
 pub use identity::new_deployment_uid;
 pub use journey_definition::{
     JourneyDefinition, JourneyScope, JourneySelector, TargetPrerequisite,

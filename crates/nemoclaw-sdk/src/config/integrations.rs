@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{AgentTools, ConfigError, Document, Sandbox, SecretRef};
+use super::{AgentTools, ConfigError, Document, NamedSandbox, SecretRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -89,15 +89,16 @@ pub struct IntegrationBinding<'a> {
     pub agent_refs: Vec<&'a str>,
 }
 
-impl Sandbox {
+impl<'a> NamedSandbox<'a> {
     /// Resolve deployment and sandbox definitions without implicitly granting access.
-    pub fn integration_bindings<'a>(
-        &'a self,
+    pub fn integration_bindings(
+        self,
         shared: &'a BTreeMap<String, Integration>,
     ) -> Result<Vec<IntegrationBinding<'a>>, ConfigError> {
+        let sandbox = self.definition;
         validate_definitions(shared)?;
-        validate_definitions(&self.integrations)?;
-        if self
+        validate_definitions(&sandbox.integrations)?;
+        if sandbox
             .integrations
             .keys()
             .any(|name| shared.contains_key(name))
@@ -107,12 +108,12 @@ impl Sandbox {
             ));
         }
         let mut bindings = BTreeMap::new();
-        let agent = &self.agent;
+        let agent = &sandbox.agent;
         validate_definitions(&agent.integrations)?;
         if agent
             .integrations
             .keys()
-            .any(|name| shared.contains_key(name) || self.integrations.contains_key(name))
+            .any(|name| shared.contains_key(name) || sandbox.integrations.contains_key(name))
         {
             return Err(ConfigError::new(
                 "agent integration names must not shadow enclosing definitions",
@@ -124,7 +125,7 @@ impl Sandbox {
             .iter()
             .enumerate()
             .map(|(index, name)| {
-                let definition = self
+                let definition = sandbox
                     .integrations
                     .get(name)
                     .or_else(|| shared.get(name))
@@ -132,13 +133,13 @@ impl Sandbox {
                         super::references::missing_reference(
                             &format!(
                                 "spec.sandboxes[{}].agent.integrationRefs[{index}]",
-                                super::references::diagnostic_name(&self.name)
+                                super::references::diagnostic_name(self.name)
                             ),
                             "integration",
                             name,
                             shared
                                 .keys()
-                                .chain(self.integrations.keys())
+                                .chain(sandbox.integrations.keys())
                                 .map(String::as_str),
                         )
                     })?;
@@ -174,7 +175,7 @@ impl Sandbox {
 impl Document {
     pub(crate) fn web_search(
         &self,
-        sandbox: &super::Sandbox,
+        sandbox: NamedSandbox<'_>,
     ) -> Result<Option<RuntimeWebSearch>, ConfigError> {
         let mut selected = None;
         for binding in sandbox.integration_bindings(&self.spec.integrations)? {
@@ -204,7 +205,7 @@ impl Document {
 
 impl Document {
     /// The APIs attached to a sandbox's agent.
-    pub(crate) fn apis(&self, sandbox: &super::Sandbox) -> Result<Vec<RuntimeApi>, ConfigError> {
+    pub(crate) fn apis(&self, sandbox: NamedSandbox<'_>) -> Result<Vec<RuntimeApi>, ConfigError> {
         let mut apis = Vec::new();
         for binding in sandbox.integration_bindings(&self.spec.integrations)? {
             if let Integration::Api(api) = binding.definition {

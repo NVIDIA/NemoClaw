@@ -101,5 +101,5 @@ For partial failure and retry rules, see [deployment recovery](../../docs/build-
 
 - [SDK operation orchestration](../../crates/nemoclaw-sdk/src/deployment/mod.rs) and [runtime binding checks](../../crates/nemoclaw-sdk/src/deployment/runtime.rs).
 - [Deployment graph compiler](../../crates/nemoclaw-sdk/src/compile.rs), which joins the [runtime graph](../../crates/nemoclaw-sdk/src/compile_runtime.rs).
-- [Harness image build](../../image/fabric/Dockerfile) and [NemoClaw Fabric launcher](../../image/fabric/fabric.py).
+- [Harness image build](../../image/fabric/Dockerfile).
 - [Fabric adapter implementations](https://github.com/NVIDIA/NeMo-Fabric/tree/main/adapters).

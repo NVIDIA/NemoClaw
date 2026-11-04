@@ -15,9 +15,9 @@ fn generations() -> Generations {
 fn input(api: Value, attached: bool) -> Value {
     let mut value: Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["integrations"] = json!({ "bookings": api });
+    value["spec"]["sandboxes"]["assistant"]["integrations"] = json!({ "bookings": api });
     if attached {
-        value["spec"]["sandboxes"][0]["agent"]["integrationRefs"] = json!(["bookings"]);
+        value["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] = json!(["bookings"]);
     }
     value
 }
@@ -53,7 +53,7 @@ fn an_attached_api_registers_its_credential_for_the_sandbox() {
     // Its executables come from the sandbox's harness.
     assert_eq!(
         resource["binaries"],
-        json!("${jsondecode(data.fabric_harnesses.sandbox_0.binaries_json)}")
+        json!("${jsondecode(data.fabric_harnesses.sandbox_assistant.binaries_json)}")
     );
     // The sandbox attaches its registration and waits for it.
     let sandbox = &graph["resource"]["openshell_sandbox"]["assistant"];

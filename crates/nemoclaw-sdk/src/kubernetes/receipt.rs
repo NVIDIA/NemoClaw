@@ -3,8 +3,9 @@
 //! The private record of what one Kubernetes deployment created.
 //!
 //! The receipt lives in the deployment's state directory. It binds the
-//! deployment to one cluster and records every object it created by UID, so
-//! later operations act only on those objects and refuse a different cluster.
+//! deployment to one namespace by UID, which also identifies the cluster, and
+//! records every object it created by UID, so later operations act only on
+//! those objects and refuse a namespace or cluster that was replaced.
 
 use super::cluster::Owned;
 use crate::{ObservationError, state::save_json};
@@ -26,23 +27,15 @@ pub(crate) fn private_directory(directory: &Path) -> Result<(), ObservationError
         .map_err(|_| ObservationError::Incomplete)
 }
 
-/// The cluster a deployment was first applied to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ClusterIdentity {
-    /// API server URL from the kubeconfig context.
-    pub server: String,
-    /// UID of the cluster's kube-system namespace, stable for its lifetime.
-    pub system_uid: String,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Receipt {
     pub owner: String,
     pub name: String,
+    /// The namespace the deployment was first applied to, whether it created
+    /// it or found it. A rebuilt cluster gives the namespace a new UID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cluster: Option<ClusterIdentity>,
+    pub namespace: Option<Owned>,
     /// Objects this deployment created, in creation order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub objects: Vec<Owned>,
@@ -99,18 +92,6 @@ impl Receipt {
     pub fn save(&self, directory: &Path) -> Result<(), ObservationError> {
         private_directory(directory)?;
         save_json(&Self::path(directory), self).map_err(|_| ObservationError::Incomplete)
-    }
-
-    /// Bind to `cluster` on first use; afterwards, refuse any other cluster.
-    pub fn bind(&mut self, cluster: ClusterIdentity) -> Result<(), ObservationError> {
-        match &self.cluster {
-            None => {
-                self.cluster = Some(cluster);
-                Ok(())
-            }
-            Some(bound) if *bound == cluster => Ok(()),
-            Some(_) => Err(ObservationError::BindingMismatch),
-        }
     }
 
     /// The recorded object at `object`'s address, if this deployment made it.

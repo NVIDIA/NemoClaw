@@ -6,6 +6,8 @@ use super::*;
 use nemoclaw_build::ci::{self, Step};
 use std::{ffi::OsString, time::Instant};
 
+#[path = "run_ci/kind_registry.rs"]
+mod kind_registry;
 #[path = "run_ci/live_docker.rs"]
 mod live_docker;
 #[path = "run_ci/live_images.rs"]
@@ -163,7 +165,7 @@ fn run_step(
     step: Step,
     partition: Option<&str>,
     archive_file: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -447,8 +449,14 @@ pub(super) async fn run_steps(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: Option<&Path>,
+    images_commit: Option<&str>,
     plan: Option<&nemoclaw_build::changes::Plan>,
 ) -> Result<()> {
+    let images = match (images, images_commit) {
+        (Some(archive), _) => live_images::Source::Archive(archive),
+        (None, Some(commit)) => live_images::Source::Commit(commit),
+        (None, None) => live_images::Source::Build,
+    };
     let tools = Tools {
         pins,
         protobuf: &pins.protobuf,
@@ -488,6 +496,12 @@ pub(super) async fn run_steps(
                 command.env("PROTOC", &protoc).env("PATH", &path);
             };
             live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
+        } else if step == Step::LiveDocker {
+            // The interface test forwards and reads tokens with the CLI.
+            match live_docker::install_openshell(tools.pins, &platform).await {
+                Ok(()) => run_step(&tools, &platform, step, partition, archive_file, images),
+                Err(error) => Err(error),
+            }
         } else {
             run_step(&tools, &platform, step, partition, archive_file, images)
         };

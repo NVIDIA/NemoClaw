@@ -68,7 +68,7 @@ data vllm_runtime (version 0)
     gpu_memory_utilization: number, optional
       > Optional fraction of observed dedicated GPU memory, from 0.05 through 0.95. Requires hardware with explicit minGpuMemoryBytes, including dedicated-memory named profiles. Excludes unified-memory profiles, recipe, fixed gpuMemoryGiB and explicit KV-cache allocation; vLLM sizes its cache natively.
     host_reserve_gib: number, optional
-      > Host memory reserve in GiB excluded from the serving budget.
+      > Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe.
     kv_cache_gib: number, optional
       > KV cache allocation in GiB for ordinary vLLM. Omitted or zero defaults to 8, except gpuMemoryUtilization requires zero and lets vLLM allocate its cache. Recipe serving does not emit this flag.
     min_available_gib: number, optional
@@ -94,7 +94,7 @@ data vllm_runtime (version 0)
       architecture: string, required
         > Execution host CPU architecture.
       gpu: string, required
-        > GPU name that must equal the observed device name.
+        > GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.
       image_labels: map(string), required
         > Required org.nemoclaw.* labels. org.nemoclaw.recipe.protocol must equal v1.
       min_driver_major: number, required
@@ -110,13 +110,13 @@ data vllm_runtime (version 0)
     block resources: single
       > Preparation capacity, GPU budget, and startup headroom.
       gpu_memory_bytes: number, required
-        > Total serving GPU budget in bytes, including model, caches, and other allocations.
+        > Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.
       preparation_memory_gib: number, required
         > Preparation memory requirement in GiB, in addition to the service host reserve.
       prepared_bytes: number, required
         > Maximum total prepared-data bytes.
       startup_headroom_gib: number, required
-        > Additional available-memory headroom in GiB required at startup.
+        > Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.
     block reuse: optional
       > Optional cache import. The new recipe must verify the imported data before accepting it.
       preparation_key: string, required
