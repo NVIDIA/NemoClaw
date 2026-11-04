@@ -34,7 +34,7 @@ When a property fails on the current code, report it; don't weaken the property 
 
 ## Pass
 
-1. **Find the checks.** Read each `verify-*` skill under `.agents/skills`, or the one the user named.
+1. **Find the checks.** Read each skill under `.agents/skills` that runs a model checker, prover, or verifier against named code, or the one the user named.
    For each check, collect the property, the covered code, the bounds and assumptions, the command, and the sync commit.
    If no verify skill exists, stop and point to `create-formal-verification-skill`.
    If the skill records no sync commit, use the last commit that changed the verification files and say so.

@@ -13,7 +13,7 @@ This skill drives one Fabric-managed agent the way its user does: through its na
 It checks desired-state assertions: each check records whether the agent does what a user of that agent expects through NemoClaw, not what the selected revision happens to support.
 It reuses [verify-yaml-deployment](../verify-yaml-deployment/SKILL.md) for the run's identity, build, inference, base YAML, plan and apply, doctor, credential scan, and cleanup, and owns only the Fabric-boundary additions.
 It owns one deployment per run and never touches another.
-The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a check that must hold on every change into a Rust live test.
+The [live tests](../../../docs/contributing/live-tests.md) stay the gate; when a check must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## Scope
 
@@ -22,8 +22,8 @@ The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
 - **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes` and `openclaw`, 131 for `deepagents-code`.
 
-[Proven Pairs](#proven-pairs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome.
-A pair that isn't listed is unproven: say so with the result.
+[Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
+A pair that isn't listed has no completed run: say so with the result.
 
 ## Choose the Agent and Target
 
@@ -66,6 +66,7 @@ Run [Build the Bundle and Image](../verify-yaml-deployment/SKILL.md#build-the-bu
 ### Choose the Inference Source
 
 Run [Choose the Inference Source](../verify-yaml-deployment/SKILL.md#choose-the-inference-source) with the target file's commands.
+Check the target's [running and retained inference](../verify-yaml-deployment/targets/dgx-spark.md#discover-running-and-retained-inference-first) before proposing a new model download.
 Record the chosen source and model in `$EVIDENCE/identity.txt`; results bound to that model don't cover another.
 
 ### Write the YAML
@@ -76,8 +77,8 @@ Run [Write the YAML](../verify-yaml-deployment/SKILL.md#write-the-yaml), all fiv
 
 Add what the checks need to the base YAML, then save it:
 
-1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, both writable by the agent.
-2. **Skills.** Make `/sandbox/workspace/skills` the agent's skill path.
+1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, with `read_only: false` on both mounts; OpenShell defaults them to read-only. Follow [caller-owned volumes](../../../docs/state.md) for admission and filesystem access.
+2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `skills.paths`: OpenClaw at Fabric `e5b5ebf2b81cc3c6325301ea419ebf2453dab12e` requires individual skill directories containing `SKILL.md`, so use `[/sandbox/workspace/skills/capability-probe]`, not the parent directory. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
 3. **Capabilities.** Choose the run-scoped extension names first: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
    Then enable each capability the feature files check: the native TUI and, where in scope, the Web UI; a harmless bundled plugin; the mounted native tool and plugin locations under `/sandbox/workspace/extensions`, with any per-item enablement; and a tool allow-list from which Config change can remove only the shell-launch tool.
 4. **Merge rules.** Keep everything the base YAML sets, including its harness kind, execution, approval settings, and inference route.
@@ -145,7 +146,7 @@ Run the plan line from [Plan and Apply](../verify-yaml-deployment/SKILL.md#plan-
 grep -F "$WORKSPACE" "$EVIDENCE/plan.txt"
 ```
 
-Create both volumes so the deployment's OpenShell workspace may attach them and the sandbox identity can write them, and label each with `verify-fabric-boundary.uid=$UID_`.
+Create both volumes so the deployment's OpenShell workspace may attach them and the sandbox identity can write them. Label each with `verify-fabric-boundary.uid=$UID_`, `openshell.ai/sandbox-attachable=true`, and `openshell.ai/sandbox-attachable-workspace=$WORKSPACE` for the gateway's default admission policy.
 Set `SANDBOX_IDS` to that identity's `UID:GID`, then define `seed`, which writes one file as that identity:
 
 ```sh
@@ -231,12 +232,15 @@ Write each finding in `findings.md` as:
 - **What happened:** the observed behavior against the expected, with exact inputs.
 - **Revision:** the commit, image digest, and adapter or harness version it was observed at.
 - **Evidence:** paths under $EVIDENCE.
+- **Owner:** the component that must change to resolve it, NemoClaw or an upstream one, per the upstream boundaries in docs/design/scope.md.
 - **Next step:** what would resolve it.
 ```
 
 Never write a token, key, or full environment into evidence.
 
 ## Cleanup
+
+Preserve any existing external inference service, including containers labeled `org.nemoclaw.lifecycle=persistent` or `org.nemoclaw.test-cleanup=preserve`, and its network, images and volumes; none belong to this run's teardown.
 
 The `teardown` check in [lifecycle-and-retention](features/lifecycle-and-retention.md) runs the destroy steps of [verify-yaml-deployment's cleanup](../verify-yaml-deployment/SKILL.md#cleanup) and records its outcome first.
 Then finish that cleanup, including removal of retained resources by this run's UID, and remove this run's caller volumes:
@@ -269,15 +273,16 @@ grep -c '^| [a-z-]* | [A-Z][^|]* | *|' "$EVIDENCE/checks.md"
 The last count is the checks still without an outcome; it must be 0 for a complete run.
 Include the `checks.md` table and `findings.md`, with each finding's affected checks.
 A run is complete when every selected check has an outcome and cleanup finished; a complete run is not a claim that every check passed.
-Add the pair to [Proven Pairs](#proven-pairs) only after a complete run, including cleanup, and record its inference source and counts by outcome there.
+Add the pair to [Completed Runs](#completed-runs) only after a complete run, including cleanup, and record its inference source and counts by outcome there.
 Mark an interrupted run as interrupted, keep its evidence, and don't add it.
 
-## Proven Pairs
+## Completed Runs
 
 | Agent | Target | Inference source | Revision | Date | Passed | Failed | Not tested | Notes |
 |---|---|---|---|---|---|---|---|---|
-
-None yet.
+| openclaw | dgx-spark | External persistent Nemotron 3 Super NVFP4 | `ed47e1c29022e22559fb8b7c4916dd6e9b3a3a79` | 2026-11-03 | 6 | 40 | 90 | Original outcomes for `20261103T155036Z-openclaw-fabric-ed47e1c290`; not a working-agent qualification. Later diagnosis traced startup failure to the runner's parent skill path, rejected as `openclaw_skill_invalid`. The original pinned image starts with the individual skill directory. Original records remain unchanged; a fresh suite is needed for native capability results. Cleanup preserved external inference. |
+| openclaw | dgx-spark | External persistent Nemotron 3 Super NVFP4 | `ed47e1c29022e22559fb8b7c4916dd6e9b3a3a79` | 2026-11-03 | 52 | 75 | 9 | Complete rerun `20261103T162432Z-openclaw-fabric-ed47e1c290` with the individual skill directory. All 136 outcomes recorded; normal teardown and run-owned resource cleanup passed, with persistent inference preserved. Missing plugin/tool bindings, native TUI, generated-skill activation, and request-level skill/reporting failures remain; completion is not full capability qualification. |
+| hermes | dgx-spark | External persistent Nemotron 3 Super NVFP4 | `ed47e1c29022e22559fb8b7c4916dd6e9b3a3a79` | 2026-11-03 | 62 | 59 | 15 | Complete run `20261103T195021Z-hermes-fabric-ed47e1c290`: all 136 outcomes recorded and scoped cleanup passed; persistent inference preserved. Dashboard and supplemental API passed. Missing native bindings, fresh skill-load assertions, plugin visibility and authoring failures remain; completion is not full capability qualification. |
 
 ## Hand Off
 

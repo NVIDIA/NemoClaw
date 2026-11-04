@@ -18,7 +18,7 @@ pub mod receipt;
 pub mod storage;
 
 use crate::{Error, ObservationError, config::ManagedGateway};
-use kube::config::{KubeConfigOptions, Kubeconfig};
+use kube::config::{KubeConfigOptions, Kubeconfig, KubeconfigError};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -297,7 +297,13 @@ pub async fn connect(target: &ClusterTarget) -> Result<kube::Client, Observation
     };
     let config = kube::Config::from_custom_kubeconfig(kubeconfig, &options)
         .await
-        .map_err(|_| ObservationError::Authentication)?;
+        .map_err(|error| match error {
+            // A context the kubeconfig lacks is a configuration error, not rejected credentials.
+            KubeconfigError::LoadContext(_) => ObservationError::MissingContext(
+                ObservationError::sanitized_detail(&target.context),
+            ),
+            _ => ObservationError::Authentication,
+        })?;
     client(config)
 }
 

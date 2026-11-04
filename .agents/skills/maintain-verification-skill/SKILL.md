@@ -28,7 +28,7 @@ Don't edit product code: a behavior the map describes that the product no longer
 
 ## Pass
 
-0. **Find the target.** Find the `verify-*` skills under `.agents/skills`.
+0. **Find the target.** Find the `verify-*` skills under `.agents/skills` that have launch and drive sections and a feature map.
    Ask which one when there are several; stop and point to `create-verification-skill` when there are none.
 1. **Check the index.** Fix missing, extra, duplicate, or dead entries in `features/README.md`.
 2. **Read the source.** Give each feature file to a read-only agent session, run in parallel.

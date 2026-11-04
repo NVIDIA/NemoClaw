@@ -17,7 +17,6 @@ Five skills here adapt skills from pstack, and `statechart` runs pstack's statec
 - All five skills point at NemoClaw's skill location, design scope, upstream boundaries, live-test ownership rules, and pull request skill in place of Cursor's rules, `Task` subagents, and model roster; they ask before pushing, commenting, or credentialed runs.
 - `interrogate` inlines the parts of pstack's `arena` and `in-your-own-words` skills it used, treats an issue and its comments as a design, has adversaries probe the pinned upstream versions, and adds the restart, two-writer, and next-action probes from pstack's idempotence and shared-state principles.
 - `create-formal-verification-skill` picks targets from NemoClaw's ownership and recovery invariants, maps questions to tools for Rust code, requires discussion before adding a verifier dependency, and keeps models beside the generated skill.
-- `maintain-formal-verification-skill` looks for `verify-*` skills under `.agents/skills`.
 - `create-verification-skill` builds on `nemoclaw-e2e` and the live tests, requires an owned deployment, cleans up with `nemoclaw destroy`, keeps credentials out of evidence, and states the feature map's shape in place of upstream's example files.
 - `maintain-verification-skill` ships corrections through `nemoclaw-contributor-create-pr`.
 - `statechart` fetches the pinned tool and a checksum-verified TLC jar into the user cache instead of vendoring the TypeScript.

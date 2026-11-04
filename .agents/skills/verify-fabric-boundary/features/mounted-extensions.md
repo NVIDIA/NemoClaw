@@ -115,7 +115,7 @@ Before each check, source the run's names with `. "$EVIDENCE/mounted-extensions.
    The count must be 0 before the request. After either request, save the registration record that `bindings.md` names, for `$RUNTIME_ID` only, in `$CHECK_DIR/registration.txt`.
    A tool check's effect holds when `use.calls.txt` shows a current-turn call of `$TOOL`, by its native name, returning a JSON object with exactly `origin` set to the case's origin, `nonce` set to `$NONCE`, and `kind` set to `native-tool`.
    A hook check's effect holds when `use.calls.txt` shows a current-turn native write of `$TRIGGER`, and `ledger.after.txt` holds exactly one new line, absent from `ledger.before.txt`, with the expected `origin`, `nonce` equal to `$NONCE`, `tool` naming that call's native tool, and `call_id` matching it when the event carries one.
-5. **`mounted-native-tool-first-start`:** in the Initial phase, first, before any request that changes content and before any install, reload, or activation restart. Save the startup log or first native enumeration for this first runtime in `$CHECK_DIR/startup.txt`, then run step 4's tool request:
+5. **`mounted-native-tool-first-start`:** in the Initial phase, right after `mounted-skill-first-start` in [skills](skills.md), before any other request and before any install, reload, or activation restart. Save the startup log or first native enumeration for this first runtime in `$CHECK_DIR/startup.txt`, then run step 4's tool request:
 
    ```sh
    CASE=mounted-native-tool-first-start; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
