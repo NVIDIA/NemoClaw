@@ -208,6 +208,7 @@ docker network ls --filter "$owner_label" --format '{{.Name}}'
 ```
 
 Ask the user before the removal below deletes a model this run downloaded; keeping it is the user's decision.
+If the user keeps it, stop here and keep the state directory and bundle; #14181 tracks what such a run reports.
 Continue only when every name starts with `$WORKSPACE` and no container is running, then:
 
 ```sh
@@ -243,16 +244,17 @@ openshell provider list
 docker container ls --all --filter "$owner_label" --format '{{.Names}} {{.Status}}'
 ```
 
-Continue only when `openshell workspace list` shows `$WORKSPACE` labeled with `$UID_` and every container name starts with `$WORKSPACE`, then:
+Continue only when `openshell workspace list` shows `$WORKSPACE` labeled with `$UID_` and every container name starts with `$WORKSPACE`.
+Then delete the sandbox, and wait until it leaves `openshell sandbox list` before deleting the provider: OpenShell refuses to delete a provider attached to a sandbox that is still deleting.
+If the wait prints `sandbox still listed`, stop there; don't delete the provider or stop the gateway:
 
 ```sh
 openshell sandbox delete assistant
-timeout 120 sh -c 'while openshell sandbox list | grep -q "^assistant "; do sleep 2; done'
+timeout 300 sh -c 'while openshell sandbox list --names | grep -qx assistant; do sleep 2; done' || { echo 'sandbox still listed'; false; }
 openshell provider delete REPLACE_WITH_PROVIDER_NAME
 docker container ls --quiet --filter "$owner_label" | xargs -r docker container stop
 ```
 
-Sandbox deletion finishes in the background, and OpenShell refuses to delete a provider that a sandbox still uses; the wait covers that.
 Then run the removal above; with its gateway stopped, the volume and network come off too.
 
 ## Report
