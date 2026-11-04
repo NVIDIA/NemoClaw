@@ -481,11 +481,28 @@ impl Scenario {
         self.host.lock().unwrap().requests.clone()
     }
 
+    /// The application containers' names, sorted, once per container: a
+    /// duplicate name shows twice.
     fn application_containers(&self) -> Vec<String> {
-        let prefix = format!("{}-container-", self.prefix);
-        self.containers()
-            .into_keys()
+        let prefix = format!("/{}-container-", self.prefix);
+        let host = self.host.lock().unwrap();
+        let mut names: Vec<String> = host
+            .engine
+            .containers
+            .iter()
+            .filter_map(|c| c["Name"].as_str())
             .filter(|name| name.starts_with(&prefix))
+            .map(|name| name.trim_start_matches('/').to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The ordered container creates, starts, stops, and deletions.
+    fn container_log(&self) -> Vec<String> {
+        self.mutations()
+            .into_iter()
+            .filter(|m| m.contains("/containers/"))
             .collect()
     }
 
@@ -600,7 +617,12 @@ fn assert_one_container_each(s: &Scenario) {
         .iter()
         .map(|n| s.container_name(n))
         .collect();
-    assert_eq!(s.application_containers(), expected);
+    assert_eq!(
+        s.application_containers(),
+        expected,
+        "{:#?}",
+        s.container_log()
+    );
     let volumes: Vec<String> = s
         .volumes()
         .into_iter()
@@ -648,7 +670,12 @@ async fn unhealthy_or_unknown_readiness_fails_apply_and_retry_keeps_the_created_
     s.apply().await.unwrap();
     assert_eq!(s.containers(), containers);
     for service in ["checked", "web", "worker"] {
-        assert_eq!(creates(&s, service), 1, "{service}");
+        assert_eq!(
+            creates(&s, service),
+            1,
+            "{service}: {:#?}",
+            s.container_log()
+        );
     }
     assert_one_container_each(&s);
     s.assert_foreign_untouched();
@@ -674,7 +701,7 @@ async fn readiness_that_never_arrives_times_out_within_its_bound_and_retry_compl
     );
     s.web_statuses(&[200]);
     s.apply().await.unwrap();
-    assert_eq!(creates(&s, "web"), 1);
+    assert_eq!(creates(&s, "web"), 1, "{:#?}", s.container_log());
     assert_one_container_each(&s);
 }
 
@@ -690,9 +717,28 @@ async fn interrupted_setup_is_unfinished_and_retry_completes_without_duplicates(
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         s.cancel.cancel();
+        Instant::now()
     };
-    let (result, ()) = tokio::join!(s.apply(), interrupted);
+    let (result, cancelled) = tokio::join!(s.apply(), interrupted);
     assert!(result.is_err(), "{result:?}");
+    // Diagnostics for #14167's darwin failure: what the interrupted apply saved.
+    let state: Value = std::fs::read(s._directory.path().join("terraform.tfstate"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    let saved: Vec<String> = state["resources"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["type"] == "docker_container")
+        .map(|r| format!("{} {}", r["name"], r["instances"]))
+        .collect();
+    eprintln!(
+        "interrupted: {result:?} {:?} after cancel; serial {}; saved {saved:#?}\n{:#?}",
+        cancelled.elapsed(),
+        state["serial"],
+        s.container_log()
+    );
     let error = s
         .deployment
         .export(&CancellationToken::new())
@@ -703,7 +749,7 @@ async fn interrupted_setup_is_unfinished_and_retry_completes_without_duplicates(
     s.web_statuses(&[200]);
     let retry = CancellationToken::new();
     s.deployment.apply(&s.parsed(), &retry).await.unwrap();
-    assert_eq!(creates(&s, "web"), 1);
+    assert_eq!(creates(&s, "web"), 1, "{:#?}", s.container_log());
     assert_one_container_each(&s);
     s.assert_foreign_untouched();
     s.assert_no_unexpected_requests();
