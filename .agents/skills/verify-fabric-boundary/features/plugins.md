@@ -39,15 +39,15 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
    If no supported bundled plugin or observable hook route exists, write `none`, record one missing-implementation finding with the source and image evidence, and mark every `plugin-load` and `plugin-hooks` row Failed without sending its prompt.
    If the evidence can't decide the route, write the cause in a finding and mark them Not tested.
    Don't install an alternate service or invent a plugin API to fill the gap.
-2. **`plugin-load`:** in every phase it lists, save the deployed enablement and the runtime's registration record for this runtime ID:
+2. **`plugin-load`:** in every phase it lists, save the runtime's registration record for this runtime ID:
 
    ```sh
    CASE=plugin-load; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
    echo "$RUNTIME_ID" > "$CHECK_DIR/runtime.txt"
    ```
 
-   Copy the native configuration that enables the bundled plugin into `$CHECK_DIR/config.txt`, redacting credentials, and the registration record that `bindings.md` names, for this runtime only, into `$CHECK_DIR/registration.txt`.
-   Result: `config.txt` shows the plugin enabled, and `registration.txt` shows that the managed runtime with `$RUNTIME_ID` registered it.
+   Copy the registration record that `bindings.md` names, for this runtime only, into `$CHECK_DIR/registration.txt`, redacting credentials.
+   Result: `registration.txt` shows that the managed runtime with `$RUNTIME_ID` registered the bundled plugin enabled in the run's YAML.
    Configuration or code on disk alone leaves registration unverified: Failed when the runtime is available and its record lacks the plugin.
 3. **`plugin-hooks`:** in every phase it lists, after `plugin-load`, save the effect path's current contents in `$CHECK_DIR/effect.before.txt` and confirm it holds no entry for this nonce, then send one request that fires the recorded event:
 
