@@ -458,7 +458,7 @@ describe("Windows Ollama helper", () => {
         expect(spawnProcess).toHaveBeenLastCalledWith(
           "taskkill.exe",
           ["/PID", "4321", "/T", "/F"],
-          { stdio: "ignore" },
+          { cwd: "/", stdio: "ignore" },
         ),
       );
 
@@ -467,6 +467,133 @@ describe("Windows Ollama helper", () => {
       await expect(cancellation).resolves.toBeUndefined();
     } finally {
       restore();
+    }
+  });
+
+  it("keeps installer cancellation owned when a startup profile emits output", async () => {
+    const boundary = createWindowsInstallBoundary({
+      userHost: null,
+      watcherPath: null,
+      daemonPath: null,
+    });
+    const wrapper = createMockChildProcess();
+    const taskkill = createMockChildProcess();
+    let announceOwnedKill = () => {};
+    const ownedKillStarted = new Promise<void>((resolve) => {
+      announceOwnedKill = resolve;
+    });
+    // Model a conditional profile preamble on the installer invocation only.
+    // An unconditional preamble would reject the earlier snapshot JSON instead.
+    const children: Record<string, (args: string[]) => ReturnType<typeof createMockChildProcess>> =
+      {
+        "powershell.exe": (args) => {
+          queueMicrotask(() => {
+            const hostOptions = args.slice(
+              0,
+              args.findIndex((arg) => arg.toLowerCase() === "-command"),
+            );
+            const preamble = hostOptions.some((arg) => arg.toLowerCase() === "-noprofile")
+              ? ""
+              : "PROFILE_BANNER\n";
+            wrapper.stdout.emit(
+              "data",
+              Buffer.from(preamble + "__NEMOCLAW_WINDOWS_INSTALLER_PID__:4321\n"),
+            );
+            void Promise.resolve(boundary.triggerInterrupt("SIGTERM")).catch(() => {});
+          });
+          return wrapper;
+        },
+        "taskkill.exe": () => {
+          boundary.state.events.push("owned-taskkill-start");
+          announceOwnedKill();
+          return taskkill;
+        },
+      };
+    wrapper.kill.mockImplementation(() => {
+      boundary.state.events.push("wrapper-only-stop");
+      wrapper.emit("close", null);
+      return true;
+    });
+    const spawnProcess = vi.fn((command: string, args: string[]) => children[command](args));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), spawnProcess);
+    boundary.operations.startInstaller = vi.fn(() => {
+      boundary.state.events.push("install");
+      return windows.startWindowsOllamaInstaller();
+    });
+    let outcome: Promise<unknown> = Promise.resolve();
+    try {
+      outcome = windows
+        .installOllamaOnWindowsHost({}, boundary.operations)
+        .catch((error: unknown) => error);
+      const first = await Promise.race([
+        ownedKillStarted.then(() => "owned-kill-pending"),
+        outcome.then(() => "install-settled"),
+      ]);
+      expect(first, JSON.stringify({ events: boundary.state.events })).toBe("owned-kill-pending");
+      expect(wrapper.kill).not.toHaveBeenCalled();
+      expect(boundary.operations.rollbackSnapshot).not.toHaveBeenCalled();
+      expect(boundary.operations.preserveInterrupt).not.toHaveBeenCalled();
+      expect(spawnProcess).toHaveBeenLastCalledWith("taskkill.exe", ["/PID", "4321", "/T", "/F"], {
+        cwd: "/",
+        stdio: "ignore",
+      });
+      boundary.state.events.push("owned-tree-stopped");
+      taskkill.emit("close", 0);
+      wrapper.emit("close", null);
+      expect(await outcome).toBeInstanceOf(PreservedWindowsInterrupt);
+      expect(boundary.state.events).toEqual([
+        "snapshot",
+        "persist",
+        "install",
+        "owned-taskkill-start",
+        "owned-tree-stopped",
+        "stop-replacement",
+        "restore",
+        "signal:SIGTERM",
+      ]);
+      expect(boundary.state.userHost).toBeNull();
+      expect(boundary.operations.rollbackSnapshot).toHaveBeenCalledOnce();
+      expect(boundary.operations.resolveInstalledPath).not.toHaveBeenCalled();
+      expect(boundary.operations.awaitReady).not.toHaveBeenCalled();
+    } finally {
+      taskkill.emit("close", 0);
+      wrapper.emit("close", null);
+      await outcome;
+      restore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      stdoutSpy.mockRestore();
+    }
+  });
+
+  it("does not adopt a PID after an untrusted first stdout line", async () => {
+    const child = createMockChildProcess();
+    const taskkill = createMockChildProcess();
+    const spawnProcess = vi.fn((command: string) =>
+      command === "taskkill.exe" ? taskkill : child,
+    );
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), spawnProcess);
+    const installer = windows.startWindowsOllamaInstaller();
+    child.stdout.emit(
+      "data",
+      Buffer.from("vendor progress\n__NEMOCLAW_WINDOWS_INSTALLER_PID__:4321\n"),
+    );
+    const cancellation = installer.cancelAndWait();
+    try {
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      child.emit("close", null);
+      await cancellation.catch(() => {});
+      expect(spawnProcess).toHaveBeenCalledOnce();
+    } finally {
+      taskkill.emit("close", 0);
+      child.emit("close", null);
+      await cancellation.catch(() => {});
+      restore();
+      stdoutSpy.mockRestore();
     }
   });
 

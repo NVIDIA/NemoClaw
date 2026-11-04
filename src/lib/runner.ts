@@ -13,7 +13,7 @@ import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
 import { REPOSITORY_ROOT } from "./core/repository-root";
 import { shellQuote } from "./core/shell-quote";
 import { isPodmanGatewayRuntimeEnabled } from "./onboard/runtime-provider/configured-runtime";
-import { detectDockerHost } from "./platform";
+import { detectDockerHost, isWsl } from "./platform";
 import {
   diagnosticPreview,
   NAME_ALLOWED_FORMAT,
@@ -31,6 +31,14 @@ import { buildDockerSubprocessEnv, buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = REPOSITORY_ROOT;
 const SCRIPTS = path.join(ROOT, "scripts");
+
+// WSL can reject Windows processes when their working directory crosses private state.
+function windowsInteropWorkingDirectory(file: string): string | undefined {
+  const executable = path.win32.basename(file).toLowerCase();
+  return (executable === "powershell.exe" || executable === "taskkill.exe") && isWsl()
+    ? "/"
+    : undefined;
+}
 
 type RunnerOptions = SpawnSyncOptions & {
   ignoreError?: boolean;
@@ -148,7 +156,7 @@ function spawnAndHandle(
     ...spawnOpts,
     shell: false,
     stdio: effectiveStdio,
-    cwd: ROOT,
+    cwd: windowsInteropWorkingDirectory(safeFile) ?? ROOT,
     env: buildRunnerEnv(extraEnv, safeFile, replaceEnv),
   });
   if (!suppressOutput) {
@@ -229,7 +237,7 @@ function runArrayCmd(
     ...spawnOpts,
     shell: false,
     stdio,
-    cwd: ROOT,
+    cwd: windowsInteropWorkingDirectory(exe) ?? ROOT,
     env: buildRunnerEnv(extraEnv, exe, replaceEnv),
   });
   if (!suppressOutput) {
@@ -342,7 +350,7 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       shell: false,
-      cwd: ROOT,
+      cwd: windowsInteropWorkingDirectory(exe) ?? ROOT,
       env: buildRunnerEnv(extraEnv, exe, replaceEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
@@ -402,7 +410,7 @@ function runCaptureEx(
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       shell: false,
-      cwd: ROOT,
+      cwd: windowsInteropWorkingDirectory(exe) ?? ROOT,
       // #2616: route via buildRunnerEnv so subprocess env is sanitized and
       // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
       // Otherwise curl probes against localhost (Ollama validation, etc.)
@@ -449,6 +457,7 @@ function validateName(name: string, label = "name"): string {
 
 export {
   ROOT,
+  windowsInteropWorkingDirectory,
   buildSubprocessEnv,
   redact,
   redactFull,

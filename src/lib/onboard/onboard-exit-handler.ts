@@ -6,6 +6,7 @@ import type {
   OnboardExitFailureProcessLike,
 } from "./exit-step-failure";
 import { registerIncompleteOnboardExitFailureHandler } from "./exit-step-failure";
+import { waitForWindowsOllamaInterruptCleanup } from "../inference/ollama/windows";
 
 const INCOMPLETE_ONBOARD_EXIT_MESSAGE = "Onboarding exited before the step completed.";
 
@@ -15,7 +16,10 @@ export function registerIncompleteOnboardExitHandlerForSession(
   processLike?: OnboardExitFailureProcessLike,
 ): void {
   registerIncompleteOnboardExitFailureHandler(
-    deps,
+    {
+      ...deps,
+      waitForInterruptCleanup: deps.waitForInterruptCleanup ?? waitForWindowsOllamaInterruptCleanup,
+    },
     isComplete,
     INCOMPLETE_ONBOARD_EXIT_MESSAGE,
     processLike,

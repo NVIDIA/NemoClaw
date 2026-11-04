@@ -8,6 +8,7 @@ import { printOnboardResumeHint } from "./resume-hint";
 export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
   releaseOnboardLock?(): void;
+  waitForInterruptCleanup?(): void | Promise<void>;
   finalizeIncompleteOnboardStep(
     stepName: string,
     message?: string | null,
@@ -80,16 +81,30 @@ export function registerIncompleteOnboardExitFailureHandler(
     if (pendingSignal) return;
     pendingSignal = signal;
     setImmediate(() => {
-      removeListener("SIGINT", onSigint);
-      removeListener("SIGTERM", onSigterm);
-      try {
-        failIncompleteStep(true);
-      } finally {
+      const finishInterrupt = (): void => {
+        removeListener("SIGINT", onSigint);
+        removeListener("SIGTERM", onSigterm);
         try {
-          deps.releaseOnboardLock?.();
+          failIncompleteStep(true);
         } finally {
-          kill(pid, signal);
+          try {
+            deps.releaseOnboardLock?.();
+          } finally {
+            kill(pid, signal);
+          }
         }
+      };
+      let cleanup: void | Promise<void>;
+      try {
+        cleanup = deps.waitForInterruptCleanup?.();
+      } catch {
+        finishInterrupt();
+        return;
+      }
+      if (cleanup) {
+        void cleanup.then(finishInterrupt, finishInterrupt);
+      } else {
+        finishInterrupt();
       }
     });
   };
