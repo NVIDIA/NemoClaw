@@ -247,10 +247,12 @@ Continue only when `openshell workspace list` shows `$WORKSPACE` labeled with `$
 
 ```sh
 openshell sandbox delete assistant
+timeout 120 sh -c 'while openshell sandbox list | grep -q "^assistant "; do sleep 2; done'
 openshell provider delete REPLACE_WITH_PROVIDER_NAME
 docker container ls --quiet --filter "$owner_label" | xargs -r docker container stop
 ```
 
+Sandbox deletion finishes in the background, and OpenShell refuses to delete a provider that a sandbox still uses; the wait covers that.
 Then run the removal above; with its gateway stopped, the volume and network come off too.
 
 ## Report
