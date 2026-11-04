@@ -194,6 +194,7 @@ function gatewayResult(status: number, code: string) {
   return {
     exitCode: 0,
     signal: null,
+    timedOut: false,
     stdout: JSON.stringify({ error: { code } }),
     stderr: `${HTTP_STATUS_MARKER}${status}\n`,
   };
@@ -901,6 +902,21 @@ describe("MCP bridge transient classification", () => {
     ).resolves.toBe(draining);
     expect(retry).toHaveBeenCalledTimes(3);
     expect(wait).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["times out", { timedOut: true, signal: null }],
+    ["receives SIGTERM", { timedOut: false, signal: "SIGTERM" as const }],
+  ])("does not retry gateway draining when the command %s", async (_label, interruption) => {
+    const failed = { ...gatewayResult(503, "gateway_draining"), ...interruption };
+    const retry = vi.fn(async () => gatewayResult(200, "none"));
+    const wait = vi.fn(async () => undefined);
+
+    await expect(retryHermesGatewayDraining({ initialResult: failed, retry, wait })).resolves.toBe(
+      failed,
+    );
+    expect(retry).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
   });
 
   it("does not retry a different Hermes HTTP failure", async () => {
