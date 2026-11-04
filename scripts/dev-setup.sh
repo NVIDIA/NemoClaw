@@ -15,8 +15,7 @@ WARN_COUNT=0
 FAIL_COUNT=0
 OUTPUT_FORMAT="human"
 JSON_RESULTS=""
-NODE_HEAP_REMEDIATION_CLI="Run: NODE_OPTIONS=--max-old-space-size=8192 npm run typecheck:cli"
-NODE_HEAP_REMEDIATION_PLUGIN="Run: NODE_OPTIONS=--max-old-space-size=8192 npm --prefix nemoclaw run build"
+NODE_HEAP_REMEDIATION="The Node.js command used its configured heap limit. Free host memory or increase NODE_OPTIONS above that limit before retrying."
 
 usage() {
   cat <<'EOF'
@@ -178,16 +177,21 @@ check_command() {
   local label="$1"
   local command_name="$2"
   local remediation="$3"
+  local mode="${4:-required}"
+  local reporter="fail"
   local output
 
+  if [ "${mode}" = "optional" ]; then
+    reporter="warn"
+  fi
   if ! command -v "${command_name}" >/dev/null 2>&1; then
-    fail "${label}: not found" "${remediation}"
+    "${reporter}" "${label}: not found" "${remediation}"
     return
   fi
   if output="$("${command_name}" --version 2>/dev/null)"; then
     pass "${label} $(first_line "${output}")"
   else
-    fail "${label}: version check failed" "${remediation}"
+    "${reporter}" "${label}: version check failed" "${remediation}"
   fi
 }
 
@@ -238,10 +242,21 @@ is_node_heap_oom_output() {
 }
 
 print_node_heap_oom_guidance() {
-  local remediation="$1"
+  local step="$1"
+  local remediation="$2"
 
-  printf 'Node.js exhausted its V8 heap while running this type check.\n' >&2
+  printf 'Node.js exhausted its V8 heap while attempting: %s.\n' "${step}" >&2
   printf 'Next: %s\n' "${remediation}" >&2
+}
+
+run_with_default_node_heap() {
+  local node_options="${NODE_OPTIONS:-}"
+
+  case " ${node_options} " in
+    *" --max-old-space-size="* | *" --max_old_space_size="*) ;;
+    *) node_options="${node_options:+${node_options} }--max-old-space-size=6144" ;;
+  esac
+  NODE_OPTIONS="${node_options}" "$@"
 }
 
 check_quiet_command_with_heap_hint() {
@@ -255,7 +270,7 @@ check_quiet_command_with_heap_hint() {
     fail "${label}: failed" "${remediation}"
     return
   }
-  if "$@" >"${output_file}" 2>&1; then
+  if run_with_default_node_heap "$@" >"${output_file}" 2>&1; then
     rm -f "${output_file}"
     pass "${label}"
   elif is_node_heap_oom_output "${output_file}"; then
@@ -344,24 +359,30 @@ run_setup_step() {
 run_setup_step_with_heap_hint() {
   local label="$1"
   local heap_remediation="$2"
-  local output_file
+  local output_file="" exit_status=0
   shift 2
 
   printf '\n==> %s\n' "${label}"
+  trap 'exit_status=$?; trap - EXIT INT TERM; if [ -n "${output_file}" ]; then rm -f -- "${output_file}"; fi; exit "${exit_status}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-dev-setup.XXXXXX")" || {
+    trap - EXIT INT TERM
     printf 'Setup stopped while attempting: %s\n' "${label}" >&2
     return 1
   }
-  if "$@" >"${output_file}" 2>&1; then
-    rm -f "${output_file}"
+  if run_with_default_node_heap "$@" >"${output_file}" 2>&1; then
+    rm -f -- "${output_file}"
+    trap - EXIT INT TERM
     return 0
   fi
   if is_node_heap_oom_output "${output_file}"; then
-    print_node_heap_oom_guidance "${heap_remediation}"
+    print_node_heap_oom_guidance "${label}" "${heap_remediation}"
   else
     cat "${output_file}" >&2
   fi
-  rm -f "${output_file}"
+  rm -f -- "${output_file}"
+  trap - EXIT INT TERM
   printf 'Setup stopped while attempting: %s\n' "${label}" >&2
   return 1
 }
@@ -417,15 +438,13 @@ repair_repository() {
     node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check || return 1
   run_setup_step "Install plugin dependencies" \
     npm --prefix nemoclaw install --include=dev --ignore-scripts || return 1
-  run_setup_step "Build the CLI" npm run build:cli || return 1
-  run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
-  # Keep the explicit checks aligned with the broader pre-push and CI contracts.
-  run_setup_step_with_heap_hint "Type-check the CLI" "${NODE_HEAP_REMEDIATION_CLI}" \
+  run_setup_step_with_heap_hint "Build the CLI" "${NODE_HEAP_REMEDIATION}" \
+    npm run build:cli || return 1
+  run_setup_step_with_heap_hint "Build and type-check the plugin" "${NODE_HEAP_REMEDIATION}" \
+    npm --prefix nemoclaw run build || return 1
+  # Keep the explicit CLI check aligned with the broader pre-push and CI contracts.
+  run_setup_step_with_heap_hint "Type-check the CLI" "${NODE_HEAP_REMEDIATION}" \
     npm run typecheck:cli || return 1
-  run_setup_step_with_heap_hint "Type-check the plugin without emitting files" \
-    "${NODE_HEAP_REMEDIATION_PLUGIN}" \
-    "${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc" --noEmit \
-    -p "${REPO_ROOT}/nemoclaw/tsconfig.json" || return 1
   run_setup_step "Install repository Git hooks" "${REPO_ROOT}/node_modules/.bin/prek" install || return 1
   if [ "${EXPOSE_CLI}" = "true" ]; then
     printf '\nCLI exposure was explicitly requested.\n'
@@ -633,7 +652,8 @@ run_doctor() {
   fi
   check_command "Git" git "Install Git."
   check_command "GitHub CLI" gh "Install GitHub CLI."
-  check_command "hadolint" hadolint "Install hadolint (macOS: brew install hadolint)."
+  check_command "hadolint" hadolint \
+    "Install hadolint before running Dockerfile lint checks (macOS: brew install hadolint)." optional
 
   if node "${REPO_ROOT}/scripts/lib/openshell-sdk-install.mts" check >/dev/null 2>&1; then
     pass "OpenShell SDK"
@@ -658,12 +678,12 @@ run_doctor() {
     "${REPO_ROOT}/nemoclaw/tsconfig.json" "${REPO_ROOT}/nemoclaw/package.json"
   if [ -x "${root_tsc}" ]; then
     check_quiet_command_with_heap_hint "CLI type check" "Run: npm run typecheck:cli" \
-      "${NODE_HEAP_REMEDIATION_CLI}" \
+      "${NODE_HEAP_REMEDIATION}" \
       "${root_tsc}" -p "${REPO_ROOT}/tsconfig.cli.json"
   fi
   if [ -x "${plugin_tsc}" ]; then
     check_quiet_command_with_heap_hint "Plugin type check" "Run: npm --prefix nemoclaw run build" \
-      "${NODE_HEAP_REMEDIATION_PLUGIN}" \
+      "${NODE_HEAP_REMEDIATION}" \
       "${plugin_tsc}" --noEmit -p "${REPO_ROOT}/nemoclaw/tsconfig.json"
   fi
 

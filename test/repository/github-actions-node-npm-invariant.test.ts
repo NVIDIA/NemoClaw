@@ -19,8 +19,10 @@ const GITHUB_ROOT = path.join(REPO_ROOT, ".github");
 const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const IMMUTABLE_REVIEWED_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
-const IMMUTABLE_PREPARE_E2E_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9";
+const IMMUTABLE_PREPARE_E2E_ACTIONS = new Set([
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@7fcbf13ecd7bc0ea835a949417cf9eb68067adf9",
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@e7e587da7c6c2c48aa112533c7eaeb549e40a351",
+]);
 const LOCAL_REVIEWED_NPM_ACTION = /^\.\/(?:[^/\s]+\/)*\.github\/actions\/setup-reviewed-npm$/u;
 
 type Step = {
@@ -100,7 +102,7 @@ function installsReviewedNpm(step: Step): boolean {
   return Boolean(
     step.uses === IMMUTABLE_REVIEWED_NPM_ACTION ||
     isLocalReviewedNpmAction(step.uses) ||
-    step.uses === IMMUTABLE_PREPARE_E2E_ACTION ||
+    IMMUTABLE_PREPARE_E2E_ACTIONS.has(step.uses ?? "") ||
     step.run?.includes("Install-WslNode") ||
     step.run?.includes("setup-reviewed-npm/verify-and-install-npm.sh"),
   );
@@ -157,12 +159,13 @@ describe("controlled setup-node environments", () => {
     "if npm ci; then echo ready; fi",
   ])("detects prefixed npm execution: %s", (run) => expect(runsNpm({ run })).toBe(true));
 
-  it("rejects a similarly named unapproved npm setup action", () => {
-    expect(
-      installsReviewedNpm({
-        uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm-fake@98669f24d35f18e49b6b2769cd68709509ea24f2",
-      }),
-    ).toBe(false);
+  it.each([
+    "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm-fake@98669f24d35f18e49b6b2769cd68709509ea24f2",
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e-fake@e7e587da7c6c2c48aa112533c7eaeb549e40a351",
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@main",
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@0000000000000000000000000000000000000000",
+  ])("rejects an unreviewed npm setup action: %s", (uses) => {
+    expect(installsReviewedNpm({ uses })).toBe(false);
   });
 
   // source-shape-contract: security -- Changes to the reviewed npm bootstrap must select both PR image validation and the post-merge base-image publication path.
@@ -398,7 +401,7 @@ describe("controlled setup-node environments", () => {
           .filter(
             (reference) =>
               reference !== IMMUTABLE_REVIEWED_NPM_ACTION &&
-              reference !== IMMUTABLE_PREPARE_E2E_ACTION,
+              !IMMUTABLE_PREPARE_E2E_ACTIONS.has(reference),
           )
           .map((reference) => `${path.relative(REPO_ROOT, file)}:${reference}`),
       );

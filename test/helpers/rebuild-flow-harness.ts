@@ -30,6 +30,12 @@ export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
 export const destroy = requireDist("./destroy.js");
+export const destroyPresence = requireDist(
+  "./destroy-presence.js",
+) as typeof import("../../src/lib/actions/sandbox/destroy-presence");
+export const dockerRuntime = requireDist(
+  "../../adapters/docker/run.js",
+) as typeof import("../../src/lib/adapters/docker/run");
 export const dockerImage = requireDist("../../adapters/docker/image.js");
 export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 export const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
@@ -187,10 +193,14 @@ export type RebuildFlowTestHookOptions = {
 
 export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions = {}): void {
   const restoreRebuildFlowEnv = snapshotEnv([
+    "HOME",
+    "NEMOCLAW_TEST_BASE_HOME",
     "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
     "NEMOCLAW_SANDBOX_NAME",
   ]);
   beforeEach(() => {
+    process.env.HOME = createHarnessTempDir("nemoclaw-rebuild-home-");
+    process.env.NEMOCLAW_TEST_BASE_HOME = process.env.HOME;
     harnessRebuildBackups.splice(0);
     delete process.env.NEMOCLAW_SANDBOX_NAME;
     if (options.acceptThirdPartySoftware) {

@@ -310,6 +310,8 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
             agent === "openclaw" ? "NEMOCLAW_LLAMACPP_LOCAL_TOKEN" : "COMPATIBLE_API_KEY",
         }),
         "test-only-rejected-key",
+        undefined,
+        expect.any(Function),
       );
     });
 

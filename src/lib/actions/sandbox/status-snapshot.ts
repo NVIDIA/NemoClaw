@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
@@ -36,7 +37,11 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  GATEWAY_PORT,
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding/identity";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
 import {
@@ -83,6 +88,18 @@ import {
   probeTerminalRuntimeCgroupOom,
   type TerminalRuntimeOomProbeResult,
 } from "./terminal-runtime-health";
+
+const unlockedStatusRead = new AsyncLocalStorage<boolean>();
+
+/** Run a best-effort status read that may observe transitional ordinary sandbox state. */
+export function withUnlockedSandboxStatusRead<T>(operation: () => Promise<T> | T): Promise<T> | T {
+  return unlockedStatusRead.run(true, operation);
+}
+
+/** Whether status is running in the best-effort ordinary-host read path. */
+export function isUnlockedSandboxStatusRead(): boolean {
+  return unlockedStatusRead.getStore() === true;
+}
 
 type ProbeProviderHealth = (
   provider: string,
@@ -145,7 +162,11 @@ export function maybeGetSandboxStatusInferenceHealth(
 
 /** True when the authoritative inference route must make status exit nonzero. */
 export function isInferenceHealthFailing(inferenceHealth: ProviderHealthStatus | null): boolean {
-  return Boolean(inferenceHealth && (!inferenceHealth.probed || !inferenceHealth.ok));
+  return Boolean(
+    inferenceHealth &&
+    !(inferenceHealth.ok && inferenceHealth.degraded === true) &&
+    (!inferenceHealth.probed || !inferenceHealth.ok),
+  );
 }
 
 /** Validate user-editable mount state before it reaches JSON or terminal output. */
@@ -200,6 +221,8 @@ export interface SandboxStatusReport {
   portableLifecyclePhase?: "pending" | "configuring" | "active";
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
+  /** True when host-fence contention suppresses inference-health and invocation probes. */
+  inferenceProbeSuppressed?: boolean;
   rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
   hostGpuDetected: boolean;
   sandboxGpuEnabled: boolean;
@@ -267,6 +290,12 @@ export function resolveSandboxStatusDcodeAutoApprovalMode(
 ): DcodeAutoApprovalMode | null {
   if (sandbox?.agent !== "langchain-deepagents-code") return null;
   return normalizeDcodeAutoApprovalMode(sandbox.dcodeAutoApprovalMode);
+}
+
+export function resolveSandboxStatusSessionGatewayName(sandbox: registry.SandboxEntry): string {
+  return sandbox.gatewayName != null || sandbox.gatewayPort != null
+    ? resolveSandboxGatewayName(sandbox)
+    : resolveGatewayName(GATEWAY_PORT);
 }
 
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
@@ -484,9 +513,11 @@ export async function collectSandboxStatusSnapshot(
     ((name: string) =>
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
-        ...(initialPreflight?.intentionalStopConfirmed
-          ? { gatewayRecovery: "observe" as const }
-          : {}),
+        ...(isUnlockedSandboxStatusRead()
+          ? { gatewayRecovery: "observe" as const, selectOwningGateway: false }
+          : initialPreflight?.intentionalStopConfirmed
+            ? { gatewayRecovery: "observe" as const }
+            : {}),
       }));
   let lookup: SandboxGatewayState;
   try {
@@ -499,6 +530,7 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   if (
+    !isUnlockedSandboxStatusRead() &&
     sb?.stopped === true &&
     lookup.state === "present" &&
     (lookup.phase === "Ready" || lookup.phase === "Running") &&
@@ -526,6 +558,7 @@ export async function collectSandboxStatusSnapshot(
     !initialPreflight?.intentionalStopConfirmed;
   let recoveredManagedGateway = false;
   if (
+    !isUnlockedSandboxStatusRead() &&
     lookup.state === "present" &&
     (lookup.recoveredSandbox || managedOpenClawDeliveryMustBeProven)
   ) {
@@ -568,8 +601,9 @@ export async function collectSandboxStatusSnapshot(
         )
       : undefined;
   const suppressInferenceProbe =
-    (postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
-    opts.suppressInferenceProbe === true;
+    isUnlockedSandboxStatusRead() ||
+    ((postRecoveryPreflight ?? initialPreflight)?.suppressInferenceProbe ??
+      opts.suppressInferenceProbe === true);
   const nativeSelection = readNativeStatusSelection(sb);
   const { attachment: nativeAttachment, label: nativeLabel } = nativeSelection;
   let nativeAttachmentFailure = nativeSelection.failure;
@@ -625,7 +659,13 @@ export async function collectSandboxStatusSnapshot(
   // as drift instead of being mislabeled as this sandbox's configuration.
   const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
-  if (!suppressInferenceProbe && lookup.state === "present" && nativeProvider && sb) {
+  if (
+    !isUnlockedSandboxStatusRead() &&
+    !suppressInferenceProbe &&
+    lookup.state === "present" &&
+    nativeProvider &&
+    sb
+  ) {
     const expected = nativeAttachment;
     if (!gatewayName || !expected) {
       nativeAttachmentFailure =

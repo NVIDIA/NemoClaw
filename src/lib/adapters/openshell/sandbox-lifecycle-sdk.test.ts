@@ -51,6 +51,24 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(get).toHaveBeenCalledWith("alpha", { signal: expect.any(AbortSignal) });
   });
 
+  it.each([
+    { action: "start" as const, expectedTimeoutMs: 135_000, settledPhase: "ready" },
+    { action: "stop" as const, expectedTimeoutMs: 75_000, settledPhase: "stopped" },
+  ])("uses the $action default timeout", async ({ action, expectedTimeoutMs, settledPhase }) => {
+    const test = harness();
+    test.get.mockResolvedValue({ id: sandboxId, phase: settledPhase });
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    try {
+      await expect(test.lifecycle[`${action}Sandbox`](request)).resolves.toEqual({
+        kind: "accepted",
+      });
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expectedTimeoutMs);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it("rejects an invalid name before it connects", async () => {
     const { connect, lifecycle } = harness();
 
@@ -79,21 +97,21 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(test.waitReady).not.toHaveBeenCalled();
   });
 
-  it("accepts Ready after twenty initial Error observations", async () => {
+  it("accepts Ready after forty initial Error observations", async () => {
     const test = harness();
-    const phases = ["stopped", ...Array<string>(20).fill("Error"), "Ready"];
+    const phases = ["stopped", ...Array<string>(40).fill("Error"), "Ready"];
     test.get.mockImplementation(async () => ({
       id: sandboxId,
       phase: phases.shift() ?? "Error",
     }));
 
     await expect(test.lifecycle.startSandbox(request)).resolves.toEqual({ kind: "accepted" });
-    expect(test.waitForStartPoll).toHaveBeenCalledTimes(20);
+    expect(test.waitForStartPoll).toHaveBeenCalledTimes(40);
     expect(test.startSandbox).toHaveBeenCalledOnce();
   });
 
   it.each([
-    { firstPhase: "Error", expectedPolls: 20 },
+    { firstPhase: "Error", expectedPolls: 40 },
     { firstPhase: "Provisioning", expectedPolls: 1 },
   ])("fails on Error after $firstPhase", async ({ firstPhase, expectedPolls }) => {
     const test = harness();

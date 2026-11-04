@@ -20,6 +20,7 @@ import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import { resolveMaxTokensField } from "../inference/max-tokens-field";
+import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
 import type { HostLocalInferenceSandboxProofAuthority } from "./runtime-provider/host-local-inference-routing";
 import {
   buildCompatibleEndpointSmokeRequestScript,
@@ -70,11 +71,25 @@ const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
   (COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
-const PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS =
-  (PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT * COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS +
-    PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS +
-    COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
-  1000;
+const PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS = Math.max(
+  COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS,
+  LOCAL_INFERENCE_TIMEOUT_SECS,
+);
+
+function providerNeutralSmokeCommandTimeoutMs(requestTimeoutSeconds: number): number {
+  const proofTimeoutSeconds =
+    COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * requestTimeoutSeconds +
+    totalRetryBackoffSeconds(
+      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+    );
+  return (
+    (PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT * proofTimeoutSeconds +
+      PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS +
+      COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
+    1000
+  );
+}
 const OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT = Object.freeze({
   version: 1,
   httpStatus: 403,
@@ -289,7 +304,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     target,
     command: forceCanonicalRoute ? ["python3", "-c", script] : ["sh", "-lc", script],
     timeoutMilliseconds: forceCanonicalRoute
-      ? PROVIDER_NEUTRAL_SMOKE_COMMAND_TIMEOUT_MS
+      ? providerNeutralSmokeCommandTimeoutMs(PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS)
       : COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
   });
   const smokeOutput = [smokeResult.stdout, smokeResult.stderr].join("\n").trim();
@@ -306,7 +321,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
         "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
       );
     }
-    if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
+    if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(-1200)}`);
     fail(smokeStatus || 1);
   }
 
@@ -643,12 +658,13 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
 
 /**
  * Runs a Python standard-library request inside the sandbox, proving a real
- * chat response through the selected endpoint and explicit denial outside its policy.
+ * chat response through the selected endpoint and unavailable direct host access.
  */
 export function buildProviderNeutralInferenceSandboxSmokeScript(
   model: string,
   authority: HostLocalInferenceSandboxProofAuthority | undefined,
   local?: NativeLocalProviderAttachment,
+  requestTimeoutSeconds: number = PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS,
 ): string {
   const expectedHealthPath =
     authority?.service === "ollama"
@@ -696,22 +712,25 @@ auth_headers = {"Authorization": "Bearer " + credential}`
     : "auth_headers = {}";
   return `
 import errno
+import http.client
 import json
 import os
 import re
+import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ${authSetup}
 inference_url = ${inferenceUrl}
+request_timeout_seconds = ${String(positiveInt(requestTimeoutSeconds, PROVIDER_NEUTRAL_SMOKE_REQUEST_TIMEOUT_SECONDS))}
 model = ${modelValue}
 max_tokens_field = ${maxTokensField}
 tool_calling_required = ${toolCallingRequired}
 max_response_bytes = 1048576
 inference_opener = urllib.request.build_opener()
-direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def post_inference(payload, label):
     request = urllib.request.Request(
@@ -723,7 +742,7 @@ def post_inference(payload, label):
     response_data = None
     for attempt in range(3):
         try:
-            with inference_opener.open(request, timeout=60) as response:
+            with inference_opener.open(request, timeout=request_timeout_seconds) as response:
                 if response.status < 200 or response.status > 299:
                     raise RuntimeError("${endpointLabel} returned HTTP %s" % response.status)
                 response_bytes = response.read(max_response_bytes + 1)
@@ -742,7 +761,23 @@ def post_inference(payload, label):
                 continue
             print("${endpointLabel} %s proof returned terminal HTTP %s" % (label, error.code), file=sys.stderr)
             sys.exit(1)
-        except urllib.error.URLError:
+        except socket.timeout:
+            print(
+                "${endpointLabel} %s proof timed out after %s seconds without a response; "
+                "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and retry the failed operation"
+                % (label, request_timeout_seconds),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, socket.timeout):
+                print(
+                    "${endpointLabel} %s proof timed out after %s seconds without a response; "
+                    "raise NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for a slow model and retry the failed operation"
+                    % (label, request_timeout_seconds),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if attempt < 2:
                 time.sleep(5 * (attempt + 1))
                 continue
@@ -838,58 +873,113 @@ direct_denial_http_status = ${String(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.ht
 direct_denial_error = ${directDenialError}
 direct_denial_detail = ${directDenialDetail}
 direct_deny_timeout_seconds = ${String(PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS)}
-direct_request = urllib.request.Request(
-    direct_url,
-    data=json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": "Prove direct inference is denied."}],
-        max_tokens_field: 1,
-    }).encode("utf-8"),
-    headers={"Content-Type": "application/json"},
-    method=direct_method,
-)
+direct_target = urllib.parse.urlsplit(direct_url)
 try:
-    with direct_opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
-        print(
-            "direct host inference route unexpectedly returned HTTP %s" % direct_response.status,
-            file=sys.stderr,
+    direct_addresses = list(dict.fromkeys(
+        (family, sockaddr)
+        for family, _, _, _, sockaddr in socket.getaddrinfo(
+            direct_target.hostname, direct_target.port, type=socket.SOCK_STREAM
         )
-        sys.exit(1)
-except urllib.error.HTTPError as error:
-    denial_bytes = error.read(max_response_bytes + 1)
+        if family in (socket.AF_INET, socket.AF_INET6)
+    ))
+except OSError:
+    print("direct host inference deny could not be proven; address resolution failed", file=sys.stderr)
+    sys.exit(1)
+if not direct_addresses:
+    print("direct host inference deny could not be proven; no usable address", file=sys.stderr)
+    sys.exit(1)
+direct_probe_outcomes = []
+direct_probe_omitted_outcomes = 0
+
+def record_direct_outcome(sockaddr, outcome):
+    global direct_probe_omitted_outcomes
+    entry = "%s (%s)" % (sockaddr[0], outcome)
+    # Keep the first seven outcomes and the latest result within the error budget.
+    if len(direct_probe_outcomes) < 8:
+        direct_probe_outcomes.append(entry)
+    else:
+        direct_probe_outcomes[-1] = entry
+        direct_probe_omitted_outcomes += 1
+
+def fail_direct(message):
+    summary = ", ".join(direct_probe_outcomes)
+    if direct_probe_omitted_outcomes:
+        summary += ", %s earlier outcomes omitted" % direct_probe_omitted_outcomes
+    print("%s; direct outcomes: %s" % (message, summary), file=sys.stderr)
+    sys.exit(1)
+
+direct_body = json.dumps({
+    "model": model,
+    "messages": [{"role": "user", "content": "Prove direct inference is denied."}],
+    max_tokens_field: 1,
+}).encode("utf-8")
+direct_deadline = time.monotonic() + direct_deny_timeout_seconds
+for family, sockaddr in direct_addresses:
+    remaining = direct_deadline - time.monotonic()
+    if remaining <= 0:
+        record_direct_outcome(sockaddr, "deadline-exceeded")
+        fail_direct("direct host inference deny could not be proven")
+    with socket.socket(family, socket.SOCK_STREAM) as direct_socket:
+        direct_socket.settimeout(remaining)
+        try:
+            direct_socket.connect(sockaddr)
+        except OSError as error:
+            transport_outcome = {
+                errno.ECONNREFUSED: "connection-refused",
+                errno.ENETUNREACH: "network-unreachable",
+                errno.EHOSTUNREACH: "host-unreachable",
+            }.get(error.errno)
+            if transport_outcome:
+                record_direct_outcome(sockaddr, transport_outcome)
+                continue
+            record_direct_outcome(sockaddr, "connection-error")
+            fail_direct("direct host inference deny could not be proven")
+        direct_connection = http.client.HTTPConnection(
+            direct_target.hostname, direct_target.port, timeout=remaining
+        )
+        direct_connection.sock = direct_socket
+        try:
+            direct_connection.request(
+                direct_method,
+                direct_target.path,
+                body=direct_body,
+                headers={"Content-Type": "application/json", "Host": direct_target.netloc},
+            )
+            direct_response = direct_connection.getresponse()
+            denial_bytes = direct_response.read(max_response_bytes + 1)
+        except (OSError, http.client.HTTPException):
+            record_direct_outcome(sockaddr, "request-error")
+            fail_direct("direct host inference deny could not be proven")
+        finally:
+            direct_connection.close()
     if len(denial_bytes) > max_response_bytes:
-        print("direct host inference policy-denial response exceeded byte limit", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "response-too-large")
+        fail_direct("direct host inference policy-denial response exceeded byte limit")
     try:
         denial_text = denial_bytes.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
-        print("direct host inference policy-denial response was not valid UTF-8", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "invalid-utf8")
+        fail_direct("direct host inference policy-denial response was not valid UTF-8")
     try:
         denial = json.loads(denial_text)
     except json.JSONDecodeError:
-        print("direct host inference policy-denial response was not valid JSON", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "invalid-json")
+        fail_direct("direct host inference policy-denial response was not valid JSON")
     detail = denial.get("detail") if isinstance(denial, dict) else None
     if (
-        error.code != direct_denial_http_status
+        direct_response.status != direct_denial_http_status
         or not isinstance(denial, dict)
         or denial.get("error") != direct_denial_error
     ):
-        print("direct host inference response was not an OpenShell policy denial", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "unexpected-response")
+        fail_direct("direct host inference response was not an OpenShell policy denial")
     if detail != direct_denial_detail:
-        print(
+        record_direct_outcome(sockaddr, "policy-format-drift")
+        fail_direct(
             "direct host inference OpenShell policy-denial contract v%s format drifted"
-            % direct_denial_contract_version,
-            file=sys.stderr,
+            % direct_denial_contract_version
         )
-        sys.exit(1)
-except urllib.error.URLError as error:
-    reason = error.reason
-    if not isinstance(reason, ConnectionRefusedError) or reason.errno != errno.ECONNREFUSED:
-        print("direct host inference deny could not be proven", file=sys.stderr)
-        sys.exit(1)
+    record_direct_outcome(sockaddr, "policy-denied")
 
 print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 `.trim();

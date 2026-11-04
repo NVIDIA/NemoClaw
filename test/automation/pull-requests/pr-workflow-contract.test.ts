@@ -575,21 +575,24 @@ describe("pull request and main workflow contracts", () => {
       sharedActions.cliCoverageShard,
       sharedActions.pluginCoverage,
     ];
-    expect(
-      actions.map((action) => requiredStep(action, "Setup Node.js").with?.["registry-url"]),
-    ).toEqual(actions.map(() => undefined));
-    expect(actions.map((action) => requiredStep(action, "Setup Node.js").with?.scope)).toEqual(
-      actions.map(() => undefined),
-    );
+    const setups = actions.map((action) => requiredStep(action, "Setup Node.js").with);
+    expect(setups.map((setup) => setup?.["registry-url"])).toEqual(actions.map(() => undefined));
+    expect(setups.map((setup) => setup?.scope)).toEqual(actions.map(() => undefined));
     expect(actions.map((action) => requiredStep(action, "Install dependencies").env)).toEqual(
-      actions.map(() => ({
-        NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
+      actions.map((action) => ({
+        ...(action === sharedActions.compileArtifacts
+          ? { PACKAGE_MODE: "${{ inputs.package-mode }}" }
+          : {}),
+        NODE_AUTH_TOKEN:
+          action === sharedActions.compileArtifacts
+            ? "${{ github.event_name == 'push' && inputs.package-mode != 'artifact' && github.token || '' }}"
+            : "${{ github.event_name == 'push' && github.token || '' }}",
         GITHUB_TOKEN: "${{ github.event_name == 'pull_request' && github.token || '' }}",
       })),
     );
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
       'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
-      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" full "$PACKAGE_MODE"',
       'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
       'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
       'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',

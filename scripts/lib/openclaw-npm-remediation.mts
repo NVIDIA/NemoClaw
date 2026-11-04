@@ -27,6 +27,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { rewriteRegularFile } from "./bundled-npm-package.mts";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
@@ -35,15 +36,14 @@ type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
   kind:
+    | "plugin-security"
     | "axios"
-    | "core"
-    | "current-core"
     | "jaeger"
-    | "legacy-core"
+    | "music-metadata"
     | "slack-proxy-addr"
     | "undici"
     | "zod";
-  version: "2026.3.11" | "2026.6.10" | "2026.7.1" | "2026.9.2" | "2026.9.5";
+  version: "2026.10.5" | "2026.6.10" | "2026.7.1" | "2026.9.2" | "2026.9.5";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -111,49 +111,10 @@ const AGENT_BASE_VERSION = "6.0.2";
 const AGENT_BASE_INTEGRITY =
   "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==";
 const AGENT_BASE_TARBALL = "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz";
-const TAR_VERSION = "7.5.21";
-const TAR_INTEGRITY =
-  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
-const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
-const LEGACY_BAILEYS_VERSION = "7.0.0-rc.9";
-const LEGACY_BAILEYS_INTEGRITY =
-  "sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==";
-const LEGACY_BAILEYS_TARBALL =
-  "https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-7.0.0-rc.9.tgz";
-const LEGACY_LIBSIGNAL_VERSION = "6.0.0";
-const LEGACY_LIBSIGNAL_INTEGRITY =
-  "sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==";
-const LEGACY_LIBSIGNAL_TARBALL = "https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz";
-const FS_SAFE_VERSION = "0.3.0";
-const FS_SAFE_INTEGRITY =
-  "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==";
-const FS_SAFE_TARBALL = "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz";
-const BRACE_EXPANSION_VERSION = "5.0.7";
-const BRACE_EXPANSION_INTEGRITY =
-  "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
-const BRACE_EXPANSION_TARBALL =
-  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
-const CURRENT_BRACE_EXPANSION_VERSION = "5.0.9";
-const CURRENT_BRACE_EXPANSION_INTEGRITY =
-  "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
-const CURRENT_BRACE_EXPANSION_TARBALL =
-  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
-const CURRENT_FAST_URI_VERSION = "3.1.7";
-const CURRENT_FAST_URI_INTEGRITY =
-  "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==";
-const CURRENT_FAST_URI_TARBALL = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
 const CURRENT_UNDICI_VERSION = "8.12.2";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==";
 const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz";
-const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
-const CURRENT_IP_ADDRESS_INTEGRITY =
-  "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
-const CURRENT_IP_ADDRESS_TARBALL = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
-const CURRENT_TAR_VERSION = "7.5.21";
-const CURRENT_TAR_INTEGRITY =
-  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
-const CURRENT_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
 const JAEGER_PROPAGATOR_VERSION = "2.9.0";
 const JAEGER_PROPAGATOR_INTEGRITY =
   "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
@@ -268,7 +229,84 @@ const BUNDLED_ZOD_VERSIONS: Readonly<Record<string, string>> = {
   "@openclaw/googlechat@2026.9.5": "4.5.4",
 };
 
+export const PLUGIN_SECURITY_REPLACEMENTS = {
+  undici: {
+    version: "8.12.3",
+    integrity:
+      "sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==",
+    tarball: "https://registry.npmjs.org/undici/-/undici-8.12.3.tgz",
+    tree: "sha512-f4dE2d+8pJTk4u1Si/CLrp/RPTQBeelxfceKCQzHal8W0VPgj2URurkjFnMCHn4WQB+HArUxb20VWsWbJD4jOw==",
+  },
+  zod: {
+    version: "4.6.6",
+    integrity:
+      "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==",
+    tarball: "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz",
+    tree: "sha512-gn5OiA3b/DcrCWmkaouzHWlX2qgGMHY/Vr9PkNqFJCq2pbCvz+200iN2wzRyRcY9AVj2G/CJWCu/B2f+pmW/2Q==",
+  },
+  "body-parser": {
+    version: "2.4.0",
+    integrity:
+      "sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==",
+    tarball: "https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz",
+    tree: "sha512-OjENWuF9eD/ENvgYcFC4opV2eUE5+CDdNsuVJ7PBt9CtW5vsXsuQGco1iF3sfawjHqx4o8Bde6HY0IzlqaY/Ow==",
+    closedTree:
+      "sha512-rQ1fiXYGRNuTBGwSC0fu+PU9YTcgMcMW/B6CL1S7M7/ycckQ2rT0QE+RqJZwgfyUiOrfLiX100tiFeFI0VkfNA==",
+  },
+  qs: {
+    version: "6.16.1",
+    integrity:
+      "sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==",
+    tarball: "https://registry.npmjs.org/qs/-/qs-6.16.1.tgz",
+    tree: "sha512-cFTImK/osYPgDAZDPSmf0gwmIJlzmPZ7jqeTmblsSjyU5ToQupumnz1cQ/weCrZNswe0gtog9BI2+9fIs7IAow==",
+  },
+  "content-type": {
+    version: "2.1.0",
+    integrity:
+      "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
+    tarball: "https://registry.npmjs.org/content-type/-/content-type-2.1.0.tgz",
+    tree: "sha512-nfpnTjLPE5GROUYwUpVxI5EZsRZMo8QaFD4cUfMxj8dUNmanx02mmFmtYgtaHo/Zhx6FAOSw968ETQM8zhRvcQ==",
+  },
+} as const;
+const PLUGIN_SECURITY_SOURCE_TREES: Readonly<Record<string, string>> = {
+  undici:
+    "sha512-EVXENEOE+lbjDT2ZClNs4dOhne8iqLzRjflhAq7ybVTMAkv6k6VLj9TukF3sIO5FYKV87CUSwqX5ZshL1Cvylg==",
+  zod: "sha512-jEk1wOBwNSnzN007AAgq/4I4pqOYDklmvMerB7WqzajKP5PIZDpM+ceeLIYIbLOKkkqaos0UjkEIQqdJi7oXKQ==",
+  "body-parser":
+    "sha512-tBSG2NtAGFZjDE60UubJ+ql0O8ztLz97jiso1tqYnF+Ai4rWi+jhXaEf81YK0qmOOu6v9EUDigvz7eSLDZnwGQ==",
+};
+
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/whatsapp@2026.9.2": {
+    kind: "music-metadata",
+    version: "2026.9.2",
+    expectedPatchedTreeIntegrity:
+      "sha512-fLr8urxlwrYm6r9RVXdVlYACuiXPehWu7LeZmR02SuBNb4H2onG5rs2lms9lamOrGsA+73z4qCtpBWG/WBibSg==",
+  },
+  "@openclaw/whatsapp@2026.9.5": {
+    kind: "music-metadata",
+    version: "2026.9.5",
+    expectedPatchedTreeIntegrity:
+      "sha512-oycnF4CR3Ch5j3zGbJDunWqvGAGXMgT9nv1kqbcE1Ur90GZPZNqt9DM/ebDDPjss0jjOxAOzMnDePz64ruA6cQ==",
+  },
+  "@openclaw/discord@2026.10.5": {
+    kind: "plugin-security",
+    version: "2026.10.5",
+    expectedPatchedTreeIntegrity:
+      "sha512-saU2KynfnHtwat1AnNh0/iHmAOILfecUXRXEGBEtlZfyIu2eA9yYeG8L2dBq7cgJqcRABNpv7LBHiSzLXACdPw==",
+  },
+  "@openclaw/googlechat@2026.10.5": {
+    kind: "plugin-security",
+    version: "2026.10.5",
+    expectedPatchedTreeIntegrity:
+      "sha512-kc2e2IAsIFgzt2t2GCiCvEVXsqIk2fIp/Quz14K+VtYzQ17P5MB+8QWk9kcz2DjhOg22tpU67bDJ+Is+pXjzlQ==",
+  },
+  "@openclaw/slack@2026.10.5": {
+    kind: "plugin-security",
+    version: "2026.10.5",
+    expectedPatchedTreeIntegrity:
+      "sha512-IGX+TjKx3QTjSbLzEAG6InRxMBYg7ZQwdDTRPIDDn8R4WL53/EW2c+xw+9ga6zdqcdUvIt3bE+/iO5BHqrBx1w==",
+  },
   "@openclaw/googlechat@2026.9.2": {
     expectedPatchedTreeIntegrity:
       "sha512-Eg4tVTLq3kfVB7thJU3Sarzt0BUGtg/z+Jt2Y5+pyCra6/NhQAq4/7IjWj72pfkNLGTr2xxxvq8Im++bZRrfXA==",
@@ -347,29 +385,6 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
       "sha512-A23af8PA4KuO8vju0viceyj1Y0M7ywF66TxKZZ8rI21L/TSn8RrzqiSaOV4UewV3/PLjDz+lY5lY+qbycOCBfg==",
     kind: "axios",
     version: "2026.7.1",
-  },
-  "openclaw@2026.6.10": {
-    expectedPatchedMetadataIntegrity:
-      "sha512-XMycUUV7gCzUYbjgwrglER0AQEtfuKUz6wyo4ilm/7nSSkLocYUYVkrJuBFYPW3no8Y5FW/1+2hWCssIyjxn3g==",
-    kind: "core",
-    version: "2026.6.10",
-  },
-  // openclaw/openclaw#113584: remove after a supported OpenClaw archive
-  // publishes every corrected dependency identity in its manifest and shrinkwrap.
-  // npm 12 no longer packs or honors npm-shrinkwrap.json. The reviewed archive
-  // still ships the complete bundleDependencies tree, and this digest pins that
-  // exact npm 12 packed tree so either a packlist or bundled-graph change fails.
-  "openclaw@2026.7.1": {
-    expectedPatchedTreeIntegrity:
-      "sha512-NIcEgu7zgU+3NdWIDeWSABtVv4RCZABNQv7i5NwG+qn3VrfYfFru0ZWH4f85Xwvrp94VOxYRQB0Uz5BRLCuH2Q==",
-    kind: "current-core",
-    version: "2026.7.1",
-  },
-  "openclaw@2026.3.11": {
-    kind: "legacy-core",
-    expectedPatchedMetadataIntegrity:
-      "sha512-kuoMP4afOUId6SrExT5xaSjSigSovFwaXflirtJFZqqlREqAoVj7QHl1i/1LS5Jk3kq5x85jQCqy2R/4rSPSLQ==",
-    version: "2026.3.11",
   },
 });
 
@@ -499,6 +514,19 @@ function extractArchive(
   return packageDirectory;
 }
 
+function readSafeJson(filename: string, label: string): JsonObject {
+  const descriptor = openSync(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!fstatSync(descriptor).isFile()) throw new Error(`${label} must be a real file`);
+    const value: unknown = JSON.parse(readFileSync(descriptor, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error(`${label} must be an object`);
+    return value as JsonObject;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 function readJson(path: string): JsonObject {
   const parsed = JSON.parse(readFileSync(path, "utf-8"));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -600,56 +628,9 @@ function hashMetadataEntries(entries: readonly (readonly [string, Buffer])[]): s
   return `sha512-${hash.digest("base64")}`;
 }
 
-// The retained 2026.6.10 remediation shipped with a narrower metadata digest.
-// Keep enforcing that exact historical contract for those four identities while
-// 2026.7.1 continues to use the stronger complete-tree digest above.
+// Retained 2026.6.10 plugin recipes use metadata digests. Preserve their
+// historical contract while later recipes use complete-tree digests.
 function hashPatchedMetadata(packageDirectory: string): string {
-  const packageJson = readJson(join(packageDirectory, "package.json"));
-  if (packageJson.name === "openclaw" && packageJson.version === "2026.3.11") {
-    const bundledTarPackageJson = readJson(
-      join(packageDirectory, "node_modules", "tar", "package.json"),
-    );
-    const bundledBaileysPackageJson = readJson(
-      join(packageDirectory, "node_modules", "@whiskeysockets", "baileys", "package.json"),
-    );
-    const bundledLibsignalPackageJson = readJson(
-      join(packageDirectory, "node_modules", "libsignal", "package.json"),
-    );
-    return hashMetadataEntries([
-      [
-        "legacy-openclaw-remediation.json",
-        Buffer.from(
-          `${JSON.stringify(
-            {
-              bundledDependencies: packageJson.bundledDependencies,
-              bundledTar: {
-                name: bundledTarPackageJson.name,
-                version: bundledTarPackageJson.version,
-              },
-              bundledBaileys: {
-                dependencies: bundledBaileysPackageJson.dependencies,
-                name: bundledBaileysPackageJson.name,
-                version: bundledBaileysPackageJson.version,
-              },
-              bundledLibsignal: {
-                dependencies: bundledLibsignalPackageJson.dependencies,
-                name: bundledLibsignalPackageJson.name,
-                version: bundledLibsignalPackageJson.version,
-              },
-              name: packageJson.name,
-              baileysDependency: packageJson.dependencies?.["@whiskeysockets/baileys"],
-              libsignalDependency: packageJson.dependencies?.libsignal,
-              tarDependency: packageJson.dependencies?.tar,
-              version: packageJson.version,
-            },
-            null,
-            2,
-          )}\n`,
-        ),
-      ],
-    ]);
-  }
-
   const names = ["package.json"];
   if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
     names.push("npm-shrinkwrap.json");
@@ -713,49 +694,6 @@ function requireCurrentUndiciReplacement(packageJson: JsonObject, label: string)
   ) {
     throw new Error(
       `undici@${CURRENT_UNDICI_VERSION} package contract changed; review the remediation before updating it`,
-    );
-  }
-}
-
-function requireCurrentIpAddressReplacement(packageJson: JsonObject): void {
-  requirePackageIdentity(
-    packageJson,
-    "ip-address",
-    CURRENT_IP_ADDRESS_VERSION,
-    "OpenClaw ip-address remediation package",
-  );
-  if (
-    (packageJson.dependencies !== undefined &&
-      Object.keys(packageJson.dependencies).length !== 0) ||
-    packageJson.engines?.node !== ">= 12"
-  ) {
-    throw new Error(
-      `ip-address@${CURRENT_IP_ADDRESS_VERSION} package contract changed; review the remediation before updating it`,
-    );
-  }
-}
-
-function requireCurrentTarReplacement(packageJson: JsonObject): void {
-  requirePackageIdentity(
-    packageJson,
-    "tar",
-    CURRENT_TAR_VERSION,
-    "OpenClaw tar remediation package",
-  );
-  requireDependencyShape(
-    packageJson,
-    {
-      "@isaacs/fs-minipass": "^4.0.0",
-      chownr: "^3.0.0",
-      minipass: "^7.1.2",
-      minizlib: "^3.1.0",
-      yallist: "^5.0.0",
-    },
-    `tar@${CURRENT_TAR_VERSION}`,
-  );
-  if (packageJson.engines?.node !== ">=18" || packageJson.license !== "BlueOak-1.0.0") {
-    throw new Error(
-      `tar@${CURRENT_TAR_VERSION} package contract changed; review the remediation before updating it`,
     );
   }
 }
@@ -834,206 +772,6 @@ export function patchOpenClawPluginPackageGraph(
     engines: { node: ">= 6.0.0" },
   };
 
-  writeJson(packageJsonPath, packageJson);
-  writeJson(shrinkwrapPath, shrinkwrap);
-}
-
-export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
-  const packageJsonPath = join(packageDirectory, "package.json");
-  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
-  const packageJson = readJson(packageJsonPath);
-  requirePackageIdentity(packageJson, "openclaw", "2026.6.10", "OpenClaw core");
-  if (packageJson.dependencies?.tar !== "7.5.16") {
-    throw new Error("openclaw@2026.6.10 must declare reviewed tar@7.5.16 before remediation");
-  }
-  if (packageJson.dependencies?.jszip !== "3.10.1") {
-    throw new Error("openclaw@2026.6.10 must declare reviewed jszip@3.10.1 before remediation");
-  }
-  if (packageJson.dependencies?.["brace-expansion"] !== undefined) {
-    throw new Error("openclaw@2026.6.10 unexpectedly declares brace-expansion directly");
-  }
-  if (packageJson.bundledDependencies !== undefined) {
-    throw new Error("openclaw@2026.6.10 unexpectedly declares bundled dependencies");
-  }
-
-  const shrinkwrap = readJson(shrinkwrapPath);
-  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
-    throw new Error("openclaw@2026.6.10 must ship an npm lockfileVersion 3 shrinkwrap");
-  }
-  const packages = shrinkwrap.packages as JsonObject;
-  const root = packages[""] as JsonObject;
-  requirePackageIdentity(root, "openclaw", "2026.6.10", "OpenClaw shrinkwrap root");
-  const tar = packages["node_modules/tar"] as JsonObject | undefined;
-  const braceExpansion = packages["node_modules/brace-expansion"] as JsonObject | undefined;
-  const fsSafe = packages["node_modules/@openclaw/fs-safe"] as JsonObject | undefined;
-  const jszip = packages["node_modules/jszip"] as JsonObject | undefined;
-  const minimatch = packages["node_modules/minimatch"] as JsonObject | undefined;
-  if (root.dependencies?.tar !== "7.5.16" || tar?.version !== "7.5.16") {
-    throw new Error("openclaw@2026.6.10 tar shrinkwrap state changed after review");
-  }
-  if (root.dependencies?.jszip !== "3.10.1" || jszip?.version !== "3.10.1") {
-    throw new Error("openclaw@2026.6.10 jszip shrinkwrap state changed after review");
-  }
-  if (
-    fsSafe?.optionalDependencies?.jszip !== "^3.10.1" ||
-    fsSafe?.optionalDependencies?.tar !== "7.5.13" ||
-    Object.keys(fsSafe.optionalDependencies).length !== 2 ||
-    packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined
-  ) {
-    throw new Error(
-      "openclaw@2026.6.10 @openclaw/fs-safe optional dependency layout changed after review",
-    );
-  }
-  if (
-    braceExpansion?.version !== "5.0.6" ||
-    minimatch?.dependencies?.["brace-expansion"] !== "^5.0.5"
-  ) {
-    throw new Error("openclaw@2026.6.10 brace-expansion layout changed after review");
-  }
-
-  packageJson.dependencies.tar = TAR_VERSION;
-  packageJson.bundledDependencies = ["@openclaw/fs-safe"];
-  root.dependencies.tar = TAR_VERSION;
-  tar.version = TAR_VERSION;
-  tar.resolved = TAR_TARBALL;
-  tar.integrity = TAR_INTEGRITY;
-  delete fsSafe.optionalDependencies;
-  braceExpansion.version = BRACE_EXPANSION_VERSION;
-  braceExpansion.resolved = BRACE_EXPANSION_TARBALL;
-  braceExpansion.integrity = BRACE_EXPANSION_INTEGRITY;
-
-  writeJson(packageJsonPath, packageJson);
-  writeJson(shrinkwrapPath, shrinkwrap);
-}
-
-export function patchCurrentOpenClawCorePackageGraph(packageDirectory: string): void {
-  const packageJsonPath = join(packageDirectory, "package.json");
-  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
-  const packageJson = readJson(packageJsonPath);
-  requirePackageIdentity(packageJson, "openclaw", "2026.7.1", "OpenClaw core");
-  if (
-    packageJson.dependencies?.minimatch !== "10.2.5" ||
-    packageJson.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
-    packageJson.dependencies?.["@openclaw/fs-safe"] !== "0.4.1" ||
-    packageJson.dependencies?.tar !== "7.5.19" ||
-    packageJson.dependencies?.undici !== "8.5.0" ||
-    packageJson.dependencies?.["brace-expansion"] !== undefined ||
-    packageJson.dependencies?.["fast-uri"] !== undefined ||
-    packageJson.dependencies?.["ip-address"] !== undefined
-  ) {
-    throw new Error("openclaw@2026.7.1 dependency boundary changed after review");
-  }
-
-  const shrinkwrap = readJson(shrinkwrapPath);
-  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
-    throw new Error("openclaw@2026.7.1 must ship an npm lockfileVersion 3 shrinkwrap");
-  }
-  const packages = shrinkwrap.packages as JsonObject;
-  const root = packages[""] as JsonObject;
-  requirePackageIdentity(root, "openclaw", "2026.7.1", "OpenClaw shrinkwrap root");
-  const braceExpansion = packages["node_modules/brace-expansion"] as JsonObject | undefined;
-  const fastUri = packages["node_modules/fast-uri"] as JsonObject | undefined;
-  const minimatch = packages["node_modules/minimatch"] as JsonObject | undefined;
-  const ajv = packages["node_modules/ajv"] as JsonObject | undefined;
-  const undici = packages["node_modules/undici"] as JsonObject | undefined;
-  const ipAddress = packages["node_modules/ip-address"] as JsonObject | undefined;
-  const expressRateLimit = packages["node_modules/express-rate-limit"] as JsonObject | undefined;
-  const fsSafe = packages["node_modules/@openclaw/fs-safe"] as JsonObject | undefined;
-  const tar = packages["node_modules/tar"] as JsonObject | undefined;
-  if (
-    braceExpansion?.version !== "5.0.7" ||
-    braceExpansion.resolved !==
-      "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz" ||
-    braceExpansion.integrity !==
-      "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==" ||
-    braceExpansion.dependencies?.["balanced-match"] !== "^4.0.2" ||
-    minimatch?.dependencies?.["brace-expansion"] !== "^5.0.5"
-  ) {
-    throw new Error("openclaw@2026.7.1 brace-expansion layout changed after review");
-  }
-  if (
-    fastUri?.version !== "3.1.2" ||
-    fastUri.resolved !== "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.2.tgz" ||
-    fastUri.integrity !==
-      "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==" ||
-    ajv?.version !== "8.20.0" ||
-    ajv.dependencies?.["fast-uri"] !== "^3.0.1"
-  ) {
-    throw new Error("openclaw@2026.7.1 fast-uri layout changed after review");
-  }
-  if (
-    root.dependencies?.undici !== "8.5.0" ||
-    undici?.version !== "8.5.0" ||
-    undici.resolved !== "https://registry.npmjs.org/undici/-/undici-8.5.0.tgz" ||
-    undici.integrity !==
-      "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==" ||
-    undici.engines?.node !== ">=22.19.0"
-  ) {
-    throw new Error("openclaw@2026.7.1 undici layout changed after review");
-  }
-  if (
-    ipAddress?.version !== "10.2.0" ||
-    ipAddress.resolved !== "https://registry.npmjs.org/ip-address/-/ip-address-10.2.0.tgz" ||
-    ipAddress.integrity !==
-      "sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==" ||
-    ipAddress.engines?.node !== ">= 12" ||
-    expressRateLimit?.version !== "8.5.2" ||
-    expressRateLimit.dependencies?.["ip-address"] !== "^10.2.0"
-  ) {
-    throw new Error("openclaw@2026.7.1 ip-address layout changed after review");
-  }
-  if (
-    root.dependencies?.tar !== "7.5.19" ||
-    tar?.version !== "7.5.19" ||
-    tar.resolved !== "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz" ||
-    tar.integrity !==
-      "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==" ||
-    tar.dependencies?.["@isaacs/fs-minipass"] !== "^4.0.0" ||
-    tar.dependencies?.chownr !== "^3.0.0" ||
-    tar.dependencies?.minipass !== "^7.1.2" ||
-    tar.dependencies?.minizlib !== "^3.1.0" ||
-    tar.dependencies?.yallist !== "^5.0.0" ||
-    Object.keys(tar.dependencies).length !== 5 ||
-    tar.engines?.node !== ">=18" ||
-    tar.license !== "BlueOak-1.0.0"
-  ) {
-    throw new Error("openclaw@2026.7.1 tar layout changed after review");
-  }
-  if (
-    fsSafe?.version !== "0.4.1" ||
-    fsSafe.resolved !== "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.4.1.tgz" ||
-    fsSafe.integrity !==
-      "sha512-hQi+BxO10KdRFlYUot1syC+hTaUnGeQNdqX5kwkKJig8CFq1tKsYJLPm+zkiiGsSKOprPAquQl/txejEhpKPgg==" ||
-    fsSafe.license !== "MIT" ||
-    fsSafe.engines?.node !== ">=22" ||
-    fsSafe.optionalDependencies?.jszip !== "^3.10.1" ||
-    fsSafe.optionalDependencies?.tar !== "7.5.19" ||
-    Object.keys(fsSafe.optionalDependencies).length !== 2 ||
-    packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined
-  ) {
-    throw new Error("openclaw@2026.7.1 @openclaw/fs-safe tar layout changed after review");
-  }
-
-  packageJson.dependencies.tar = CURRENT_TAR_VERSION;
-  packageJson.dependencies.undici = CURRENT_UNDICI_VERSION;
-  root.dependencies.tar = CURRENT_TAR_VERSION;
-  root.dependencies.undici = CURRENT_UNDICI_VERSION;
-  braceExpansion.version = CURRENT_BRACE_EXPANSION_VERSION;
-  braceExpansion.resolved = CURRENT_BRACE_EXPANSION_TARBALL;
-  braceExpansion.integrity = CURRENT_BRACE_EXPANSION_INTEGRITY;
-  fastUri.version = CURRENT_FAST_URI_VERSION;
-  fastUri.resolved = CURRENT_FAST_URI_TARBALL;
-  fastUri.integrity = CURRENT_FAST_URI_INTEGRITY;
-  undici.version = CURRENT_UNDICI_VERSION;
-  undici.resolved = CURRENT_UNDICI_TARBALL;
-  undici.integrity = CURRENT_UNDICI_INTEGRITY;
-  ipAddress.version = CURRENT_IP_ADDRESS_VERSION;
-  ipAddress.resolved = CURRENT_IP_ADDRESS_TARBALL;
-  ipAddress.integrity = CURRENT_IP_ADDRESS_INTEGRITY;
-  fsSafe.optionalDependencies.tar = CURRENT_TAR_VERSION;
-  tar.version = CURRENT_TAR_VERSION;
-  tar.resolved = CURRENT_TAR_TARBALL;
-  tar.integrity = CURRENT_TAR_INTEGRITY;
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
 }
@@ -1254,6 +992,98 @@ function remediateBundledUndici(
     shrinkwrap.packages[""].dependencies.undici = spec.version;
     writeJson(shrinkwrapPath, shrinkwrap);
   }
+}
+
+export function patchOpenClawMusicMetadataPackageGraph(
+  packageDirectory: string,
+  replacement: string,
+  packageSpec: string,
+): void {
+  if (!["@openclaw/whatsapp@2026.9.2", "@openclaw/whatsapp@2026.9.5"].includes(packageSpec)) {
+    throw new Error("Unreviewed WhatsApp music metadata remediation");
+  }
+  const plugin = readJson(join(packageDirectory, "package.json"));
+  requirePackageIdentity(
+    plugin,
+    "@openclaw/whatsapp",
+    packageSpec.split("@").at(-1)!,
+    "WhatsApp plugin",
+  );
+  if (plugin.dependencies?.baileys !== "7.0.0-rc14") {
+    throw new Error("WhatsApp Baileys dependency changed after review");
+  }
+  const baileys = join(packageDirectory, "node_modules", "baileys");
+  const parent = readJson(join(baileys, "package.json"));
+  requirePackageIdentity(parent, "baileys", "7.0.0-rc14", "WhatsApp Baileys");
+  if (parent.dependencies?.["music-metadata"] !== "^11.12.3") {
+    throw new Error("Baileys music metadata dependency changed after review");
+  }
+  const target = join(baileys, "node_modules", "music-metadata");
+  const installed = readJson(join(target, "package.json"));
+  const alreadyPatched = installed.version === "11.16.0";
+  requirePackageIdentity(
+    installed,
+    "music-metadata",
+    alreadyPatched ? "11.16.0" : "11.15.0",
+    "Bundled music metadata",
+  );
+  const fixed = readJson(join(replacement, "package.json"));
+  requirePackageIdentity(fixed, "music-metadata", "11.16.0", "Music metadata replacement");
+  const dependencies = {
+    "@borewit/text-codec": "^0.2.2",
+    "@tokenizer/token": "^0.3.0",
+    "content-type": "^2.1.0",
+    debug: "^4.4.3",
+    "file-type": "^21.3.4",
+    "media-typer": "^2.0.0",
+    strtok3: "^10.3.5",
+    "token-types": "^6.1.2",
+    "uint8array-extras": "^1.5.0",
+    "win-guid": "^0.2.1",
+  };
+  requireDependencyShape(installed, dependencies, "Bundled music metadata");
+  requireDependencyShape(fixed, dependencies, "Music metadata replacement");
+  if (fixed.engines?.node !== ">=18") {
+    throw new Error("Music metadata package layout changed after review");
+  }
+  hashPackageTree(target);
+  // npm may nest these unchanged dependencies under the bundled parser.
+  // Retain that resolution when replacing the parser's own files.
+  const nested = join(target, "node_modules");
+  if (existsSync(nested)) {
+    const nestedTree = hashPackageTree(nested);
+    const replacementNested = join(replacement, "node_modules");
+    if (existsSync(replacementNested)) {
+      if (hashPackageTree(replacementNested) !== nestedTree)
+        throw new Error("Music metadata nested dependencies changed after review");
+    } else {
+      cpSync(nested, replacementNested, { recursive: true });
+    }
+  }
+  const replacementTree = hashPackageTree(replacement);
+  if (alreadyPatched) {
+    if (hashPackageTree(target) !== replacementTree)
+      throw new Error("Music metadata changed after remediation");
+    return;
+  }
+  copyReplacementPackage(replacement, target);
+}
+
+function remediateMusicMetadata(
+  packageDirectory: string,
+  packageSpec: string,
+  root: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const archive = packReplacement(
+    "music-metadata@11.16.0",
+    "sha512-D5zZHjQUbfR+JhHjnwdbgeB4qj7zVJtisCB1I0GAI5sjSPGqPLoY14WMIzMeR8iA+4nSFswVLpO4crksZUybBg==",
+    "https://registry.npmjs.org/music-metadata/-/music-metadata-11.16.0.tgz",
+    root,
+    env,
+  );
+  const replacement = extractArchive(archive.archivePath, join(root, "music-metadata"), root, env);
+  patchOpenClawMusicMetadataPackageGraph(packageDirectory, replacement, packageSpec);
 }
 
 function patchOpenClawBundledBodyParser(
@@ -1668,97 +1498,6 @@ export function patchOpenClawBundledZodPackageGraph(
   }
 }
 
-export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
-  const packageJsonPath = join(packageDirectory, "package.json");
-  const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
-  const bundledBaileysPackageJsonPath = join(
-    packageDirectory,
-    "node_modules",
-    "@whiskeysockets",
-    "baileys",
-    "package.json",
-  );
-  const bundledLibsignalPackageJsonPath = join(
-    packageDirectory,
-    "node_modules",
-    "libsignal",
-    "package.json",
-  );
-  const packageJson = readJson(packageJsonPath);
-  requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
-  if (packageJson.dependencies?.tar !== "7.5.11") {
-    throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
-  }
-  if (packageJson.dependencies?.["@whiskeysockets/baileys"] !== LEGACY_BAILEYS_VERSION) {
-    throw new Error(
-      `openclaw@2026.3.11 must declare reviewed @whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION} before remediation`,
-    );
-  }
-  if (packageJson.dependencies?.libsignal !== undefined) {
-    throw new Error("openclaw@2026.3.11 unexpectedly declares libsignal before remediation");
-  }
-  if (packageJson.bundledDependencies !== undefined) {
-    throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
-  }
-  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
-    throw new Error("openclaw@2026.3.11 unexpectedly ships an npm shrinkwrap");
-  }
-  if (!existsSync(bundledTarPackageJsonPath)) {
-    throw new Error("openclaw@2026.3.11 remediation requires the reviewed bundled tar package");
-  }
-  if (!existsSync(bundledBaileysPackageJsonPath) || !existsSync(bundledLibsignalPackageJsonPath)) {
-    throw new Error(
-      "openclaw@2026.3.11 remediation requires the reviewed bundled Baileys and libsignal packages",
-    );
-  }
-  requirePackageIdentity(
-    readJson(bundledTarPackageJsonPath),
-    "tar",
-    TAR_VERSION,
-    "Legacy OpenClaw bundled tar remediation",
-  );
-  const bundledBaileysPackageJson = readJson(bundledBaileysPackageJsonPath);
-  requirePackageIdentity(
-    bundledBaileysPackageJson,
-    "@whiskeysockets/baileys",
-    LEGACY_BAILEYS_VERSION,
-    "Legacy OpenClaw bundled Baileys remediation",
-  );
-  requireDependencyShape(
-    bundledBaileysPackageJson,
-    {
-      "@cacheable/node-cache": "^1.4.0",
-      "@hapi/boom": "^9.1.3",
-      "async-mutex": "^0.5.0",
-      libsignal: LEGACY_LIBSIGNAL_VERSION,
-      "lru-cache": "^11.1.0",
-      "music-metadata": "^11.7.0",
-      "p-queue": "^9.0.0",
-      pino: "^9.6",
-      protobufjs: "^7.2.4",
-      ws: "^8.13.0",
-    },
-    `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
-  );
-  const bundledLibsignalPackageJson = readJson(bundledLibsignalPackageJsonPath);
-  requirePackageIdentity(
-    bundledLibsignalPackageJson,
-    "libsignal",
-    LEGACY_LIBSIGNAL_VERSION,
-    "Legacy OpenClaw bundled libsignal remediation",
-  );
-  requireDependencyShape(
-    bundledLibsignalPackageJson,
-    { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
-    `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
-  );
-
-  packageJson.dependencies.tar = TAR_VERSION;
-  packageJson.dependencies.libsignal = LEGACY_LIBSIGNAL_VERSION;
-  packageJson.bundledDependencies = ["tar", "@whiskeysockets/baileys", "libsignal"];
-  writeJson(packageJsonPath, packageJson);
-}
-
 export function patchOpenClawDiagnosticsPackageGraph(packageDirectory: string): void {
   const packageSpec = "@openclaw/diagnostics-otel@2026.6.10";
   const packageJsonPath = join(packageDirectory, "package.json");
@@ -1909,27 +1648,222 @@ export function patchOpenClawDiagnosticsOtelPackageGraph(packageDirectory: strin
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
-function patchFsSafePackageGraph(packageDirectory: string): void {
-  const packageJsonPath = join(packageDirectory, "package.json");
-  const packageJson = readJson(packageJsonPath);
-  requirePackageIdentity(
-    packageJson,
-    "@openclaw/fs-safe",
-    FS_SAFE_VERSION,
-    "OpenClaw fs-safe remediation package",
-  );
-  if (
-    !packageJson.optionalDependencies ||
-    packageJson.optionalDependencies.jszip !== "^3.10.1" ||
-    packageJson.optionalDependencies.tar !== "7.5.13" ||
-    Object.keys(packageJson.optionalDependencies).length !== 2
-  ) {
-    throw new Error(
-      "@openclaw/fs-safe@0.3.0 optional dependency graph changed; review the remediation",
+const DISCORD_SDK_ORIGINAL_OUTPUT_INTEGRITY =
+  "sha512-jV67lNWDgUUED4SqoFvZDVyJRVMZV62987FUbN7tj+gR7KGgfhicbXlfmmkozkuhXizsj8Rhw6zXMNc3pA6gFA==";
+const DISCORD_SDK_FIXED_OUTPUT_INTEGRITY =
+  "sha512-9NRHdhVeV01hd9pb9lAAQFiqShpRgQtP11QBF3RRqr4vE4pzSAb6C0f87VYdT85ax2CiGKVcT2ekynKRpCKqNw==";
+const ZOD_4_6_6_TREE_INTEGRITY =
+  "sha512-gn5OiA3b/DcrCWmkaouzHWlX2qgGMHY/Vr9PkNqFJCq2pbCvz+200iN2wzRyRcY9AVj2G/CJWCu/B2f+pmW/2Q==";
+
+function patchDiscordCollectionBounds(source: string): string {
+  let patched = source;
+  for (const field of ["exactLength", "maxLength", "maxSize"]) {
+    const before = `message: def.${field}.message,\n                });\n                status.dirty();`;
+    if (patched.split(before).length !== 2) {
+      throw new Error(`Discord embedded Zod ${field} guard has drifted`);
+    }
+    const after =
+      field === "exactLength"
+        ? "                if (tooBig) return INVALID;\n                status.dirty();"
+        : "                return INVALID;";
+    patched = patched.replace(
+      before,
+      `message: def.${field}.message,\n                });\n${after}`,
     );
   }
-  delete packageJson.optionalDependencies;
-  writeJson(packageJsonPath, packageJson);
+  return patched;
+}
+
+function patchDiscordZodDeclarations(outputDirectory: string): void {
+  let imports = 0;
+  let files = 0;
+  for (const entry of readdirSync(outputDirectory, { recursive: true })) {
+    if (!entry.toString().endsWith(".d.ts")) continue;
+    const filename = join(outputDirectory, entry.toString());
+    const original = readFileSync(filename, "utf8");
+    const patched = original.replace(
+      /((?:from\s+|import\s*\())(['"])zod\2/g,
+      (_match: string, prefix: string, quote: string) => {
+        imports += 1;
+        return `${prefix}${quote}zod/v3${quote}`;
+      },
+    );
+    if (patched !== original) {
+      files += 1;
+      writeFileSync(filename, patched);
+    }
+  }
+  if (imports !== 15 || files !== 14) {
+    throw new Error("Discord embedded Zod declaration imports have drifted");
+  }
+}
+
+/** Keep the SDK's v3 API while backporting early rejection of oversized collections. */
+export function patchDiscordEmbeddedZodPackage(
+  packageDirectory: string,
+  replacementZodDirectory: string,
+): void {
+  for (const directory of [packageDirectory, replacementZodDirectory]) {
+    const metadata = lstatSync(directory);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Discord Zod remediation requires real package directories");
+    }
+  }
+  // Reject links and special members before reading metadata or changing either input.
+  hashPackageTree(packageDirectory);
+  const manifest = readJson(join(packageDirectory, "package.json"));
+  requirePackageIdentity(manifest, "@discord/embedded-app-sdk", "2.5.0", "Discord SDK");
+  if (hashPackageTree(replacementZodDirectory) !== ZOD_4_6_6_TREE_INTEGRITY) {
+    throw new Error("Discord replacement Zod tree integrity mismatch");
+  }
+  const outputIntegrity = hashPackageTree(join(packageDirectory, "output"));
+  if (outputIntegrity === DISCORD_SDK_FIXED_OUTPUT_INTEGRITY) {
+    if (
+      manifest.dependencies?.zod !== "4.6.6" ||
+      hashPackageTree(join(packageDirectory, "node_modules", "zod")) !== ZOD_4_6_6_TREE_INTEGRITY
+    ) {
+      throw new Error("Discord remediated Zod dependency has drifted");
+    }
+    return;
+  }
+  if (
+    outputIntegrity !== DISCORD_SDK_ORIGINAL_OUTPUT_INTEGRITY ||
+    manifest.dependencies?.zod !== "^3.9.8"
+  ) {
+    throw new Error("Discord embedded Zod source integrity mismatch");
+  }
+  const stagingRoot = mkdtempSync(join(dirname(packageDirectory), ".discord-zod-remediation-"));
+  try {
+    const staged = join(stagingRoot, "package");
+    cpSync(packageDirectory, staged, { recursive: true, verbatimSymlinks: true });
+    const outputDirectory = join(staged, "output");
+    for (const extension of ["mjs", "cjs"]) {
+      const filename = join(outputDirectory, "lib", "zod", "lib", `index.${extension}`);
+      writeFileSync(filename, patchDiscordCollectionBounds(readFileSync(filename, "utf8")));
+    }
+    patchDiscordZodDeclarations(outputDirectory);
+    if (hashPackageTree(outputDirectory) !== DISCORD_SDK_FIXED_OUTPUT_INTEGRITY) {
+      throw new Error("Discord embedded Zod patched output integrity mismatch");
+    }
+    manifest.dependencies.zod = "4.6.6";
+    writeJson(join(staged, "package.json"), manifest);
+    copyReplacementPackage(replacementZodDirectory, join(staged, "node_modules", "zod"));
+    copyReplacementPackage(staged, packageDirectory);
+  } finally {
+    rmSync(stagingRoot, { recursive: true, force: true });
+  }
+}
+
+function requireRealPackagePath(root: string, relativePath: string): string {
+  let current = resolve(root);
+  for (const part of ["", ...relativePath.split("/")]) {
+    current = join(current, part);
+    const metadata = lstatSync(current);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Plugin security remediation requires real package directories");
+    }
+  }
+  return current;
+}
+
+/** Repair bundled copies that npm's overrides do not replace. */
+export function patchOpenClaw105PluginDependencies(
+  packageDirectory: string,
+  workingDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  requireRealPackagePath(packageDirectory, "");
+  const manifest = readSafeJson(join(packageDirectory, "package.json"), "OpenClaw plugin manifest");
+  const originalManifest = JSON.stringify(manifest);
+  if (
+    manifest.version !== "2026.10.5" ||
+    !["@openclaw/discord", "@openclaw/googlechat", "@openclaw/slack"].includes(
+      String(manifest.name),
+    )
+  ) {
+    throw new Error("OpenClaw plugin security remediation identity has drifted");
+  }
+  const root = mkdtempSync(join(workingDirectory, "plugin-security-"));
+  try {
+    const replacements = new Map<string, string>();
+    const replacement = (name: keyof typeof PLUGIN_SECURITY_REPLACEMENTS): string => {
+      const cached = replacements.get(name);
+      if (cached) return cached;
+      const identity = PLUGIN_SECURITY_REPLACEMENTS[name];
+      const archive = packReplacement(
+        `${name}@${identity.version}`,
+        identity.integrity,
+        identity.tarball,
+        root,
+        env,
+      );
+      const directory = extractArchive(archive.archivePath, join(root, name), root, env);
+      if (hashPackageTree(directory) !== identity.tree) {
+        throw new Error(`Plugin replacement tree integrity mismatch: ${name}`);
+      }
+      replacements.set(name, directory);
+      return directory;
+    };
+    const replace = (name: "undici" | "zod" | "body-parser", location: string): void => {
+      const destination = requireRealPackagePath(packageDirectory, location);
+      const current = hashPackageTree(destination);
+      const expected =
+        name === "body-parser"
+          ? PLUGIN_SECURITY_REPLACEMENTS[name].closedTree
+          : PLUGIN_SECURITY_REPLACEMENTS[name].tree;
+      if (current === expected) return;
+      if (current !== PLUGIN_SECURITY_SOURCE_TREES[name]) {
+        throw new Error(`OpenClaw bundled dependency source integrity mismatch: ${name}`);
+      }
+      const source = replacement(name);
+      if (name === "body-parser") {
+        // Bolt also has content-type 1.x and qs 6.16.0. Keep 2.4's required copies local.
+        for (const nested of ["content-type", "qs"] as const) {
+          copyReplacementPackage(replacement(nested), join(source, "node_modules", nested));
+        }
+      }
+      if (hashPackageTree(source) !== expected) {
+        throw new Error(`Plugin prepared dependency tree integrity mismatch: ${name}`);
+      }
+      copyReplacementPackage(source, destination);
+    };
+    const dependencies = manifest.dependencies as Record<string, unknown>;
+    if (dependencies?.zod !== "4.6.5" && dependencies?.zod !== "4.6.6") {
+      throw new Error("OpenClaw plugin Zod declaration has drifted");
+    }
+    if (
+      manifest.name !== "@openclaw/googlechat" &&
+      dependencies?.undici !== "8.11.2" &&
+      dependencies?.undici !== "8.12.3"
+    ) {
+      throw new Error("OpenClaw plugin HTTP dependency declaration has drifted");
+    }
+    replace("zod", "node_modules/zod");
+    if (manifest.name !== "@openclaw/googlechat") replace("undici", "node_modules/undici");
+    if (manifest.name === "@openclaw/slack") {
+      replace("body-parser", "node_modules/@slack/bolt/node_modules/body-parser");
+    }
+    if (manifest.name === "@openclaw/discord") {
+      const sdk = requireRealPackagePath(
+        packageDirectory,
+        "node_modules/@discord/embedded-app-sdk",
+      );
+      patchDiscordEmbeddedZodPackage(sdk, join(packageDirectory, "node_modules/zod"));
+    }
+    dependencies.zod = "4.6.6";
+    if (manifest.name !== "@openclaw/googlechat") dependencies.undici = "8.12.3";
+    rewriteRegularFile(
+      join(packageDirectory, "package.json"),
+      "OpenClaw plugin manifest",
+      (original) => {
+        if (JSON.stringify(JSON.parse(original)) !== originalManifest)
+          throw new Error("OpenClaw plugin manifest changed before writing");
+        return `${JSON.stringify(manifest, null, 2)}\n`;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 function copyReplacementPackage(
@@ -2189,7 +2123,11 @@ export function buildRemediatedOpenClawPluginArchive(
     remediationRoot,
     env,
   );
-  if (remediation.kind === "slack-proxy-addr") {
+  if (remediation.kind === "music-metadata") {
+    remediateMusicMetadata(sourcePackage, request.packageSpec, remediationRoot, env);
+  } else if (remediation.kind === "plugin-security") {
+    patchOpenClaw105PluginDependencies(sourcePackage, remediationRoot, env);
+  } else if (remediation.kind === "slack-proxy-addr") {
     const archive = packReplacement(
       `proxy-addr@${PROXY_ADDR_VERSION}`,
       PROXY_ADDR_INTEGRITY,
@@ -2204,124 +2142,6 @@ export function buildRemediatedOpenClawPluginArchive(
       env,
     );
     patchOpenClawSlackProxyAddrPackageGraph(sourcePackage, replacement);
-  } else if (remediation.kind === "core") {
-    const fsSafeArchive = packReplacement(
-      `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
-      FS_SAFE_INTEGRITY,
-      FS_SAFE_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const fsSafePackage = extractArchive(
-      fsSafeArchive.archivePath,
-      join(remediationRoot, "fs-safe"),
-      remediationRoot,
-      env,
-    );
-    patchFsSafePackageGraph(fsSafePackage);
-    copyReplacementPackage(
-      fsSafePackage,
-      join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
-    );
-    patchOpenClawCorePackageGraph(sourcePackage);
-  } else if (remediation.kind === "current-core") {
-    const braceExpansionArchive = packReplacement(
-      `brace-expansion@${CURRENT_BRACE_EXPANSION_VERSION}`,
-      CURRENT_BRACE_EXPANSION_INTEGRITY,
-      CURRENT_BRACE_EXPANSION_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const fastUriArchive = packReplacement(
-      `fast-uri@${CURRENT_FAST_URI_VERSION}`,
-      CURRENT_FAST_URI_INTEGRITY,
-      CURRENT_FAST_URI_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const undiciArchive = packReplacement(
-      `undici@${CURRENT_UNDICI_VERSION}`,
-      CURRENT_UNDICI_INTEGRITY,
-      CURRENT_UNDICI_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const ipAddressArchive = packReplacement(
-      `ip-address@${CURRENT_IP_ADDRESS_VERSION}`,
-      CURRENT_IP_ADDRESS_INTEGRITY,
-      CURRENT_IP_ADDRESS_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const tarArchive = packReplacement(
-      `tar@${CURRENT_TAR_VERSION}`,
-      CURRENT_TAR_INTEGRITY,
-      CURRENT_TAR_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const braceExpansionPackage = extractArchive(
-      braceExpansionArchive.archivePath,
-      join(remediationRoot, "brace-expansion"),
-      remediationRoot,
-      env,
-    );
-    const fastUriPackage = extractArchive(
-      fastUriArchive.archivePath,
-      join(remediationRoot, "fast-uri"),
-      remediationRoot,
-      env,
-    );
-    const undiciPackage = extractArchive(
-      undiciArchive.archivePath,
-      join(remediationRoot, "undici"),
-      remediationRoot,
-      env,
-    );
-    const ipAddressPackage = extractArchive(
-      ipAddressArchive.archivePath,
-      join(remediationRoot, "ip-address"),
-      remediationRoot,
-      env,
-    );
-    const tarPackage = extractArchive(
-      tarArchive.archivePath,
-      join(remediationRoot, "tar"),
-      remediationRoot,
-      env,
-    );
-    const braceExpansionPackageJson = readJson(join(braceExpansionPackage, "package.json"));
-    const fastUriPackageJson = readJson(join(fastUriPackage, "package.json"));
-    const undiciPackageJson = readJson(join(undiciPackage, "package.json"));
-    requirePackageIdentity(
-      braceExpansionPackageJson,
-      "brace-expansion",
-      CURRENT_BRACE_EXPANSION_VERSION,
-      "OpenClaw brace-expansion remediation package",
-    );
-    requireDependencyShape(
-      braceExpansionPackageJson,
-      { "balanced-match": "^4.0.2" },
-      `brace-expansion@${CURRENT_BRACE_EXPANSION_VERSION}`,
-    );
-    requirePackageIdentity(
-      fastUriPackageJson,
-      "fast-uri",
-      CURRENT_FAST_URI_VERSION,
-      "OpenClaw fast-uri remediation package",
-    );
-    if (
-      fastUriPackageJson.dependencies !== undefined &&
-      Object.keys(fastUriPackageJson.dependencies).length !== 0
-    ) {
-      throw new Error(
-        `fast-uri@${CURRENT_FAST_URI_VERSION} dependency graph changed; review the remediation before updating it`,
-      );
-    }
-    requireCurrentUndiciReplacement(undiciPackageJson, "OpenClaw undici remediation package");
-    requireCurrentIpAddressReplacement(readJson(join(ipAddressPackage, "package.json")));
-    requireCurrentTarReplacement(readJson(join(tarPackage, "package.json")));
-    patchCurrentOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "undici") {
     const undiciArchive = packReplacement(
       `undici@${CURRENT_UNDICI_VERSION}`,
@@ -2342,128 +2162,6 @@ export function buildRemediatedOpenClawPluginArchive(
     );
     patchOpenClawDiscordPackageGraph(sourcePackage);
     copyReplacementPackage(undiciPackage, join(sourcePackage, "node_modules", "undici"));
-  } else if (remediation.kind === "legacy-core") {
-    const bundledTarPath = join(sourcePackage, "node_modules", "tar");
-    const bundledBaileysPath = join(sourcePackage, "node_modules", "@whiskeysockets", "baileys");
-    const bundledLibsignalPath = join(sourcePackage, "node_modules", "libsignal");
-    if (
-      existsSync(bundledTarPath) ||
-      existsSync(bundledBaileysPath) ||
-      existsSync(bundledLibsignalPath)
-    ) {
-      throw new Error(
-        "openclaw@2026.3.11 unexpectedly bundles a legacy remediation package before remediation",
-      );
-    }
-    const tarArchive = packReplacement(
-      `tar@${TAR_VERSION}`,
-      TAR_INTEGRITY,
-      TAR_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const baileysArchive = packReplacement(
-      `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
-      LEGACY_BAILEYS_INTEGRITY,
-      LEGACY_BAILEYS_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const libsignalArchive = packReplacement(
-      `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
-      LEGACY_LIBSIGNAL_INTEGRITY,
-      LEGACY_LIBSIGNAL_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const tarPackage = extractArchive(
-      tarArchive.archivePath,
-      join(remediationRoot, "tar"),
-      remediationRoot,
-      env,
-    );
-    const baileysPackage = extractArchive(
-      baileysArchive.archivePath,
-      join(remediationRoot, "baileys"),
-      remediationRoot,
-      env,
-    );
-    const libsignalPackage = extractArchive(
-      libsignalArchive.archivePath,
-      join(remediationRoot, "libsignal"),
-      remediationRoot,
-      env,
-    );
-    requirePackageIdentity(
-      readJson(join(tarPackage, "package.json")),
-      "tar",
-      TAR_VERSION,
-      "Legacy OpenClaw tar remediation package",
-    );
-    const baileysPackageJsonPath = join(baileysPackage, "package.json");
-    const baileysPackageJson = readJson(baileysPackageJsonPath);
-    requirePackageIdentity(
-      baileysPackageJson,
-      "@whiskeysockets/baileys",
-      LEGACY_BAILEYS_VERSION,
-      "Legacy OpenClaw Baileys remediation package",
-    );
-    requireDependencyShape(
-      baileysPackageJson,
-      {
-        "@cacheable/node-cache": "^1.4.0",
-        "@hapi/boom": "^9.1.3",
-        "async-mutex": "^0.5.0",
-        libsignal: "git+https://github.com/whiskeysockets/libsignal-node",
-        "lru-cache": "^11.1.0",
-        "music-metadata": "^11.7.0",
-        "p-queue": "^9.0.0",
-        pino: "^9.6",
-        protobufjs: "^7.2.4",
-        ws: "^8.13.0",
-      },
-      `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION}`,
-    );
-    if (
-      baileysPackageJson.engines?.node !== ">=20.0.0" ||
-      baileysPackageJson.license !== "MIT" ||
-      JSON.stringify(sortedObject(baileysPackageJson.peerDependencies ?? {})) !==
-        JSON.stringify(
-          sortedObject({
-            "audio-decode": "^2.1.3",
-            jimp: "^1.6.0",
-            "link-preview-js": "^3.0.0",
-            sharp: "*",
-          }),
-        )
-    ) {
-      throw new Error(
-        `@whiskeysockets/baileys@${LEGACY_BAILEYS_VERSION} package contract changed; review the remediation before updating it`,
-      );
-    }
-    const libsignalPackageJson = readJson(join(libsignalPackage, "package.json"));
-    requirePackageIdentity(
-      libsignalPackageJson,
-      "libsignal",
-      LEGACY_LIBSIGNAL_VERSION,
-      "Legacy OpenClaw libsignal remediation package",
-    );
-    requireDependencyShape(
-      libsignalPackageJson,
-      { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
-      `libsignal@${LEGACY_LIBSIGNAL_VERSION}`,
-    );
-    if (libsignalPackageJson.license !== "GPL-3.0") {
-      throw new Error(
-        `libsignal@${LEGACY_LIBSIGNAL_VERSION} package contract changed; review the remediation before updating it`,
-      );
-    }
-    baileysPackageJson.dependencies.libsignal = LEGACY_LIBSIGNAL_VERSION;
-    writeJson(baileysPackageJsonPath, baileysPackageJson);
-    copyReplacementPackage(tarPackage, bundledTarPath);
-    copyReplacementPackage(baileysPackage, bundledBaileysPath);
-    copyReplacementPackage(libsignalPackage, bundledLibsignalPath);
-    patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "axios") {
     const axiosArchive = packReplacement(
       `axios@${AXIOS_VERSION}`,
@@ -2814,6 +2512,7 @@ function remediateInstalledTeamsDependencies(
 function remediateVerifiedInstalledOfficialOpenClawPlugin(
   request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
 ): void {
+  const kind = REMEDIATIONS[request.packageSpec]?.kind;
   const patchesProxyAddr = REMEDIATIONS[request.packageSpec]?.kind === "slack-proxy-addr";
   const supportsZod = Boolean(BUNDLED_ZOD_VERSIONS[request.packageSpec]);
   const patchesBody =
@@ -2822,7 +2521,14 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const patchesMsal =
     request.packageSpec === "@openclaw/msteams@2026.9.2" ||
     request.packageSpec === "@openclaw/msteams@2026.9.5";
-  if (!patchesProxyAddr && !supportsZod && !patchesMsal) return;
+  if (
+    kind !== "plugin-security" &&
+    kind !== "music-metadata" &&
+    !patchesProxyAddr &&
+    !supportsZod &&
+    !patchesMsal
+  )
+    return;
   if (
     !request.packageDirectory ||
     !isAbsolute(request.packageDirectory) ||
@@ -2854,6 +2560,23 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
       `Official ${packageName === "@openclaw/slack" ? "Slack" : "plugin"} install path is outside its trusted plugin root`,
     );
   }
+  let installedPath = trustedRoot;
+  for (const component of installedParts) {
+    installedPath = join(installedPath, component);
+    const metadata = lstatSync(installedPath);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Official plugin directory must be a real directory");
+    }
+  }
+  if (kind === "plugin-security") {
+    const installed = readJson(join(packageDirectory, "package.json"));
+    requirePackageIdentity(installed, packageName, "2026.10.5", "Official plugin");
+    patchOpenClaw105PluginDependencies(packageDirectory, request.workingDirectory, {
+      ...process.env,
+      ...request.env,
+    });
+    return;
+  }
   const installedMetadata = readJson(join(packageDirectory, "package.json"));
   requirePackageIdentity(
     installedMetadata,
@@ -2870,6 +2593,8 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
     (installedMetadata.dependencies?.undici !== undefined ||
       existsSync(join(packageDirectory, "node_modules", "undici")));
   const dependencyPaths: string[][] = [];
+  if (kind === "music-metadata")
+    dependencyPaths.push(["node_modules", "baileys", "node_modules", "music-metadata"]);
   if (patchesMsal) {
     for (const name of ["@azure/msal-node", "@azure/identity", "@microsoft/teams.apps", "zod"]) {
       let dependency = trustedRoot;
@@ -2918,6 +2643,10 @@ function remediateVerifiedInstalledOfficialOpenClawPlugin(
   const env = { ...process.env, ...request.env };
   const directory = mkdtempSync(join(request.workingDirectory, "official-plugin-remediation-"));
   try {
+    if (kind === "music-metadata") {
+      remediateMusicMetadata(packageDirectory, request.packageSpec, directory, env);
+      return;
+    }
     if (patchesMsal) {
       remediateInstalledTeamsDependencies(packageDirectory, directory, env);
       return;

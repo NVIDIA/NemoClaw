@@ -164,6 +164,18 @@ describe("createLlamaCppSelectionHandler", () => {
     });
   });
 
+  it("uses the managed probe budget only after managed installation", async () => {
+    const probe = vi.fn(() => ({ ok: true as const, model: "team/requested" }));
+    const handler = createLlamaCppSelectionHandler(deps({ probeLlamaCppAttachment: probe }));
+
+    await handler(state(), "team/requested", null, true);
+
+    expect(probe).toHaveBeenCalledWith("secret-token", {
+      requestedModel: "team/requested",
+      managedRuntime: true,
+    });
+  });
+
   it("exits non-interactively when NEMOCLAW_LLAMACPP_LOCAL_TOKEN is absent (#8161)", async () => {
     const probe = vi.fn();
     const handler = createLlamaCppSelectionHandler(

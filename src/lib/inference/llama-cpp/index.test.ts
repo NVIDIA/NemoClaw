@@ -83,6 +83,118 @@ describe("isSafeLlamaCppServedModelAlias", () => {
 });
 
 describe("probeLlamaCppAttachment", () => {
+  it.each([
+    { managedRuntime: undefined, timeout: "5" },
+    { managedRuntime: true as const, timeout: "30" },
+  ])("bounds every fingerprint request to $timeout seconds", ({ managedRuntime, timeout }) => {
+    const probe = scriptedProbe(nativeResponses());
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        managedRuntime,
+        runCurlProbeImpl: probe,
+      }),
+    ).toMatchObject({ ok: true, model: "team/model-alias" });
+    expect(probe).toHaveBeenCalledTimes(5);
+    expect(probe.mock.calls.map(([args]) => args[args.indexOf("--max-time") + 1])).toEqual(
+      Array(5).fill(timeout),
+    );
+  });
+
+  it("allows the measured slow bridge to complete within one managed fingerprint deadline", () => {
+    let elapsedMs = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsedMs);
+    const scripted = scriptedProbe(nativeResponses());
+    const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
+      const result = scripted(argv, options);
+      elapsedMs += 16_000;
+      return result;
+    });
+    try {
+      expect(
+        probeLlamaCppAttachment("secret-token", {
+          managedRuntime: true,
+          runCurlProbeImpl: probe,
+        }),
+      ).toMatchObject({ ok: true, model: "team/model-alias" });
+      expect(probe).toHaveBeenCalledTimes(5);
+      expect(probe.mock.calls.map(([args]) => args[args.indexOf("--max-time") + 1])).toEqual([
+        "30",
+        "30",
+        "30",
+        "30",
+        "26",
+      ]);
+      expect(probe.mock.calls.map(([, options]) => options?.timeoutMs)).toEqual([
+        35_000, 35_000, 35_000, 35_000, 26_000,
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("stops the managed fingerprint at the request that exhausts its shared deadline", () => {
+    let elapsedMs = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsedMs);
+    const scripted = scriptedProbe(nativeResponses());
+    const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
+      const result = scripted(argv, options);
+      elapsedMs += 30_000;
+      return result;
+    });
+    try {
+      expect(
+        probeLlamaCppAttachment("secret-token", {
+          managedRuntime: true,
+          runCurlProbeImpl: probe,
+        }),
+      ).toMatchObject({
+        ok: false,
+        reason: "probe-timeout",
+        message: expect.stringContaining("authenticated /health"),
+      });
+      expect(probe).toHaveBeenCalledTimes(3);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    { phase: "anonymous /v1/models", timeoutAt: 0 },
+    { phase: "anonymous /props", timeoutAt: 1 },
+    { phase: "authenticated /v1/models", timeoutAt: 1 },
+    { phase: "authenticated /health", timeoutAt: 2 },
+    { phase: "authenticated /props", timeoutAt: 3 },
+    { phase: "authenticated /metrics", timeoutAt: 4 },
+  ])("identifies a managed fingerprint timeout at $phase (#12285)", ({ phase, timeoutAt }) => {
+    const responses = nativeResponses();
+    responses[0] = phase === "anonymous /props" ? response(200, '{"data":[]}') : responses[0]!;
+    responses[timeoutAt] = curlFailure(28);
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        managedRuntime: true,
+        runCurlProbeImpl: scriptedProbe(responses),
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: "probe-timeout",
+      message: expect.stringContaining(phase),
+    });
+  });
+
+  it("still rejects an invalid managed API key", () => {
+    const responses = nativeResponses();
+    responses[1] = response(401, '{"error":"unauthorized"}');
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        managedRuntime: true,
+        runCurlProbeImpl: scriptedProbe(responses),
+      }),
+    ).toMatchObject({ ok: false, reason: "authentication-rejected" });
+  });
+
   it("returns the selected model's served context rather than its training limit (#11527)", () => {
     const responses = nativeResponses();
     responses[1] = response(

@@ -57,13 +57,16 @@ async def resolve_and_load_mcp_tools(
     project_context=None,
 ):
     configs = []
+    session_cwd_servers = set()
     if explicit_config_path:
         config_path = (
             str(project_context.resolve_user_path(explicit_config_path))
             if project_context is not None
             else explicit_config_path
         )
-        configs.append(load_mcp_config(config_path))
+        explicit_config = load_mcp_config(config_path)
+        configs.append(explicit_config)
+        session_cwd_servers.update(explicit_config["mcpServers"])
     return configs
 
 

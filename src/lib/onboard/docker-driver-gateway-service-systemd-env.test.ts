@@ -50,10 +50,27 @@ describe("systemd user service environment", () => {
     [undefined, undefined, "/run/user/1234", "unix:path=/run/user/1234/bus"],
     ["", "", "/run/user/1234", "unix:path=/run/user/1234/bus"],
     ["/custom/runtime", undefined, "/custom/runtime", "unix:path=/custom/runtime/bus"],
-    [undefined, "unix:path=/custom/bus", "/run/user/1234", "unix:path=/custom/bus"],
-    ["/custom/runtime", "unix:path=/custom/bus", "/custom/runtime", "unix:path=/custom/bus"],
+    [undefined, "unix:path=/custom/bus", "/run/user/1234", "unix:path=/run/user/1234/bus"],
+    [
+      "/custom/runtime",
+      "unix:path=/custom/bus",
+      "/custom/runtime",
+      "unix:path=/custom/runtime/bus",
+    ],
+    [
+      "/custom/runtime",
+      "unix:path=/custom/runtime/bus,guid=e2e",
+      "/custom/runtime",
+      "unix:path=/custom/runtime/bus,guid=e2e",
+    ],
+    [
+      "/run/user/1234",
+      "unix:path=/run/user/1234/../5678/bus",
+      "/run/user/1234",
+      "unix:path=/run/user/1234/bus",
+    ],
   ])(
-    "supplies the systemd user environment without changing configured values [case %#]",
+    "supplies the systemd user environment and keeps only a bus inside the configured runtime directory [case %#]",
     (runtime, bus, expectedRuntime, expectedBus) => {
       vi.spyOn(process, "getuid").mockReturnValue(1234);
       vi.stubEnv("NVIDIA_API_KEY", "host-only-test-value");

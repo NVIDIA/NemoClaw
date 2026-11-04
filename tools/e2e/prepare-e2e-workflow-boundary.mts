@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import {
+  isReviewedOpenShellSdkInstallStep,
+  REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP,
+} from "./reviewed-openshell-sdk-install-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { E2E_ACTION_PROVENANCE, E2E_JOB_POLICY } from "./workflow-boundary-policy.mts";
 
@@ -69,13 +73,36 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
   if (!isDeepStrictEqual(record(record(action.inputs)["build-cli"]), expectedInput)) {
     errors.push("prepare-e2e build-cli input must default to true");
   }
-  if (Object.keys(record(action.inputs)).length !== 1) {
-    errors.push("prepare-e2e must expose only the build-cli input");
+  if (
+    !isDeepStrictEqual(record(action.inputs)["install-dependencies"], {
+      description: "Install root dependencies before an optional CLI build.",
+      required: false,
+      default: "true",
+    }) ||
+    Object.keys(record(action.inputs)).length !== 2
+  ) {
+    errors.push(
+      "prepare-e2e must expose build-cli and install-dependencies with installation enabled by default",
+    );
   }
 
   const runs = record(action.runs);
   if (runs.using !== "composite") errors.push("prepare-e2e must be a composite action");
   const expectedSteps = [
+    {
+      name: "Validate preparation inputs",
+      shell: "bash",
+      env: {
+        BUILD_CLI: "${{ inputs.build-cli }}",
+        INSTALL_DEPENDENCIES: "${{ inputs.install-dependencies }}",
+      },
+      run: `set -euo pipefail
+case "$BUILD_CLI:$INSTALL_DEPENDENCIES" in
+  true:true|false:true|false:false) ;;
+  *) echo "Invalid preparation inputs: building requires dependency installation." >&2; exit 1 ;;
+esac
+`,
+    },
     {
       name: "Set up Node",
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
@@ -87,6 +114,7 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
     },
     {
       name: "Install root dependencies",
+      if: "${{ inputs.install-dependencies == 'true' }}",
       shell: "bash",
       run: "npm ci --ignore-scripts",
     },
@@ -105,9 +133,70 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
   return errors;
 }
 
+function validateCompilerSdkPreparation(job: WorkflowRecord): string[] {
+  const jobSteps = steps(job.steps);
+  const download = jobSteps.find((step) => step.name === "Download reviewed OpenShell SDK archive");
+  const compileIndex = jobSteps.findIndex((step) => step.uses === PREPARE_COMPILED_ARTIFACT_ACTION);
+  if (
+    job.needs !== "package-openshell-sdk" ||
+    job.if !==
+      "${{ !cancelled() && (needs.package-openshell-sdk.result == 'success' || (needs.package-openshell-sdk.result == 'skipped' && inputs.checkout_sha != '' && (inputs.jobs == 'native-runtime-qualification-producer' || inputs.jobs == 'llama-cpp-dgx-spark-qualification') && inputs.targets == '')) }}" ||
+    !isDeepStrictEqual(download, {
+      name: "Download reviewed OpenShell SDK archive",
+      if: NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION,
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    jobSteps.indexOf(download!) >= compileIndex
+  ) {
+    return ["generate-matrix must download this run's reviewed SDK archives before compilation"];
+  }
+  return [];
+}
+
+function validateCandidateSdkPreparation(jobName: string, job: WorkflowRecord): string[] {
+  const jobSteps = steps(job.steps);
+  const downloads = jobSteps.filter(
+    (step) => step.name === "Download reviewed OpenShell SDK archive",
+  );
+  const installs = jobSteps.filter((step) => step.name === REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
+  const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
+  if (
+    !dependencies.includes("package-openshell-sdk") ||
+    downloads.length !== 1 ||
+    installs.length !== 1 ||
+    !isDeepStrictEqual(downloads[0], {
+      name: "Download reviewed OpenShell SDK archive",
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        name: "${{ needs.package-openshell-sdk.outputs.artifact_name }}",
+        path: "${{ runner.temp }}/openshell-sdk",
+      },
+    }) ||
+    !isReviewedOpenShellSdkInstallStep(installs[0]) ||
+    jobSteps.indexOf(downloads[0]) !== prepareIndex - 1 ||
+    jobSteps.indexOf(installs[0]) !== prepareIndex + 1
+  ) {
+    return [
+      `${jobName} must download its reviewed SDK before preparation and install it immediately afterward`,
+    ];
+  }
+  return [];
+}
+
 export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
   const jobs = record(workflow.jobs);
+  if (
+    record(jobs["package-openshell-sdk"]).if !==
+    NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION
+  ) {
+    errors.push("SDK packaging must follow candidate compilation selection");
+  }
   const expectedJobs = new Set(
     Object.entries(jobs)
       .filter(([jobName, value]) => {
@@ -142,6 +231,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       jobName === CLI_ARTIFACT_PRODUCER_JOB ? PREPARE_COMPILED_ARTIFACT_ACTION : PREPARE_E2E_ACTION;
     const prepareSteps = jobSteps.filter((step) => step.uses === expectedAction);
     if (jobName === CLI_ARTIFACT_PRODUCER_JOB) {
+      errors.push(...validateCompilerSdkPreparation(record(value)));
       const trustedCheckoutIndex = jobSteps.findIndex(
         (step) => step.name === "Check out trusted compiled artifact action",
       );
@@ -182,15 +272,31 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     const withInputs = record(prepare.with);
     const shouldBuild =
       jobName === CLI_ARTIFACT_PRODUCER_JOB || PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
-    if (shouldBuild && Object.keys(withInputs).length !== 0) {
+    if (
+      jobName === CLI_ARTIFACT_PRODUCER_JOB
+        ? !isDeepStrictEqual(withInputs, { "package-mode": "artifact" })
+        : shouldBuild && Object.keys(withInputs).length !== 0
+    ) {
       errors.push(
         jobName === CLI_ARTIFACT_PRODUCER_JOB
-          ? `${jobName} prepare-e2e must own the only default CLI build`
+          ? `${jobName} prepare-e2e must build with reviewed SDK artifacts`
           : `${jobName} prepare-e2e must use its default trusted CLI build`,
       );
     }
-    if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
+    const trustedController = jobName === "managed-image-protected-runtime";
+    if (
+      !shouldBuild &&
+      !isDeepStrictEqual(
+        withInputs,
+        trustedController
+          ? { "build-cli": "false" }
+          : { "build-cli": "false", "install-dependencies": "false" },
+      )
+    ) {
       errors.push(`${jobName} prepare-e2e must set build-cli to false`);
+    }
+    if (!shouldBuild && !trustedController) {
+      errors.push(...validateCandidateSdkPreparation(jobName, record(value)));
     }
     if (
       jobName === "generate-matrix" &&
@@ -202,7 +308,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     }
     const allowedKeys = shouldBuild
       ? jobName === "generate-matrix"
-        ? ["if", "name", "uses"]
+        ? ["if", "name", "uses", "with"]
         : ["name", "uses"]
       : ["name", "uses", "with"];
     if (!isDeepStrictEqual(Object.keys(prepare).sort(), allowedKeys.sort())) {

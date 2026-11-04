@@ -34,7 +34,13 @@ import {
   assertNoPerAgentMaxSpawnDepthJson,
   takeSelectedAgentsManifest,
 } from "./agents-manifest";
-import type { OnboardFlags } from "./command-support";
+import {
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+  type HermesSwitchyardRoutingIntent,
+  loadSwitchyardOnboardConfig,
+  type OnboardFlags,
+} from "./command-support";
 import { handleOnboardCommandError, reportOnboardCommandError } from "./command/error-reporting";
 import {
   type ExperimentalOnboardProfile,
@@ -53,8 +59,12 @@ import {
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
-import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
-import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
+import {
+  DCODE_AGENT_NAME,
+  DCODE_OBSERVABILITY_FEATURE,
+  isDcodeAgent,
+  isOpenclawAgent,
+} from "./observability-policy-presets";
 import { parseExactExternalImageReference } from "./workload/external-image";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 import {
@@ -98,6 +108,7 @@ export interface OnboardCommandOptions {
   resumeIntentSnapshot: OnboardResumeIntentSnapshot | null;
   servingProfile: string | null;
   servingProfileProvenance: ServingProfileProvenance | null;
+  switchyardRouting?: HermesSwitchyardRoutingIntent;
 }
 
 export interface ResolveOnboardOptionsDeps {
@@ -271,6 +282,29 @@ function validateObservabilityAgent(
     }) === "unsupported-request"
   ) {
     fail(deps, "  --observability is supported only with --agent langchain-deepagents-code.");
+  }
+}
+
+function validateDcodeAutoApprovalInput(
+  flags: OnboardFlags,
+  agent: string | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (flags["dcode-auto-approval"] !== "thread-opt-in") return;
+  const recorded = deps.resumeIntent?.snapshot;
+  const selectedAgent =
+    agent ??
+    (deps.env.NEMOCLAW_AGENT?.trim() || (recorded ? (recorded.recordedAgent ?? "openclaw") : null));
+  const customImage =
+    flags.from !== undefined || flags["from-image"] !== undefined || recorded?.recordedCustomImage;
+  // Fresh interactive selection can resolve an unspecified agent later.
+  if (!selectedAgent && !customImage) return;
+  const resolvedAgent = resolveAgentNameAlias(selectedAgent, [DCODE_AGENT_NAME]) ?? selectedAgent;
+  if (customImage || !isDcodeAgent(resolvedAgent)) {
+    fail(
+      deps,
+      "  --dcode-auto-approval thread-opt-in is supported only with the managed --agent langchain-deepagents-code image.",
+    );
   }
 }
 
@@ -486,6 +520,42 @@ function resolveExternalImageReference(
   }
 }
 
+function resolveSwitchyardRouting(
+  flags: OnboardFlags,
+  agent: string | null,
+  experimentalProfile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): HermesSwitchyardRoutingIntent | null {
+  const requested = flags["switchyard-config"];
+  if (requested === undefined) return null;
+  const recorded = deps.resumeIntent?.snapshot;
+  const selectedAgent =
+    agent ??
+    (deps.env.NEMOCLAW_AGENT?.trim() || (recorded ? (recorded.recordedAgent ?? "openclaw") : ""));
+  const effectiveAgent = resolveAgentNameAlias(selectedAgent, ["hermes"]) ?? selectedAgent;
+  if (effectiveAgent !== "hermes") {
+    fail(deps, "  --switchyard-config is supported only for Hermes onboarding.");
+  }
+  if (
+    flags.from !== undefined ||
+    flags["from-image"] !== undefined ||
+    recorded?.recordedCustomImage
+  ) {
+    fail(deps, "  --switchyard-config requires the managed Hermes image.");
+  }
+  if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
+    fail(deps, "  --switchyard-config is not supported by the Portable profile.");
+  }
+  if (flags["apf-interceptor"] === true) {
+    fail(deps, "  --switchyard-config requires configured inference providers.");
+  }
+  try {
+    return loadSwitchyardOnboardConfig(path.resolve(requested));
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : "Invalid --switchyard-config."}`);
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
@@ -493,6 +563,7 @@ export function resolveOnboardOptions(
   const experimentalProfile = resolveExperimentalProfile(flags, deps.resumeIntent);
   const resume = deps.resumeIntent?.effectiveResume ?? flags.resume === true;
   const agent = resolveAgent(flags.agent, deps);
+  const switchyardRouting = resolveSwitchyardRouting(flags, agent, experimentalProfile, deps);
   const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps, resume);
   const vllmGpuDevice = resolveVllmGpuDevice(flags["vllm-gpu-device"], resume, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
@@ -505,6 +576,7 @@ export function resolveOnboardOptions(
   if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE && fromImage) {
     fail(deps, "  --from-image cannot be used with the Portable profile.");
   }
+  validateDcodeAutoApprovalInput(flags, agent, deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(
@@ -543,6 +615,7 @@ export function resolveOnboardOptions(
     resumeIntentSnapshot: deps.resumeIntent?.snapshot ?? null,
     servingProfile: activeServingProfileId(servingProfileProvenance),
     servingProfileProvenance,
+    ...(switchyardRouting ? { switchyardRouting } : {}),
   };
 }
 
@@ -662,6 +735,7 @@ interface OnboardCommandEnvironmentSnapshot {
   toolDisclosure: string | undefined;
   vllmGpuDevice: string | undefined;
   ollamaAutostart: { present: boolean; value: string | undefined };
+  switchyardRouting: string | undefined;
 }
 
 function resolveCommandResumeIntent(deps: RunOnboardCommandDeps): ResolvedOnboardResumeIntent {
@@ -698,6 +772,15 @@ function handleOnboardCommandAttemptError(
   return handleOnboardCommandError(error, deps, promptCancellationCode(error)) ?? "complete";
 }
 
+function restoreOptionalEnvironmentValue(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  value: string | undefined,
+): void {
+  if (value === undefined) delete env[name];
+  else env[name] = value;
+}
+
 function restoreOnboardCommandEnvironment(
   env: NodeJS.ProcessEnv,
   options: OnboardCommandOptions,
@@ -706,19 +789,17 @@ function restoreOnboardCommandEnvironment(
 ): void {
   if (options.agentsManifest) {
     takeSelectedAgentsManifest(env);
-    if (snapshot.agentsManifest === undefined) delete env.NEMOCLAW_EXTRA_AGENTS_JSON;
-    else env.NEMOCLAW_EXTRA_AGENTS_JSON = snapshot.agentsManifest;
+    restoreOptionalEnvironmentValue(env, "NEMOCLAW_EXTRA_AGENTS_JSON", snapshot.agentsManifest);
   }
   restoreServingProfileEnvironment();
-  if (snapshot.toolDisclosure === undefined) delete env[TOOL_DISCLOSURE_ENV];
-  else env[TOOL_DISCLOSURE_ENV] = snapshot.toolDisclosure;
-  if (snapshot.vllmGpuDevice === undefined) delete env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
-  else env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] = snapshot.vllmGpuDevice;
+  restoreOptionalEnvironmentValue(env, TOOL_DISCLOSURE_ENV, snapshot.toolDisclosure);
+  restoreOptionalEnvironmentValue(env, NEMOCLAW_VLLM_GPU_DEVICE_ENV, snapshot.vllmGpuDevice);
   if (snapshot.ollamaAutostart.present) {
     env.NEMOCLAW_OLLAMA_NO_AUTOSTART = snapshot.ollamaAutostart.value ?? "";
   } else {
     delete env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
   }
+  restoreOptionalEnvironmentValue(env, HERMES_SWITCHYARD_ROUTING_ENV, snapshot.switchyardRouting);
 }
 
 async function runOnboardCommandAttempt(
@@ -740,6 +821,7 @@ async function runOnboardCommandAttempt(
       present: Object.prototype.hasOwnProperty.call(env, "NEMOCLAW_OLLAMA_NO_AUTOSTART"),
       value: env.NEMOCLAW_OLLAMA_NO_AUTOSTART,
     },
+    switchyardRouting: env[HERMES_SWITCHYARD_ROUTING_ENV],
   };
   let options = resolvedOptions;
   try {
@@ -759,6 +841,13 @@ async function runOnboardCommandAttempt(
     else delete env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
     if (options.noOllamaAutostart && !options.experimentalProfile) {
       env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+    }
+    if (options.switchyardRouting) {
+      env[HERMES_SWITCHYARD_ROUTING_ENV] = encodeHermesSwitchyardRoutingIntent(
+        options.switchyardRouting,
+      );
+    } else {
+      delete env[HERMES_SWITCHYARD_ROUTING_ENV];
     }
     await withCredentialOverrides(activation.credentialOverrides, () => deps.runOnboard(options));
     return "complete";

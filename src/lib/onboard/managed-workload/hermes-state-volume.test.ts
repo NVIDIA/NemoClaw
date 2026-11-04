@@ -17,9 +17,9 @@ import {
 } from "../managed-startup/state-roots";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import { prepareManagedStateVolumes } from "./managed-state-volumes";
+import { removeManagedAgentStateVolumes } from "./agent-state-volumes";
 import {
   managedHermesStateVolumeName,
-  removeManagedAgentStateVolumes,
   prepareManagedHermesStateVolume,
   removeManagedHermesStateVolume,
 } from "./hermes-state-volume";
@@ -63,7 +63,8 @@ describe("managed Hermes state volume", () => {
     });
 
     exitCleanup!();
-    expect(docker.volume).toBeNull();
+    expect(docker.volume).not.toBeNull();
+    expect(docker.calls.filter((args) => args[0] === "rm")).toEqual([]);
     expect(unregister).not.toHaveBeenCalled();
   });
 

@@ -21,7 +21,9 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
   log(
     "    add <PROVIDER> --type <TYPE> [--agent <AGENT>]    Register a provider credential (reads value from env)",
   );
-  log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
+  log(
+    "    reset <PROVIDER> [--yes]        Remove a provider credential from the OpenShell gateway",
+  );
   log("");
   log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
   log("  Nothing is persisted to host disk; credential registration reads values from env vars.");

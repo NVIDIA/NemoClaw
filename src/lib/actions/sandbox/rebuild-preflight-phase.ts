@@ -41,6 +41,7 @@ import {
   resolveRebuildLiveState,
   prepareRebuildStoppedAgentState,
   restoreRecordedRebuildGatewayStateDir,
+  resolveSandboxGatewayName,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -179,8 +180,8 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
-  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
+  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
@@ -233,7 +234,10 @@ export async function runRebuildPreflightPhase(
   if (mcpRuntimeSelection) {
     pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
   }
-  const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
+  const activeSessionCount = countActiveSandboxSessionsForRebuild(
+    sandboxName,
+    resolveSandboxGatewayName(sandboxEntry),
+  );
   const versionCheck = await runRebuildGatewayIntentPreflight({
     checkGatewaySchema: async () =>
       isDcodeRebuildAgent(rebuildAgent) ||

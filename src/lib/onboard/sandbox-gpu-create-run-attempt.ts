@@ -15,7 +15,7 @@ import {
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
-import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
+import { managedStartupCreateReadiness } from "./managed-startup/hold";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
@@ -804,14 +804,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
               },
             }),
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+        ...managedStartupCreateReadiness({
+          startupCommand: input.sandboxStartupCommand,
           isTerminalAgent: input.terminalAgent,
-          startupRunsDuringCreate: true,
           env: input.sandboxEnv,
+          deferPostCreateEffects: deferRestartSafeCutover || deferPostCreateEffects,
         }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityRequest)
             ? "create"

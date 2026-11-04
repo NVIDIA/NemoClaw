@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
+import { scopeGatewayOpenshellArgs } from "../../adapters/openshell/gateway-scope";
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -39,6 +40,57 @@ export type DestroyRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,
 ) => { error?: Error; status: number | null; stdout?: string; stderr?: string };
+
+/** Keep preflight and execution on the same recorded gateway and runtime authority. */
+export function createGatewayScopedDestroyRunner(
+  runOpenshell: DestroyRunOpenshell,
+  gatewayName: string,
+  selectedEnvironment?: () => Record<string, string>,
+): DestroyRunOpenshell {
+  return (args, options = {}) =>
+    runOpenshell(
+      scopeSandboxDestroyOpenShellArgs(args, gatewayName),
+      selectedEnvironment
+        ? {
+            ...options,
+            env: selectedEnvironment(),
+            replaceEnv: true,
+          }
+        : options,
+    );
+}
+
+export function scopeSandboxDestroyOpenShellArgs(args: string[], gatewayName: string): string[] {
+  const command = args[0] ?? "";
+  const subcommand = args[1] ?? "";
+  const supported =
+    ["sandbox", "provider", "inference"].includes(command) ||
+    (command === "gateway" && ["destroy", "list", "remove"].includes(subcommand));
+  if (!supported) {
+    throw new Error(`Refusing to run unscoped OpenShell destroy command '${command}'.`);
+  }
+  if (command === "gateway" && subcommand === "remove") {
+    const requestedGateway = args[2] ?? "";
+    if (requestedGateway !== gatewayName) {
+      throw new Error(
+        `OpenShell command targets gateway '${requestedGateway}' instead of '${gatewayName}'.`,
+      );
+    }
+    if (
+      args
+        .slice(3)
+        .some((arg) => arg === "-g" || arg === "--gateway" || arg.startsWith("--gateway="))
+    ) {
+      throw new Error("OpenShell command contains multiple gateway targets.");
+    }
+    return [...args];
+  }
+  return scopeGatewayOpenshellArgs(
+    args,
+    gatewayName,
+    command === "gateway" && subcommand === "destroy" ? 2 : undefined,
+  );
+}
 
 export const SANDBOX_DESTROY_TIMEOUT_MS = OPENSHELL_HEAVY_TIMEOUT_MS;
 
@@ -118,24 +170,6 @@ export function resolveGatewayCleanupRuntimeProviderId(
       ? resolveConfiguredRuntimeProvider().identity.id
       : null);
   return configuredProviderId ? normalizeRuntimeProviderIdentity(configuredProviderId) : null;
-}
-
-export async function selectGatewayForSandboxDestroy(
-  sandboxName: string,
-  gatewayName: string,
-  lifecycle: Pick<OpenShellGatewayLifecycle, "selectGateway">,
-  runtimeSelection?: CleanupGatewayDeps["runtimeSelection"],
-): Promise<void> {
-  const selected = await lifecycle.selectGateway({
-    target: { kind: "named", gatewayName },
-    ...(runtimeSelection ? { runtimeSelection } : {}),
-  });
-  if (selected.ok) return;
-  console.error(`  ${selected.error.message}`);
-  console.error(
-    `  Failed to select gateway '${gatewayName}' before destroying sandbox '${sandboxName}'.`,
-  );
-  process.exit(1);
 }
 
 export async function cleanupGatewayAfterLastSandbox(

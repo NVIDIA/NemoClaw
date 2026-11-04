@@ -23,7 +23,6 @@ function completedBufferedCommand(
     stderr: "",
   };
 }
-
 function runInferenceRouteThenDrift(
   harness: ReturnType<typeof createConnectHarness>,
 ): (
@@ -80,6 +79,16 @@ describe("connectSandbox flow", () => {
     process.stdin as typeof process.stdin & { setRawMode?: (mode: boolean) => unknown }
   ).setRawMode;
   const originalStdoutIsTty = process.stdout.isTTY;
+  const nativeNvidiaEntry = {
+    provider: "nvidia-prod",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    nativeNvidiaProviderAttachment: {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "provider-123",
+    },
+  };
 
   beforeEach(() => {
     process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
@@ -127,15 +136,58 @@ describe("connectSandbox flow", () => {
     expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
       kind: "connect",
       sandboxName: "alpha",
-      target: { kind: "selected" },
+      target: { kind: "named", gatewayName: "nemoclaw" },
     });
     expect(harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       exitSpy.mock.invocationCallOrder[0]!,
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("existing SSH sessions");
+    expect(output).toContain("existing active sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it.each([
+    { label: "HTTP 429", httpStatus: 429, timedOut: false },
+    { label: "HTTP 500", httpStatus: 500, timedOut: false },
+    { label: "confirmed timeout", httpStatus: null, timedOut: true },
+  ])("opens an interactive diagnostic shell after a native NVIDIA $label", async (failure) => {
+    const harness = createConnectHarness({ registryEntry: nativeNvidiaEntry });
+    harness.nativeInferenceInvocationSpy.mockResolvedValue({
+      ok: false,
+      detail: `NVIDIA inference ${failure.label}`,
+      httpStatus: failure.httpStatus,
+      timedOut: failure.timedOut,
+    });
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+    expect(harness.verifyNativeNvidiaProviderAttachmentSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("inference is degraded");
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalled();
+  });
+
+  it("rejects a native NVIDIA transient in probe-only mode without publishing readiness", async () => {
+    const harness = createConnectHarness({ registryEntry: nativeNvidiaEntry });
+    harness.nativeInferenceInvocationSpy.mockResolvedValue({
+      ok: false,
+      detail: "NVIDIA inference HTTP 500",
+      httpStatus: 500,
+    });
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps native NVIDIA HTTP 401 terminal for interactive connect", async () => {
+    const harness = createConnectHarness({ registryEntry: nativeNvidiaEntry });
+    harness.nativeInferenceInvocationSpy.mockResolvedValue({
+      ok: false,
+      detail: "NVIDIA inference HTTP 401",
+      httpStatus: 401,
+    });
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {
@@ -148,6 +200,11 @@ describe("connectSandbox flow", () => {
 
     expect(process.env.OPENSHELL_GATEWAY).toBe("ambient-sibling");
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw-8091");
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+    });
   });
 
   it("uses strict settlement and skips ordinary approval for a completed Portable sandbox (#9207)", async () => {
@@ -221,20 +278,14 @@ describe("connectSandbox flow", () => {
   });
 
   it("runs the DCode route probe through its managed runtime boundary (#6191)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
+      registryEntry: { gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
       sessionAgent: {
         name: "langchain-deepagents-code",
         runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
       },
-    });
-    const registry = requireDist("../../src/lib/state/registry.js");
-    registry.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-      gpuEnabled: false,
     });
     const responses = new Map([
       ["sandbox list", { status: 0, output: "alpha Ready" }],
@@ -268,7 +319,7 @@ describe("connectSandbox flow", () => {
         HOME: "/usr/local/lib/nemoclaw",
       },
       sandboxName: "alpha",
-      target: { kind: "selected" },
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
       timeoutMilliseconds: expect.any(Number),
       tty: false,
     });
@@ -280,10 +331,15 @@ describe("connectSandbox flow", () => {
           "-c",
           expect.stringContaining("/v1/chat/completions"),
         ],
-        target: { kind: "named", gatewayName: "nemoclaw" },
+        target: { kind: "named", gatewayName: "nemoclaw-8091" },
         timeoutMilliseconds: 95_000,
       }),
     );
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+    });
     expect(harness.sandboxRunBufferedSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
     );

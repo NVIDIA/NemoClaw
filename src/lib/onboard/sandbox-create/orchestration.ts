@@ -1716,7 +1716,8 @@ function assertCreateLifecycleJournal(input: {
   }
 }
 
-function shouldInspectExistingSandbox(input: {
+/** Inspect provider attachments only for a live sandbox outside portable or verified resume flows. */
+export function shouldInspectExistingSandbox(input: {
   readonly liveExists: boolean;
   readonly portableLifecycle: boolean;
   readonly resumingVerifiedCreate: boolean;
@@ -1827,6 +1828,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     allowRemovedImmutabilityStateRecord = false,
     fromImage: string | null = null,
     requestedExternalToolDisclosure: ToolDisclosure | null = null,
+    switchyardRoutingConfigured = false,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
@@ -1989,7 +1991,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         requestedExtraProviders: createIntent?.extraProviders,
         resolvedIntent: createIntent?.resolved,
         planOrdinaryExtraProviders: () =>
-          planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+          planRegisteredExtraProviders(GATEWAY_NAME, {
+            runOpenshell,
+            webSearchProvider: webSearchConfig?.provider ?? null,
+          }),
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;
@@ -2171,6 +2176,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         : managedWorkloadOnboard.prepareSandboxWorkloadForPortableLifecycle(
             runtime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            switchyardRoutingConfigured,
           );
     };
     const prepareManagedStateVolumeLifecycle = (
@@ -2187,6 +2193,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
         roots: managedStateRoots,
         runtimeProvider: requireManagedWorkloadRuntime().runtimeProvider,
+        workspace: process.env.OPENSHELL_WORKSPACE || "default",
       });
     };
     const finalizeRecreatedSourceHermesVolume = (
@@ -2401,6 +2408,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           toolDisclosure: effectiveToolDisclosure,
           dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
+          ...sandboxReuse.hermesSwitchyardRoutingCreateIntentFields(
+            getRequestedSandboxAgentName(agent),
+            process.env,
+          ),
         },
       });
     let pendingStateRestoreBackupPath: string | null = null,
@@ -2428,6 +2439,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       })
     ) {
       const existingSandboxState = getSandboxReuseState(sandboxName);
+      sandboxReuse.assertHermesSwitchyardRoutingReusable({
+        agentName: getRequestedSandboxAgentName(agent),
+        entry: registry.getSandbox(sandboxName),
+        env: process.env,
+        recreate: isRecreateSandbox(createIntent?.recreate),
+        sandboxState: existingSandboxState,
+      });
       const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
       let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 

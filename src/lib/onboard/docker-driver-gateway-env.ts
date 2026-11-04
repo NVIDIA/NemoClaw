@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse as parseToml } from "smol-toml";
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
@@ -48,6 +49,10 @@ import type {
   RuntimeProviderGatewayHostRuntime,
   RuntimeProviderGatewaySurface,
 } from "./runtime-provider/contract";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "./openshell-version";
 import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
@@ -168,6 +173,7 @@ function preparePortableGatewayHostRuntime(
       sandboxNamespace: "omitted",
       hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
       includeSupervisorBin: false,
+      driverConfigLayout: "inline-supervisor",
       processOwnership: "scoped-namespace",
     },
     network: {
@@ -326,42 +332,22 @@ export function assertDockerDriverGatewayBindAddressSafe(
   );
 }
 
-type TomlScalar = boolean | number | string;
-
-function parseTomlScalar(raw: string): TomlScalar | undefined {
-  const booleanMatch = raw.match(/^(true|false)(?:\s+#.*)?$/);
-  if (booleanMatch?.[1]) return booleanMatch[1] === "true";
-  const integerMatch = raw.match(/^(\d+)(?:\s+#.*)?$/);
-  if (integerMatch?.[1]) return Number(integerMatch[1]);
-  const stringMatch = raw.match(/^("(?:[^"\\]|\\.)*")(?:\s+#.*)?$/);
-  if (!stringMatch?.[1]) return undefined;
-  try {
-    const value: unknown = JSON.parse(stringMatch[1]);
-    return typeof value === "string" ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseTomlScalarValues(toml: string): Map<string, TomlScalar> {
-  const values = new Map<string, TomlScalar>();
-  let section = "";
-  for (const rawLine of toml.split("\n")) {
-    const line = rawLine.trim();
-    const sectionMatch = line.match(/^\[([A-Za-z0-9_.-]+)\]$/);
-    if (sectionMatch?.[1]) {
-      section = sectionMatch[1];
-      continue;
+function parseTomlScalarValues(toml: string) {
+  const parsed = parseToml(toml);
+  const get = (key: string): unknown => {
+    let value: unknown = parsed;
+    for (const part of key.split(".")) {
+      if (!value || typeof value !== "object" || !Object.hasOwn(value, part)) return undefined;
+      value = (value as Record<string, unknown>)[part];
     }
-    const assignmentMatch = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.+)$/);
-    if (!assignmentMatch?.[1] || !assignmentMatch[2]) continue;
-    const value = parseTomlScalar(assignmentMatch[2]);
-    if (value !== undefined) values.set(`${section}.${assignmentMatch[1]}`, value);
-  }
-  return values;
+    return value;
+  };
+  return { get, has: (key: string) => get(key) !== undefined };
 }
 
-function assertTomlBoolean(values: Map<string, TomlScalar>, key: string, expected: boolean): void {
+type TomlValues = ReturnType<typeof parseTomlScalarValues>;
+
+function assertTomlBoolean(values: TomlValues, key: string, expected: boolean): void {
   const actual = values.get(key);
   if (actual === expected) return;
   throw new Error(
@@ -371,13 +357,13 @@ function assertTomlBoolean(values: Map<string, TomlScalar>, key: string, expecte
   );
 }
 
-function assertTomlString(values: Map<string, TomlScalar>, key: string): string {
+function assertTomlString(values: TomlValues, key: string): string {
   const actual = values.get(key);
   if (typeof actual === "string" && actual.trim()) return actual;
   throw new Error(`OpenShell Docker-driver gateway config must set non-empty ${key}`);
 }
 
-function assertTomlInteger(values: Map<string, TomlScalar>, key: string, expected: number): void {
+function assertTomlInteger(values: TomlValues, key: string, expected: number): void {
   const actual = values.get(key);
   if (actual === expected) return;
   throw new Error(
@@ -418,7 +404,28 @@ export function assertDockerDriverGatewayAuthConfigSafe(
   const toml = fs.readFileSync(configPath, "utf-8");
   const values = parseTomlScalarValues(toml);
   assertTomlBoolean(values, "openshell.gateway.disable_tls", false);
-  assertTomlBoolean(values, "openshell.gateway.tls.require_client_auth", true);
+  const nativeSchema = usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION);
+  if (nativeSchema) {
+    assertTomlInteger(values, "openshell.version", 2);
+    for (const key of ["cert_path", "key_path", "client_ca_path"] as const) {
+      const fullKey = `openshell.gateway.tls.${key}`;
+      if (!path.isAbsolute(assertTomlString(values, fullKey))) {
+        throw new Error(`OpenShell gateway ${fullKey} must be an absolute TLS path`);
+      }
+    }
+    // Schema 2 derives client authentication from its CA and application auth settings.
+    if (
+      values.has("openshell.gateway.tls.require_client_auth") ||
+      values.has("openshell.gateway.oidc.issuer") ||
+      (gatewayEnv.OPENSHELL_OIDC_ISSUER ?? environment.OPENSHELL_OIDC_ISSUER) !== undefined
+    ) {
+      throw new Error(
+        "OpenShell gateway requires schema 2 client-CA authentication without OIDC overrides",
+      );
+    }
+  } else {
+    assertTomlBoolean(values, "openshell.gateway.tls.require_client_auth", true);
+  }
   assertTomlBoolean(values, "openshell.gateway.mtls_auth.enabled", true);
   assertTomlBoolean(values, "openshell.gateway.auth.allow_unauthenticated_users", false);
   for (const key of ["signing_key_path", "public_key_path", "kid_path"] as const) {
@@ -426,11 +433,19 @@ export function assertDockerDriverGatewayAuthConfigSafe(
     assertGatewayJwtFile(fullKey, assertTomlString(values, fullKey));
   }
   assertTomlString(values, "openshell.gateway.gateway_jwt.gateway_id");
-  assertTomlInteger(
-    values,
-    "openshell.gateway.gateway_jwt.ttl_secs",
-    DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
-  );
+  if (nativeSchema) {
+    if (values.has("openshell.gateway.gateway_jwt.ttl_secs")) {
+      throw new Error(
+        "OpenShell gateway config must omit gateway_jwt.ttl_secs for non-expiring sandbox sessions",
+      );
+    }
+  } else {
+    assertTomlInteger(
+      values,
+      "openshell.gateway.gateway_jwt.ttl_secs",
+      DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+    );
+  }
 }
 
 export function getDockerDriverGatewayEndpoint(gatewayPort: number = GATEWAY_PORT): string {

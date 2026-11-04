@@ -33,6 +33,7 @@ const NATIVE_STATE_CASES = [
   ["/sandbox/.nemoclaw-dcode-unknown.txt", "unknown-home"],
   ["/sandbox/workspace/nemoclaw-dcode/project.txt", "workspace"],
   ["/sandbox/.local/share/nemoclaw-dcode/packages/tool.txt", "package"],
+  ["/sandbox/.npm/_cacache/nemoclaw-dcode-cache-marker", "npm-cache"],
   ["/sandbox/.deepagents/plugins/nemoclaw-dcode/plugin.txt", "plugin"],
   ["/sandbox/.deepagents/hooks/nemoclaw-dcode/preflight.sh", "hook"],
   ["/sandbox/.deepagents/cron/nemoclaw-dcode/jobs.json", "cron"],

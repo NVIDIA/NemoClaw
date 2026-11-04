@@ -149,6 +149,8 @@ describe("locked onboarding runtime preparation", () => {
             checkpointUpdatedAt: checkpoint.updatedAt,
             machineRevision: 1,
             profile: "portable",
+            recordedAgent: null,
+            recordedCustomImage: false,
           },
         },
         true,

@@ -8,6 +8,11 @@ type LabeledSandboxContainer = {
   readonly name: string;
 };
 
+export type DockerPrivilegedSandboxTargetRecord = {
+  readonly resourceHandle: string;
+  readonly containerName: string;
+};
+
 export function dockerContainerNameMatchesSandbox(
   containerName: string,
   sandboxName: string,
@@ -29,20 +34,27 @@ function parseLabeledSandboxContainers(output: string): LabeledSandboxContainer[
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const [id, name, ...unexpected] = line.split("\t");
-      if (!id || !name || unexpected.length > 0 || /\s/u.test(id)) {
+    .flatMap((line) => {
+      const [id, name, role = "", ...unexpected] = line.split("\t");
+      if (
+        !id ||
+        !name ||
+        unexpected.length > 0 ||
+        /\s/u.test(id) ||
+        !["", "sandbox", "supervisor"].includes(role)
+      ) {
         throw new Error("Docker returned malformed OpenShell sandbox container metadata.");
       }
-      return { id, name };
+      // Legacy workloads have no role label; 0.1.3 companions share the sandbox label.
+      return role === "supervisor" ? [] : [{ id, name }];
     });
 }
 
-export function selectDockerPrivilegedSandboxTarget(
+export function selectDockerPrivilegedSandboxTargetRecord(
   sandboxName: string,
   labeledContainerRows: string,
   registeredNames: readonly string[] = [sandboxName],
-): string | null {
+): DockerPrivilegedSandboxTargetRecord | null {
   const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
     (left, right) => right.length - left.length || left.localeCompare(right),
   );
@@ -65,5 +77,19 @@ export function selectDockerPrivilegedSandboxTarget(
         "refusing ambiguous lifecycle execution.",
     );
   }
-  return candidates[0]?.id ?? null;
+  const selected = candidates[0];
+  return selected
+    ? Object.freeze({ resourceHandle: selected.id, containerName: selected.name })
+    : null;
+}
+
+export function selectDockerPrivilegedSandboxTarget(
+  sandboxName: string,
+  labeledContainerRows: string,
+  registeredNames: readonly string[] = [sandboxName],
+): string | null {
+  return (
+    selectDockerPrivilegedSandboxTargetRecord(sandboxName, labeledContainerRows, registeredNames)
+      ?.resourceHandle ?? null
+  );
 }

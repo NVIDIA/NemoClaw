@@ -212,7 +212,9 @@ export function createDeps(
       getOpenshellBinary: () => "/usr/bin/openshell",
       needsBedrockRuntimeAdapter: () => false,
       isInferenceRouteReady: calls.routeReady,
-      isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
+      hasNativeLocalProviderAuthority: vi.fn(() => true),
+      isRoutedInferenceProvider: (provider: string) =>
+        ["nvidia-router", "custom-router"].includes(provider),
       reconcileModelRouter: calls.reconcileRouter,
       reupsertRoutedProvider: calls.reupsertRoutedProvider,
       reserveSandboxInferenceRoute: calls.reserveRoute,

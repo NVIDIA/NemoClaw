@@ -14,7 +14,10 @@ export type OpenShellGatewayMutationResult =
     }>;
 
 export type OpenShellGatewayRegistryResult =
-  | Readonly<{ ok: true; names: readonly string[] }>
+  | Readonly<{
+      ok: true;
+      names: readonly string[];
+    }>
   | Readonly<{ ok: false; error: OpenShellSandboxError }>;
 
 /** Gateway registry mutations never retry. Ownership policy stays with the caller. */

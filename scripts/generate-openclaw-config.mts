@@ -975,8 +975,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
     });
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
-  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider)
-    ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl)
+  const nativeLocal = ["ollama-local", "vllm-local", "llama-cpp-local", "nvidia-router"].includes(
+    upstreamProvider,
+  )
+    ? nativeLocalCredentialReference(upstreamProvider, inferenceBaseUrl, "openclaw")
     : null;
   const providers = {
     [providerKey]: {
@@ -992,7 +994,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const pluginEntries: JsonObject = {
     bonjour: { enabled: false },
-    nemoclaw: { enabled: true },
+    // OpenClaw requires this opt-in for non-bundled prompt and lifecycle hooks.
+    nemoclaw: { enabled: true, hooks: { allowConversationAccess: true } },
   };
   const managedImageCapabilityUnion = readBooleanBuildFlag(
     env,

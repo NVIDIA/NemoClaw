@@ -459,17 +459,16 @@ describe("inference health", () => {
       expect(result?.detail).toContain("carried no choices");
     });
 
-    it("keeps the connection and credential advice when the route returns HTTP 500 (#9108)", () => {
+    it("reports NVIDIA HTTP 500 as degraded without blaming the credential (#13616)", () => {
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "meta/llama-3.3-70b-instruct",
         getCredentialImpl: () => "nvapi-test",
         runCurlProbeImpl: () => httpServerError(),
       });
 
-      expect(result?.ok).toBe(false);
-      expect(result?.detail).toContain("Check your network connection");
-      expect(result?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
-      expect(result?.detail).not.toContain("was answered");
+      expect(result).toMatchObject({ ok: true, probed: false, degraded: true });
+      expect(result?.detail).toContain("HTTP 500");
+      expect(result?.detail).not.toContain("NVIDIA_INFERENCE_API_KEY");
     });
 
     it("reports a provider error envelope returned with HTTP 200 as unhealthy", () => {

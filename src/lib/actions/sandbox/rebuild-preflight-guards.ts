@@ -33,6 +33,7 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildVersionCheck } from "./rebuild-preflight-confirmation";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { reconcileJournaledRebuildRecovery } from "./destroy-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-preflight";
 
 export interface RebuildRoutePreflightReceipt {
@@ -368,6 +369,26 @@ export function blockRebuildOnRetainedSandboxRecovery(
     .listRetainedSandboxRecoveryRecords()
     .find((record) => record.sandboxName === sandboxName);
   if (!retainedRecovery) return false;
+
+  if (retainedRecovery.sandboxIdentityFingerprint === null) {
+    try {
+      const reconciled = reconcileJournaledRebuildRecovery(
+        sandbox,
+        onboardSession.listRetainedSandboxRecoveryRecords(),
+        { session: onboardSession, registry },
+      );
+      if (reconciled) {
+        console.log(
+          `  Cleared absent replacement recovery for '${sandboxName}'; resuming its saved rebuild.`,
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
+      return true;
+    }
+  }
 
   console.error(
     `  Rebuild cannot use retained sandbox '${sandboxName}' while recovery record '${retainedRecovery.recordId}' is unresolved. No sandbox or Docker resources were removed.`,
