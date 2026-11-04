@@ -77,7 +77,7 @@ Run blocks call these modules:
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |
 | `docker-openclaw-hermes-interfaces` | Live / HCL | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token; Hermes's API answers `FOUR` ([Agent Interfaces](#agent-interfaces)). |
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
-| `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
+| `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
@@ -111,7 +111,7 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 
 ## Spark and Fabric
 
-The `docker-openclaw-hermes-vllm` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
+The `docker-openclaw-vllm-shared` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
 Spark hardware has no CI runner yet.
 
 The SDK's `runtime_compile::an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes` test owns what changing only a model's image pin reaches: its container and image, not its storage.
