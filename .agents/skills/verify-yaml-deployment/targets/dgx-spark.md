@@ -106,25 +106,29 @@ echo "$ENDPOINT $MODEL" > "$EVIDENCE/inference.txt"
 If no vLLM runs, follow the retained-inference discovery above before declaring the precondition missing or proposing a download.
 If `MODEL` is empty, diagnose readiness or authentication; do not proceed with an unverified endpoint.
 That server, its network, and its key belong to another deployment: read them, never change them.
-Edit the YAML: delete `spec.services`, and replace `spec.inferenceProviders` and the route's model:
+Edit the YAML by hand, writing out the values of `$ENDPOINT` and `$MODEL`:
+
+1. Delete the whole `spec.services` block.
+2. Replace `spec.inferenceProviders` with:
+   ```yaml
+     inferenceProviders:
+       vllm:
+         provider: openai
+         api: openai-completions
+         endpoint: REPLACE_WITH_ENDPOINT
+         credential:
+           env: VLLM_KEY
+   ```
+3. In the sandbox's route, set `providerRef: vllm` and `overrides.model: REPLACE_WITH_MODEL`.
+
+Then check the edits:
 
 ```sh
-python3 - "$RUN_DIR/deployment.yaml" "$ENDPOINT" "$MODEL" <<'PY'
-import sys, yaml
-path, endpoint, model = sys.argv[1:]
-doc = yaml.safe_load(open(path))
-doc["spec"].pop("services", None)
-doc["spec"]["inferenceProviders"] = {"vllm": {
-    "provider": "openai", "api": "openai-completions",
-    "endpoint": endpoint, "credential": {"env": "VLLM_KEY"}}}
-route = doc["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]
-route["providerRef"] = "vllm"
-route["overrides"]["model"] = model
-yaml.safe_dump(doc, open(path, "w"), sort_keys=False)
-PY
+grep -c '^  services:' "$RUN_DIR/deployment.yaml"
+grep -cE "endpoint: $ENDPOINT\$|providerRef: vllm\$|model: $MODEL\$" "$RUN_DIR/deployment.yaml"
 ```
 
-The snippet uses PyYAML, which this host has; it drops the file's comments.
+Result: `0`, then `3`.
 
 ### Managed Service
 

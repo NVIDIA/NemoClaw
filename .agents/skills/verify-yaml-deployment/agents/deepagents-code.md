@@ -10,7 +10,7 @@ The adapter runs LangChain's `dcode` over ACP in the sandbox, and can write a la
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [deepagents-code-terminal](../features/deepagents-code-terminal.md) | `7cc29a4a3e` | 2026-11-02 |
+| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [deepagents-code-terminal](../features/deepagents-code-terminal.md) | `b5489e5768` | 2026-11-04 |
 
 ## YAML Edits
 
@@ -20,22 +20,25 @@ The target names no Deep Agents Code example; start from the target's `deepagent
 EXAMPLE=examples/gtc-dc/deepagents-dgx-spark.yaml
 ```
 
-After the skill's and the target's edits:
+After the skill's and the target's edits, replace the sandbox's whole `harness` block with this one, and delete the route's `maxTokens` line:
+
+```yaml
+      harness:
+        kind: nvidia.fabric.langchain.deepagents-code
+        settings:
+          approval_mode: auto
+          interfaces:
+            terminal: {}
+```
+
+Check the edits:
 
 ```sh
-python3 - "$RUN_DIR/deployment.yaml" <<'PY'
-import sys, yaml
-path = sys.argv[1]
-doc = yaml.safe_load(open(path))
-sandbox = doc["spec"]["sandboxes"]["assistant"]
-sandbox["harness"] = {
-    "kind": "nvidia.fabric.langchain.deepagents-code",
-    "settings": {"approval_mode": "auto", "interfaces": {"terminal": {}}},
-}
-sandbox["agent"]["inference"]["routes"][0]["overrides"].pop("maxTokens", None)
-yaml.safe_dump(doc, open(path, "w"), sort_keys=False)
-PY
+grep -cE '^ *(maxTokens|timeoutSeconds):' "$RUN_DIR/deployment.yaml"
+grep -cE 'kind: nvidia\.fabric\.langchain\.deepagents-code$|approval_mode: auto$|terminal: \{\}$' "$RUN_DIR/deployment.yaml"
 ```
+
+Result: `0`, then `3`.
 
 - `approval_mode` is required: `auto` lets `dcode`'s classifier review gated actions during invocations; `yolo` allows them all.
 - The adapter accepts only `models` and `models.base_url` from the public Fabric configuration, so the route's `maxTokens` and the harness's `execution.timeoutSeconds` must go: plan accepts them, and apply fails with `validation_failed`.
