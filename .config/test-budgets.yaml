@@ -65,7 +65,9 @@ binaries:
   nemoclaw-provider::contract:
     summed_seconds: 82
     test_seconds: 12
-  # 65 tests: at most 139.1 s summed; slowest test 5.7 s.
+  # 65 tests: at most 139.1 s summed; slowest test 5.7 s. The chart tests
+  # (#14174) pull the pinned chart from ghcr.io for each render; one took
+  # 8.1 s on linux_amd64.
   openshell-provider::contract:
     summed_seconds: 180
-    test_seconds: 8
+    test_seconds: 12

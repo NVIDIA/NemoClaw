@@ -202,7 +202,7 @@ Its `binaries` section budgets each provider's contract binary by its nextest na
 |---|---|---|---|
 | `fabric-provider::contract` | 25 s | 10 s | 20 s |
 | `nemoclaw-provider::contract` | 45 s | 8 s | 16 s |
-| `openshell-provider::contract` | 105 s | 6 s | 12 s |
+| `openshell-provider::contract` | 180 s | 12 s | 24 s |
 
 Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count.
 
