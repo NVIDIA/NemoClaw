@@ -25,6 +25,8 @@ import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-ma
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { requireLaunchSemanticHealth } from "../../actions/sandbox/launch-readiness/health";
 import { loadAgent } from "../../agent/defs";
+import { saveCredential } from "../../credentials/store";
+import { createRegisteredSandboxIdentityRevalidation } from "../sandbox-recreate-transaction";
 
 const routing = createHermesSwitchyardRoutingIntent({
   efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
@@ -326,6 +328,179 @@ describe("Switchyard provider bindings", () => {
     ).rejects.toThrow("host credential");
     expect(f.methods.createProvider).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { outcome: "success", expected: "fulfilled", fail: () => {} },
+    {
+      outcome: "profile rejection",
+      expected: "rejected",
+      fail: (f: ReturnType<typeof fixture>) =>
+        f.methods.inspectProviderProfile.mockResolvedValue({
+          ok: false,
+          error: { kind: "command", reason: "failed", message: "profile unavailable" },
+        }),
+    },
+    {
+      outcome: "create rejection",
+      expected: "rejected",
+      fail: (f: ReturnType<typeof fixture>) =>
+        f.methods.createProvider.mockResolvedValue({
+          ok: false,
+          error: { kind: "command", reason: "failed", message: "create unavailable" },
+        }),
+    },
+    {
+      outcome: "collision",
+      expected: "rejected",
+      fail: (f: ReturnType<typeof fixture>) => f.setup(),
+    },
+  ])("removes hydrated credentials after $outcome (#13863)", async ({ fail, expected }) => {
+    const f = fixture();
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", undefined);
+    vi.stubEnv("OPENAI_API_KEY", undefined);
+    await fail(f);
+    const result = await prepareSwitchyardProviders({
+      ...f.input,
+      readCredential: (key) => {
+        const value = `test-secret-${key}`;
+        saveCredential(key, value);
+        return value;
+      },
+    }).then(
+      () => "fulfilled",
+      () => "rejected",
+    );
+    expect(result).toBe(expected);
+    expect(process.env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(process.env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("removes staged credentials when a later credential read throws (#13863)", async () => {
+    const f = fixture();
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", undefined);
+    vi.stubEnv("OPENAI_API_KEY", undefined);
+    const failure = new Error("credential resolver failed");
+    const readCredential = vi
+      .fn<(key: string) => string>()
+      .mockImplementationOnce((key) => {
+        saveCredential(key, "test-staged-secret");
+        return "test-staged-secret";
+      })
+      .mockImplementationOnce(() => {
+        throw failure;
+      });
+
+    await expect(prepareSwitchyardProviders({ ...f.input, readCredential })).rejects.toBe(failure);
+    expect(process.env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(process.env.OPENAI_API_KEY).toBeUndefined();
+    expect(f.methods.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("preserves preexisting credential values after hydration (#13863)", async () => {
+    const f = fixture();
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-existing-efficient");
+    vi.stubEnv("OPENAI_API_KEY", "test-existing-capable");
+    await prepareSwitchyardProviders({
+      ...f.input,
+      readCredential: (key) => {
+        saveCredential(key, "test-temporary-value");
+        return "test-temporary-value";
+      },
+    });
+    expect(process.env.NVIDIA_INFERENCE_API_KEY).toBe("test-existing-efficient");
+    expect(process.env.OPENAI_API_KEY).toBe("test-existing-capable");
+  });
+
+  it("rejects a stale lifecycle generation before creating providers (#13863)", async () => {
+    const f = fixture();
+    const updateSandbox = vi.fn(() => true);
+    const input = setupInput(f, updateSandbox);
+    const expected = {
+      name: f.input.sandboxName,
+      gatewayName: f.input.gatewayName,
+      lifecycleGeneration: "original",
+      lifecycleLiveIdentityFingerprint: "original",
+    };
+    input.options.revalidateSandboxIdentity = createRegisteredSandboxIdentityRevalidation(
+      expected,
+      {
+        readRegistration: () => ({ ...expected, lifecycleGeneration: "replacement" }),
+        observe: () => ({ state: "ready", liveIdentityFingerprint: "original" }),
+      },
+    );
+
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("registered identity");
+    expect(f.methods.createProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+  });
+
+  it("rejects a changed identity before activating recorded bindings (#13863)", async () => {
+    const f = fixture();
+    const { bindings } = await f.setup();
+    f.methods.createProvider.mockClear();
+    const updateSandbox = vi.fn(() => true);
+    const input = setupInput(f, updateSandbox, () => ({
+      name: f.input.sandboxName,
+      gatewayName: f.input.gatewayName,
+      provider: routing.capable.provider,
+      model: routing.capable.model,
+      hermesSwitchyard: { routing, bindings },
+    }));
+    input.options.revalidateSandboxIdentity = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error("registered identity changed");
+      });
+
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("registered identity");
+    expect(f.providers.size).toBe(2);
+    expect(f.methods.createProvider).not.toHaveBeenCalled();
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+  });
+
+  it.each([
+    { change: "registered generation", generation: "replacement", fingerprint: "original" },
+    { change: "live identity", generation: "original", fingerprint: "replacement" },
+  ])(
+    "rejects changed $change after provider creation (#13863)",
+    async ({ generation, fingerprint }) => {
+      const f = fixture();
+      const updateSandbox = vi.fn(() => true);
+      const input = setupInput(f, updateSandbox);
+      const expected = {
+        name: f.input.sandboxName,
+        gatewayName: f.input.gatewayName,
+        lifecycleGeneration: "original",
+        lifecycleLiveIdentityFingerprint: "original",
+      };
+      let recorded = expected;
+      let live = "original";
+      input.options.revalidateSandboxIdentity = createRegisteredSandboxIdentityRevalidation(
+        expected,
+        {
+          readRegistration: () => recorded,
+          observe: () => ({ state: "ready", liveIdentityFingerprint: live }),
+        },
+      );
+      const create = f.methods.createProvider.getMockImplementation()!;
+      f.methods.createProvider.mockImplementation(async (...args) => {
+        const result = await create(...args);
+        recorded = { ...expected, lifecycleGeneration: generation };
+        live = fingerprint;
+        return result;
+      });
+
+      await expect(setupSwitchyardInference(input)).rejects.toThrow("identity");
+      expect(f.providers.size).toBe(0);
+      expect(f.methods.deleteProvider).toHaveBeenCalledTimes(2);
+      expect(updateSandbox).not.toHaveBeenCalled();
+      expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+    },
+  );
 
   it("refuses existing providers without updating credentials (#13863)", async () => {
     const f = fixture();

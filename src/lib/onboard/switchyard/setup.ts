@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { withRestoredCredentialEnv } from "../credential-env";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
 import {
@@ -84,6 +85,7 @@ export async function setupSwitchyardInference(input: {
     throw new SwitchyardProviderBindingError(
       "another onboarding session owns the sandbox reservation. No provider was changed.",
     );
+  input.options.revalidateSandboxIdentity?.("prepare the Switchyard inference providers");
   let bindings;
   if (previous?.hermesSwitchyard) {
     const recorded = validateSwitchyardBindingState(previous.hermesSwitchyard);
@@ -114,6 +116,7 @@ export async function setupSwitchyardInference(input: {
           bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
         ),
       });
+      input.options.revalidateSandboxIdentity?.("activate the recorded Switchyard bindings");
       input.environment[HERMES_SWITCHYARD_BINDINGS_ENV] = encodeSwitchyardProviderBindings(
         bindings,
         routing,
@@ -134,6 +137,7 @@ export async function setupSwitchyardInference(input: {
     });
   }
   try {
+    input.options.revalidateSandboxIdentity?.("reserve the Switchyard sandbox route");
     const reserved = deps.updateSandbox(sandboxName, {
       provider,
       model,
@@ -205,62 +209,75 @@ export async function prepareSwitchyardProviders(input: {
     providerName: `nemoclaw-sy-${identity}-${index}`,
   }));
   const target: OpenShellGatewayTarget = { kind: "named", gatewayName: input.gatewayName };
-  // Complete credential and collision preflight before the first provider create.
-  const credentials = definitions.map((definition) => {
-    const value = input.readCredential(definition.credentialEnv);
-    if (!value || value.startsWith("openshell:resolve:"))
-      throw new SwitchyardProviderBindingError(
-        `a host credential for ${definition.credentialEnv} is required for fresh setup.`,
-      );
-    return value;
-  });
-  const lifecycles = definitions.map((definition) => nativeProviderLifecycle(definition));
-  for (const lifecycle of lifecycles) {
-    if (await lifecycle.inspectNativeProvider(input.adapter, target))
-      throw new SwitchyardProviderBindingError(
-        "fresh setup found an existing provider; no provider was changed.",
-      );
-    await lifecycle.requireNativeProviderProfileBoundary(input.adapter, target);
-  }
-  const created: { lifecycle: (typeof lifecycles)[number]; receipt: NativeProviderAttachment }[] =
-    [];
-  try {
-    for (const [index, lifecycle] of lifecycles.entries()) {
-      const receipt = await lifecycle.ensureNativeProvider({
-        adapter: input.adapter,
-        target,
-        credentialValue: credentials[index] ?? null,
-      });
-      created.push({ lifecycle, receipt });
-    }
-    return await observeSwitchyardProviderBindings({
-      routing,
-      adapter: input.adapter,
-      target,
-      providerNames: Object.fromEntries(
-        definitions.map((definition) => [definition.logicalProvider, definition.providerName]),
-      ),
-    });
-  } catch {
-    let cleanupFailed = false;
-    for (const { lifecycle, receipt } of created.reverse()) {
+  return withRestoredCredentialEnv(
+    definitions.map(({ credentialEnv }) => credentialEnv),
+    async () => {
+      const credentials: string[] = [];
       try {
-        await lifecycle.removeNewNativeProvider({
-          adapter: input.adapter,
-          target,
-          expected: receipt,
-        });
-      } catch {
-        cleanupFailed = true;
+        // Complete credential and collision preflight before the first provider create.
+        for (const definition of definitions) {
+          const value = input.readCredential(definition.credentialEnv);
+          if (!value || value.startsWith("openshell:resolve:"))
+            throw new SwitchyardProviderBindingError(
+              `a host credential for ${definition.credentialEnv} is required for fresh setup.`,
+            );
+          credentials.push(value);
+        }
+        const lifecycles = definitions.map((definition) => nativeProviderLifecycle(definition));
+        for (const lifecycle of lifecycles) {
+          if (await lifecycle.inspectNativeProvider(input.adapter, target))
+            throw new SwitchyardProviderBindingError(
+              "fresh setup found an existing provider; no provider was changed.",
+            );
+          await lifecycle.requireNativeProviderProfileBoundary(input.adapter, target);
+        }
+        const created: {
+          lifecycle: (typeof lifecycles)[number];
+          receipt: NativeProviderAttachment;
+        }[] = [];
+        try {
+          for (const [index, lifecycle] of lifecycles.entries()) {
+            const receipt = await lifecycle.ensureNativeProvider({
+              adapter: input.adapter,
+              target,
+              credentialValue: credentials[index] ?? null,
+            });
+            created.push({ lifecycle, receipt });
+          }
+          return await observeSwitchyardProviderBindings({
+            routing,
+            adapter: input.adapter,
+            target,
+            providerNames: Object.fromEntries(
+              definitions.map((definition) => [
+                definition.logicalProvider,
+                definition.providerName,
+              ]),
+            ),
+          });
+        } catch {
+          let cleanupFailed = false;
+          for (const { lifecycle, receipt } of created.reverse()) {
+            try {
+              await lifecycle.removeNewNativeProvider({
+                adapter: input.adapter,
+                target,
+                expected: receipt,
+              });
+            } catch {
+              cleanupFailed = true;
+            }
+          }
+          // A create without an attestable receipt cannot authorize deletion. Do not retry or adopt it.
+          throw new SwitchyardProviderBindingError(
+            cleanupFailed
+              ? "setup failed and owned-provider cleanup is incomplete. Routing was not activated. Inspect the sandbox's Switchyard providers before retrying."
+              : "setup failed. Confirmed new providers were removed; an unconfirmed create may require cleanup. Routing was not activated.",
+          );
+        }
+      } finally {
+        credentials.fill("");
       }
-    }
-    // A create without an attestable receipt cannot authorize deletion. Do not retry or adopt it.
-    throw new SwitchyardProviderBindingError(
-      cleanupFailed
-        ? "setup failed and owned-provider cleanup is incomplete. Routing was not activated. Inspect the sandbox's Switchyard providers before retrying."
-        : "setup failed. Confirmed new providers were removed; an unconfirmed create may require cleanup. Routing was not activated.",
-    );
-  } finally {
-    credentials.fill("");
-  }
+    },
+  );
 }
