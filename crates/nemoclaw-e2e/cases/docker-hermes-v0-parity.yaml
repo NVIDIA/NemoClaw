@@ -59,6 +59,7 @@ spec:
                 - /opt/fabric
                 - /opt/nemoclaw
                 - /opt/hermes
+                - /opt/nemo-relay/plugins/switchyard
               read_write:
                 - /sandbox
       agent:
