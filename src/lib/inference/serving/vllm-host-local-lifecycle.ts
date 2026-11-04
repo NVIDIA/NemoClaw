@@ -9,8 +9,9 @@ import { dockerCapture, dockerRun } from "../../adapters/docker/local-model-runt
 import { isPodmanGatewayRuntimeEnabled } from "../../onboard/runtime-provider/configured-runtime";
 import { resolveCurrentRuntimeProviderBundle } from "../../onboard/runtime-provider/current";
 import { writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
-import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
+import { loadManagedVllmApiKey, managedVllmApiKeyPath, managedVllmStateDir } from "../vllm-api-key";
 import { buildLocalManagedVllmDockerEnv } from "../vllm-docker-env";
+import { assertNoManagedDistributedVllmRuntimeReceipts } from "./managed-runtime-receipts";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
   resolveManagedVllmBridgeHost,
@@ -319,21 +320,42 @@ export function getLegacyHostLocalManagedVllmBridgeHost(
       )
     )
       return null;
-    // Qualified native Podman can attach an operator-run server without Docker.
-    if (
+    const missingDocker =
       inspection.error !== undefined &&
       "code" in inspection.error &&
-      inspection.error.code === "ENOENT" &&
+      inspection.error.code === "ENOENT";
+    let nativePodman = false;
+    if (
+      !inspection.error &&
+      inspection.status !== null &&
+      inspection.status > 0 &&
+      ["", "[]"].includes(String(inspection.stdout ?? "").trim()) &&
       isPodmanGatewayRuntimeEnabled()
     ) {
       const runtime = resolveCurrentRuntimeProviderBundle();
-      if (
+      nativePodman =
         runtime.identity.id === "podman" &&
         runtime.hostLocalInference.supported &&
-        runtime.hostLocalInference.services.includes("vllm")
-      ) {
-        return null;
+        runtime.hostLocalInference.services.includes("vllm");
+    }
+    if (missingDocker || nativePodman) {
+      // Existing-server attachment has no Docker dependency. Retained managed
+      // state still requires inspection, even after switching to native Podman.
+      try {
+        assertNoManagedDistributedVllmRuntimeReceipts();
+        for (const file of [runtimeReceiptPath(managedVllmStateDir()), managedVllmApiKeyPath()]) {
+          try {
+            fs.lstatSync(file);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw error;
+          }
+          throw new ManagedVllmInspectionError();
+        }
+      } catch {
+        throw new ManagedVllmInspectionError();
       }
+      return null;
     }
     throw new ManagedVllmInspectionError();
   }

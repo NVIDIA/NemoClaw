@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { SpawnSyncOptions, SpawnSyncReturns } from "node:child_process";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireValue } from "../../core/require-value";
 import { createSetupNimVllmHandler } from "../../onboard/setup-nim-vllm";
 import {
@@ -16,9 +20,15 @@ import {
   validateLocalProvider,
 } from "../local";
 
+import { MANAGED_VLLM_API_KEY_FILE, managedVllmStateDir } from "../vllm-api-key";
 import type { dockerCapture as captureDocker } from "../../adapters/docker/local-model-runtime";
+import {
+  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+} from "./managed-runtime-receipts";
 import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 import {
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   getLegacyHostLocalManagedVllmBridgeHost,
   ManagedVllmInspectionError,
   recoverHostLocalManagedVllmEndpoint,
@@ -106,6 +116,10 @@ function interceptDocker(
   });
 }
 
+function retainManagedState(file: string): void {
+  fs.writeFileSync(file, "retained", { mode: 0o600 });
+}
+
 function expectLocalSpawns(count: number) {
   expect(subprocess.spawnSync).toHaveBeenCalledTimes(count);
   for (const [file, _args, options] of subprocess.spawnSync.mock.calls) {
@@ -127,10 +141,16 @@ function expectLocalSpawns(count: number) {
 }
 
 describe("host-local managed vLLM container probe", () => {
+  let home: string;
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "vllm-probe-"));
+    vi.spyOn(os, "homedir").mockReturnValue(home);
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     subprocess.spawnSync.mockReset();
+    fs.rmSync(home, { recursive: true, force: true });
   });
 
   it.each([
@@ -166,28 +186,28 @@ describe("host-local managed vLLM container probe", () => {
   it.each([
     ["unavailable daemon", "docker", "", { status: 1, stderr: "Cannot connect to Docker" }],
     [
-      "unavailable daemon under Podman",
+      "unavailable daemon under portable Podman",
       "podman",
-      "",
+      "portable",
       { status: 1, stderr: "Cannot connect to Docker" },
     ],
     [
-      "missing Docker",
+      "partial Docker inspection under Podman",
+      "podman",
+      "",
+      { status: 1, stdout: JSON.stringify([ownedContainer()]), stderr: "inspection failed" },
+    ],
+    [
+      "denied Docker executable",
       "docker",
       "",
-      { status: null, error: Object.assign(new Error("missing Docker"), { code: "ENOENT" }) },
+      { status: null, error: Object.assign(new Error("denied Docker"), { code: "EACCES" }) },
     ],
     [
       "denied Docker executable under Podman",
       "podman",
       "",
       { status: null, error: Object.assign(new Error("denied Docker"), { code: "EACCES" }) },
-    ],
-    [
-      "portable Docker runtime",
-      "podman",
-      "portable",
-      { status: null, error: Object.assign(new Error("missing Docker"), { code: "ENOENT" }) },
     ],
   ] as const)(
     "stops Docker-managed routes before probing with %s",
@@ -218,19 +238,33 @@ describe("host-local managed vLLM container probe", () => {
     },
   );
 
-  it.each([null, "served/model"])(
-    "selects and health-checks existing native Podman vLLM without Docker (model=%s) (#14083)",
-    async (model) => {
+  it.each([
+    { runtime: "docker", profile: "", model: null },
+    { runtime: "docker", profile: "", model: "served/model" },
+    { runtime: "podman", profile: "", model: null },
+    { runtime: "podman", profile: "", model: "served/model" },
+    { runtime: "podman", profile: "portable", model: null },
+    { runtime: "podman", profile: "portable", model: "served/model" },
+    { runtime: "podman", profile: "", model: null, daemonUnavailable: true },
+    { runtime: "podman", profile: "", model: "served/model", daemonUnavailable: true },
+  ])(
+    "selects and health-checks existing vLLM with unavailable Docker ($runtime, $profile, model=$model, daemon=$daemonUnavailable) (#14083)",
+    async ({ runtime, profile, model, daemonUnavailable }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
-      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "");
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", runtime);
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", profile);
       interceptDocker(null);
-      subprocess.spawnSync.mockReturnValue({
-        status: null,
-        stdout: "",
-        stderr: "",
-        error: Object.assign(new Error("spawnSync docker ENOENT"), { code: "ENOENT" }),
-      });
+      subprocess.spawnSync.mockReturnValue(
+        daemonUnavailable
+          ? { status: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" }
+          : {
+              status: null,
+              stdout: "",
+              stderr: "",
+              error: Object.assign(new Error("spawnSync docker ENOENT"), { code: "ENOENT" }),
+            },
+      );
+      expect(getManagedVllmProviderBinding()).toBeNull();
       const inventory = JSON.stringify({ data: [{ id: "served/model" }] });
       const query = vi.fn(() => inventory);
       const validate = vi.fn(async () => ({ ok: true, api: "openai-completions" }));
@@ -302,6 +336,62 @@ describe("host-local managed vLLM container probe", () => {
         }),
       ).toMatchObject({ ok: true, endpoint: "http://127.0.0.1:8000/v1/models" });
       expect(probe).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(
+    (
+      [
+        ["receipt", HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE, retainManagedState],
+        ["key", MANAGED_VLLM_API_KEY_FILE, retainManagedState],
+        ["Station receipt", DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE, retainManagedState],
+        ["cluster receipt", MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE, retainManagedState],
+        [
+          "receipt symlink",
+          HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+          (file) => fs.symlinkSync(path.join(home, "absent"), file),
+        ],
+        [
+          "unreadable state",
+          HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+          () => {
+            vi.spyOn(fs, "lstatSync").mockImplementation(() => {
+              throw Object.assign(new Error("denied"), { code: "EACCES" });
+            });
+          },
+        ],
+      ] satisfies Array<[string, string, (file: string) => unknown]>
+    ).flatMap(([state, file, prepare]) =>
+      [false, true].map((missingDocker) => ({ state, file, prepare, missingDocker })),
+    ),
+  )(
+    "refuses unvalidated managed $state with missing Docker=$missingDocker under native Podman",
+    ({ file, prepare, missingDocker }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "");
+      fs.mkdirSync(managedVllmStateDir(), { recursive: true });
+      prepare(path.join(managedVllmStateDir(), file));
+      interceptDocker(null);
+      subprocess.spawnSync.mockReturnValue(
+        missingDocker
+          ? {
+              status: null,
+              stdout: "",
+              stderr: "",
+              error: Object.assign(new Error("missing"), { code: "ENOENT" }),
+            }
+          : { status: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" },
+      );
+      const probe = vi.fn();
+      expect(() => getLegacyHostLocalManagedVllmBridgeHost(8000)).toThrow(
+        ManagedVllmInspectionError,
+      );
+      expect(() => getManagedVllmProviderBinding()).toThrow();
+      expect(probeLocalProviderHealth("vllm-local", { runCurlProbeImpl: probe })).toMatchObject({
+        ok: false,
+      });
+      expect(probe).not.toHaveBeenCalled();
     },
   );
 
