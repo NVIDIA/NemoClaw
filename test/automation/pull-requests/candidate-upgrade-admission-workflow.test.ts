@@ -56,7 +56,7 @@ function packagingFixture() {
 function fixture() {
   const pr = {
     state: "open",
-    head: { sha: head, repo: { full_name: "NVIDIA/NemoClaw" } },
+    head: { sha: head, ref: "codex/candidate", repo: { full_name: "NVIDIA/NemoClaw" } },
     base: { sha: base, ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
   };
   const context = {
@@ -66,21 +66,27 @@ function fixture() {
     runId: 456,
     payload: {
       pull_request: { number: 123 },
-      issue: { number: 123, pull_request: {} },
-      comment: { body: `NemoClaw-Upgrade-E2E: approve ${head} ${base}` },
-      changes: { body: { from: "" } },
+      workflow_run: {
+        event: "pull_request_review",
+        name: "Security / Candidate Review Signal",
+        head_repository: { full_name: "NVIDIA/NemoClaw" },
+        head_branch: "codex/candidate",
+        pull_requests: [] as { number: number }[],
+      },
     },
   };
   const outputs: Record<string, string> = {};
   const status = vi.fn(async (_value: unknown) => ({}));
   const get = vi.fn(async () => ({ data: pr }));
-  const github = { rest: { pulls: { get }, repos: { createCommitStatus: status } } };
+  const list = vi.fn(async () => ({ data: [{ number: 123 }] }));
+  const github = { rest: { pulls: { get, list }, repos: { createCommitStatus: status } } };
   return {
     pr,
     context,
     status,
     outputs,
     get,
+    list,
     start: () =>
       new AsyncFunction("github", "context", "core", start)(github, context, {
         setOutput: (name: string, value: string) => {
@@ -140,34 +146,76 @@ describe("candidate upgrade admission status", () => {
     expect(f.status).toHaveBeenLastCalledWith(expect.objectContaining({ state: "failure" }));
   });
 
-  it.each(["approve", "revoke", "quoted approve"])(
-    "invalidates the merge status for %s without granting permission",
-    async (action) => {
+  it("refreshes current admission after the read-only review signal", async () => {
+    const f = fixture();
+    f.context.eventName = "workflow_run";
+    await f.start();
+    expect(f.status).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ sha: head, context: "check-hash", state: "pending" }),
+    );
+    expect(f.outputs).toEqual({ pr_number: "123", head_sha: head, base_sha: base });
+    expect(f.list).toHaveBeenCalledExactlyOnceWith({
+      owner: "NVIDIA",
+      repo: "NemoClaw",
+      head: "NVIDIA:codex/candidate",
+      base: "main",
+      state: "open",
+      per_page: 2,
+    });
+  });
+
+  it.each(["wrong-event", "wrong-workflow", "fork", "missing-branch"])(
+    "rejects a %s review signal",
+    async (kind) => {
       const f = fixture();
-      f.context.eventName = "issue_comment";
-      f.context.payload.comment.body = `NemoClaw-Upgrade-E2E: ${action} ${head} ${base}`;
-      await f.start();
-      expect(f.status).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({
-          sha: head,
-          context: "check-hash",
-          state: "pending",
-        }),
-      );
-      expect(f.outputs).toEqual({ pr_number: "123", head_sha: head, base_sha: base });
+      f.context.eventName = "workflow_run";
+      const signal = f.context.payload.workflow_run;
+      const mutate: Record<string, () => unknown> = {
+        "wrong-event": () => {
+          signal.event = "push";
+        },
+        "wrong-workflow": () => {
+          signal.name = "Other workflow";
+        },
+        fork: () => {
+          signal.head_repository.full_name = "other/NemoClaw";
+        },
+        "missing-branch": () => {
+          signal.head_branch = "";
+        },
+      };
+      mutate[kind]!();
+      await expect(f.start()).rejects.toThrow(/Invalid candidate review signal/);
+      expect(f.status).not.toHaveBeenCalled();
     },
   );
 
-  it("refreshes when editing removes the approval marker", async () => {
+  it("ignores a review signal after its branch has no open PR", async () => {
     const f = fixture();
-    f.context.eventName = "issue_comment";
-    f.context.payload.changes.body.from = f.context.payload.comment.body;
-    f.context.payload.comment.body = "removed";
+    f.context.eventName = "workflow_run";
+    f.list.mockResolvedValueOnce({ data: [] });
     await f.start();
-    expect(f.status).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ state: "pending" }));
+    expect(f.status).not.toHaveBeenCalled();
+    expect(f.outputs).toEqual({});
   });
 
-  it.each(["pull_request", "push", "workflow_dispatch"])(
+  it("rejects ambiguous open PRs for a review branch", async () => {
+    const f = fixture();
+    f.context.eventName = "workflow_run";
+    f.list.mockResolvedValueOnce({ data: [{ number: 123 }, { number: 124 }] });
+    await expect(f.start()).rejects.toThrow(/Ambiguous/);
+    expect(f.status).not.toHaveBeenCalled();
+  });
+
+  it("rejects a branch mismatch after resolving the review signal", async () => {
+    const f = fixture();
+    f.context.eventName = "workflow_run";
+    f.pr.head.ref = "other-branch";
+    await expect(f.start()).rejects.toThrow(/branch changed/);
+    expect(f.status).not.toHaveBeenCalled();
+  });
+
+  it.each(["pull_request", "push", "workflow_dispatch", "issue_comment", "pull_request_review"])(
     "rejects untrusted or unrelated event %s",
     async (event) => {
       const f = fixture();

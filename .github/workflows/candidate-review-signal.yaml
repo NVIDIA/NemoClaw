@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# This PR-context workflow only wakes the default-branch admission controller.
+# It has no credentials, checkout, artifacts, or authority to admit candidate inputs.
+name: Security / Candidate Review Signal
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+permissions: {}
+jobs:
+  signal:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Signal a review change
+        run: echo 'Candidate admission will read the current PR reviews.'

@@ -18,9 +18,9 @@ function fixture() {
   const approval = {
     id: 50,
     user: { login: "reviewer", type: "User" },
-    created_at: "2026-10-14T00:00:00Z",
-    updated_at: "2026-10-14T00:00:00Z",
-    body: `NemoClaw-Upgrade-E2E: approve ${identity.candidateSha} ${identity.baseSha}`,
+    submitted_at: "2026-10-14T00:00:00Z",
+    state: "APPROVED",
+    commit_id: identity.candidateSha,
   };
   const records = [approval];
   const permission = { role_name: "maintain" };
@@ -34,10 +34,19 @@ function fixture() {
   };
   const routes = new Map<string, unknown>([
     ["/repos/NVIDIA/NemoClaw/pulls/123", pr],
-    ["/repos/NVIDIA/NemoClaw/issues/123/comments?per_page=100&page=1", records],
+    ["/repos/NVIDIA/NemoClaw/pulls/123/reviews?per_page=100&page=1", records],
     ["/repos/NVIDIA/NemoClaw/collaborators/reviewer/permission", permission],
     [`/repos/NVIDIA/NemoClaw/contents/${sourcePath}?ref=${identity.candidateSha}`, blob],
   ]);
+  routes.set(
+    `/repos/NVIDIA/NemoClaw/compare/${identity.baseSha}...${identity.candidateSha}?per_page=1`,
+    {
+      status: "ahead",
+      base_commit: { sha: identity.baseSha },
+      merge_base_commit: { sha: identity.baseSha },
+      files: [],
+    },
+  );
   const request = vi.fn(async (path: string): Promise<unknown> => routes.get(path));
   return { pr, approval, records, permission, source, blob, request, routes };
 }
@@ -60,13 +69,179 @@ function mergeFixture() {
   return { ...f, pr, commit, mergeSha, mergeSource };
 }
 
+function retainedReviewFixture() {
+  const f = fixture();
+  const reviewed = "d".repeat(40);
+  const oldBase = "e".repeat(40);
+  f.approval.commit_id = reviewed;
+  const changes = {
+    status: "ahead",
+    base_commit: { sha: reviewed },
+    merge_base_commit: { sha: reviewed },
+    files: [{ filename: "test/unrelated.test.ts" }],
+  };
+  const policy = {
+    status: "ahead",
+    base_commit: { sha: oldBase },
+    merge_base_commit: { sha: oldBase },
+    files: [{ filename: "package-lock.json" }],
+  };
+  f.routes.set(
+    `/repos/NVIDIA/NemoClaw/compare/${reviewed}...${identity.candidateSha}?per_page=1`,
+    changes,
+  );
+  f.routes.set(`/repos/NVIDIA/NemoClaw/compare/${identity.baseSha}...${reviewed}?per_page=1`, {
+    status: "diverged",
+    base_commit: { sha: identity.baseSha },
+    merge_base_commit: { sha: oldBase },
+  });
+  f.routes.set(
+    `/repos/NVIDIA/NemoClaw/compare/${oldBase}...${identity.baseSha}?per_page=1`,
+    policy,
+  );
+  return { ...f, reviewed, changes, policy };
+}
+
 describe("candidate upgrade admission", () => {
+  it("retains approval after an unrelated test edit and a main lockfile synchronization", async () => {
+    const f = retainedReviewFixture();
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).resolves.toEqual({
+      sources: { [sourcePath]: f.source },
+      reviewer: "reviewer",
+      reviewId: 50,
+    });
+  });
+
+  it.each([
+    sourcePath,
+    "tools/e2e/candidate-upgrade-admission.mts",
+    "scripts/checks/extract-installer-pins.mts",
+  ])("requires a new review after changing %s", async (filename) => {
+    const f = retainedReviewFixture();
+    f.changes.files = [{ filename }];
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /PR approval covering/,
+    );
+  });
+
+  it("requires renewed review when main changes the trusted verification policy", async () => {
+    const f = retainedReviewFixture();
+    f.policy.files = [{ filename: "tools/e2e/candidate-review-scope.mts" }];
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /PR approval covering/,
+    );
+  });
+
+  it("includes the previous name when a sensitive input is renamed", async () => {
+    const f = retainedReviewFixture();
+    Object.assign(f.changes.files[0]!, { previous_filename: sourcePath });
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /PR approval covering/,
+    );
+  });
+
+  it.each([
+    "unrelated-history",
+    "truncated",
+    "missing-files",
+    "invalid-path",
+    "wrong-base",
+    "api-failure",
+  ])("denies reuse with %s comparison evidence", async (kind) => {
+    const f = retainedReviewFixture();
+    const mutate: Record<string, () => unknown> = {
+      "unrelated-history": () => {
+        f.changes.merge_base_commit.sha = "f".repeat(40);
+      },
+      truncated: () => {
+        f.changes.files = Array.from({ length: 300 }, () => ({ filename: "docs/example.mdx" }));
+      },
+      "missing-files": () => Object.assign(f.changes, { files: undefined }),
+      "invalid-path": () => Object.assign(f.changes, { files: [null] }),
+      "wrong-base": () => {
+        f.changes.base_commit.sha = "f".repeat(40);
+      },
+      "api-failure": () => f.request.mockRejectedValueOnce(new Error("API unavailable")),
+    };
+    mutate[kind]!();
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow();
+  });
+
+  it.each(["package.json", "scripts/lib/reviewed-npm-archive.mts"])(
+    "requires a new SDK review when %s changes",
+    async (filename) => {
+      const f = retainedReviewFixture();
+      f.changes.files = [{ filename }];
+      await expect(
+        readApprovedCandidateUpgrade(identity, ["package.json"], f.request),
+      ).rejects.toThrow(/PR approval covering/);
+    },
+  );
+
+  it("does not discard approval when the reviewer adds an ordinary comment", async () => {
+    const f = fixture();
+    f.records.push({ ...f.approval, id: 51, state: "COMMENTED" });
+    await expect(
+      readApprovedCandidateUpgrade(identity, [sourcePath], f.request),
+    ).resolves.toMatchObject({ reviewId: 50 });
+  });
+
+  it("does not revive an older approval after dismissing the replacement review", async () => {
+    const f = fixture();
+    f.records.push({ ...f.approval, id: 51, state: "DISMISSED" });
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /PR approval covering/,
+    );
+  });
+
+  it("honors another maintainer's outstanding request for changes", async () => {
+    const f = fixture();
+    f.records.push({
+      ...f.approval,
+      id: 51,
+      user: { type: "User", login: "other" },
+      state: "CHANGES_REQUESTED",
+    });
+    f.routes.set("/repos/NVIDIA/NemoClaw/collaborators/other/permission", {
+      role_name: "maintain",
+    });
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      /changes-requested/,
+    );
+  });
+
+  it.each(["duplicate", "invalid-id", "invalid-time", "mutable-commit", "unknown-state"])(
+    "rejects %s review evidence",
+    async (kind) => {
+      const f = fixture();
+      const mutate: Record<string, () => unknown> = {
+        duplicate: () => f.records.push({ ...f.approval }),
+        "invalid-id": () => {
+          f.approval.id = 0;
+        },
+        "invalid-time": () => {
+          f.approval.submitted_at = "invalid";
+        },
+        "mutable-commit": () => {
+          f.approval.commit_id = "main";
+        },
+        "unknown-state": () => {
+          f.approval.state = "unknown";
+        },
+      };
+      mutate[kind]!();
+      await expect(
+        readApprovedCandidateUpgrade(identity, [sourcePath], f.request),
+      ).rejects.toThrow();
+    },
+  );
+
   it("reads reviewed commit data and rechecks both PR identity and current maintainer authority", async () => {
     const f = fixture();
     await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).resolves.toEqual({
       sources: { [sourcePath]: f.source },
       reviewer: "reviewer",
-      commentId: 50,
+      reviewId: 50,
     });
     expect(f.request.mock.calls.filter(([path]) => path.endsWith("/permission"))).toHaveLength(2);
     expect(f.request.mock.calls.filter(([path]) => path.endsWith("/pulls/123"))).toHaveLength(2);
@@ -78,7 +253,7 @@ describe("candidate upgrade admission", () => {
     await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).resolves.toEqual({
       sources: { [sourcePath]: f.source },
       reviewer: "reviewer",
-      commentId: 50,
+      reviewId: 50,
     });
     f.records.length = 0;
     await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
@@ -86,13 +261,13 @@ describe("candidate upgrade admission", () => {
     );
   });
 
-  it("rejects a malformed bot author login before reading approval comments", async () => {
+  it("rejects a malformed bot author login before reading PR reviews", async () => {
     const f = fixture();
     f.pr.user.login = "nvidia-nemopatch-writer[bot]suffix";
     await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
       /open upstream PR/,
     );
-    expect(f.request.mock.calls.some(([path]) => path.includes("/comments"))).toBe(false);
+    expect(f.request.mock.calls.some(([path]) => path.includes("/reviews"))).toBe(false);
   });
 
   it.each([{ prNumber: 0 }, { candidateSha: "main" }, { baseSha: "main" }])(
@@ -118,52 +293,39 @@ describe("candidate upgrade admission", () => {
     },
   );
 
-  it.each([
-    "author",
-    "bot",
-    "edited",
-    "quoted",
-    "newline",
-    "old-commit",
-    "old-base",
-    "revoke",
-    "deleted",
-  ])("rejects %s approval records", async (kind) => {
-    const f = fixture();
-    const mutations: Record<string, () => void> = {
-      author: () => {
-        f.approval.user.login = "AUTHOR";
-      },
-      bot: () => {
-        f.approval.user.type = "Bot";
-      },
-      edited: () => {
-        f.approval.updated_at = "2026-10-14T00:01:00Z";
-      },
-      quoted: () => {
-        f.approval.body = `> ${f.approval.body}`;
-      },
-      newline: () => {
-        f.approval.body += "\n";
-      },
-      "old-commit": () => {
-        f.approval.body = f.approval.body.replace(identity.candidateSha, "c".repeat(40));
-      },
-      "old-base": () => {
-        f.approval.body = f.approval.body.replace(identity.baseSha, "c".repeat(40));
-      },
-      revoke: () => {
-        f.approval.body = f.approval.body.replace("approve", "revoke");
-      },
-      deleted: () => {
-        f.records.length = 0;
-      },
-    };
-    mutations[kind]!();
-    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
-      /independent maintainer/,
-    );
-  });
+  it.each(["author", "bot", "dismissed", "commented", "pending", "changes-requested", "deleted"])(
+    "rejects %s review records",
+    async (kind) => {
+      const f = fixture();
+      const mutate: Record<string, () => void> = {
+        author: () => {
+          f.approval.user.login = "AUTHOR";
+        },
+        bot: () => {
+          f.approval.user.type = "Bot";
+        },
+        deleted: () => {
+          f.records.length = 0;
+        },
+        dismissed: () => {
+          f.approval.state = "DISMISSED";
+        },
+        commented: () => {
+          f.approval.state = "COMMENTED";
+        },
+        pending: () => {
+          f.approval.state = "PENDING";
+        },
+        "changes-requested": () => {
+          f.approval.state = "CHANGES_REQUESTED";
+        },
+      };
+      mutate[kind]!();
+      await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+        /independent maintainer/,
+      );
+    },
+  );
 
   it.each(["closed", "fork", "base", "head"])(
     "rejects a PR with changed %s identity",
@@ -193,11 +355,11 @@ describe("candidate upgrade admission", () => {
   it("reads every page and honors a later revocation", async () => {
     const f = fixture();
     f.routes.set(
-      "/repos/NVIDIA/NemoClaw/issues/123/comments?per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/pulls/123/reviews?per_page=100&page=1",
       Array.from({ length: 100 }, (_, i) => ({ ...f.approval, id: i + 1 })),
     );
-    f.routes.set("/repos/NVIDIA/NemoClaw/issues/123/comments?per_page=100&page=2", [
-      { ...f.approval, id: 101, body: f.approval.body.replace("approve", "revoke") },
+    f.routes.set("/repos/NVIDIA/NemoClaw/pulls/123/reviews?per_page=100&page=2", [
+      { ...f.approval, id: 101, state: "CHANGES_REQUESTED" },
     ]);
     await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
       /independent maintainer/,
@@ -216,7 +378,7 @@ describe("candidate upgrade admission", () => {
           f.records.push({
             ...f.approval,
             id: 51,
-            body: f.approval.body.replace("approve", "revoke"),
+            state: "CHANGES_REQUESTED",
           });
         },
         role: () => {

@@ -68,7 +68,7 @@ describe("protected OpenShell workspace", () => {
     [
       "stale",
       ({ approval }) => {
-        approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: approve ${identity.candidateSha} ${identity.baseSha}`;
+        approval.approvals[0]!.commit_id = identity.candidateSha;
       },
       /approval|decision/i,
     ],
@@ -104,7 +104,7 @@ describe("protected OpenShell workspace", () => {
     git(input.candidateRoot, "add", ".");
     git(input.candidateRoot, "commit", "--quiet", "-m", "unapproved feature");
     input.candidateSha = git(input.candidateRoot, "rev-parse", "HEAD");
-    approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: approve ${input.candidateSha} ${identity.baseSha}`;
+    approval.approvals[0]!.commit_id = input.candidateSha;
     await expect(manageProtectedOpenShellWorkspace("prepare", input)).rejects.toThrow(
       /feature gate operational template/,
     );
@@ -115,12 +115,12 @@ describe("protected OpenShell workspace", () => {
     const { input, approval } = approvedFixture();
     await manageProtectedOpenShellWorkspace("prepare", input);
     const before = git(input.trustedRoot, "diff", "--no-ext-diff");
-    approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: revoke ${input.candidateSha} ${identity.baseSha}`;
+    approval.approvals[0]!.state = "DISMISSED";
     await expect(manageProtectedOpenShellWorkspace("verify", input)).rejects.toThrow(
-      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+      "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy",
     );
     await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(
-      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+      "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy",
     );
     expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
   });

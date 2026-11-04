@@ -7,16 +7,17 @@ name: Security / Candidate Upgrade Admission
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, edited, ready_for_review]
-  issue_comment:
-    types: [created, edited, deleted]
+  workflow_run:
+    workflows: [Security / Candidate Review Signal]
+    types: [completed]
 permissions:
   contents: read
   pull-requests: read
 jobs:
   candidate-upgrade-admission:
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') || (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, 'NemoClaw-Upgrade-E2E:') || contains(github.event.changes.body.from, 'NemoClaw-Upgrade-E2E:')))) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review')) }}
     concurrency:
-      group: candidate-upgrade-admission-${{ github.event.pull_request.number || github.event.issue.number }}
+      group: candidate-upgrade-admission-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -35,13 +36,26 @@ jobs:
         with:
           script: |
             if (context.repo.owner !== "NVIDIA" || context.repo.repo !== "NemoClaw") throw new Error("Unexpected upgrade repository");
-            if (!["pull_request_target", "issue_comment"].includes(context.eventName)) throw new Error("Unexpected upgrade event");
-            const marker = value => typeof value === "string" && value.includes("NemoClaw-Upgrade-E2E:");
-            if (context.eventName === "issue_comment" && (!context.payload.issue?.pull_request || (!marker(context.payload.comment?.body) && !marker(context.payload.changes?.body?.from)))) return;
-            const number = context.payload.pull_request?.number ?? context.payload.issue?.number;
+            if (!["pull_request_target", "workflow_run"].includes(context.eventName)) throw new Error("Unexpected upgrade event");
+            const signal = context.payload.workflow_run;
+            let number = context.payload.pull_request?.number;
+            if (context.eventName === "workflow_run") {
+              if (signal?.event !== "pull_request_review" || signal?.name !== "Security / Candidate Review Signal" ||
+                  signal?.head_repository?.full_name !== "NVIDIA/NemoClaw" ||
+                  typeof signal?.head_branch !== "string" || !signal.head_branch)
+                throw new Error("Invalid candidate review signal");
+              // Review-triggered runs can omit pull_requests. Resolve the current upstream PR;
+              // the signal only requests reevaluation and supplies no approval authority.
+              const { data: prs } = await github.rest.pulls.list({ ...context.repo,
+                head: context.repo.owner + ":" + signal.head_branch, base: "main", state: "open", per_page: 2 });
+              if (!Array.isArray(prs) || prs.length > 1) throw new Error("Ambiguous candidate review signal");
+              if (prs.length === 0) return;
+              number = prs[0].number;
+            }
             if (!Number.isSafeInteger(number) || number <= 0) throw new Error("Invalid upgrade PR number");
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
             if (pr.state !== "open") return;
+            if (context.eventName === "workflow_run" && pr.head.ref !== signal.head_branch) throw new Error("Candidate review branch changed");
             if (pr.head.repo?.full_name !== "NVIDIA/NemoClaw" || pr.base.repo?.full_name !== "NVIDIA/NemoClaw" || pr.base.ref !== "main") throw new Error("Unsupported upgrade PR identity");
             if (!/^[a-f0-9]{40}$/.test(pr.head.sha) || !/^[a-f0-9]{40}$/.test(pr.base.sha)) throw new Error("Invalid upgrade commits");
             await github.rest.repos.createCommitStatus({
