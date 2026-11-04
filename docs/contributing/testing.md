@@ -290,7 +290,7 @@ Documentation previews publish only for PRs targeting `v1`.
 
 | Workflow | Checks |
 |---|---|
-| CI / Bundle | `Unit`, `Contract`, `Integration`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; on `v1` pushes also `E2E / linux_arm64`, `E2E / linux_amd64`, and `E2E / HCL`, which no ruleset requires |
+| CI / Bundle | `Unit`, `Contract`, `Integration`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; on `v1` pushes also `E2E`, from `E2E / linux_arm64`, `E2E / linux_amd64`, and `E2E / HCL`, which no ruleset requires |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
@@ -382,7 +382,7 @@ Use `Fixture::engine` for a fake engine so that the test runs on every platform;
 `Live / Docker` and `Live / Kind` run on the Linux platforms only, from that platform's archive, bundle, and live images, after enabling Docker's containerd image store on the runner.
 CI / Bundle runs them on each push to `v1`, after a change merges; pull requests and manual runs don't run them.
 The same pushes run [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `E2E / HCL`: it builds its own bundle, test executable, and agent images, and runs the [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model, on hosted NVIDIA inference or the NVIDIA GPU runner.
-A live failure fails its own `E2E / PLATFORM` or `E2E / HCL` check, which no ruleset requires.
+A live failure fails its own `E2E / PLATFORM` or `E2E / HCL` job and the `E2E` check, which no ruleset requires.
 To run a suite before merging, use `cargo ci live-docker` or `cargo ci live-kind`; see [run each layer](#run-each-layer).
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 

@@ -98,6 +98,25 @@ jobs:
       tests: ${{ needs.linux_amd64.outputs.tests }}
       bundle: ${{ needs.linux_amd64.outputs.bundle }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
+  # The E2E layer's check, after a change reaches v1: the Docker and Kubernetes
+  # suites on both Linux platforms and the HCL cases that need a model.
+  e2e:
+    name: E2E
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/v1' }}
+    needs: [e2e_linux_arm64, e2e_linux_amd64, e2e_hcl]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every live suite
+        env:
+          RESULTS: >-
+            ${{ needs.e2e_linux_arm64.result }}
+            ${{ needs.e2e_linux_amd64.result }}
+            ${{ needs.e2e_hcl.result }}
+        run: |
+          for result in $RESULTS; do
+            test "$result" = success || { echo "a live suite reported $result"; exit 1; }
+          done
   # One required check per test layer, across every platform. A skipped,
   # cancelled, or failed platform must never become a successful check: a
   # missing result fails it. A layer the plan did not select passes.
