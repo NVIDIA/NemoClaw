@@ -55,6 +55,7 @@ describe("unavailable web-search reply evidence", () => {
     'Here is your answer.\n{"searchStatus":"unavailable","installationDocumentation":null}',
     '{"searchStatus":"unavailable","installationDocumentation":null}\n{"searchStatus":"unavailable","installationDocumentation":null}',
     'Web search is unavailable.\n```json\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    'Web search is not available here, so I could not look up the documentation.\n{"searchStatus":"unavailable","installationDocumentation":null}',
   ])("rejects claims outside the unavailable-search fields: %s", (reply) => {
     expect(isUnavailableSearchReply(reply)).toBe(false);
   });
