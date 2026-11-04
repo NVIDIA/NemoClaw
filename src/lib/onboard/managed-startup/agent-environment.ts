@@ -37,13 +37,15 @@ export interface ManagedStartupRootOwnedFileMaterial {
   readonly legacyInput:
     | "NEMOCLAW_DCODE_AUTO_APPROVAL"
     | "NEMOCLAW_INFERENCE_BASE_URL"
+    | "NEMOCLAW_INFERENCE_PROVIDER_ID"
     | "NEMOCLAW_REASONING_EFFORT"
     | "NEMOCLAW_UPSTREAM_PROVIDER";
   readonly path:
     | "/usr/local/share/nemoclaw/dcode-auto-approval"
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
     | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
-    | "/usr/local/share/nemoclaw/dcode-upstream-provider";
+    | "/usr/local/share/nemoclaw/dcode-upstream-provider"
+    | "/usr/local/share/nemoclaw/dcode-provider-route";
   readonly contents: string;
   readonly owner: "root";
   readonly group: "root";
@@ -539,6 +541,11 @@ function mapDcodeProfile(
       "NEMOCLAW_UPSTREAM_PROVIDER",
       "/usr/local/share/nemoclaw/dcode-upstream-provider",
       profile.inference.upstreamProvider,
+    ),
+    rootOwnedFile(
+      "NEMOCLAW_INFERENCE_PROVIDER_ID",
+      "/usr/local/share/nemoclaw/dcode-provider-route",
+      profile.inference.routeProvider,
     ),
     rootOwnedFile(
       "NEMOCLAW_REASONING_EFFORT",

@@ -684,6 +684,15 @@ describe("managed startup agent environment", () => {
       },
       {
         kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_INFERENCE_PROVIDER_ID",
+        path: "/usr/local/share/nemoclaw/dcode-provider-route",
+        contents: "inference\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
         legacyInput: "NEMOCLAW_REASONING_EFFORT",
         path: "/usr/local/share/nemoclaw/dcode-reasoning-effort",
         contents: "high\n",

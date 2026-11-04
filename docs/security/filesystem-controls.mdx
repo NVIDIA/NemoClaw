@@ -92,9 +92,11 @@ The native `mcp_servers` map in that snapshot is authoritative, including direct
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-The `/sandbox/.deepagents` directory contains Deep Agents Code runtime state and NemoClaw-generated configuration.
-NemoClaw writes `config.toml` during onboarding and rebuilds.
-Direct edits to this file can be overwritten when NemoClaw regenerates the managed inference route.
+The `/sandbox/.deepagents` directory contains Deep Agents Code runtime state and initially generated configuration.
+NemoClaw generates the initial `config.toml`, and native preference saves can update it.
+Rebuild and named recreation restore the saved native home, including those preferences.
+Current images keep managed route and upstream provider metadata in protected, root-owned files outside the native home.
+To change the provider or model without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
 
 The managed Deep Agents image deliberately omits raw provider and service credentials from generated configuration.
 OpenShell-owned credential stores and host-only secrets remain outside the native home/workspace transfer. The native `.deepagents/.mcp.json` must contain only supported URLs and OpenShell resolver placeholders for managed entries.
@@ -106,10 +108,10 @@ NemoClaw does not prevent the sandbox identity from changing paths that its Unix
 
 | Aspect | Detail |
 |---|---|
-| Default | The Deep Agents config tree contains NemoClaw-generated `config.toml`, agent-native MCP configuration, and mutable Deep Agents memory and skill state. |
+| Default | The Deep Agents config tree contains initially generated `config.toml` with native preferences, agent-native MCP configuration, and mutable memory and skill state. |
 | What you can change | Use host-side NemoClaw commands for durable model, provider, managed MCP, and policy changes; inspect or edit memory and skills through `dcode` or direct file access when appropriate. |
 | Risk of direct edits | Direct MCP edits remain authoritative but cannot widen OpenShell policy. Storing credentials in `.deepagents/.env` or literal values in `.mcp.json` moves them outside the managed credential boundary and is rejected by managed lifecycle operations. |
-| Recommendation | Keep generated config under NemoClaw control. Use OpenShell providers and NemoClaw MCP commands for credentials, and back up Deep Agents state before destructive operations. |
+| Recommendation | Use OpenShell providers and NemoClaw MCP commands for credentials. Back up Deep Agents state before destructive operations. |
 
 </AgentOnly>
 
