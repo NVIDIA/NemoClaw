@@ -302,7 +302,7 @@ function gatewayNames() {
     }
     for (const entry of entries) {
       if (entry.isSymbolicLink()) deny("a legacy gateway registration is a symbolic link");
-      if (!entry.isDirectory()) continue;
+      if (!entry.isDirectory()) deny("a legacy gateway registration is not a directory");
       const metadataPath = join(root, entry.name, "metadata.json");
       // An absent record cannot prove retirement. Check and read the opened
       // file, without following a substituted symlink or blocking on a FIFO.

@@ -65,6 +65,7 @@ export function runCommandWithInstalledVersion(
       | "system";
     legacyInventory?: unknown;
     legacyMetadata?: string;
+    legacyRegistrationFile?: "user" | "system" | "fixed-system";
     retainedRegistry?: string;
     registryGatewayPort?: string;
     missingCli?: boolean;
@@ -111,6 +112,17 @@ export function runCommandWithInstalledVersion(
     fs.mkdirSync(driverBin, { recursive: true });
     const configHome = path.join(tmp, "config");
     const retainedFiles = new Map<string, string>();
+    if (options.legacyRegistrationFile) {
+      const root =
+        options.legacyRegistrationFile === "user"
+          ? path.join(configHome, "openshell")
+          : path.join(tmp, `${options.legacyRegistrationFile}-openshell`);
+      const registration = path.join(root, "gateways", "nemoclaw");
+      fs.mkdirSync(path.dirname(registration), { recursive: true });
+      const contents = "synthetic retained gateway registration";
+      fs.writeFileSync(registration, contents);
+      retainedFiles.set(registration, contents);
+    }
     if (options.retainedRegistry !== undefined) {
       const registry = path.join(
         tmp,

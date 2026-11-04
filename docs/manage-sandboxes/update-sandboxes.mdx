@@ -109,6 +109,7 @@ Before replacing components, the installer requires a complete empty sandbox inv
 Preserved NemoClaw sandbox records also stop component replacement, including when the installed CLI reports `0.1.x` or gateway registrations are missing.
 When retained registry entries have valid identities, the refusal lists their sandbox names and the path to `sandboxes.json`.
 Preserve that file and the named sandboxes while resolving the refusal; do not delete registry entries to bypass it.
+If a gateway registration entry is a symbolic link or is not a directory, the component installer stops before downloading replacements.
 The component installer also refuses a `sandboxes.json` or legacy gateway `metadata.json` file larger than 16 MiB.
 Preserve an oversized file; do not truncate or delete it to bypass the check.
 An empty runtime inventory does not prove that retained sandbox data was retired.
