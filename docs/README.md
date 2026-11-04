@@ -3,7 +3,7 @@
 
 # Documentation Index
 
-These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The published [v1 field reference](references/v1-configuration.md) is a snapshot generated at that implementation revision; this checkout's separate generated reference describes its older SDK. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
+These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The published [v1 field reference](references/v1-configuration.md) is a snapshot generated at that implementation revision. This checkout's [generator-owned reference](reference/configuration.md) has the same named-map configuration shape but differs on three optional field types; use the snapshot and schema from the bundle's source revision when checking field types. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
 [Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
 ## About

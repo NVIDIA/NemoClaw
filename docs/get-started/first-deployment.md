@@ -6,7 +6,7 @@
 In this tutorial, you configure one OpenClaw sandbox with an existing OpenShell gateway and inference endpoint.
 You then plan the deployment, apply it, and send one request to the agent.
 The commands use the v1 source-built tools and the [OpenClaw example at implementation revision `86b8d94273`](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/examples/openclaw.yaml).
-The example at this revision keys providers and sandboxes by name; examples in other checkouts can use a different YAML shape.
+The example keys providers and sandboxes by name, as do both inspected revisions. Keep the bundle and generated schema from the source revision used to build the image.
 A successful apply starts a runtime; only an invocation checks whether the agent replies.
 
 ## Prepare the Tools and Services
@@ -27,7 +27,7 @@ cd ../nemoclaw-v1
 
 Choose another unused directory if `../nemoclaw-v1` already exists; do not replace an existing worktree.
 Run the remaining commands from this v1 worktree root on the client host unless noted otherwise.
-Do not substitute an example or a bundle from the documentation checkout: its configuration shape can differ.
+Do not mix bundles, examples, and generated schemas from different revisions: their field validation can differ even when their map shape agrees.
 
 [Build a native bundle](../build-deploy/build.md#build-a-native-bundle) from this v1 worktree and add its CLI to `PATH`:
 
@@ -80,7 +80,7 @@ Replace the following illustrative values before planning:
 Keep `spec.gateway.management: external`; this deployment does not manage the gateway or inference server.
 The external gateway's engine is used for image inspection; it does not transfer ownership of that gateway.
 Update the editor schema comment in the copied file to `../../schemas/nemoclaw-v1alpha1.schema.json`.
-For other fields, use the generated configuration reference from the selected v1 worktree (`docs/reference/configuration.md` there) or its [source-pinned v1 snapshot](../references/v1-configuration.md). The generated reference in this documentation checkout describes an older SDK and cannot validate this example. Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
+For other fields, use the generated configuration reference from the selected v1 worktree (`docs/reference/configuration.md` there) or its [source-pinned v1 snapshot](../references/v1-configuration.md). This checkout's generated reference has the same map shape but different types for three optional fields; use the source-pinned schema to validate this example. Refer to [inference configuration](../agents-inference/inference.md) for task-specific choices.
 
 If your endpoint requires a key, add a reference under `spec.inferenceProviders.local`:
 
