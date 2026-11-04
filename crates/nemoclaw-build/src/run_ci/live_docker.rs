@@ -35,26 +35,6 @@ fn by_digest(repository: &str, tag: &str) -> Result<String> {
 }
 
 /// Where the pinned OpenShell CLI is installed, by its archive's checksum.
-fn openshell_path(pins: &Pins, platform: &str) -> Result<PathBuf> {
-    let artifact = artifact(pins, platform, "openshell")?;
-    Ok(std::path::absolute(
-        Path::new(".tools")
-            .join(format!("openshell-{}", &artifact.sha256[..12]))
-            .join("openshell"),
-    )?)
-}
-
-/// Install the pinned OpenShell CLI, verified by checksum, unless it is there.
-pub(super) async fn install_openshell(pins: &Pins, platform: &str) -> Result<()> {
-    let path = openshell_path(pins, platform)?;
-    if !path.is_file() {
-        let bytes = download(artifact(pins, platform, "openshell")?).await?;
-        let directory = path.parent().ok_or("the OpenShell CLI has no directory")?;
-        ci::install_openshell(&bytes, directory)?;
-    }
-    Ok(())
-}
-
 fn ollama_base() -> Result<String> {
     let dockerfile = fs::read_to_string("image/ollama/Dockerfile")?;
     dockerfile
@@ -235,8 +215,6 @@ fn prepare(
         }
     }
     let agent = by_digest(&prefix, target)?;
-    let hermes = by_digest(&prefix, live_images::HERMES)?;
-    let deepagents_code = by_digest(&prefix, live_images::DEEPAGENTS_CODE)?;
     // The lifecycle runs an image derived from the reference image, so it
     // also checks that derived images deploy.
     live_images::build_derived(&prefix)?;
@@ -295,29 +273,6 @@ fn prepare(
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
-    // OpenClaw's, Hermes's and Deep Agents Code's interfaces share one gateway
-    // and model stand-in.
-    let interfaces = {
-        let uid = live::uuid()?;
-        let subnet = live::free_subnet(&used, &subnets)?;
-        subnets.push(subnet.clone());
-        let path = inputs.join("live-interfaces.yaml");
-        fs::write(
-            &path,
-            live::interfaces_document(&live::InterfacesInputs {
-                name: "live-interfaces",
-                uid: &uid,
-                port: live::free_port()?,
-                subnet: &subnet,
-                openclaw: &agent,
-                hermes: &hermes,
-                deepagents_code: &deepagents_code,
-                model_port: live::free_port()?,
-            }),
-        )?;
-        owned.uids.push(uid);
-        path
-    };
     // The dummy reports native health, so its whole HCL E2E lifecycle
     // completes. Its case is bound to this run like the documents above.
     let dummy_case = {
@@ -345,14 +300,6 @@ fn prepare(
         ("NEMOCLAW_HCL_CASE".into(), DUMMY_CASE.into()),
         ("NEMOCLAW_HCL_DOCUMENT".into(), path(&dummy_case)),
         ("NEMOCLAW_HCL_RUN".into(), path(&inputs.join("hcl"))),
-        (
-            "NEMOCLAW_TEST_INTERFACES_DOCUMENT".into(),
-            path(&interfaces),
-        ),
-        (
-            "NEMOCLAW_TEST_OPENSHELL".into(),
-            path(&openshell_path(pins, platform)?),
-        ),
     ]
     .into_iter()
     .chain([(

@@ -12,6 +12,7 @@ variable "context" {
     state_dir        = string
     cli              = string
     probe_executable = string
+    openshell        = string
     work_dir         = string
     evidence_dir     = string
   })

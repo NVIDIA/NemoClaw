@@ -40,6 +40,8 @@ fn case() {
         "state_dir": run.join("deployment"),
         "cli": bundle.root().join("bin").join(nemoclaw_sdk::bundle::executable("nemoclaw")),
         "probe_executable": std::env::current_exe().unwrap(),
+        // The pinned OpenShell CLI, for a case that forwards interfaces.
+        "openshell": var("NEMOCLAW_TEST_OPENSHELL").unwrap_or_default(),
         "work_dir": work,
         "evidence_dir": reports,
     });
@@ -132,6 +134,108 @@ async fn probe() {
     });
     fs::write(input("REPLY"), reply).unwrap();
     fs::write(input("REPORT"), report.to_string()).unwrap();
+}
+
+/// Request one service a sandbox exposes, as a person would with what apply
+/// reports: read the interface's token in the sandbox and forward its port
+/// with the pinned OpenShell CLI, then send one request, with the token as a
+/// Bearer credential when there is one. The published report holds the
+/// status; the token stays in memory and the body in the private work
+/// directory for `hcl/interface`.
+#[tokio::test]
+#[ignore = "run by tests/e2e/hcl/interface for one target"]
+async fn interface() {
+    use std::{
+        net::{TcpListener, TcpStream},
+        process::Stdio,
+        time::Instant,
+    };
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let openshell = || {
+        let mut command = Command::new(input("OPENSHELL"));
+        command
+            .env_remove("OPENSHELL_GATEWAY")
+            .env("OPENSHELL_GATEWAY_ENDPOINT", input("ENDPOINT"))
+            .env("OPENSHELL_WORKSPACE", input("WORKSPACE"))
+            .stdin(Stdio::null());
+        command
+    };
+    let sandbox = input("SANDBOX");
+    let token = match input("TOKEN_PATH").as_str() {
+        "" => None,
+        path => {
+            let output = openshell()
+                .args([
+                    "sandbox", "exec", "-n", &sandbox, "--no-tty", "--", "cat", path,
+                ])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "cannot read the interface's token");
+            Some(String::from_utf8(output.stdout).unwrap().trim().to_owned())
+        }
+    };
+    let local = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut forward = openshell()
+        .args([
+            "forward",
+            "service",
+            &sandbox,
+            "--target-port",
+            &input("PORT"),
+        ])
+        .args(["--local", &format!("127.0.0.1:{local}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // The forward listens once OpenShell sets it up, and its first connection
+    // can still fail while the tunnel opens.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while TcpStream::connect(("127.0.0.1", local)).is_err() {
+        assert!(Instant::now() < deadline, "the forward does not listen");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{local}{}", input("PATH"));
+    let body = input("BODY");
+    let (status, text) = loop {
+        let mut request = if body.is_empty() {
+            client.get(&url)
+        } else {
+            client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(body.clone())
+        };
+        if let Some(token) = &token {
+            request = request.bearer_auth(token);
+        }
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                break (status, response.text().await.unwrap_or_default());
+            }
+            Err(_) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("the request through the forward failed: {error}"),
+        }
+    };
+    let _ = forward.kill();
+    let _ = forward.wait();
+    fs::write(input("RESPONSE"), text).unwrap();
+    fs::write(
+        input("REPORT"),
+        json!({"sandbox": sandbox, "port": input("PORT"), "status": status}).to_string(),
+    )
+    .unwrap();
 }
 
 /// The managed Kubernetes gateway that `binding` records, reached as the

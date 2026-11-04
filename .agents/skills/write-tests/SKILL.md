@@ -50,7 +50,7 @@ Within each layer, write a native `tofu test` scenario before a Rust test:
 |---|---|---|
 | Contract | `tests/contract/hcl/<module>/tests/*.tftest.hcl` | `tests/contract/failures/`: a command that must fail, a saved plan, or the state file |
 | Integration | `tests/integration/hcl/tests/*.tftest.hcl`, with documents in `crates/nemoclaw-e2e/cases/` or unchanged `examples/` | `tests/integration/rust/`: SDK and CLI behavior |
-| Live E2E | `tests/e2e/hcl/tests/*.tftest.hcl`, run by `hcl_live::case` | `tests/e2e/rust/` |
+| Live E2E | `tests/e2e/hcl/tests/*.tftest.hcl`, run by `hcl_live::case` | A probe in `tests/e2e/hcl_live.rs` for a real boundary operation that HCL cannot run, such as invoking an agent |
 
 Use Rust only when the behavior needs one of these:
 

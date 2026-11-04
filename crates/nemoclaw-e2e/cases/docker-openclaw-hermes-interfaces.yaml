@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# OpenClaw's Control UI and Hermes's API server and dashboard on NVIDIA
+# hosted inference, behind a managed Docker gateway. Apply reports each
+# interface; a person reaches it with the pinned OpenShell CLI's forward and
+# the token apply names.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-interfaces
+  # CI gives each run a fresh identity.
+  uid: 9d4c1f2e-6b3a-4c8d-a5e7-2f1b0c9d8e76
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17693
+    engine: unix:///var/run/docker.sock
+    config:
+      openshell.drivers.docker:
+        allow_driver_config: true
+  inferenceProviders:
+    nvidia:
+      provider: openai
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    claw:
+      image:
+        # CI binds this template to its candidate OpenClaw image.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        settings:
+          interfaces:
+            dashboard:
+              port: 18789
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b
+    hermes:
+      image:
+        # CI binds this template to its candidate Hermes image.
+        ref: nc-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        settings:
+          interfaces:
+            api:
+              port: 8642
+            dashboard:
+              port: 9119
+      agent:
+        name: hermes
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

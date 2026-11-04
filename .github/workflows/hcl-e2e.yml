@@ -77,6 +77,9 @@ jobs:
           - case: docker-hermes-v0-parity
             runner: ubuntu-24.04
             secret: NVIDIA_API_KEY
+          - case: docker-openclaw-hermes-interfaces
+            runner: ubuntu-24.04
+            secret: NVIDIA_API_KEY
           - case: docker-openclaw-vllm
             # This NVIDIA GPU runner is already used by the main E2E workflow.
             runner: linux-amd64-gpu-rtxpro6000-latest-1
@@ -120,6 +123,19 @@ jobs:
             -e "s#nc-prototype-ollama@sha256:a\{64\}#nc-prototype-ollama@$(id nc-prototype-ollama:rust-v1)#" \
             -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
             "crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
+      # A case that forwards interfaces uses the pinned OpenShell CLI, as a person would.
+      - name: Install the pinned OpenShell CLI
+        if: contains(matrix.case, 'interfaces')
+        run: |
+          url=$(jq -r '.platforms.linux_amd64.openshell.url' versions.json)
+          sha=$(jq -r '.platforms.linux_amd64.openshell.sha256' versions.json)
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/openshell.tar.gz" "$url"
+          echo "$sha  $RUNNER_TEMP/openshell.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/openshell"
+          # The archive holds only the openshell executable.
+          tar -xzf "$RUNNER_TEMP/openshell.tar.gz" -C "$RUNNER_TEMP/openshell"
+          test -x "$RUNNER_TEMP/openshell/openshell"
+          echo "NEMOCLAW_TEST_OPENSHELL=$RUNNER_TEMP/openshell/openshell" >> "$GITHUB_ENV"
       - name: Run the scenario
         working-directory: crates/nemoclaw-e2e
         env:
