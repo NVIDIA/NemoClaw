@@ -80,8 +80,10 @@ for both onboarding calls, rebuild, restart, consumer, credential scan and sibli
 denial. Its catalogue job adds both DCode scenario budgets to the existing
 75-minute routing allowance, for a total of 243 minutes. This preserves the
 inherited suite's overall limit instead of summing every per-test failure guard.
-Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+Manual PR runs use the catalogue and job timeout from the trusted workflow commit on `main`, so
 a candidate's job-timeout change applies only after it reaches that commit.
+The protected managed-image GPU job allows 90 minutes, with 60 minutes for setup and providers,
+15 minutes for rollback, and 15 minutes reserved for cleanup, evidence, and runner headroom.
 
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
@@ -1561,6 +1563,16 @@ run, restart survival, credential non-exposure, and removal in one sandbox.
 After replacing plugin v1 with v2, it restarts through the native gateway
 command and invokes the updated tool through the running gateway. A separate
 CLI inspection cannot prove that the gateway discarded its cached plugin code.
+Each fixture version registers a distinct, no-argument local tool. A normal
+agent turn exercises admission and execution; metadata-only audit records must
+pair a successful completion with a start for the same run, tool, and call.
+This avoids assertions on weather fields, tool arguments, or reply wording.
+The audit read polls at most five times, one second apart, for asynchronous
+persistence; it never repeats the agent turn. Existing admin approval grants
+access to the audit command. Execution of each version's distinct tool proves
+installation and replacement; JSON plugin inventory proves removal. Those
+postconditions replace redundant install and uninstall exit checks. The same
+checks run for source installs and baked Launchables.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
 no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
 container, observes `Error`, and requires a different container to restore both the workspace and
@@ -2520,13 +2532,20 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
-The 75-minute job records its start before checkout. Setup and provider qualification share the first
-45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
+The 90-minute job records its start before checkout. Setup and provider qualification share the first
+60 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
 limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
 and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
 and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
 fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
 NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
+NIM and vLLM readiness probes attempt to retain bounded, redacted container state and the last 200
+log lines when they fail or receive SIGTERM or SIGINT. Diagnostics use the verified full container
+ID before owner cleanup removes the container. The existing command timeout and kill grace bound
+diagnostic collection: after supervisor termination, it has only the remaining grace period.
+A hung diagnostic command is killed when that grace expires, so evidence may be partial.
+Successful readiness does not collect logs. The AMD64 cache upload uses fast compression for its
+uncompressed Docker image archive; image identities and offline-build checks remain unchanged.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.

@@ -221,6 +221,8 @@ describe("local inference helpers", () => {
     expect(getLocalProviderHealthCheck("vllm-local")).toEqual([
       "curl",
       "-sf",
+      "--write-out",
+      "\\n%{http_code}",
       "http://127.0.0.1:8000/v1/models",
     ]);
     expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toEqual([
@@ -235,6 +237,8 @@ describe("local inference helpers", () => {
       "--max-time",
       "10",
       "-sf",
+      "--write-out",
+      "\\n%{http_code}",
       "http://host.openshell.internal:8000/v1/models",
     ]);
   });
@@ -266,7 +270,7 @@ describe("local inference helpers", () => {
     expect(isLocalProviderProbeOutputHealthy("http://10.40.0.1:8000/health", "000")).toBe(false);
     expect(isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", "000")).toBe(false);
     expect(
-      isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", '{"data":[]}'),
+      isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", '{"data":[]}\n200'),
     ).toBe(true);
   });
 
@@ -338,7 +342,7 @@ describe("local inference helpers", () => {
           ? ""
           : cmd.includes("run")
             ? ""
-            : '{"data":[]}';
+            : '{"data":[]}\n200';
     const noopSleep = () => {};
     const result = validateLocalProvider("vllm-local", mockCapture, noopSleep);
     expect(result.ok).toBe(false);
@@ -944,7 +948,7 @@ describe("local inference helpers", () => {
     const mockCapture = () => {
       callCount += 1;
       // Call 1: host check succeeds
-      if (callCount === 1) return '{"data":[]}';
+      if (callCount === 1) return '{"data":[]}\n200';
       // Calls 2+: container check + diagnostics all fail
       return "";
     };
