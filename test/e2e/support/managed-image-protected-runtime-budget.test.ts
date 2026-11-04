@@ -25,12 +25,12 @@ const result: ShellProbeResult = {
   artifacts: { stdout: "stdout", stderr: "stderr", result: "command-result.json" },
 };
 
-it("charges setup to the job budget and reserves rollback, cleanup, and evidence within 75 minutes", () => {
+it("charges setup to the job budget and reserves rollback, cleanup, and evidence within 90 minutes", () => {
   const setup = 12 * MINUTE;
   const deadlines = protectedRuntimeDeadlines(String(START), START + setup);
-  expect(deadlines.providers - START).toBe(45 * MINUTE);
+  expect(deadlines.providers - START).toBe(60 * MINUTE);
   expect(deadlines.rollback - deadlines.providers).toBe(PROTECTED_RUNTIME_ROLLBACK_MS);
-  expect(deadlines.testTimeoutMs).toBe(48 * MINUTE);
+  expect(deadlines.testTimeoutMs).toBe(63 * MINUTE);
   expect(
     setup +
       deadlines.testTimeoutMs +
@@ -45,7 +45,7 @@ it.each([undefined, "", "0", "NaN", "Infinity", "-1", String(START + 1)])(
   (value) => expect(() => protectedRuntimeDeadlines(value, START)).toThrow("job start"),
 );
 
-it("bounds nine slow serial transactions before they consume rollback or cleanup time", async () => {
+it("bounds slow serial transactions before they consume rollback or cleanup time", async () => {
   let now = START + 12 * MINUTE;
   const deadlines = protectedRuntimeDeadlines(String(START), now);
   const command = vi.fn(
@@ -60,10 +60,12 @@ it("bounds nine slow serial transactions before they consume rollback or cleanup
   await host.command("qualification-2", [], { timeoutMs: 10 * MINUTE });
   await host.command("qualification-3", [], { timeoutMs: 10 * MINUTE });
   await host.command("qualification-4", [], { timeoutMs: 10 * MINUTE });
-  await expect(host.command("qualification-5", [], { timeoutMs: 10 * MINUTE })).rejects.toThrow(
+  await host.command("qualification-5", [], { timeoutMs: 10 * MINUTE });
+  await host.command("qualification-6", [], { timeoutMs: 10 * MINUTE });
+  await expect(host.command("qualification-7", [], { timeoutMs: 10 * MINUTE })).rejects.toThrow(
     "exceeded its budget",
   );
-  expect(command).toHaveBeenCalledTimes(5);
+  expect(command).toHaveBeenCalledTimes(7);
   expect(now).toBeLessThan(deadlines.providers);
   expect(deadlines.rollback - now).toBeGreaterThanOrEqual(PROTECTED_RUNTIME_ROLLBACK_MS);
 });
@@ -102,7 +104,7 @@ it("rejects a command that finishes after the shared deadline even when it exits
 });
 
 it("refuses late setup before qualification can register or mutate runtime resources", () => {
-  expect(() => protectedRuntimeDeadlines(String(START), START + 45 * MINUTE)).toThrow(
+  expect(() => protectedRuntimeDeadlines(String(START), START + 60 * MINUTE)).toThrow(
     "setup exhausted",
   );
 });

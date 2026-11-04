@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { npmPackFilePaths } from "../helpers/npm-pack-result";
 import {
   createMinimumOpenClawPluginApi,
@@ -135,6 +136,44 @@ describe("packed NemoClaw plugin metadata", () => {
     expect(gatewayMinimum).toEqual(minimumHostApi);
     expect(compareRelease(buildVersion, pluginApiMinimum)).toBeGreaterThanOrEqual(0);
     expect(compareRelease(buildVersion, gatewayMinimum)).toBeGreaterThanOrEqual(0);
+  });
+
+  // source-shape-contract: compatibility -- Declared runtime bounds must not admit a host that rejects the packaged plugin's required safety hooks.
+  it("keeps agent and blueprint runtime minimums compatible with the packaged plugin", () => {
+    const plugin = readPluginPackage();
+    const pluginApiMinimum = parseRelease(
+      (plugin.openclaw?.compat?.pluginApi as string).slice(2),
+      "plugin API minimum",
+    );
+    const gatewayMinimum = parseRelease(
+      plugin.openclaw?.compat?.minGatewayVersion,
+      "gateway minimum",
+    );
+    const agent = YAML.parse(
+      fs.readFileSync(path.join(repoRoot, "agents/openclaw/manifest.yaml"), "utf8"),
+    );
+    const blueprint = YAML.parse(
+      fs.readFileSync(path.join(repoRoot, "nemoclaw-blueprint/blueprint.yaml"), "utf8"),
+    );
+    expect(agent.version_constraint).toEqual(expect.stringMatching(/^>=\d{4}\.\d{1,2}\.\d{1,2}$/));
+    const agentMinimum = parseRelease(agent.version_constraint.slice(2), "agent minimum");
+    const blueprintMinimum = parseRelease(blueprint.min_openclaw_version, "blueprint minimum");
+    expect(
+      compareRelease(agentMinimum, pluginApiMinimum),
+      "agent plugin API compatibility",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      compareRelease(agentMinimum, gatewayMinimum),
+      "agent gateway compatibility",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      compareRelease(blueprintMinimum, pluginApiMinimum),
+      "blueprint plugin API compatibility",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      compareRelease(blueprintMinimum, gatewayMinimum),
+      "blueprint gateway compatibility",
+    ).toBeGreaterThanOrEqual(0);
   });
 
   it("registers commands and hooks without a fallback provider when native primary is absent", async () => {

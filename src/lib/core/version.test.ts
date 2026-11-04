@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -67,8 +67,9 @@ describe("lib/version", () => {
     writeFileSync(join(testDir, "package.json"), JSON.stringify({ version: "1.2.3" }));
   });
 
-  it("falls back to package.json version when no git and no .version", () => {
-    expect(getVersion({ rootDir: testDir })).toBe("1.2.3");
+  it("reports 0.0.0 from the root manifest without Git metadata or a version stamp (#14026)", () => {
+    copyFileSync(join(repoRoot, "package.json"), join(testDir, "package.json"));
+    expect(getVersion({ rootDir: testDir })).toBe("0.0.0");
   });
 
   it("prefers .version file over package.json", () => {

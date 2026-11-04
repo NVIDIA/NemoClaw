@@ -22,7 +22,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/actions/sandbox/rebuild", () => mocks);
-vi.mock("../../lib/actions/sandbox/rebuild/owning-registry", () => ({
+vi.mock("../../lib/actions/sandbox/rebuild/owning-registry", async (importOriginal) => ({
+  withRebuildHostFence: (
+    await importOriginal<typeof import("../../lib/actions/sandbox/rebuild/owning-registry")>()
+  ).withRebuildHostFence,
   delegateRebuildToOwningRegistry: mocks.delegateRebuildToOwningRegistry,
   delegateRecoveryRetirementToOwningRegistry: mocks.delegateRecoveryRetirementToOwningRegistry,
 }));
@@ -127,6 +130,35 @@ describe("sandbox:rebuild command", testTimeoutOptions(15_000), () => {
       expect.objectContaining({ yes: true }),
     );
     expect(mocks.retireRebuildRecoveryBackup).not.toHaveBeenCalled();
+  });
+
+  it("frames a held host lifecycle lock before the command admits rebuild (#13808)", async () => {
+    fs.mkdirSync(path.join(home, ".nemoclaw-portable-host.lock"), { mode: 0o700 });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code}`);
+    }) as typeof process.exit);
+    const started = Date.now();
+    let output = "";
+
+    try {
+      await expect(RebuildCliCommand.run(["alpha", "--yes"], rootDir)).rejects.toThrow(
+        "process.exit:1",
+      );
+    } finally {
+      output = stderr.mock.calls.flat().join("\n");
+      exit.mockRestore();
+      stderr.mockRestore();
+    }
+
+    expect(output).toContain(
+      "Rebuild preflight failed: the host lifecycle lock could not be acquired.",
+    );
+    expect(output).toContain("Another onboarding or rebuild run may be in progress.");
+    expect(output).toContain("Aborting rebuild");
+    expect(output).not.toContain("after 120 retries");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(mocks.rebuildSandbox).not.toHaveBeenCalled();
   });
 
   it("delegates a sibling-root rebuild before the command lifecycle fence", async () => {

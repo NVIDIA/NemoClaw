@@ -3,6 +3,10 @@
 
 import { Buffer } from "node:buffer";
 import { PROVIDERLESS_INFERENCE_ENV } from "../../providerless-inference";
+import {
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../../hermes-switchyard-routing";
 
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import {
@@ -447,6 +451,9 @@ function mapHermesProfile(
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeCanonicalJson(profile.tools.enabledGateways),
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
+    [HERMES_SWITCHYARD_ROUTING_ENV]: profile.agentConfig.switchyardRouting
+      ? encodeHermesSwitchyardRoutingIntent(profile.agentConfig.switchyardRouting)
+      : "",
   };
 
   const runtimeEnvironment: MutableEnvironment = {
@@ -455,6 +462,7 @@ function mapHermesProfile(
     HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
   };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
+  delete runtimeEnvironment[HERMES_SWITCHYARD_ROUTING_ENV];
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =
