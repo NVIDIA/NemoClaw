@@ -4,7 +4,7 @@
 # GPU Autoscaling on Kubernetes
 
 Run one agent sandbox per user on Kubernetes, all sharing a GPU inference Service that Kubernetes scales from one GPU pod to several as load grows.
-The [kubernetes-gpu-autoscaling chart](https://github.com/NVIDIA/nemoclaw-community/tree/ae756c28bda501eb9c4b7ec26d977e6f0c6fd2fc/examples/recipes/nvidia/kubernetes-gpu-autoscaling) in NVIDIA/nemoclaw-community runs the inference pods, their HorizontalPodAutoscaler, and the metrics it scales on.
+The [kubernetes-gpu-autoscaling chart](https://github.com/NVIDIA/nemoclaw-community/tree/cb46db83abcadd8e069213e854b6e560149f3cdd/examples/recipes/nvidia/kubernetes-gpu-autoscaling) in NVIDIA/nemoclaw-community runs the inference pods, their HorizontalPodAutoscaler, and the metrics it scales on.
 NemoClaw runs only the gateway and the sandboxes, which reach the chart's Service as [a model server in the cluster](../../../docs/kubernetes.md#use-a-model-server-in-the-cluster).
 
 [openclaw-ollama.yaml](openclaw-ollama.yaml) declares two OpenClaw sandboxes, `user-0000` and `user-0001`, that use the chart's Ollama runtime.
@@ -16,7 +16,7 @@ No automated test covers this procedure; [current limits](../../../docs/limits.m
 - **The cluster, NemoClaw bundle and agent images** that [Deploy to Kubernetes or OpenShift](../../../docs/kubernetes.md#prerequisites) lists.
 - **For the chart:** NVIDIA GPU nodes with the NVIDIA GPU Operator and its DCGM exporter, Metrics Server, `helm` and `kubectl` with a context that can install cluster-wide charts, and `git`.
   The chart pins its Ollama and Node.js images to linux/amd64 digests, so its pods need AMD64 GPU nodes.
-  The chart's [README](https://github.com/NVIDIA/nemoclaw-community/blob/ae756c28bda501eb9c4b7ec26d977e6f0c6fd2fc/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#install-details) describes its scheduling, storage and runtime options.
+  The chart's [README](https://github.com/NVIDIA/nemoclaw-community/blob/cb46db83abcadd8e069213e854b6e560149f3cdd/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#install-details) describes its scheduling, storage and runtime options.
 - **`jq`** and the pinned OpenShell CLI, to invoke an agent.
 
 ## Install the Inference Chart
@@ -28,13 +28,14 @@ Clone the chart at the revision these instructions were written against, then in
 ```sh
 git clone https://github.com/NVIDIA/nemoclaw-community.git
 cd nemoclaw-community
-git checkout ae756c28bda501eb9c4b7ec26d977e6f0c6fd2fc
+git checkout cb46db83abcadd8e069213e854b6e560149f3cdd
 cd examples/recipes/nvidia/kubernetes-gpu-autoscaling
 INFERENCE_RUNTIME=ollama DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ./scripts/install-hpa.sh
 ```
 
 Set `DCGM_NAMESPACE` to the namespace of the DCGM exporter, `gpu-operator` for the Helm-installed GPU Operator, and `MAX_REPLICAS` to the most GPU pods the chart may run.
 The chart runs one runtime per release; installing again with another `INFERENCE_RUNTIME` replaces the release's pods.
+To run two pairings at once, see [Run Two Runtimes on Shared GPUs](#run-two-runtimes-on-shared-gpus).
 Each pod is ready, `2/2`, when the runtime has the model and the metrics proxy beside it answers:
 
 ```sh
@@ -86,6 +87,19 @@ For another pairing, install the chart with its runtime and change the file's `h
 NIM requires an NGC API key; the chart's README describes the Secrets to create before `install-hpa.sh`.
 NemoClaw itself doesn't place NIM ([#12649](https://github.com/NVIDIA/NemoClaw/issues/12649)).
 
+### Run Two Runtimes on Shared GPUs
+
+To serve Hermes with vLLM and OpenClaw with Ollama from the same GPUs, install the chart twice with its `install-two-runtimes.sh` instead of `install-hpa.sh`:
+
+```sh
+DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ./scripts/install-two-runtimes.sh
+```
+
+It installs the release `nemoclaw-gpu-vllm` in the namespace of the same name, and `nemoclaw-gpu-ollama` likewise, each with its own autoscaler whose ceiling is `MAX_REPLICAS`.
+Both ceilings count the same GPUs, so a pod that doesn't fit stays Pending until the other runtime scales down.
+For each release, use its name as the namespace and release in [Find the Service and Key](#find-the-service-and-key): its Gateway is `<release>-metrics-proxy` and its key Secret is `<release>-metrics-proxy-inference-api`.
+In the configuration, declare one inference provider and one inference per release, each with that release's key variable and model, and point each sandbox's `agent.inferenceRef` at the inference for its pairing.
+
 ## Deploy the Sandboxes
 
 From the NemoClaw repository root, build the agent image and its metadata bundle, as [Prepare Agent Images](../../../docs/kubernetes.md#prepare-agent-images) describes, then push the image and note the digest of the pushed index:
@@ -133,7 +147,8 @@ With the `oidc` profile:
 
 1. [Reach the gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
 2. [Select the gateway and workspace](../../../docs/interfaces.md#select-the-gateway-and-workspace).
-3. Copy a sandbox's command from apply's **Agents** list, or, from the deployment directory, read its runtime ID from a plan's JSON result, then send one prompt, as [Run One Headless OpenClaw Request](../../../docs/agents.md#run-one-headless-openclaw-request) describes:
+3. Copy a sandbox's command from apply's **Agents** list, or read its runtime ID from `agents.SANDBOX.runtimeId` in apply's or a plan's JSON result, then send one prompt, as [Run One Headless OpenClaw Request](../../../docs/agents.md#run-one-headless-openclaw-request) describes.
+   From the deployment directory, a plan reports the runtimes the last apply left without changing them:
 
 ```sh
 sandbox=user-0000
@@ -150,6 +165,9 @@ Watch the autoscaler's metric and replica count while agents work:
 ```sh
 kubectl --namespace nemoclaw-gpu get hpa --watch
 ```
+
+The autoscaler scales on GPU utilization or on average request latency; the chart's `scripts/set-hpa-metric.sh gpu_utilization` or `scripts/set-hpa-metric.sh latency_avg` switches an installed release between them without changing its runtime or model.
+Set `RELEASE` and `NAMESPACE` for a release other than `nemoclaw-gpu`.
 
 This directory has no load client to drive many agents at once.
 
@@ -169,5 +187,5 @@ helm uninstall nemoclaw-gpu --namespace nemoclaw-gpu
 kubectl --namespace nemoclaw-gpu delete secret nemoclaw-gpu-metrics-proxy-inference-api nemoclaw-gpu-metrics-proxy-ingress-auth
 ```
 
-The chart's [uninstall section](https://github.com/NVIDIA/nemoclaw-community/blob/ae756c28bda501eb9c4b7ec26d977e6f0c6fd2fc/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#full-recipe-uninstall) lists the Prometheus stack, Prometheus Adapter and Envoy Gateway that remain installed.
+The chart's [uninstall section](https://github.com/NVIDIA/nemoclaw-community/blob/cb46db83abcadd8e069213e854b6e560149f3cdd/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#full-recipe-uninstall) lists the Prometheus stack, Prometheus Adapter and Envoy Gateway that remain installed.
 Each GPU node keeps the downloaded model under `/var/lib/nemoclaw-gpu` until you delete it.
