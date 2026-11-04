@@ -21,6 +21,11 @@ import {
 
 const DCODE_MCP_SNAPSHOT_TMPFS = "/run/nemoclaw-dcode-mcp";
 
+export const DCODE_MCP_SNAPSHOT_RESIDUE_PROBE = `from pathlib import Path
+
+assert list(Path("${DCODE_MCP_SNAPSHOT_TMPFS}").iterdir()) == []
+`;
+
 async function assertDcodeMcpSnapshotPlatformContract(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -79,7 +84,7 @@ async function assertDcodeMcpSnapshotResidue(
   phase: string,
 ): Promise<void> {
   const script = trustedSandboxShellScript(
-    `test -z "$(find ${DCODE_MCP_SNAPSHOT_TMPFS} -mindepth 1 -maxdepth 1 -print -quit)"`,
+    `python3 -I - <<'PY'\n${DCODE_MCP_SNAPSHOT_RESIDUE_PROBE}PY`,
   );
   const result = await sandbox.execShell(sandboxName, script, {
     artifactName: `exact-main-dcode-mcp-snapshot-residue-${phase}`,
