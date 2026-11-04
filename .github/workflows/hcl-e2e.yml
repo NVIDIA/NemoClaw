@@ -2,16 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # The HCL E2E cases that need a model: hosted NVIDIA inference, or vLLM and
 # Ollama on an NVIDIA GPU runner. CI / Bundle calls it, passing its secrets,
-# whenever the plan selects the live suites, and reports it in the E2E check.
-# Run it alone with a dispatch or a push to a run-hcl-e2e/ branch.
+# whenever the plan selects the live suites, and reports it in the E2E check;
+# it runs the GPU cases except on pull requests, which NVIDIA's GPU runners
+# refuse. Dispatch it to run it alone.
 name: Live / HCL
 
 on:
   workflow_call:
+    inputs:
+      gpu:
+        description: Also run the cases that need the NVIDIA GPU runner, which refuses pull request jobs.
+        type: boolean
+        default: true
   workflow_dispatch:
-  # Like Live / Brev, opt-in pushes also work before v1 becomes the default branch.
-  push:
-    branches: [run-hcl-e2e/**]
+    inputs:
+      gpu:
+        description: Also run the cases that need the NVIDIA GPU runner.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -63,34 +71,46 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # The cases to run: those on GitHub-hosted runners always, and those on the
+  # NVIDIA GPU runner when the gpu input asks for them.
+  cases:
+    name: Select cases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.select.outputs.include }}
+    steps:
+      - id: select
+        env:
+          GPU: ${{ inputs.gpu }}
+        run: |
+          hosted='[
+            {"case": "docker-openclaw-nvidia", "runner": "ubuntu-24.04", "secret": "NVIDIA_API_KEY"},
+            {"case": "docker-openclaw-v0-parity", "runner": "ubuntu-24.04", "secret": "NVIDIA_API_KEY"},
+            {"case": "docker-hermes-v0-parity", "runner": "ubuntu-24.04", "secret": "NVIDIA_API_KEY"}
+          ]'
+          # This NVIDIA GPU runner is already used by the main E2E workflow.
+          gpu='[
+            {"case": "docker-openclaw-vllm", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": ""},
+            {"case": "docker-openclaw-hermes-vllm", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": ""},
+            {"case": "docker-openclaw-hermes-ollama", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": "NVIDIA_API_KEY"}
+          ]'
+          if [ "$GPU" = true ]; then
+            include=$(jq -cn --argjson hosted "$hosted" --argjson gpu "$gpu" '$hosted + $gpu')
+          else
+            include=$(jq -c . <<<"$hosted")
+          fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   e2e:
     name: ${{ matrix.case }}
-    needs: build
+    needs: [build, cases]
     # Runs only when the build ran.
-    if: needs.build.result == 'success'
+    if: needs.build.result == 'success' && needs.cases.result == 'success'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - case: docker-openclaw-nvidia
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
-          - case: docker-openclaw-v0-parity
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
-          - case: docker-hermes-v0-parity
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
-          - case: docker-openclaw-vllm
-            # This NVIDIA GPU runner is already used by the main E2E workflow.
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
-            secret: ""
-          - case: docker-openclaw-hermes-vllm
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
-            secret: ""
-          - case: docker-openclaw-hermes-ollama
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
-            secret: NVIDIA_API_KEY
+        include: ${{ fromJSON(needs.cases.outputs.include) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     # These cases use fixed gateway ports; finish cleanup before another run starts.

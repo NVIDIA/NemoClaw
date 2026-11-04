@@ -2,10 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 name: CI / Bundle
 on:
-  # Push a run-live/ branch to run every job, including the Docker and
-  # Kubernetes live suites, outside a pull request.
   push:
-    branches: [v1, run-live/**]
+    branches: [v1]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
   workflow_dispatch:
@@ -66,13 +64,16 @@ jobs:
   # The live suites, whenever the plan selects them, including on pull
   # requests. E2E / PLATFORM runs the Docker and Kubernetes suites from the
   # platform's test archive and bundle. E2E / HCL builds its own candidate and
-  # runs the HCL E2E cases that need a model; they use the inference secret and
-  # the GPU runner, so a fork's pull request skips them.
+  # runs the HCL E2E cases that need a model; they use the inference secret, so
+  # a fork's pull request skips them. The cases on the NVIDIA GPU runner, which
+  # refuses pull request jobs, run on v1 pushes and manual runs.
   e2e_hcl:
     name: E2E / HCL
     needs: plan
     if: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      gpu: ${{ github.event_name != 'pull_request' }}
     # The hosted cases read NVIDIA_API_KEY.
     secrets: inherit
   e2e_linux_arm64:

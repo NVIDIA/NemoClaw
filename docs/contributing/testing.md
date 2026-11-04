@@ -380,14 +380,14 @@ Use `Fixture::engine` for a fake engine so that the test runs on every platform;
 ### Live Suites
 
 `Live / Docker` and `Live / Kind` run on the Linux platforms only, from that platform's archive, bundle, and live images, after enabling Docker's containerd image store on the runner.
-They run whenever the shared validation plan selects them: on every `v1` push, `run-live/` branch push, and manual run, and on a pull request whose changes reach the live build.
+They run whenever the shared validation plan selects them: on every `v1` push and manual run, and on a pull request whose changes reach the live build.
 On a pull request, the plan compares the merge commit with its first parent, the PR base.
 A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
 [Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suites.
 After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
 
 [Live / HCL](../../.github/workflows/hcl-e2e.yml) builds its own bundle, test executable, and agent images and runs the [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model, on hosted NVIDIA inference or the NVIDIA GPU runner.
-CI / Bundle runs them as `E2E / HCL` whenever the plan selects the live suites, except on a fork's pull request, which cannot use the inference secret or the GPU runner; dispatch the workflow or push a `run-hcl-e2e/` branch to run them alone.
+CI / Bundle runs them as `E2E / HCL` whenever the plan selects the live suites, except on a fork's pull request, which cannot use the inference secret. On a pull request it runs only the hosted cases, because NVIDIA's GPU runners refuse jobs that a pull request starts; `v1` pushes and manual runs add the GPU cases. Dispatch Live / HCL to run it alone, with or without the GPU cases.
 
 The required `E2E` check fails when the plan fails or a selected live suite fails; it passes when the plan selects no live suite.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
