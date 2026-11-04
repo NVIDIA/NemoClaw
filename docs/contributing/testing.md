@@ -161,7 +161,7 @@ A contract test runs the provider built from the checkout, but a system test run
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
 It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, and an image derived from the dummy under a fresh `nc-live-` prefix; and writes gateway documents, and binds the dummy HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
-It runs the `live-docker` profile in three nextest commands: one for the tests that need no gateway document, then one for each of the two gateway tests with its own document.
+It runs the `live-docker` profile in five nextest commands: one for the tests that need no gateway document, one for each of the two gateway tests with its own document, then one for each HCL E2E case, `docker-dummy` and `docker-openclaw-hermes-interfaces`, with its bound document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
@@ -192,8 +192,8 @@ Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Age
 |---|---|---|---|---|
 | `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
 | `lifecycle` | Each partition's nextest run | 300 s | 90 s | 180 s |
-| `live-docker` | Its four nextest commands together | 360 s | 180 s | 360 s |
-| `live-kind` | The nextest run | 300 s | 180 s | 360 s |
+| `live-docker` | Its five nextest commands together | 480 s | 180 s | 360 s |
+| `live-kind` | Its nextest commands, one per HCL case, together | 330 s | 210 s | 420 s |
 
 Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's lifecycle partitions, and a limit for any one of its tests:
 

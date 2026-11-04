@@ -5,9 +5,21 @@
 # apply lists each interface; with the pinned OpenShell CLI's forward and
 # the token apply names, OpenClaw's Control UI loads and serves its
 # configuration, Hermes's API server lists its models and answers a chat
-# completion through hosted inference, and Hermes's dashboard page loads
-# with its session token. Destroy keeps only the gateway's storage. The
-# Live / HCL workflow runs it.
+# completion with the stub model's reply, and Hermes's dashboard page loads
+# with its session token. The stub refuses requests without the run's key,
+# so the reply also shows NemoClaw sent the configured key. Destroy keeps
+# only the gateway's storage. cargo ci live-docker runs it.
+
+run "model" {
+  module {
+    source = "./model"
+  }
+
+  variables {
+    key   = var.model_key
+    reply = "nemoclaw-stub-reply"
+  }
+}
 
 run "apply" {
   module {
@@ -71,9 +83,9 @@ run "interfaces" {
         path       = "/v1/chat/completions"
         body = {
           model    = "hermes-agent"
-          messages = [{ role = "user", content = "Reply with exactly the word FOUR." }]
+          messages = [{ role = "user", content = "Reply to this NemoClaw live test." }]
         }
-        answer = "FOUR"
+        answer = "nemoclaw-stub-reply"
       }
       dashboard = {
         sandbox    = "hermes"

@@ -31,8 +31,12 @@ lifecycle:
 # linux_amd64 and 210 s on linux_arm64 in 11 v1 runs, which included the
 # runtime rebuild test since removed with the runtime builder; 228 s in one
 # linux_arm64 run without it.
+# The HCL cases now run one after another as their own commands: the dummy
+# case with its redeploy (#14178) and the interface case with two agents and
+# a stub model (#14179), so the commands take longer together. Re-measure and
+# lower this once a few runs show the new total.
 live-docker:
-  wall_seconds: 360
+  wall_seconds: 480
   test_seconds: 180
 
 # Live / Kind: at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1

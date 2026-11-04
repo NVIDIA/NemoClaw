@@ -19,6 +19,13 @@ variable "context" {
 }
 
 # A kind case's cluster, which cargo ci live-kind sets as TF_VAR_kubeconfig.
+variable "model_key" {
+  description = "The key a Docker case's stub model requires; cargo ci live-docker sets it."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "kubeconfig" {
   type    = string
   default = ""
