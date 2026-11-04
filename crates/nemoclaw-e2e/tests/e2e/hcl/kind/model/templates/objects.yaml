@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Two releases render this chart. The `namespaces` part holds what is ready
+# once created; the `workloads` part, what its release waits for.
+{{- if eq .Values.part "namespaces" }}
 # The deployment's namespace, annotated as OpenShift annotates a project.
 apiVersion: v1
 kind: Namespace
@@ -29,12 +32,19 @@ metadata:
 data:
   ca.crt: {{ .Values.issuer.ca | quote }}
 ---
-# The existing issuer: the SDK's development issuer objects, in their own
-# namespace as an identity provider's would be.
+# The existing issuer's namespace, as an identity provider's would be.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.issuer.namespace }}
+---
+# The stub model's namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.modelNamespace }}
+{{- else if eq .Values.part "workloads" }}
+# The existing issuer: the SDK's development issuer objects.
 {{- range .Values.issuer.objects }}
 ---
 {{ toYaml . }}
@@ -138,3 +148,6 @@ spec:
         - name: scratch
           emptyDir:
             sizeLimit: 16Mi
+{{- else }}
+{{- fail "part must be namespaces or workloads" }}
+{{- end }}
