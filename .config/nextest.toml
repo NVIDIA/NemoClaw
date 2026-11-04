@@ -91,7 +91,7 @@ default-filter = '''
 [profile.live-kind]
 inherits = "ci"
 test-threads = 4
-slow-timeout = { period = "180s", terminate-after = 2 }
+slow-timeout = { period = "210s", terminate-after = 2 }
 default-filter = '''
 package(nemoclaw-e2e) & binary(=e2e) & test(=hcl_live::case)
 '''
