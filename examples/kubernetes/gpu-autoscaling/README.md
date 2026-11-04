@@ -9,6 +9,7 @@ NemoClaw runs only the gateway and the sandboxes, which reach the chart's Servic
 
 [openclaw-ollama.yaml](openclaw-ollama.yaml) declares two OpenClaw sandboxes, `user-0000` and `user-0001`, that use the chart's Ollama runtime.
 The chart also serves vLLM and NVIDIA NIM; [Choose a Pairing](#choose-a-pairing) lists what to change for those.
+[two-runtimes.yaml](two-runtimes.yaml) declares a Hermes sandbox on the chart's vLLM runtime and an OpenClaw sandbox on its Ollama runtime, set up for [load.sh](load.sh), which sends prompts to the agents to load the GPUs.
 No automated test covers this procedure; [current limits](../../../docs/limits.md#platforms-models-and-placement) lists what else is untested.
 
 ## Prerequisites
@@ -17,7 +18,7 @@ No automated test covers this procedure; [current limits](../../../docs/limits.m
 - **For the chart:** NVIDIA GPU nodes with the NVIDIA GPU Operator and its DCGM exporter, Metrics Server, `helm` and `kubectl` with a context that can install cluster-wide charts, and `git`.
   The chart pins its Ollama and Node.js images to linux/amd64 digests, so its pods need AMD64 GPU nodes.
   The chart's [README](https://github.com/NVIDIA/nemoclaw-community/blob/cb46db83abcadd8e069213e854b6e560149f3cdd/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#install-details) describes its scheduling, storage and runtime options.
-- **`jq`** and the pinned OpenShell CLI, to invoke an agent.
+- **`jq`** and the pinned OpenShell CLI, to invoke an agent, and **`curl`**, for `load.sh`.
 
 ## Install the Inference Chart
 
@@ -98,7 +99,7 @@ DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ./scripts/install-two-runtimes.sh
 It installs the release `nemoclaw-gpu-vllm` in the namespace of the same name, and `nemoclaw-gpu-ollama` likewise, each with its own autoscaler whose ceiling is `MAX_REPLICAS`.
 Both ceilings count the same GPUs, so a pod that doesn't fit stays Pending until the other runtime scales down.
 For each release, use its name as the namespace and release in [Find the Service and Key](#find-the-service-and-key): its Gateway is `<release>-metrics-proxy` and its key Secret is `<release>-metrics-proxy-inference-api`.
-In the configuration, declare one inference provider and one inference per release, each with that release's key variable and model, and point each sandbox's `agent.inferenceRef` at the inference for its pairing.
+In the configuration, declare one inference provider and one inference per release, each with that release's key variable and model, and point each sandbox's `agent.inferenceRef` at the inference for its pairing, as [two-runtimes.yaml](two-runtimes.yaml) does with `GPU_VLLM_API_KEY` and `GPU_OLLAMA_API_KEY`.
 
 ## Deploy the Sandboxes
 
@@ -109,6 +110,8 @@ mkdir -p .local/gpu-autoscaling
 cargo images build --platform linux/amd64 openclaw
 cargo images export-metadata nc-fabric:openclaw --output .local/openclaw.metadata.json
 ```
+
+For [two-runtimes.yaml](two-runtimes.yaml), build and export `hermes` as well, and set `HERMES_IMAGE_METADATA` and `OPENCLAW_IMAGE_METADATA` to the two bundles instead of `NEMOCLAW_AGENT_IMAGE_METADATA`.
 
 Copy the file into the deployment directory:
 
@@ -169,7 +172,40 @@ kubectl --namespace nemoclaw-gpu get hpa --watch
 The autoscaler scales on GPU utilization or on average request latency; the chart's `scripts/set-hpa-metric.sh gpu_utilization` or `scripts/set-hpa-metric.sh latency_avg` switches an installed release between them without changing its runtime or model.
 Set `RELEASE` and `NAMESPACE` for a release other than `nemoclaw-gpu`.
 
-This directory has no load client to drive many agents at once.
+## Drive Load Through the Agents
+
+[load.sh](load.sh) sends prompts to every agent of a deployment, a bounded number at a time, and reports each request's latency and errors.
+It reaches the agents only through the gateway, as the OpenShell CLI, so the deployment must use the `oidc` profile, as [two-runtimes.yaml](two-runtimes.yaml) does.
+It sends each sandbox's prompts one of two ways:
+
+- **Hermes's API server**, for a sandbox whose apply result lists an `api` interface and a service URL for it: an OpenAI chat completion to that URL, with the interface's token.
+  Declare both in the sandbox, as `user-0000` in `two-runtimes.yaml` does: `harness.settings.interfaces.api` with its `port`, and a `serviceExposures` entry named `api` for that port with `authorizationMode: BEARER_PASSTHROUGH`, so that the gateway passes the token on to Hermes.
+  The script reads the token once, with `openshell sandbox exec … cat` and the `tokenPath` that apply reports.
+- **`fabric-agent-ctl invoke`**, for any other sandbox, such as OpenClaw or Deep Agents: through `openshell sandbox exec`, with the runtime ID that apply reports under `agents`.
+
+Apply with JSON output and keep the result, from the deployment directory:
+
+```sh
+nemoclaw apply -o json --progress off --non-interactive --state-dir state deployment.yaml > apply.json
+```
+
+Then, as in [Invoke an Agent](#invoke-an-agent), keep the gateway's port forward running and select the gateway and workspace, and run the script with the number of prompts and the most to send at once:
+
+```sh
+PROMPTS=40 CONCURRENCY=8 ../../examples/kubernetes/gpu-autoscaling/load.sh apply.json
+```
+
+A service URL names the gateway's own port, `8080`, under `openshell.localhost`; the script connects to the port forward instead, at `GATEWAY_ADDRESS`, `127.0.0.1:17671` by default, and presents the client certificate from `MTLS_DIR`, by default the directory where you copied it for the OpenShell CLI.
+`PROMPT_FILE` replaces the built-in prompts with one prompt per line, `TIMEOUT` limits each request, 300 seconds by default, and `RESULTS` names a file for one JSON line per request.
+The script prints how many prompts it sent and how many replied, the median, 95th-percentile and longest latency of replies, overall and per sandbox, up to 10 failures, and one reply per sandbox.
+It exits nonzero if any request failed.
+A request that reaches `TIMEOUT` counts as failed; the script stops waiting for it but doesn't cancel the agent's run.
+
+- Each apply that starts a new runtime changes its runtime ID and Hermes's token: apply again with `-o json`, then rerun the script.
+- Each `fabric-agent-ctl invoke` is one `openshell sandbox exec` through the gateway, which NemoClaw limits to one CPU ([limits](../../../docs/limits.md)), and Fabric runs one invocation at a time per runtime, so concurrent prompts to one such sandbox wait in the sandbox, not on the GPUs.
+- Hermes's API server runs at most 10 requests at once per sandbox by default and answers `429` beyond that.
+- A service URL skips the gateway's sign-in: anyone who can reach the gateway's listener with its client certificate can reach Hermes's API, which only its token protects; see [who can use an interface](../../../docs/interfaces.md#who-can-use-an-interface).
+- The OpenShell CLI doesn't renew a token it got through client credentials ([NVIDIA/OpenShell#4287](https://github.com/NVIDIA/OpenShell/issues/4287)); for a run longer than the token's lifetime, sign in again first.
 
 ## Remove the Deployment
 
