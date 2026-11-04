@@ -5,9 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
 import { readYaml, type WorkflowJob } from "../../helpers/e2e-workflow-contract";
 
-const workflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
-  ".github/workflows/candidate-upgrade-admission.yaml",
-);
+const workflow = readYaml<{
+  on: { workflow_run: { workflows: string[]; types: string[] } };
+  jobs: Record<string, WorkflowJob>;
+}>(".github/workflows/candidate-upgrade-admission.yaml");
+const reviewSignal = readYaml<{
+  name: string;
+  on: { pull_request_review: { types: string[] } };
+}>(".github/workflows/candidate-review-signal.yaml");
 const steps = workflow.jobs["candidate-upgrade-admission"]!.steps!;
 const start = steps.find((step) => step.id === "identity")!.with!.script as string;
 const finish = steps.find((step) => step.name === "Report current candidate upgrade admission")!
@@ -146,23 +151,34 @@ describe("candidate upgrade admission status", () => {
     expect(f.status).toHaveBeenLastCalledWith(expect.objectContaining({ state: "failure" }));
   });
 
-  it("refreshes current admission after the read-only review signal", async () => {
-    const f = fixture();
-    f.context.eventName = "workflow_run";
-    await f.start();
-    expect(f.status).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ sha: head, context: "check-hash", state: "pending" }),
-    );
-    expect(f.outputs).toEqual({ pr_number: "123", head_sha: head, base_sha: base });
-    expect(f.list).toHaveBeenCalledExactlyOnceWith({
-      owner: "NVIDIA",
-      repo: "NemoClaw",
-      head: "NVIDIA:codex/candidate",
-      base: "main",
-      state: "open",
-      per_page: 2,
-    });
-  });
+  // source-shape-contract: security -- GitHub must relay every review change to the trusted admission controller so dismissed approvals cannot leave candidate authorization stale.
+  it.each(["submitted", "edited", "dismissed"])(
+    "refreshes admission through the configured %s review handoff",
+    async (action) => {
+      expect(reviewSignal.on.pull_request_review.types).toContain(action);
+      expect(workflow.on.workflow_run).toEqual({
+        workflows: [reviewSignal.name],
+        types: ["completed"],
+      });
+      const f = fixture();
+      f.context.eventName = "workflow_run";
+      f.context.payload.workflow_run.name = reviewSignal.name;
+      f.context.payload.workflow_run.event = Object.keys(reviewSignal.on)[0]!;
+      await f.start();
+      expect(f.status).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ sha: head, context: "check-hash", state: "pending" }),
+      );
+      expect(f.outputs).toEqual({ pr_number: "123", head_sha: head, base_sha: base });
+      expect(f.list).toHaveBeenCalledExactlyOnceWith({
+        owner: "NVIDIA",
+        repo: "NemoClaw",
+        head: "NVIDIA:codex/candidate",
+        base: "main",
+        state: "open",
+        per_page: 2,
+      });
+    },
+  );
 
   it.each(["wrong-event", "wrong-workflow", "fork", "missing-branch"])(
     "rejects a %s review signal",

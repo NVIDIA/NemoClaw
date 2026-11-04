@@ -140,31 +140,49 @@ describe("candidate upgrade admission", () => {
     );
   });
 
-  it.each([
-    "unrelated-history",
-    "truncated",
-    "missing-files",
-    "invalid-path",
-    "wrong-base",
-    "api-failure",
-  ])("denies reuse with %s comparison evidence", async (kind) => {
+  it.each(["unrelated-history", "truncated", "missing-files", "invalid-path", "wrong-base"])(
+    "denies reuse with %s comparison evidence",
+    async (kind) => {
+      const f = retainedReviewFixture();
+      const mutate: Record<string, () => unknown> = {
+        "unrelated-history": () => {
+          f.changes.merge_base_commit.sha = "f".repeat(40);
+        },
+        truncated: () => {
+          f.changes.files = Array.from({ length: 300 }, () => ({ filename: "docs/example.mdx" }));
+        },
+        "missing-files": () => Object.assign(f.changes, { files: undefined }),
+        "invalid-path": () => Object.assign(f.changes, { files: [null] }),
+        "wrong-base": () => {
+          f.changes.base_commit.sha = "f".repeat(40);
+        },
+      };
+      const error: Record<string, string> = {
+        "unrelated-history": "PR approval covering",
+        truncated: "incomplete file list",
+        "missing-files": "incomplete file list",
+        "invalid-path": "invalid file path",
+        "wrong-base": "invalid commit identities",
+      };
+      mutate[kind]!();
+      await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+        error[kind]!,
+      );
+    },
+  );
+
+  it("denies review reuse when the comparison API is unavailable", async () => {
     const f = retainedReviewFixture();
-    const mutate: Record<string, () => unknown> = {
-      "unrelated-history": () => {
-        f.changes.merge_base_commit.sha = "f".repeat(40);
-      },
-      truncated: () => {
-        f.changes.files = Array.from({ length: 300 }, () => ({ filename: "docs/example.mdx" }));
-      },
-      "missing-files": () => Object.assign(f.changes, { files: undefined }),
-      "invalid-path": () => Object.assign(f.changes, { files: [null] }),
-      "wrong-base": () => {
-        f.changes.base_commit.sha = "f".repeat(40);
-      },
-      "api-failure": () => f.request.mockRejectedValueOnce(new Error("API unavailable")),
-    };
-    mutate[kind]!();
-    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow();
+    const comparison = `/repos/NVIDIA/NemoClaw/compare/${f.reviewed}...${identity.candidateSha}?per_page=1`;
+    const responses = new Map([...f.routes].map(([path, value]) => [path, async () => value]));
+    responses.set(comparison, async () => {
+      throw new Error("API unavailable");
+    });
+    f.request.mockImplementation(async (path) => responses.get(path)!());
+    await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+      "API unavailable",
+    );
+    expect(f.request).toHaveBeenCalledWith(comparison);
   });
 
   it.each(["package.json", "scripts/lib/reviewed-npm-archive.mts"])(
