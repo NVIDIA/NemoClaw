@@ -1104,7 +1104,7 @@ function nativeRouterSetupResult(
   routedProvider: boolean,
   attachment: NativeLocalProviderAttachment | undefined,
   credentialEnv: string | undefined,
-): Pick<SetupInferenceResult, "nativeInference"> {
+): Pick<Extract<SetupInferenceResult, { ok: true }>, "nativeInference"> {
   if (!routedProvider || !attachment) return {};
   return {
     nativeInference: { endpointUrl: attachment.endpointUrl, credentialEnv: credentialEnv! },
