@@ -148,10 +148,7 @@ printf '%s\n' "$*" >> docker.log
 if [ -n "$DOCKER_FAIL_IMAGE" ]; then
     case "$1 $2" in
         'buildx bake')
-            [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1
-            for argument; do
-                [ "$argument" = "ollama-proxy.tags=nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
-            done ;;
+            [ "$3" = "$DOCKER_FAIL_IMAGE" ] && exit 1 ;;
         'buildx build')
             for argument; do
                 [ "$argument" = "nc-live-images:$DOCKER_FAIL_IMAGE" ] && exit 1
@@ -469,7 +466,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 }
 
 #[test]
-fn live_images_builds_the_agent_images_dummy_and_proxy_images_once_and_saves_them_compressed() {
+fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     let output = fixture.run(&["live-images"]);
@@ -494,21 +491,13 @@ fn live_images_builds_the_agent_images_dummy_and_proxy_images_once_and_saves_the
             "{log}"
         );
     }
-    // The proxy builds from the Bake target, with a label.
-    assert!(
-        log.lines()
-            .any(|line| line.starts_with("buildx bake ollama-proxy --load")
-                && line.contains("ollama-proxy.tags=nc-live-images:proxy-a")
-                && line.contains("ollama-proxy.labels.org.nemoclaw.test=proxy-a")),
-        "{log}"
-    );
     assert!(!log.contains("buildx build"), "{log}");
     assert!(!log.lines().any(|line| line.starts_with("save ")), "{log}");
     let archive =
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:deepagents-code docker.io/library/nc-live-images:dummy docker.io/library/nc-live-images:proxy-a",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:deepagents-code docker.io/library/nc-live-images:dummy",
         "{archive}"
     );
 }
@@ -520,7 +509,7 @@ fn live_images_report_each_build_duration() {
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
-    for image in ["openclaw", "hermes", "deepagents-code", "dummy", "proxy-a"] {
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         let tag = format!("nc-live-images:{image}");
         let start = report
             .find(&format!("Building live image {tag}\n"))
@@ -544,7 +533,7 @@ fn live_images_report_each_build_duration() {
 
 #[test]
 fn live_images_report_failed_build_duration_and_stop() {
-    let images = ["openclaw", "hermes", "deepagents-code", "dummy", "proxy-a"];
+    let images = ["openclaw", "hermes", "deepagents-code", "dummy"];
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
@@ -618,7 +607,7 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
     );
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
-    for image in ["openclaw", "hermes", "deepagents-code", "dummy", "proxy-a"] {
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         assert!(
             log.lines().any(|line| line
                 .strip_prefix(&format!("tag nc-live-images:{image} nc-live-"))
@@ -767,7 +756,7 @@ fn lifecycle_preserves_ci_profiles_and_explicit_worker_overrides() {
 }
 
 #[test]
-fn live_docker_pulls_a_v1_commits_images_and_derives_the_proxy_instead_of_building() {
+fn live_docker_pulls_a_v1_commits_images_instead_of_building() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     fixture.seed_live_inputs();
@@ -780,13 +769,7 @@ fn live_docker_pulls_a_v1_commits_images_and_derives_the_proxy_instead_of_buildi
     );
     let log = fixture.docker_log();
     let package = "ghcr.io/nvidia/nemoclaw/v1-ci";
-    for image in [
-        "openclaw",
-        "hermes",
-        "deepagents-code",
-        "dummy",
-        "ollama-proxy",
-    ] {
+    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
         let pulled = format!("pull --quiet {package}:{image}-{commit}-");
         assert!(
             log.lines().any(|line| line.starts_with(&pulled)),
@@ -803,8 +786,8 @@ fn live_docker_pulls_a_v1_commits_images_and_derives_the_proxy_instead_of_buildi
             "{image} not named for this run: {log}"
         );
     }
-    // No agent or proxy builds and no archive: only one-layer images on the
-    // pulled ones, the proxy and the derived reference image.
+    // No agent builds and no archive: only the derived reference image, one
+    // layer on the pulled one.
     assert!(
         !log.contains("buildx bake") && !log.lines().any(|line| line.starts_with("load")),
         "{log}"
@@ -813,16 +796,12 @@ fn live_docker_pulls_a_v1_commits_images_and_derives_the_proxy_instead_of_buildi
         .lines()
         .filter(|line| line.contains("buildx build"))
         .collect();
-    assert_eq!(builds.len(), 2, "{log}");
-    for image in ["proxy-a", "dummy-derived"] {
-        assert!(
-            builds
-                .iter()
-                .any(|line| line.starts_with("buildx build --builder default")
-                    && line.contains(&format!(":{image} "))),
-            "{image} not derived: {log}"
-        );
-    }
+    assert_eq!(builds.len(), 1, "{log}");
+    assert!(
+        builds[0].starts_with("buildx build --builder default")
+            && builds[0].contains(":dummy-derived "),
+        "dummy-derived not derived: {log}"
+    );
 }
 
 #[test]

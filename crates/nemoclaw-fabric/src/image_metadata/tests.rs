@@ -231,6 +231,10 @@ fn local_file_errors_do_not_expose_paths_or_contents() {
     std::fs::write(&path, b"PRIVATE_SENTINEL").unwrap();
     let invalid = observe(&source, "IMAGE_METADATA", &image);
     assert_eq!(invalid.status, ObservationStatus::Unknown);
+    assert_eq!(
+        invalid.reason.as_deref(),
+        Some("the image metadata bundle that IMAGE_METADATA names is missing or invalid")
+    );
     assert!(
         !serde_json::to_string(&invalid)
             .unwrap()
@@ -239,5 +243,37 @@ fn local_file_errors_do_not_expose_paths_or_contents() {
     assert_eq!(
         observe(&Source("relative.json".into()), "IMAGE_METADATA", &image).status,
         ObservationStatus::Unknown
+    );
+}
+
+#[test]
+fn another_images_bundle_names_the_variable_and_the_missing_digest() {
+    struct Source(String);
+    impl Secrets for Source {
+        fn resolve(&self, _: &str) -> Result<String, ObservationError> {
+            Ok(self.0.clone())
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("bundle.json");
+    let (image, _) = fixture(true, &["arm64"]);
+    let (other, bundle) = fixture(true, &["amd64"]);
+    assert_ne!(image, other);
+    std::fs::write(&path, serde_json::to_vec(&bundle).unwrap()).unwrap();
+    let observed = observe(
+        &Source(path.to_string_lossy().into_owned()),
+        "IMAGE_METADATA",
+        &image,
+    );
+    assert_eq!(observed.status, ObservationStatus::Unknown);
+    let (_, digest) = image.rsplit_once('@').unwrap();
+    assert_eq!(
+        observed.reason.as_deref(),
+        Some(
+            format!(
+                "the image metadata bundle that IMAGE_METADATA names doesn't describe {digest}"
+            )
+            .as_str()
+        )
     );
 }

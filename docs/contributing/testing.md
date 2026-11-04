@@ -121,7 +121,7 @@ A coverage test in each binary requires a contract test for every type the provi
 A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
 System tests live in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which holds only tests against local fixtures; the `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) selects the whole binary.
 Its `hcl/` directory holds the `tofu test` scenarios, which the `hcl_integration` module in `tofu_test/` runs: shared NemoClaw documents, unchanged examples, and authored HCL examples.
-Its `rust/` directory holds the `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, and `helm_recovery` modules, which keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#system-tests) says which a check belongs in.
+Its `rust/` directory holds the `container_service`, `deployment`, `export_observations`, `fabric_deployment`, `multi_agent`, `remote_service`, and `helm_recovery` modules, which keep the SDK and CLI behavior that `tofu test` cannot observe. [Run integration tests](integration-tests.md#system-tests) says which a check belongs in.
 On Unix, `helm_recovery` runs the bundle's OpenTofu and Helm provider against an in-memory Kubernetes API.
 The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
 [Run integration tests](integration-tests.md#system-tests) describes the scenarios.
@@ -133,7 +133,7 @@ Live tests use real Docker engines, kind clusters, images, or remote hosts, and 
 Its [HCL E2E scenarios](live-tests.md#hcl-e2e-scenarios) are in `tests/e2e/hcl`, and the live tests not yet migrated to them are Rust modules in `tests/e2e/rust`.
 The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` and `kubernetes_chart` tests and its kind HCL E2E scenario.
 The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
-Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
+Other ignored tests, such as the Brev and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 
 ## Run Each Layer
@@ -161,7 +161,7 @@ A contract test runs the provider built from the checkout, but a system test run
 [Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
-It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, an image derived from the dummy, and two proxy images under a fresh `nc-live-` prefix; and writes gateway documents, and binds the dummy HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, and an image derived from the dummy under a fresh `nc-live-` prefix; and writes gateway documents, and binds the dummy HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
@@ -176,13 +176,13 @@ It deletes the cluster and its image tag whether or not the tests pass; set `NEM
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
 To build the live images once for both suites, run `cargo ci live-images`.
-It builds the OpenClaw, Hermes, and Deep Agents Code agent images, the reference dummy image, and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+It builds the OpenClaw, Hermes, and Deep Agents Code agent images and the reference dummy image under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
 The command exports directly from Docker's local containerd store before compression.
 This requires Docker to report its containerd address and namespace, `sudo -n ctr` access, and temporary disk space for the uncompressed archive.
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
-Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Agents Code, reference, and proxy images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`, and derives the two proxy images from the pushed proxy with one label each.
+Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Agents Code, and reference images that a `v1` commit pushed to `ghcr.io/nvidia/nemoclaw/v1-ci`, after `docker login ghcr.io`.
 `cargo run -p nemoclaw-build -- changes live-images --base REV` names such a commit: the newest of the latest 30 on `REV`'s first-parent history that pushed all five images for both architectures, provided the image rules find no change between it and `HEAD`.
 
 ## Budgets and Per-Test Limits
@@ -549,6 +549,15 @@ cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
 There is no coverage threshold or CI coverage job.
 
 ## Write Tests
+
+Put each test at the layer that owns its behavior, and don't repeat a check that a lower layer covers:
+
+1. Unit: one crate's rule, with in-process fakes.
+2. Contract: one provider type through OpenTofu, in its `tests/contract/hcl/` scenarios.
+3. Integration: the compiled graph across providers in a `tests/integration/hcl/` scenario, or, in `tests/integration/rust/`, what `tofu test` cannot observe: the SDK and CLI, expected provider errors, saved plans, and interrupted or cancelled operations.
+4. Live E2E: successful paths that need a real engine, cluster, image, model, or host.
+
+At each layer, prefer a `tofu test` scenario to a Rust test. The [`write-tests` skill](../../.agents/skills/write-tests/SKILL.md) walks through the choice.
 
 Write each test as input, operation, and expected result, and name the observable behavior and its conditions in its title.
 For deployment tests, keep the YAML and expected plan and apply resource actions easy to find.

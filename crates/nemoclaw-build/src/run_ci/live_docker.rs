@@ -232,7 +232,6 @@ fn prepare(
             live_images::build_hermes(platform, &prefix)?;
             live_images::build_deepagents_code(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
-            live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
@@ -339,10 +338,6 @@ fn prepare(
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
-        (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE".into(),
-            by_digest(&prefix, "proxy-a")?,
-        ),
         (
             "NEMOCLAW_TEST_GATEWAY_STATE".into(),
             path(&inputs.join("recovery-state")),

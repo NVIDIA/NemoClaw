@@ -365,14 +365,8 @@ pub const LIVE_HERMES: &str = "hermes";
 pub const LIVE_DEEPAGENTS_CODE: &str = "deepagents-code";
 
 /// The pushed images the live suites can pull instead of building: the agent,
-/// Hermes, Deep Agents Code, the reference image, and the proxy.
-pub const LIVE_PULLED: [&str; 5] = [
-    LIVE_AGENT.0,
-    LIVE_HERMES,
-    LIVE_DEEPAGENTS_CODE,
-    "dummy",
-    "ollama-proxy",
-];
+/// Hermes, Deep Agents Code, and the reference image.
+pub const LIVE_PULLED: [&str; 4] = [LIVE_AGENT.0, LIVE_HERMES, LIVE_DEEPAGENTS_CODE, "dummy"];
 
 /// The reference `v1` pushed for `name` at `commit` on one Linux architecture.
 pub fn commit_image(name: &str, commit: &str, arch: &str) -> String {

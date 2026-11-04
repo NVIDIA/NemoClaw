@@ -57,6 +57,10 @@ cargo images export-metadata nc-fabric:openclaw --output openclaw.metadata.json
 Push the image, then use the digest of the pushed index in `image.ref`.
 The bundle is checked against that digest, so it must come from the same build.
 It covers every Linux platform the index lists, so one bundle serves ARM64 and AMD64 nodes.
+When you copy the image to another registry, copy the whole index so its digest stays the same; besides its platform's image, an index from `cargo images build` lists an attestation manifest that Buildx adds.
+With `oc image mirror`, pass `--keep-manifest-list=true --filter-by-os='.*'`; by default it copies only the image for the platform `oc` runs on.
+If a copy changes the digest, write the bundle again from the copy with `--registry`, as [Build agent images](build.md#build-agent-images) describes.
+For OpenShift's internal registry, reference the copy by the address nodes pull from, `image-registry.openshift-image-registry.svc:5000/<namespace>/<name>@<digest>`, and let the deployment's service accounts pull from that namespace, for example with the `system:image-puller` role.
 Set the environment variable named in `image.metadata` to the bundle's path before each command.
 See [Build agent images](build.md#build-agent-images) for the harnesses each platform builds.
 
@@ -145,7 +149,7 @@ With this profile, the namespace holds no development issuer, and the state dire
 
 With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](interfaces.md#invoke-an-agent) and run other `openshell` commands.
 It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
-These steps have not been run on a cluster.
+No automated test covers these steps; [#14131](https://github.com/NVIDIA/NemoClaw/issues/14131) records one manual run against a bare-metal single-node OpenShift 4.22 cluster with Keycloak as the issuer.
 
 In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
 Leave the forward running:
@@ -174,7 +178,11 @@ done
 chmod 600 "$mtls/tls.key"
 ```
 
-Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI with a localhost redirect.
+Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI.
+The CLI receives the sign-in on `http://127.0.0.1` at a free port, path `/callback`, so that client must accept that redirect on any port.
+The CLI checks the issuer's certificate against the client host's trusted CAs.
+If the host doesn't trust the CA that signed it, such as the CA in `caConfigMap`, save that CA's certificate in a PEM file and set `SSL_CERT_FILE` to its path for every `openshell` command; the CLI then trusts only the certificates in that file, and it contacts the issuer whenever it refreshes your token.
+The browser that opens for the sign-in must trust that CA too, or it warns about the issuer's certificate.
 The CLI opens a browser to sign in, and presents the client certificate together with your token:
 
 ```sh
