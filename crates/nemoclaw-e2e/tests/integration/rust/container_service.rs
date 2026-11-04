@@ -335,12 +335,21 @@ impl Scenario {
         .await;
         let web = Arc::new(Mutex::new(VecDeque::from([200])));
         let web_requests = Arc::new(Mutex::new(0));
-        let (statuses, requests) = (web.clone(), web_requests.clone());
+        // Only this deployment's readiness check knows the path, so a request
+        // that another process sends to a reused port is not counted.
+        let health_path = format!(
+            "/health/{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let (statuses, requests, path) = (web.clone(), web_requests.clone(), health_path.clone());
         let web_endpoint = http_fixture::Fixture::start_tcp(move |request| {
-            assert_eq!(
-                (request.method.as_str(), request.path.as_str()),
-                ("GET", "/health")
-            );
+            if (request.method.as_str(), request.path.as_str()) != ("GET", path.as_str()) {
+                return Some((404, Vec::new()));
+            }
             *requests.lock().unwrap() += 1;
             Some((next(&mut statuses.lock().unwrap()).unwrap(), Vec::new()))
         })
@@ -362,7 +371,7 @@ impl Scenario {
                 "services":{
                     "web":{"kind":"container","image":application_image('a'),
                         "publication":{"bindAddress":"127.0.0.1","port":port},
-                        "readiness":{"path":"/health","timeoutSeconds":8}},
+                        "readiness":{"path":health_path,"timeoutSeconds":8}},
                     "worker":{"kind":"container","image":application_image('a'),
                         "readiness":{"runtimeStatus":STATUS,"timeoutSeconds":8}},
                     "checked":{"kind":"container","image":application_image('a'),
@@ -708,37 +717,37 @@ async fn readiness_that_never_arrives_times_out_within_its_bound_and_retry_compl
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake Docker engine and OpenShell fixture"]
 async fn interrupted_setup_is_unfinished_and_retry_completes_without_duplicates() {
-    let s = Scenario::new().await;
+    let mut s = Scenario::new().await;
+    // One application, so no other container is being created when the
+    // interrupt arrives: only its readiness wait is interrupted.
+    let services = s.document["spec"]["services"].as_object_mut().unwrap();
+    services.retain(|name, _| name == "web");
     s.web_statuses(&[503]);
-    let web = s.container_name("web");
     let interrupted = async {
-        // Interrupt while apply waits for the created web container.
-        while !s.application_containers().contains(&web) || *s.web_requests.lock().unwrap() == 0 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        // The first request to the web container's health path comes from
+        // its readiness check, which starts only after the provider has
+        // created and started the container.
+        while *s.web_requests.lock().unwrap() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         s.cancel.cancel();
-        Instant::now()
     };
-    let (result, cancelled) = tokio::join!(s.apply(), interrupted);
-    assert!(result.is_err(), "{result:?}");
-    // Diagnostics for #14167's darwin failure: what the interrupted apply saved.
-    let state: Value = std::fs::read(s._directory.path().join("terraform.tfstate"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default();
-    let saved: Vec<String> = state["resources"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|r| r["type"] == "docker_container")
-        .map(|r| format!("{} {}", r["name"], r["instances"]))
-        .collect();
-    eprintln!(
-        "interrupted: {result:?} {:?} after cancel; serial {}; saved {saved:#?}\n{:#?}",
-        cancelled.elapsed(),
-        state["serial"],
-        s.container_log()
+    let (result, ()) = tokio::join!(s.apply(), interrupted);
+    assert!(
+        matches!(result, Err(nemoclaw_sdk::Error::Cancelled)),
+        "{result:?}"
     );
+    // The interrupted apply kept its record of the created container.
+    let state: Value = serde_json::from_slice(
+        &std::fs::read(s._directory.path().join("terraform.tfstate")).unwrap(),
+    )
+    .unwrap();
+    let recorded = state["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["type"] == "docker_container" && r["name"] == "container_service_web");
+    assert!(recorded, "{:#?}", s.container_log());
     let error = s
         .deployment
         .export(&CancellationToken::new())
@@ -750,7 +759,19 @@ async fn interrupted_setup_is_unfinished_and_retry_completes_without_duplicates(
     let retry = CancellationToken::new();
     s.deployment.apply(&s.parsed(), &retry).await.unwrap();
     assert_eq!(creates(&s, "web"), 1, "{:#?}", s.container_log());
-    assert_one_container_each(&s);
+    let web = s.container_name("web");
+    assert_eq!(
+        s.application_containers(),
+        std::slice::from_ref(&web),
+        "{:#?}",
+        s.container_log()
+    );
+    let volumes: Vec<String> = s
+        .volumes()
+        .into_iter()
+        .filter(|v| v.contains("-container-"))
+        .collect();
+    assert_eq!(volumes, [format!("{web}-data")]);
     s.assert_foreign_untouched();
     s.assert_no_unexpected_requests();
 }
