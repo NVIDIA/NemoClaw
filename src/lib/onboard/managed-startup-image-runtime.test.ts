@@ -757,26 +757,70 @@ describe("managed startup image runtime", () => {
     expect(() => verifyHermesSwitchyardRoutingFiles({}, paths)).not.toThrow();
   });
 
-  it("rejects committed Switchyard routing drift on replay (#13862)", () => {
-    const { environment, paths, serialized } = switchyardRoutingFixture();
-    const filesystem = mockRootReplayFilesystem(
-      [],
-      new Map([
-        [paths.relayPluginsSource, { contents: serialized.relayPluginsToml, mode: 0o600 }],
-        [paths.relayPluginStateSource, { contents: serialized.relayPluginStateJson, mode: 0o600 }],
+  it.each([
+    ["Relay activation", "relayPluginsTarget", "private activation contents"],
+    ["Relay state", "relayPluginStateTarget", "private state contents"],
+    ["legacy deployment", "switchyardDeploymentTarget", null],
+  ] as const)(
+    "requires an independent backup for data recovery without changing rejected %s (#13865)",
+    (_label, targetKey, replacement) => {
+      const { environment, paths, serialized } = switchyardRoutingFixture();
+      const filesystem = mockRootReplayFilesystem(
+        [],
+        new Map([
+          [paths.relayPluginsTarget, { contents: serialized.relayPluginsToml, mode: 0o444 }],
+          [
+            paths.relayPluginStateTarget,
+            { contents: serialized.relayPluginStateJson, mode: 0o444 },
+          ],
+          [
+            paths.switchyardDeploymentTarget,
+            { contents: serialized.switchyardDeploymentToml, mode: 0o444 },
+          ],
+        ]),
+      );
+      const legacyDeployment = serialized.switchyardDeploymentToml.replaceAll(
+        /^timeout_ms = 120000\nmax_retries = 0\n/gm,
+        "",
+      );
+      filesystem.writeFile(paths[targetKey], replacement ?? legacyDeployment, 0o444);
+      const readRoutingState = () =>
         [
-          paths.switchyardDeploymentSource,
-          { contents: serialized.switchyardDeploymentToml, mode: 0o600 },
-        ],
-      ]),
-    );
-    installHermesSwitchyardRoutingFiles(environment, paths, { uid: 0, gid: 0 });
-    filesystem.writeFile(paths.relayPluginsTarget, "drifted activation", 0o444);
+          paths.relayPluginsTarget,
+          paths.relayPluginStateTarget,
+          paths.switchyardDeploymentTarget,
+        ].map((target) => {
+          const stat = fs.lstatSync(target, { bigint: true });
+          return [
+            filesystem.readFile(target),
+            stat.uid,
+            stat.gid,
+            stat.mode,
+            stat.ino,
+            stat.ctimeNs,
+            stat.nlink,
+          ];
+        });
+      const before = readRoutingState();
 
-    expect(() => verifyHermesSwitchyardRoutingFiles(environment, paths)).toThrow(
-      /committed Hermes routing artifact drifted/u,
-    );
-  });
+      expect(() => verifyHermesSwitchyardRoutingFiles(environment, paths)).toThrow(
+        expect.objectContaining({
+          name: "ManagedStartupImageRuntimeError",
+          message:
+            `Managed startup image application failed: committed Hermes routing artifact drifted: ${paths[targetKey]}\n` +
+            "Hermes startup stopped because its protected routing configuration does not match this image.\n" +
+            "Do not edit the protected routing files to bypass this check.\n" +
+            "To start a fresh Hermes sandbox, run on the host:\n" +
+            "  nemoclaw onboard --agent hermes --name <new-name> --switchyard-config <routing-config.json>\n" +
+            "Replace <new-name> with an unused sandbox name and <routing-config.json> with your Switchyard routing JSON file.\n" +
+            "This creates a fresh workspace; it does not recover data from the failed sandbox.\n" +
+            "Restoring your previous data requires an independently maintained backup.\n" +
+            "Do not delete the failed sandbox while data recovery is unresolved.",
+        }),
+      );
+      expect(readRoutingState()).toEqual(before);
+    },
+  );
 
   it("verifies a host-copied transaction only through the explicit read-only receipt mode", async () => {
     const profile = managedStartupE2eProfile("openclaw");

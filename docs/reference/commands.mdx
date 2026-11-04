@@ -474,6 +474,14 @@ Changing or disabling the saved routing configuration requires `--recreate-sandb
 While routing is configured, `inference set` refuses changes.
 To return to a single model, re-onboard with `--recreate-sandbox` and omit `--switchyard-config`.
 
+The generated efficient and capable clients set `timeout_ms = 120000` and `max_retries = 0`.
+This policy configures a 120-second deadline for each physical provider call, including its full response stream, with no automatic provider retries.
+The capable client uses the same settings when reused as the routing judge.
+These fixed settings are not user overrides and do not define a whole-turn deadline or response-byte limit.
+
+Configuration generation and package validation do not prove runtime deadline enforcement, cancellation, or interception of every Hermes request.
+Adaptive routing remains opt-in and is disabled by default.
+
 ```json
 {
   "schemaVersion": 1,
