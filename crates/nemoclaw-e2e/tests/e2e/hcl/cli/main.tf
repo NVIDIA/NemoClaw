@@ -78,8 +78,11 @@ output "exit_code" {
 }
 
 output "error" {
-  description = "The command's standard error, which carries a failure's message."
-  value       = trimspace(file("${local.directory}/stderr"))
+  description = "A failed command's message: with --output json, the CLI reports it, already redacted, in its JSON result on standard output; otherwise standard error."
+  value = local.exit_code == 0 ? "" : try(
+    jsondecode(file("${local.directory}/stdout")).error.message,
+    trimspace(file("${local.directory}/stderr")),
+  )
 }
 
 output "result" {
