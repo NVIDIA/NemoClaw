@@ -21,7 +21,11 @@ import {
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 import { resolveTierPresets } from "../policy/tiers";
 import { listPresets } from "../policy";
-import { customNativeProvider } from "../inference/native-provider/custom";
+import {
+  customNativeProvider,
+  boundCustomNativeProfile,
+} from "../inference/native-provider/custom";
+import { nativeProviderLifecycle } from "../inference/native-provider";
 import { assertOpenShellPolicyEndpointPins } from "../adapters/openshell/policy-boundary";
 
 type PolicyRule = {
@@ -121,7 +125,16 @@ describe("initial sandbox policy real preset merge", () => {
       expect(() =>
         assertOpenShellPolicyEndpointPins(document, definition.endpoint, definition.allowedIps!),
       ).not.toThrow();
-      expect(policy.network_policies?.native_hosted_inference?.endpoints).toEqual([
+      // OpenShell projects this profile when sandbox creation attaches the provider.
+      // The base policy must not retain a second copy after that provider is detached.
+      expect(policy.network_policies).not.toHaveProperty("native_hosted_inference");
+      const profile = YAML.parse(
+        boundCustomNativeProfile(
+          definition,
+          nativeProviderLifecycle(definition).nativeProviderProfilePath(),
+        ),
+      );
+      expect(profile.endpoints).toEqual([
         expect.objectContaining({
           host: "integrate.api.nvidia.com",
           allowed_ips: ["8.8.8.8"],

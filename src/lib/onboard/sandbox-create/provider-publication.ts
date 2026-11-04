@@ -10,6 +10,7 @@ import { ensureNativeLocalProviderAttached } from "../../inference/native-local/
 import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
 import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
+import { usesAttachedCustomNvidiaPolicy } from "../../inference/native-provider/network-policy";
 
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
@@ -299,6 +300,17 @@ export async function verifyNativeLocalAttachmentAfterCreate(input: {
 
 export function usesNativeHostedProvider(inferenceProvider: string | null): boolean {
   return isNativeHostedProviderName(inferenceProvider);
+}
+
+/** Attached custom NVIDIA profiles own access without a persistent base grant. */
+export function requiresNativeHostedBasePolicy(
+  inferenceProvider: string | null,
+  receipt?: SandboxEntry["nativeHostedProviderAttachment"],
+): boolean {
+  return (
+    usesNativeHostedProvider(inferenceProvider) &&
+    !usesAttachedCustomNvidiaPolicy(inferenceProvider, receipt)
+  );
 }
 
 export async function verifyNativeHostedAttachmentAfterCreate(input: {

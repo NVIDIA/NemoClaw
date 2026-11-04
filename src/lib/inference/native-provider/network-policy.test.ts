@@ -99,8 +99,7 @@ describe("custom NVIDIA endpoint policy ownership", () => {
     delete original.nvidia;
     const first = build();
     const parsed = YAML.parse(first);
-    const { native_hosted_inference: _native, ...remaining } = parsed.network_policies;
-    expect(remaining).toEqual(original);
+    expect(parsed.network_policies).toEqual(original);
     policy.network_policies = parsed.network_policies;
     expect(build()).toBe(first);
   });

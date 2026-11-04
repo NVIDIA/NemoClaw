@@ -10,6 +10,8 @@ import YAML from "yaml";
 
 import { prepareInitialSandboxCreatePolicy } from "../initial-policy";
 import { selectRebuildCreatePolicy } from "./orchestration";
+import { customNativeProvider } from "../../inference/native-provider/custom";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 
 const roots: string[] = [];
 const cleanups: Array<() => boolean | undefined> = [];
@@ -25,7 +27,12 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function rebuild(inferenceProvider: string | null, nativePolicy?: unknown, hostedPolicy?: unknown) {
+function rebuild(
+  inferenceProvider: string | null,
+  nativePolicy?: unknown,
+  hostedPolicy?: unknown,
+  receipt?: NativeProviderAttachment,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-rebuild-policy-test-"));
   roots.push(root);
   const livePath = path.join(root, "live.yaml");
@@ -44,7 +51,7 @@ function rebuild(inferenceProvider: string | null, nativePolicy?: unknown, hoste
       "../../../../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
     ),
     [],
-    { agentName: "openclaw", inferenceProvider },
+    { agentName: "openclaw", inferenceProvider, nativeHostedProviderAttachment: receipt },
   );
   cleanups.push(() => replacement.cleanup?.());
   const selected = selectRebuildCreatePolicy(
@@ -59,6 +66,7 @@ function rebuild(inferenceProvider: string | null, nativePolicy?: unknown, hoste
     [nativeProvider, "nemoclaw-openai-api-v1"],
     source,
     inferenceProvider,
+    receipt,
   );
   cleanups.push(() => selected.cleanup?.());
   return {
@@ -135,4 +143,27 @@ describe("native hosted rebuild policy", () => {
       native_hosted_inference: hosted,
     });
   });
+});
+
+it("keeps custom NVIDIA pins owned by the attached provider through rebuild (#14013)", () => {
+  const custom = customNativeProvider({
+    provider: "compatible-endpoint",
+    endpointUrl: "https://integrate.api.nvidia.com/v1",
+    api: "openai-completions",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  const receipt: NativeProviderAttachment = {
+    schemaVersion: 1,
+    providerName: custom.providerName,
+    profileId: custom.profileId,
+    providerId: "owned-custom",
+    endpointUrl: custom.endpointUrl,
+    allowedIps: custom.allowedIps,
+    custom: custom.custom,
+  };
+  const result = rebuild(custom.providerName, undefined, undefined, receipt);
+  expect(result.selected.network_policies).toEqual({ host_rule: hostPolicy });
+  expect(result.replacement.network_policies).not.toHaveProperty("native_hosted_inference");
+  expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
 });

@@ -23,6 +23,19 @@ import {
 
 export const NATIVE_HOSTED_INFERENCE_POLICY_KEY = "native_hosted_inference";
 
+/** The attached profile owns canonical custom NVIDIA access for its entire lifetime. */
+export function usesAttachedCustomNvidiaPolicy(
+  providerName: string | null,
+  receipt?: NativeProviderAttachment,
+): boolean {
+  const definition = hostedNativeProviderForAttachment(receipt);
+  return Boolean(
+    definition?.providerName === providerName &&
+    definition?.custom &&
+    definition.endpoint === "https://integrate.api.nvidia.com/v1",
+  );
+}
+
 export function buildNativeHostedSandboxPolicy(
   basePolicy: string,
   providerName: string,
@@ -82,6 +95,11 @@ export function buildNativeHostedSandboxPolicy(
     throw new Error(
       "The native hosted inference policy conflicts with the selected provider profile",
     );
+  }
+  if (usesAttachedCustomNvidiaPolicy(providerName, receipt)) {
+    // Sandbox creation attaches the verified profile, including its IP pins.
+    // A second base grant would survive detachment and conflict with native NVIDIA.
+    return replacedBundledRule ? YAML.stringify(policy) : basePolicy;
   }
   if (existing !== undefined && !replacedBundledRule) return basePolicy;
   policy.network_policies = { ...policies, [NATIVE_HOSTED_INFERENCE_POLICY_KEY]: entry };
