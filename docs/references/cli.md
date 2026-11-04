@@ -147,6 +147,8 @@ External Ollama model failures identify the service's upstream field and its val
 Diagnostics identify the operation, cause, and confirmed retention where available; they do not imply rollback or cleanup when resource state is unknown.
 Short protected values cause child error details and resource/download progress to be withheld; see [diagnostic disclosure](../security/security.md#diagnostic-disclosure).
 On Unix, SIGINT and SIGTERM cancel ongoing work, including credential prompts.
+During an apply or destroy, the first signal stops OpenTofu from starting further resource operations, and the command waits until those in progress finish and the state records them, which takes as long as the slowest of them, such as a Helm install that waits for its gateway.
+A second signal stops OpenTofu at once; a resource that it was creating can then be missing from the state.
 Interruption preserves the recorded recovery boundary; follow [recovery](../build-deploy/usage.md#updates-and-recovery) before retrying.
 
 | Exit code | Meaning |
