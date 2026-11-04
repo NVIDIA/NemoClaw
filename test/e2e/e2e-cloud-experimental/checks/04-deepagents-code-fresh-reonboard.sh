@@ -322,13 +322,13 @@ set +e
 config_set_output="$("$CLI" "$SANDBOX_NAME" config set --key models.default --value "openai:$REJECTED_MUTATION_MODEL" 2>&1)"
 config_set_status=$?
 set -e
-[ "$config_set_status" -ne 0 ] || fail "config set unexpectedly mutated image-baked DCode config"
-printf '%s\n' "$config_set_output" | grep -Fq "config is baked into the sandbox image at build time" || fail "config set rejection did not explain the image-baked boundary"
-printf '%s\n' "$config_set_output" | grep -Fq "re-onboard with the new selection" || fail "config set rejection did not provide re-onboard guidance"
-printf '%s\n' "$config_set_output" | grep -Fq -- "--fresh" || fail "config set rejection did not provide the fresh re-onboard command"
+[ "$config_set_status" -ne 0 ] || fail "config set unexpectedly mutated native DCode config"
+printf '%s\n' "$config_set_output" | grep -Fq "saved native preferences" || fail "config set rejection did not explain native preference preservation"
+printf '%s\n' "$config_set_output" | grep -Fq "use a new sandbox name" || fail "config set rejection did not provide new-name guidance"
+printf '%s\n' "$config_set_output" | grep -Fq -- "--name <new-sandbox-name> --fresh" || fail "config set rejection did not provide the new-name onboarding command"
 config_sha_after="$(sandbox_exec "sha256sum /sandbox/.deepagents/config.toml | awk '{print \$1}'")" || fail "could not hash DCode config after rejected mutation"
-[ "$config_sha_after" = "$config_sha_before" ] || fail "rejected config set changed image-baked DCode config"
-pass "config set rejects image-baked DCode mutation without changing the file"
+[ "$config_sha_after" = "$config_sha_before" ] || fail "rejected config set changed native DCode config"
+pass "config set rejects host-side DCode mutation without changing the file"
 
 if ! reonboard_output="$(
   COMPATIBLE_API_KEY="$COMPATIBLE_API_KEY" \
