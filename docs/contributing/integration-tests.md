@@ -307,7 +307,8 @@ The tests exercise the bundled CLI and providers with an isolated Docker-over-SS
 They check recovery after failed startup, export and unchanged reapply, failed observation without lost bindings, and replacement of credentials outside state.
 Destroy removes disposable containers and service networks while retaining storage; the partial-runtime tests tear down after failed creation without first creating the missing compute.
 `unverified_vllm_images_are_checked_after_pull_before_storage` checks that an image is rejected after pull without creating storage or compute, and that the recorded image binding is cleaned up; the image check after pull and the storage it protects are the same for Ollama.
-The `managed_bearer` tests check that apply sends no generation probes; Fabric owns native service startup, authentication, configuration, and protocol checks.
+The remote vLLM scenario checks that apply sends no generation probes; Fabric owns native service startup, authentication, configuration, and protocol checks.
+Each runtime-independent check runs in one scenario. The SDK's runtime tests own the Preserve and Recreate decision for every model kind; the Ollama scenario keeps a real plan reaching it, and the SDK's `runtime_compile` tests own where a remote service publishes its port.
 Runtime status and Docker responses are simulated; the tests do not download or serve a model.
 
 ## Other Fixture Tests
