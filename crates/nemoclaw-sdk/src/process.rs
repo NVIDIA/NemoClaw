@@ -140,8 +140,11 @@ pub(crate) async fn run_with_progress(
             // operations and saves the state once those in progress finish,
             // which takes as long as the slowest of them. Ending it sooner can
             // leave a resource without a binding, so an apply gets as long as
-            // it needs unless the caller stops it now. Other commands get 5 s.
-            let apply = cfg!(unix) && args.first() == Some(&"apply");
+            // it needs unless the caller stops it now. Other commands get 5 s,
+            // as does a refresh-only apply, which changes no resources.
+            let apply = cfg!(unix)
+                && args.first() == Some(&"apply")
+                && !args.contains(&"-refresh-only");
             if apply && let Some(callback) = &mutation_progress {
                 callback(crate::Progress::Stopping);
             }
@@ -630,6 +633,46 @@ mod tests {
                 "{operation}, {binary}, cancelled={cancelled}"
             );
         }
+    }
+
+    /// A refresh-only apply changes no resources, so an interrupt ends it after
+    /// the grace that other commands get, even when it ignores the interrupt.
+    #[tokio::test]
+    async fn an_interrupted_refresh_only_apply_ends_after_the_grace_period() {
+        let directory = tempfile::tempdir().unwrap();
+        // `sh apply` runs this script from the working directory.
+        std::fs::write(
+            directory.path().join("apply"),
+            "trap '' INT\n: > ignoring\nexec sleep 30\n",
+        )
+        .unwrap();
+        let token = CancellationToken::new();
+        let interrupt = token.clone();
+        let ignoring = directory.path().join("ignoring");
+        tokio::spawn(async move {
+            for _ in 0..300 {
+                if ignoring.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            interrupt.cancel();
+        });
+        let started = std::time::Instant::now();
+        let result = run(
+            directory.path(),
+            Path::new("/bin/sh"),
+            &["apply", "-refresh-only", "-auto-approve"],
+            &Default::default(),
+            &token,
+        )
+        .await;
+        assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "the interrupted refresh ran for {:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test]

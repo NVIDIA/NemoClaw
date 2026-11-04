@@ -70,6 +70,10 @@ NemoClaw keeps these by decision, as its own promises:
 - No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
 - Agent image assembly, for now: NemoClaw builds and publishes the images that hold Fabric and each harness's native agent, so it installs and pins those agents in the [agent Dockerfile](../../image/fabric/Dockerfile). Image building moves to the Fabric repository later; Fabric owns each adapter's behavior and its tests.
 
+NemoClaw works around these upstream gaps until the components it pins close them:
+
+- OpenTofu 1.12.9 keeps an interrupted apply's progress only in a state directory that already holds a state file; without one, the snapshot it saves when stopped lists only the last resource it updated. The SDK has OpenTofu create the file with a refresh before an apply's first plan ([#14155](https://github.com/NVIDIA/NemoClaw/issues/14155)).
+
 ## Ownership and Recovery
 
 - Validate configuration strictly; retain intent, digests, secret references, and durable data bindings.

@@ -289,6 +289,10 @@ impl Deployment {
         (self.progress)(Progress::Validating);
         self.initialize(&bundle, &store, &compiled.graph, cancel)
             .await?;
+        if apply {
+            self.create_state(&bundle, &store, &document, cancel)
+                .await?;
+        }
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
         let expected = expected_bindings(&compiled, &bindings)?;
         (self.progress)(Progress::Planning);
