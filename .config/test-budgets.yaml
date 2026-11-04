@@ -46,14 +46,14 @@ live-docker:
 # 130.1-143.3 s on linux_amd64 in four runs, then 163.3 s and 155.6 s on
 # #14124, whose other Kubernetes tests were 10-15% slower too. Return to
 # 150 s and 270 s when #14087 is resolved.
-# Live / Kind now runs two HCL cases one after the other (#14176). The
-# development case, which destroys and redeploys, took 189.6 s on
-# linux_amd64 and 180.7 s on linux_arm64; with the OIDC case (114.0 s and
-# 106.9 s) the step took 303.6 s and 287.5 s. Each destroy still waits out
-# the termination grace period above.
+# Live / Kind runs two HCL cases one after the other (#14176). With the
+# kind module's cleanup no longer waiting for namespace deletion (#14177),
+# the development case, which destroys and redeploys, took 137.9 s on
+# linux_amd64 and 136.9 s on linux_arm64; with the OIDC case (105.1 s and
+# 95.7 s) the step took 243.0 s and 232.6 s.
 live-kind:
-  wall_seconds: 330
-  test_seconds: 210
+  wall_seconds: 300
+  test_seconds: 180
 
 # Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
 # two runs after providers and the fake OpenShell gateway set TCP_NODELAY.
