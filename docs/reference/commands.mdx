@@ -17,8 +17,7 @@ content:
 ---
 
 NemoClaw collects operation telemetry to help improve the project.
-Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed TEST receiver by default.
-Production delivery is not enabled.
+Ordinary installer and supported CLI operations attempt to send telemetry about completed operations to NVIDIA's fixed Production receiver by default.
 To disable NemoClaw telemetry, run `export NEMOCLAW_DISABLE_TELEMETRY=1` in each shell before installation or CLI use.
 Refer to [Operation Telemetry](/user-guide/openclaw/security/best-practices#operation-telemetry) for details.
 
@@ -460,7 +459,20 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 #### `--switchyard-config <file>`
 
-For managed Hermes onboarding, load adaptive Switchyard routing from a JSON file containing only the efficient and capable provider/model selections. Both targets must name approved fixed hosted provider profiles and must use different model IDs, even when they use different providers. NemoClaw reuses the capable target as the routing judge and derives the internal Relay and Switchyard configuration; the file must not contain credentials, endpoints, or internal routing fragments. This option requires the managed Hermes image. Portable and custom images are not supported.
+For managed Hermes onboarding, generate adaptive Switchyard routing configuration from a JSON file containing only the efficient and capable provider/model selections.
+Both targets must name approved fixed hosted provider profiles and use different model IDs, even when they use different providers.
+NemoClaw configures the capable target as the routing judge and derives the internal Relay and Switchyard configuration.
+The file must not contain credentials, endpoints, or internal routing fragments.
+This option requires the managed Hermes image; Portable and custom images are not supported.
+
+<Note>
+Provider credential attachment for the routed targets remains tracked in [issue #13863](https://github.com/NVIDIA/NemoClaw/issues/13863).
+Generating this configuration does not establish production routing.
+</Note>
+
+Changing or disabling the saved routing configuration requires `--recreate-sandbox`.
+While routing is configured, `inference set` refuses changes.
+To return to a single model, re-onboard with `--recreate-sandbox` and omit `--switchyard-config`.
 
 ```json
 {
