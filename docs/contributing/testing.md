@@ -192,7 +192,7 @@ Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Age
 |---|---|---|---|---|
 | `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
 | `lifecycle` | Each partition's nextest run | 300 s | 90 s | 180 s |
-| `live-docker` | Its five nextest commands together | 480 s | 180 s | 360 s |
+| `live-docker` | Its five nextest commands together | 360 s | 180 s | 360 s |
 | `live-kind` | Its nextest commands, one per HCL case, together | 300 s | 180 s | 360 s |
 
 Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's lifecycle partitions, and a limit for any one of its tests:
