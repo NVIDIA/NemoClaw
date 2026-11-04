@@ -117,6 +117,11 @@ fn a_container_service_refuses_options_outside_the_contract() {
             "files",
             json!({"/run/nemoclaw/agent-connection.json": "{}"}),
         ),
+        // Optional settings are omitted, not null, so authoring tools offer
+        // them as their own types rather than as arbitrary JSON.
+        ("command", Value::Null),
+        ("readiness", json!({"path": null})),
+        ("readiness", json!({"runtimeStatus": null})),
     ] {
         let mut value = example();
         value["spec"]["services"]["application"][field] = setting;
