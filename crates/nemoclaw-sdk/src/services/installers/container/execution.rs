@@ -65,9 +65,11 @@ impl ContainerExecution {
 pub struct ContainerReadiness {
     /// HTTP GET path on the container's listener. Success requires HTTP 200; redirects are not followed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
     pub path: Option<String>,
     /// Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String")]
     pub runtime_status: Option<String>,
     /// Startup wait in seconds, 1–3600. Omission selects 300.
     #[serde(default = "default_timeout")]

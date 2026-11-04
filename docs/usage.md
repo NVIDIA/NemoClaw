@@ -97,6 +97,7 @@ Keep state, diagnose the failure, and reapply after recovery; see [recovering an
 ### Run an Application Container
 
 Declare a `kind: container` service with an immutable image and literal environment settings.
+The [application container example](../examples/application-container.yaml) runs an application beside one agent and passes it the workspace, sandbox, agent, and gateway address as literal environment values; NemoClaw does not interpret them.
 The image owns its entrypoint; optional `command` overrides its arguments, and `files` supplies nonsecret configuration with mode 0444.
 Environment values enter configuration, plans/state, exports, and Docker inspection; they are not protected credential references.
 Generic credential-file delivery is deferred.
