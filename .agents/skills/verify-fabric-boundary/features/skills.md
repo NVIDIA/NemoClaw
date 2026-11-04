@@ -120,7 +120,7 @@ MARKER=%s
 
    Record whether the request completed in `$CHECK_DIR/create.status.txt`, separately from whether a skill was created: a timed-out or failed request may still have saved it.
    Resolve the save location yourself from `create.calls.txt`, the authoring call's result, native discovery, and the native state and skill roots in `bindings.md`, then search the sandbox for the run-named skill.
-   The sandbox's filesystem policy hides `/`, so search the writable roots that `openshell sandbox get assistant` lists under `read_write`; the agent can save a file only there:
+   The sandbox's filesystem policy makes `/` unreadable, so search its writable roots, which the image's default policy sets to `/sandbox`, `/tmp`, and `/home/node`; if `openshell sandbox get assistant --policy-only` lists another `read_write` directory, add it:
 
    ```sh
    openshell sandbox exec -n assistant --no-tty -- sh -c 'find /sandbox /tmp /home/node -type f -path "*$1*" -print 2>/dev/null | xargs -r grep -lF -- "$2"' sh "$SKILL_NAME" "$MARKER" | tee "$CHECK_DIR/found.txt"
