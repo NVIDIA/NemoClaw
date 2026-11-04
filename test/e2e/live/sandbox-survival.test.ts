@@ -75,7 +75,7 @@ async function waitForNativeAgentReady(
     delayMs: SANDBOX_SURVIVAL_NATIVE_READINESS.delayMs,
     probe: (_attempt, artifactName) =>
       exec(
-        `code="$(curl -q --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(gatewayPort)}/health)"; case "$code" in 200|401) printf '%s\\n' ready ;; *) exit 1 ;; esac`,
+        `curl -q --noproxy '*' -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:${String(gatewayPort)}/readyz | node -e 'let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>{try{const v=JSON.parse(s);if(v.ready!==true||!Array.isArray(v.failing)||v.failing.length)throw Error("not ready");console.log("ready");}catch{process.exitCode=1;}});'`,
         artifactName,
       ),
     accept: (result) => result.exitCode === 0 && result.stdout.trim() === "ready",
