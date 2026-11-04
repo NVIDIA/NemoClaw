@@ -136,4 +136,3 @@ Ask the user first, and check that the host has the memory the README lists, wit
 
 - The examples' ports and subnets collide with earlier runs of those examples on the same host; always choose new ones.
 - A shared vLLM serves one sequence at a time in the examples' settings; another deployment's request can slow a reply.
-- `sudo grep` is needed to scan state written by the `docker` group.
