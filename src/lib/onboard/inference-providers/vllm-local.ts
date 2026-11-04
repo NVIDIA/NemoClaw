@@ -4,6 +4,7 @@
 // vLLM local inference provider setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
+import { isLocalProviderProbeOutputHealthy } from "../../inference/serving/model-inventory";
 import type { SetupInferenceResult, VllmDeps } from "./types";
 
 export async function setupVllmLocalInference(
@@ -27,11 +28,13 @@ export async function setupVllmLocalInference(
   const validation = validateLocalProvider(provider);
   if (!validation.ok) {
     const hostCheck = getLocalProviderHealthCheck(provider);
-    // Use run() and check exit status rather than coercing runCapture() output
-    // to boolean — curl -sf can leave output even on failure in edge cases.
-    const hostResponding = hostCheck
-      ? run(hostCheck, { ignoreError: true, suppressOutput: true }).status === 0
-      : false;
+    const hostResult = hostCheck
+      ? run(hostCheck, { ignoreError: true, suppressOutput: true })
+      : null;
+    const hostResponding =
+      hostCheck !== null &&
+      hostResult?.status === 0 &&
+      isLocalProviderProbeOutputHealthy(hostCheck.at(-1) ?? "", String(hostResult.stdout ?? ""));
 
     if (hostResponding) {
       console.warn(`  ⚠ ${validation.message}`);

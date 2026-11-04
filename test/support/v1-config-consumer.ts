@@ -113,15 +113,11 @@ export interface PinnedV1ConsumerEvidence {
   >;
 }
 
-/** Parse an exact export and generate its native settings with the pinned v1 consumer. */
-export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerEvidence {
+function preparePinnedV1Consumer() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-v1-consumer-"));
   const consumer = path.join(temporaryRoot, "consumer");
   const archive = path.join(temporaryRoot, "consumer.tar");
-  const input = path.join(temporaryRoot, "export.yaml");
-  const settings = path.join(temporaryRoot, "settings.json");
   try {
-    fs.writeFileSync(input, raw, { mode: 0o600 });
     execFileSync(
       "git",
       [
@@ -140,6 +136,24 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
       path.join(FIXTURE_ROOT, "config-export-compatibility.rs"),
       path.join(consumer, "crates/nemoclaw-sdk/tests/config_export_compatibility.rs"),
     );
+    return { temporaryRoot, consumer };
+  } catch (error) {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+function validateWithPinnedV1Consumer(
+  workspace: ReturnType<typeof preparePinnedV1Consumer>,
+  raw: string,
+): PinnedV1ConsumerEvidence {
+  const { temporaryRoot, consumer } = workspace;
+  // Reuse compilation only. Each invocation must produce its own native settings.
+  const invocation = fs.mkdtempSync(path.join(temporaryRoot, "validation-"));
+  const input = path.join(invocation, "export.yaml");
+  const settings = path.join(invocation, "settings.json");
+  try {
+    fs.writeFileSync(input, raw, { mode: 0o600 });
     try {
       execFileSync(
         "cargo",
@@ -189,6 +203,33 @@ export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerE
       ...evidence,
     } as unknown as PinnedV1ConsumerEvidence;
   } finally {
-    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    fs.rmSync(invocation, { force: true, recursive: true });
+  }
+}
+
+/** Reuse the pinned checkout and Cargo build until the owning suite disposes it. */
+export function createPinnedV1Consumer() {
+  let workspace: ReturnType<typeof preparePinnedV1Consumer> | undefined;
+  return {
+    validate(raw: string): PinnedV1ConsumerEvidence {
+      workspace ??= preparePinnedV1Consumer();
+      return validateWithPinnedV1Consumer(workspace, raw);
+    },
+    dispose(): void {
+      if (workspace) {
+        fs.rmSync(workspace.temporaryRoot, { force: true, recursive: true });
+        workspace = undefined;
+      }
+    },
+  };
+}
+
+/** Parse one export and remove its pinned consumer workspace before returning. */
+export function validateConfigExportWithPinnedV1(raw: string): PinnedV1ConsumerEvidence {
+  const consumer = createPinnedV1Consumer();
+  try {
+    return consumer.validate(raw);
+  } finally {
+    consumer.dispose();
   }
 }

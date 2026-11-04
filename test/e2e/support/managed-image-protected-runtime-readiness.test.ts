@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, type TestContext, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
@@ -66,13 +66,17 @@ const PROVIDER_CONTAINER_ID = "a".repeat(64);
 const PROVIDER_IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const PROVIDER_IMAGE = `registry.example/vllm@sha256:${"c".repeat(64)}`;
 const VLLM_PROVIDER_NAME = protectedProviderContainerName("vllm", PROVIDER_COHORT);
+const CONTAINER_READINESS = [
+  { kind: "nim", build: protectedNimReadinessCommand },
+  { kind: "vllm", build: protectedVllmReadinessCommand },
+] as const;
 
 vi.setConfig({ maxConcurrency: 2 });
 
-function createReadinessFixture(): ReadinessFixture {
+function createReadinessFixture(context: TestContext): ReadinessFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-readiness-"));
   const owned: { progress?: TestProgress } = {};
-  onTestFinished(() => {
+  context.onTestFinished(() => {
     owned.progress?.stop();
     fs.rmSync(root, { force: true, recursive: true });
   });
@@ -320,8 +324,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     );
   });
 
-  it("refuses a pre-existing provider container without deleting it", async () => {
-    const fixture = createReadinessFixture();
+  it("refuses a pre-existing provider container without deleting it", async (context) => {
+    const fixture = createReadinessFixture(context);
     const env = installProviderDocker(fixture, "normal");
     const command = protectedProviderContainerPreflightCommand(VLLM_PROVIDER_NAME);
     const result = await fixture.host.command(command.command, command.args, {
@@ -347,8 +351,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     );
   });
 
-  it("removes a provider container by exact authority and verifies ID and name absence", async () => {
-    const fixture = createReadinessFixture();
+  it("removes a provider container by exact authority and verifies ID and name absence", async (context) => {
+    const fixture = createReadinessFixture(context);
     const env = installProviderDocker(fixture, "normal");
     const command = protectedProviderContainerCleanupCommand(providerAuthority());
     const result = await fixture.host.command(command.command, command.args, {
@@ -380,7 +384,7 @@ describe.concurrent("protected managed-image runtime commands", () => {
     expect(revalidated.stdout).toContain(`name=${VLLM_PROVIDER_NAME}`);
   });
 
-  it.each([
+  it.for([
     ["missing", "cleanup evidence is missing"],
     ["ambiguous", "cleanup evidence is ambiguous"],
     ["reused", "container name"],
@@ -390,31 +394,35 @@ describe.concurrent("protected managed-image runtime commands", () => {
     ["remove-indeterminate", "cleanup removal is indeterminate"],
     ["id-verification-indeterminate", "ID verification is indeterminate"],
     ["name-verification-indeterminate", "name verification is indeterminate"],
-  ] as const)("fails closed for %s provider cleanup evidence", async (scenario, message) => {
-    const fixture = createReadinessFixture();
-    const env = installProviderDocker(fixture, scenario);
-    const command = protectedProviderContainerCleanupCommand(providerAuthority());
-    const result = await fixture.host.command(command.command, command.args, {
-      artifactName: `provider-cleanup-${scenario}`,
-      captureLimitBytes: command.captureLimitBytes,
-      env,
-      timeoutMs: 5_000,
-    });
+  ] as const)(
+    "fails closed for %s provider cleanup evidence",
+    async ([scenario, message], context) => {
+      const fixture = createReadinessFixture(context);
+      const env = installProviderDocker(fixture, scenario);
+      const command = protectedProviderContainerCleanupCommand(providerAuthority());
+      const result = await fixture.host.command(command.command, command.args, {
+        artifactName: `provider-cleanup-${scenario}`,
+        captureLimitBytes: command.captureLimitBytes,
+        env,
+        timeoutMs: 5_000,
+      });
 
-    expect(result.exitCode).toBe(70);
-    expect(result.stderr).toContain(message);
-    const removalEvidence = fs.existsSync(env.FAKE_PROVIDER_REMOVE_LOG!)
-      ? fs.readFileSync(env.FAKE_PROVIDER_REMOVE_LOG!, "utf8").trim()
-      : "";
-    expect(removalEvidence).toBe(
-      scenario === "id-verification-indeterminate" || scenario === "name-verification-indeterminate"
-        ? PROVIDER_CONTAINER_ID
-        : "",
-    );
-  });
+      expect(result.exitCode).toBe(70);
+      expect(result.stderr).toContain(message);
+      const removalEvidence = fs.existsSync(env.FAKE_PROVIDER_REMOVE_LOG!)
+        ? fs.readFileSync(env.FAKE_PROVIDER_REMOVE_LOG!, "utf8").trim()
+        : "";
+      expect(removalEvidence).toBe(
+        scenario === "id-verification-indeterminate" ||
+          scenario === "name-verification-indeterminate"
+          ? PROVIDER_CONTAINER_ID
+          : "",
+      );
+    },
+  );
 
-  it("fails when the provider name is reused after exact-ID removal", async () => {
-    const fixture = createReadinessFixture();
+  it("fails when the provider name is reused after exact-ID removal", async (context) => {
+    const fixture = createReadinessFixture(context);
     const env = installProviderDocker(fixture, "reuse-after-remove");
     const command = protectedProviderContainerCleanupCommand(providerAuthority());
     const result = await fixture.host.command(command.command, command.args, {
@@ -431,8 +439,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     );
   });
 
-  it("excludes a same-cohort registry from the provider cleanup inventory", async () => {
-    const fixture = createReadinessFixture();
+  it("excludes a same-cohort registry from the provider cleanup inventory", async (context) => {
+    const fixture = createReadinessFixture(context);
     const env = installProviderInventoryDocker(fixture);
     const nimName = protectedProviderContainerName("nim", PROVIDER_COHORT);
     const command = protectedProviderFinalInventoryCommand(
@@ -456,31 +464,34 @@ describe.concurrent("protected managed-image runtime commands", () => {
     expect(dockerCalls).toContain(`label=${PROTECTED_PROVIDER_KIND_LABEL}`);
   });
 
-  it.each([
+  it.for([
     ["retained-provider", "retained state"],
     ["retained-name", "retained state"],
     ["retained-sandbox", "retained state"],
     ["retained-network", "retained state"],
     ["indeterminate-provider", "provider-owned container inventory is indeterminate"],
     ["indeterminate-network", "managed network inventory is indeterminate"],
-  ] as const)("fails closed for %s final provider inventory", async (scenario, message) => {
-    const fixture = createReadinessFixture();
-    const env = installProviderInventoryDocker(fixture, scenario);
-    const command = protectedProviderFinalInventoryCommand(
-      PROVIDER_COHORT,
-      VLLM_PROVIDER_NAME,
-      protectedProviderContainerName("nim", PROVIDER_COHORT),
-    );
-    const result = await fixture.host.command(command.command, command.args, {
-      artifactName: `provider-final-inventory-${scenario}`,
-      captureLimitBytes: command.captureLimitBytes,
-      env,
-      timeoutMs: 5_000,
-    });
+  ] as const)(
+    "fails closed for %s final provider inventory",
+    async ([scenario, message], context) => {
+      const fixture = createReadinessFixture(context);
+      const env = installProviderInventoryDocker(fixture, scenario);
+      const command = protectedProviderFinalInventoryCommand(
+        PROVIDER_COHORT,
+        VLLM_PROVIDER_NAME,
+        protectedProviderContainerName("nim", PROVIDER_COHORT),
+      );
+      const result = await fixture.host.command(command.command, command.args, {
+        artifactName: `provider-final-inventory-${scenario}`,
+        captureLimitBytes: command.captureLimitBytes,
+        env,
+        timeoutMs: 5_000,
+      });
 
-    expect(result.exitCode).toBe(70);
-    expect(result.stderr).toContain(message);
-  });
+      expect(result.exitCode).toBe(70);
+      expect(result.stderr).toContain(message);
+    },
+  );
 
   it.each([
     { kind: "relative", logPath: "ollama.log" },
@@ -492,8 +503,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     );
   });
 
-  it("ignores login-shell logout hooks and reports successful readiness", async () => {
-    const fixture = createReadinessFixture();
+  it("ignores login-shell logout hooks and reports successful readiness", async (context) => {
+    const fixture = createReadinessFixture(context);
     writeCommand(fixture.binDir, "ollama", "exit 0");
     writeCommand(fixture.binDir, "curl", "exit 0");
 
@@ -521,8 +532,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     expect(vllm.stdout).toBe("managed-image-vllm-ready attempts=1\n");
   });
 
-  it("returns failure with a redacted tail of at most 200 Ollama log lines", async () => {
-    const fixture = createReadinessFixture();
+  it("returns failure with a redacted tail of at most 200 Ollama log lines", async (context) => {
+    const fixture = createReadinessFixture(context);
     const sensitiveValue = "protected-readiness-sensitive-value";
     const sourceLog = path.join(fixture.root, "ollama-source.log");
     fs.writeFileSync(
@@ -568,8 +579,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     expect(resultArtifact).not.toContain(sensitiveValue);
   });
 
-  it("bounds one oversized Ollama log line while retaining the readiness failure", async () => {
-    const fixture = createReadinessFixture();
+  it("bounds one oversized Ollama log line while retaining the readiness failure", async (context) => {
+    const fixture = createReadinessFixture(context);
     const sensitiveValue = "oversized-protected-readiness-sensitive-value";
     writeCommand(fixture.binDir, "curl", "/bin/sleep 0.2\nexit 1");
     writeCommand(fixture.binDir, "seq", "printf '1\\n'");
@@ -602,8 +613,8 @@ describe.concurrent("protected managed-image runtime commands", () => {
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
   });
 
-  it("retains the vLLM readiness failure after oversized failing Docker logs", async () => {
-    const fixture = createReadinessFixture();
+  it("retains the vLLM readiness failure after oversized failing Docker logs", async (context) => {
+    const fixture = createReadinessFixture(context);
     const sensitiveValue = "oversized-vllm-readiness-sensitive-value";
     const command = protectedVllmReadinessCommand(VLLM_PROVIDER_NAME);
     const sourceLog = path.join(fixture.root, "vllm-oversized-source.log");
@@ -642,8 +653,8 @@ exit 42`,
     expect(Buffer.byteLength(stderrArtifact)).toBeLessThanOrEqual(command.captureLimitBytes + 256);
   });
 
-  it("redacts provider-native NIM failure evidence in memory and artifacts", async () => {
-    const fixture = createReadinessFixture();
+  it("redacts provider-native NIM failure evidence in memory and artifacts", async (context) => {
+    const fixture = createReadinessFixture(context);
     const sensitiveValue = "protected-nim-readiness-sensitive-value";
     const command = protectedNimReadinessCommand(
       protectedProviderContainerName("nim", PROVIDER_COHORT),
@@ -678,8 +689,8 @@ exit 42`,
     expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
   });
 
-  it("reports vLLM diagnostics when the container stops during readiness", async () => {
-    const fixture = createReadinessFixture();
+  it("reports vLLM diagnostics when the container stops during readiness", async (context) => {
+    const fixture = createReadinessFixture(context);
     const command = protectedVllmReadinessCommand(VLLM_PROVIDER_NAME);
     writeCommand(fixture.binDir, "curl", "exit 1");
     writeCommand(fixture.binDir, "sleep", "exit 99");
@@ -705,8 +716,8 @@ printf 'vllm-stopped-diagnostic\\n'`,
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
   });
 
-  it("bounds a connected-but-stalled vLLM probe before collecting diagnostics", async () => {
-    const fixture = createReadinessFixture();
+  it("bounds a connected-but-stalled vLLM probe before collecting diagnostics", async (context) => {
+    const fixture = createReadinessFixture(context);
     const command = protectedVllmReadinessCommand(VLLM_PROVIDER_NAME);
     const curlArgvLog = path.join(fixture.root, "curl-argv.log");
     writeCommand(
@@ -748,8 +759,8 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
   });
 
-  it("bounds a connected-but-stalled NIM probe and redacts its diagnostics", async () => {
-    const fixture = createReadinessFixture();
+  it("bounds a connected-but-stalled NIM probe and redacts its diagnostics", async (context) => {
+    const fixture = createReadinessFixture(context);
     const sensitiveValue = "protected-nim-stalled-probe-api-key";
     const command = protectedNimReadinessCommand(
       protectedProviderContainerName("nim", PROVIDER_COHORT),
@@ -801,6 +812,126 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
     expect(fs.readFileSync(result.artifacts.stderr, "utf8")).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
   });
+});
+
+describe.concurrent.each(CONTAINER_READINESS)("$kind interrupted readiness", ({ kind, build }) => {
+  it("accepts a full container ID and skips diagnostics after successful readiness", async (context) => {
+    const fixture = createReadinessFixture(context);
+    const dockerCalls = path.join(fixture.root, "docker-calls");
+    writeCommand(fixture.binDir, "curl", "exit 0");
+    writeCommand(fixture.binDir, "docker", 'printf "%s\\n" "$*" >>"$FAKE_DOCKER_CALLS"');
+    const command = build(PROVIDER_CONTAINER_ID);
+    const result = await fixture.host.command(command.command, command.args, {
+      artifactName: `${kind}-ready-without-diagnostics`,
+      captureLimitBytes: command.captureLimitBytes,
+      env: { ...fixture.env, FAKE_DOCKER_CALLS: dockerCalls },
+      timeoutMs: 5_000,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(`managed-image-${kind}-ready attempts=1`);
+    expect(result.stderr).toBe("");
+    expect(fs.existsSync(dockerCalls)).toBe(false);
+  });
+
+  it.for([protectedProviderContainerName(kind, PROVIDER_COHORT), PROVIDER_CONTAINER_ID])(
+    "retains redacted diagnostics for %s when the supervisor times out",
+    { timeout: 10_000 },
+    async (container, context) => {
+      const fixture = createReadinessFixture(context);
+      const sensitiveValue = "interrupted-provider-sensitive-value";
+      const dockerCalls = path.join(fixture.root, "docker-calls");
+      // The shell is waiting on a foreground child when the supervisor signals its group.
+      writeCommand(fixture.binDir, "curl", "exec /bin/sleep 30");
+      writeCommand(
+        fixture.binDir,
+        "docker",
+        `printf '%s\\n' "$*" >>"$FAKE_DOCKER_CALLS"
+if [ "$1" = container ]; then
+  printf 'status=running exit_code=0 oom_killed=false\\n'
+  exit 0
+fi
+printf 'provider-native-log %s\\n' "$FAKE_PROVIDER_SECRET"
+exit 42`,
+      );
+      const command = build(container);
+      const result = await fixture.host.command(command.command, command.args, {
+        artifactName: `${kind}-interrupted`,
+        captureLimitBytes: command.captureLimitBytes,
+        env: {
+          ...fixture.env,
+          FAKE_DOCKER_CALLS: dockerCalls,
+          FAKE_PROVIDER_SECRET: sensitiveValue,
+        },
+        redactionValues: [sensitiveValue],
+        timeoutMs: 1_000,
+        killGraceMs: 5_000,
+      });
+
+      expect(result.stderr).toContain("status=running exit_code=0 oom_killed=false");
+      expect(result.timedOut).toBe(true);
+      expect(result.exitCode).toBe(143);
+      expect(result.stdout).not.toContain(`managed-image-${kind}-ready`);
+      expect(result.stderr).toContain("provider-native-log [REDACTED]");
+      expect(result.stderr).toContain(`managed-image-${kind}-not-ready attempts=1`);
+      const calls = fs.readFileSync(dockerCalls, "utf8").trim().split("\n");
+      expect(calls).toContain(
+        `container inspect ${container} --format status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}}`,
+      );
+      expect(calls).toContain(`logs --tail 200 ${container}`);
+      expect(result.stderr).not.toContain(sensitiveValue);
+      const savedStderr = fs.readFileSync(result.artifacts.stderr, "utf8");
+      const savedResult = fs.readFileSync(result.artifacts.result, "utf8");
+      expect(savedStderr).toContain("provider-native-log [REDACTED]");
+      expect(savedResult).toContain("provider-native-log [REDACTED]");
+      expect(savedStderr).not.toContain(sensitiveValue);
+      expect(savedResult).not.toContain(sensitiveValue);
+    },
+  );
+
+  it(
+    "kills hung diagnostics within the supervisor grace and reaps their process",
+    { timeout: 10_000 },
+    async (context) => {
+      const fixture = createReadinessFixture(context);
+      const diagnosticPid = path.join(fixture.root, "diagnostic-pid");
+      writeCommand(fixture.binDir, "curl", "exec /bin/sleep 30");
+      writeCommand(
+        fixture.binDir,
+        "docker",
+        `if [ "$1" = container ]; then
+  printf 'status=running exit_code=0 oom_killed=false\\n'
+  exit 0
+fi
+printf '%s\\n' "$$" >"$FAKE_DIAGNOSTIC_PID"
+trap '' TERM
+exec /bin/sleep 30`,
+      );
+      const command = build(PROVIDER_CONTAINER_ID);
+      const result = await fixture.host.command(command.command, command.args, {
+        artifactName: `${kind}-hung-diagnostics`,
+        captureLimitBytes: command.captureLimitBytes,
+        env: { ...fixture.env, FAKE_DIAGNOSTIC_PID: diagnosticPid },
+        timeoutMs: 1_000,
+        killGraceMs: 2_000,
+      });
+
+      expect(result.timedOut).toBe(true);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.durationMs).toBeLessThan(7_000);
+      expect(result.stderr).toContain("status=running exit_code=0 oom_killed=false");
+      const pid = Number(fs.readFileSync(diagnosticPid, "utf8").trim());
+      expect(pid).toBeGreaterThan(0);
+      expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    },
+  );
+
+  it.each(["g".repeat(64), "a".repeat(65), "a;echo injected"])(
+    "rejects an unsafe or overlong container reference %s",
+    (container) => {
+      expect(() => build(container)).toThrow("outside the Docker name contract");
+    },
+  );
 });
 
 describe("protected provider image ownership", () => {
