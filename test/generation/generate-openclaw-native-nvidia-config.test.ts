@@ -10,6 +10,24 @@ import {
   NATIVE_NVIDIA_URLS,
 } from "../fixtures/native-nvidia-inference-urls";
 
+it("uses an opaque native Model Router credential without serializing the key (#13560)", () => {
+  const endpoint = "http://host.openshell.internal:4000/v1";
+  const config = buildConfig({
+    ...baseOpenClawGenerationEnv(),
+    NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+    NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-router",
+    NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+    NVIDIA_INFERENCE_API_KEY: "test-only-secret",
+    NEMOCLAW_LOCAL_INFERENCE_TOKEN: "test-only-secret",
+  });
+  expect(config.models.providers.inference.baseUrl).toBe(endpoint);
+  expect(config.models.providers.inference.apiKey).toBe(
+    "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  );
+  expect(JSON.stringify(config)).not.toContain("test-only-secret");
+  expect(JSON.stringify(config)).not.toContain("inference.local");
+});
+
 it.each(NATIVE_NVIDIA_URLS)(
   "uses a resolvable credential for native NVIDIA inference at %s",
   (baseUrl) => {
