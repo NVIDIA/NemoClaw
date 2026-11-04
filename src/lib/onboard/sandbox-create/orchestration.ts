@@ -98,6 +98,8 @@ import {
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeLocalAttachmentAfterCreate,
   verifyNativeNvidiaAttachmentAfterCreate,
+  validateAttachedSwitchyardProvidersBeforeSandboxCreation,
+  verifySwitchyardAttachmentAfterCreate,
 } from "./provider-publication";
 import {
   materializeRebuildPolicyHandoff,
@@ -1457,6 +1459,7 @@ export function createProviderEffectBoundary(input: {
   let verifiedOwnedProfileIds: readonly string[] = [];
   let verifiedHermesToolGatewayProfileId: string | null = null;
   const validate = async () => {
+    await validateAttachedSwitchyardProvidersBeforeSandboxCreation(input.preparationInput, deps);
     await validateAttachedMessagingProvidersBeforeSandboxCreation(input.preparationInput, deps);
     if (!input.deferred && !input.resumingVerifiedCreate) {
       verifiedOwnedProfileIds = await validateAttachedOwnedProfilesBeforeSandboxCreation(
@@ -1502,6 +1505,12 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    const switchyard = input.preparationInput.hermesSwitchyard;
+    if (switchyard) {
+      context.revalidateSandboxIdentity("verify Switchyard provider attachments");
+      await verifySwitchyardAttachmentAfterCreate(input.sandboxName, input.preparationInput, deps);
+      return;
+    }
     if (input.expectedNativeLocalProviderAttachment) {
       context.revalidateSandboxIdentity(
         `attaching native local provider for sandbox '${input.sandboxName}'`,
@@ -1998,6 +2007,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;
+    sandboxReuse.bindHermesSwitchyardCreateEnvironment(
+      resolvedCreateIntent.hermesSwitchyard,
+      process.env,
+    );
     const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
     const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
       dashboardRuntime.shouldManageDashboardForAgent(agent),
@@ -3766,6 +3779,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
       extraProviders: resolvedCreateIntent.extraProviders,
       directCreateProviderNames,
+      hermesSwitchyard: resolvedCreateIntent.hermesSwitchyard,
       gatewayName: GATEWAY_NAME,
       ...directCreateHermesToolGatewayProfile({
         enabled: resolvedCreateIntent.hermesToolGateways.length > 0,

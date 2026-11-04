@@ -30,6 +30,7 @@ import {
   normalizeNativeLocalProviderAttachment,
   retainedNativeLocalProviderAttachment,
   nativeHostedReservationAttachment,
+  requireSwitchyardBindingForSelection,
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
   normalizeSandboxInferenceRouteSelection,
@@ -577,6 +578,7 @@ export function registerSandbox(
       ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
+      hermesSwitchyard: requireSwitchyardBindingForSelection(entry),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
@@ -630,6 +632,7 @@ type SandboxInferenceRouteReservation = Pick<
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
 };
 
 interface SandboxInferenceRouteReservationOptions {
@@ -671,6 +674,7 @@ export function reserveSandboxInferenceRoute(
     )
       return false;
     const normalized = normalizeInferenceSelection(route);
+    const hermesSwitchyard = requireSwitchyardBindingForSelection(route);
     const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
       route.nativeLocalProviderAttachment,
     );
@@ -763,6 +767,10 @@ export function reserveSandboxInferenceRoute(
             nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
           ) &&
           isDeepStrictEqual(
+            existing.hermesSwitchyard,
+            hermesSwitchyard ?? existing.hermesSwitchyard,
+          ) &&
+          isDeepStrictEqual(
             normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(existing)),
             normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(route)),
           ));
@@ -811,6 +819,7 @@ export function reserveSandboxInferenceRoute(
         existing ?? undefined,
         { ...normalized, gatewayName: route.gatewayName },
       ),
+      hermesSwitchyard,
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,

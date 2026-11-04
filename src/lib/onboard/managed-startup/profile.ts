@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type SwitchyardProviderBindings,
+  validateSwitchyardProviderBindings,
+} from "../../hermes-switchyard-routing";
+
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
@@ -309,6 +314,7 @@ export interface ManagedStartupHermesConfig {
   readonly webSearch: ManagedStartupWebSearch;
   /** Absent only on canonical profiles created before Switchyard integration. */
   readonly switchyardRouting?: HermesSwitchyardRoutingIntent | null;
+  readonly switchyardBindings?: SwitchyardProviderBindings | null;
 }
 
 export interface ManagedStartupDcodeConfig {
@@ -567,6 +573,11 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance(
       "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
       "agentConfig.switchyardRouting",
+      "runtime-env",
+    ),
+    affordance(
+      "NEMOCLAW_HERMES_SWITCHYARD_BINDINGS_B64",
+      "agentConfig.switchyardBindings",
       "runtime-env",
     ),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
@@ -1064,7 +1075,12 @@ const OPENCLAW_CONFIG_KEYS = new Set([
 const LEGACY_OPENCLAW_CONFIG_KEYS = new Set([...OPENCLAW_CONFIG_KEYS, "deviceAuth"]);
 const LEGACY_DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const LEGACY_DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
-const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch", "switchyardRouting"]);
+const HERMES_CONFIG_KEYS = new Set([
+  "agent",
+  "webSearch",
+  "switchyardRouting",
+  "switchyardBindings",
+]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
 const PI_CONFIG_KEYS = new Set(["agent"]);
 const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
@@ -1904,10 +1920,18 @@ function validateAgentConfig(
       !hasSwitchyardRouting || config.switchyardRouting === null
         ? null
         : validateHermesSwitchyardRoutingIntent(config.switchyardRouting);
+    const switchyardBindings = switchyardRouting
+      ? validateSwitchyardProviderBindings(config.switchyardBindings, switchyardRouting)
+      : null;
+    if (!switchyardRouting && config.switchyardBindings != null)
+      invalid("Switchyard bindings require an explicit routing configuration");
     return {
       agent,
       webSearch: validateWebSearch(config.webSearch, agent),
       ...(hasSwitchyardRouting ? { switchyardRouting } : {}),
+      ...(Object.hasOwn(config, "switchyardBindings") || switchyardRouting
+        ? { switchyardBindings }
+        : {}),
     };
   }
 

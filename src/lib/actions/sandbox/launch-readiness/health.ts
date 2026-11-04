@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateSwitchyardBindingState } from "../../../hermes-switchyard-routing";
+import { verifySwitchyardProviderBindings } from "../../../onboard/switchyard/bindings";
+import { decodeManagedStartupProfile } from "../../../onboard/managed-startup/profile";
+import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
+
 import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
-import { verifyNativeLocalStatusAttachment } from "../inference-route-health";
+import {
+  verifyNativeLocalStatusAttachment,
+  verifyNativeNvidiaStatusAttachment,
+  verifyNativeHostedStatusAttachment,
+} from "../inference-route-health";
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
@@ -24,13 +33,10 @@ import {
 import type { SandboxEntry } from "../../../state/registry";
 import {
   normalizeNativeNvidiaProviderAttachment,
-  verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../../../inference/native-nvidia";
 import type { NativeProviderAttachment } from "../../../inference/native-provider/contract";
 import { recordedNativeProviderAttachment } from "../../../inference/native-provider/recorded-selection";
-import { fixedNativeProviderForAttachment } from "../../../inference/native-provider/fixed";
-import { nativeProviderLifecycle } from "../../../inference/native-provider";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
 import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
 import {
@@ -71,6 +77,7 @@ export type LaunchReadinessObservationStage =
   | "inference-route";
 
 export interface LaunchReadinessHealthDeps {
+  switchyardProviderAdapter?: OpenShellProviderAdapter;
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
@@ -128,6 +135,9 @@ export function createBoundLaunchReadinessDeps(
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
     inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
+    switchyardProviderAdapter: createCliOpenShellProviderAdapter({
+      run: (args, options) => capture(args, options),
+    }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
       isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
@@ -240,6 +250,41 @@ export async function requireNativeInferenceHealth(input: {
   deps: LaunchReadinessHealthDeps;
   allowTransientNvidiaInvocation?: boolean;
 }): Promise<boolean> {
+  let profileSwitchyard = null;
+  if (
+    (input.agentName ?? input.entry.agent) === "hermes" &&
+    input.entry.workload?.kind === "managed-image"
+  ) {
+    const config = decodeManagedStartupProfile(input.entry.workload.encodedProfile).agentConfig;
+    if (config.agent === "hermes" && config.switchyardRouting)
+      profileSwitchyard = {
+        routing: config.switchyardRouting,
+        bindings: config.switchyardBindings,
+      };
+  }
+  if (input.entry.hermesSwitchyard || profileSwitchyard) {
+    const state = validateSwitchyardBindingState(input.entry.hermesSwitchyard);
+    if (
+      (input.agentName ?? input.entry.agent) !== "hermes" ||
+      input.entry.gatewayName !== input.gatewayName ||
+      input.entry.provider !== state.routing.capable.provider ||
+      input.entry.model !== state.routing.capable.model ||
+      !profileSwitchyard ||
+      JSON.stringify(profileSwitchyard) !== JSON.stringify(state)
+    )
+      throw new LaunchReadinessEvidenceError();
+    await verifySwitchyardProviderBindings({
+      routing: state.routing,
+      expected: state.bindings,
+      sandboxName: input.sandboxName,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      adapter: input.deps.switchyardProviderAdapter ?? createCliOpenShellProviderAdapter(),
+      providerNames: Object.fromEntries(
+        state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+      ),
+    });
+    return true;
+  }
   if (input.entry.nativeLocalProviderAttachment !== undefined) {
     const expected = normalizeNativeLocalProviderAttachment(
       input.entry.nativeLocalProviderAttachment,
@@ -276,35 +321,20 @@ export async function requireNativeInferenceHealth(input: {
   const model = normalizedString(input.entry.model);
   if (!provider || !model) throw new LaunchReadinessEvidenceError();
   const nvidia = normalizeNativeNvidiaProviderAttachment(expected);
-  if (nvidia && input.deps.verifyNativeNvidiaAttachment) {
-    await input.deps.verifyNativeNvidiaAttachment({
+  if (nvidia)
+    await verifyNativeNvidiaStatusAttachment({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected: nvidia,
+      verify: input.deps.verifyNativeNvidiaAttachment,
     });
-  } else if (nvidia) {
-    await verifyNativeNvidiaProviderAttachment({
-      adapter: createCliOpenShellProviderAdapter(),
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected: nvidia,
-    });
-  } else if (input.deps.verifyNativeHostedAttachment) {
-    await input.deps.verifyNativeHostedAttachment({
+  else
+    await verifyNativeHostedStatusAttachment({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       expected,
+      verify: input.deps.verifyNativeHostedAttachment,
     });
-  } else {
-    await nativeProviderLifecycle(
-      fixedNativeProviderForAttachment(expected),
-    ).verifyNativeProviderAttachment({
-      adapter: createCliOpenShellProviderAdapter(),
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected,
-    });
-  }
   const invocation = await (
     input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
   )({
@@ -437,16 +467,21 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeProviderAttachment(entry) || entry.nativeLocalProviderAttachment !== undefined) {
+    if (
+      getNativeProviderAttachment(entry) ||
+      entry.nativeLocalProviderAttachment !== undefined ||
+      entry.hermesSwitchyard !== undefined ||
+      (agentName === "hermes" && entry.workload?.kind === "managed-image")
+    ) {
       try {
-        await requireNativeInferenceHealth({
+        const native = await requireNativeInferenceHealth({
           sandboxName,
           gatewayName,
           agentName,
           entry,
           deps,
         });
-        return;
+        if (native) return;
       } catch (error) {
         recordLaunchReadinessObservationFailure(deps, "inference-route");
         throw error;

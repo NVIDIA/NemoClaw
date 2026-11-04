@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { switchyardBindingFixture } from "../../helpers/hermes-switchyard.ts";
 
 import {
   createHermesSwitchyardRoutingIntent,
@@ -9,12 +10,11 @@ import {
   serializeHermesSwitchyardRouting,
 } from "../../../src/lib/hermes-switchyard-routing.ts";
 
-const packageRouting = serializeHermesSwitchyardRouting(
-  createHermesSwitchyardRoutingIntent({
-    efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
-    capable: { provider: "openai-api", model: "fixture-capable" },
-  }),
-);
+const intent = createHermesSwitchyardRoutingIntent({
+  efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
+  capable: { provider: "openai-api", model: "fixture-capable" },
+});
+const packageRouting = serializeHermesSwitchyardRouting(intent, switchyardBindingFixture(intent));
 const relayPluginsBase64 = Buffer.from(packageRouting.relayPluginsToml, "utf8").toString("base64");
 const relayPluginStateBase64 = Buffer.from(packageRouting.relayPluginStateJson, "utf8").toString(
   "base64",

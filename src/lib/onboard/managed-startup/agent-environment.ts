@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+  encodeSwitchyardProviderBindings,
+} from "../../hermes-switchyard-routing";
+
 import { Buffer } from "node:buffer";
 import { PROVIDERLESS_INFERENCE_ENV } from "../../providerless-inference";
 import {
@@ -454,6 +459,13 @@ function mapHermesProfile(
     [HERMES_SWITCHYARD_ROUTING_ENV]: profile.agentConfig.switchyardRouting
       ? encodeHermesSwitchyardRoutingIntent(profile.agentConfig.switchyardRouting)
       : "",
+    [HERMES_SWITCHYARD_BINDINGS_ENV]:
+      profile.agentConfig.switchyardRouting && profile.agentConfig.switchyardBindings
+        ? encodeSwitchyardProviderBindings(
+            profile.agentConfig.switchyardBindings,
+            profile.agentConfig.switchyardRouting,
+          )
+        : "",
   };
 
   const runtimeEnvironment: MutableEnvironment = {
@@ -463,6 +475,7 @@ function mapHermesProfile(
   };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
   delete runtimeEnvironment[HERMES_SWITCHYARD_ROUTING_ENV];
+  delete runtimeEnvironment[HERMES_SWITCHYARD_BINDINGS_ENV];
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =

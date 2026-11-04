@@ -4,6 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import {
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+} from "../hermes-switchyard-routing";
 
 const childProcessMock = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -632,6 +637,10 @@ describe("managed startup image runtime", () => {
     return {
       environment: {
         [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+        [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+          switchyardBindingFixture(routing),
+          routing,
+        ),
       },
       paths: {
         relayPluginStateSource: "/sandbox/hermes-relay-plugin-state.json",
@@ -641,7 +650,7 @@ describe("managed startup image runtime", () => {
         switchyardDeploymentSource: "/sandbox/hermes-switchyard-v1.toml",
         switchyardDeploymentTarget: "/usr/local/share/hermes-switchyard-v1.toml",
       },
-      serialized: serializeHermesSwitchyardRouting(routing),
+      serialized: serializeHermesSwitchyardRouting(routing, switchyardBindingFixture(routing)),
     };
   }
 

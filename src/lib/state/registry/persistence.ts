@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateSwitchyardBindingState } from "../../hermes-switchyard-routing";
+
 import {
   normalizeNativeLocalProviderAttachment,
   normalizeNativeLocalProviderAuthorities,
@@ -245,6 +247,7 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  if (entry.hermesSwitchyard !== undefined) validateSwitchyardBindingState(entry.hermesSwitchyard);
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -305,6 +308,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
  * sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  if (entry.hermesSwitchyard !== undefined) validateSwitchyardBindingState(entry.hermesSwitchyard);
   // Defensively drop non-durable recovery markers and legacy
   // providerCredentialHashes so they can never reach sandboxes.json even if a
   // caller force-passed them through updateSandbox().

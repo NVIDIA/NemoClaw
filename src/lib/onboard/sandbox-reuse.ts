@@ -4,7 +4,12 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
-import { readHermesSwitchyardRoutingEnvironment } from "../hermes-switchyard-routing";
+import {
+  readHermesSwitchyardRoutingEnvironment,
+  type SwitchyardBindingState,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+  encodeSwitchyardProviderBindings,
+} from "../hermes-switchyard-routing";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { resolveExternalDashboardUrlForPort } from "../dashboard/url";
@@ -32,6 +37,24 @@ interface SandboxCaptureResult {
   stderr?: string;
   error?: Error;
   signal?: NodeJS.Signals | null;
+}
+
+/** Restore only the binding record paired with this explicit create intent. */
+export function bindHermesSwitchyardCreateEnvironment(
+  state: SwitchyardBindingState | undefined,
+  env: NodeJS.ProcessEnv,
+): void {
+  const requested = readHermesSwitchyardRoutingEnvironment(env);
+  if (!requested) {
+    if (state) throw new Error("Switchyard provider bindings require explicit routing intent.");
+    return;
+  }
+  if (!state || !isDeepStrictEqual(state.routing, requested))
+    throw new Error("Switchyard sandbox creation requires the selected provider binding receipts.");
+  env[HERMES_SWITCHYARD_BINDINGS_ENV] = encodeSwitchyardProviderBindings(
+    state.bindings,
+    state.routing,
+  );
 }
 
 /** Keep ordinary create fingerprints unchanged when Hermes routing is disabled. */

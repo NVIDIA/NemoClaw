@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import { validateSwitchyardBindingState } from "../../hermes-switchyard-routing";
+import {
+  observeSwitchyardProviderBindings,
+  verifySwitchyardProviderBindings,
+} from "../switchyard/bindings";
+
 import {
   importHermesToolGatewayProfile,
   LEGACY_HERMES_TOOL_GATEWAY_PROVIDER_TYPE,
@@ -50,6 +57,7 @@ type ProviderPreparationInput = {
   readonly messagingProviders: readonly string[];
   readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
   readonly extraProviders: readonly string[];
+  readonly hermesSwitchyard?: SandboxEntry["hermesSwitchyard"];
   readonly gatewayName: string;
   readonly directCreateProviderNames?: readonly string[];
   readonly hermesToolGateway?: Readonly<{ providerName: string }>;
@@ -61,6 +69,43 @@ type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpens
   readonly providerAdapter?: OpenShellProviderAdapter &
     Partial<Pick<CliOpenShellProviderAdapter, "warnIfVerifiedProfilesChangedAfterSandboxCreate">>;
 };
+
+export async function validateAttachedSwitchyardProvidersBeforeSandboxCreation(
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+): Promise<void> {
+  if (!input.hermesSwitchyard) return;
+  const state = validateSwitchyardBindingState(input.hermesSwitchyard);
+  const observed = await observeSwitchyardProviderBindings({
+    routing: state.routing,
+    adapter: resolveProviderAdapter(deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    providerNames: Object.fromEntries(
+      state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+    ),
+  });
+  if (!isDeepStrictEqual(state.bindings, observed))
+    throw new Error("Switchyard provider state changed before sandbox creation.");
+}
+
+export async function verifySwitchyardAttachmentAfterCreate(
+  sandboxName: string,
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+): Promise<void> {
+  if (!input.hermesSwitchyard) return;
+  const state = validateSwitchyardBindingState(input.hermesSwitchyard);
+  await verifySwitchyardProviderBindings({
+    routing: state.routing,
+    expected: state.bindings,
+    sandboxName,
+    adapter: resolveProviderAdapter(deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    providerNames: Object.fromEntries(
+      state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
+    ),
+  });
+}
 
 function expectedMessagingBindings(input: ProviderPreparationInput) {
   return new Map(
@@ -445,6 +490,9 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
   const adapter = resolveProviderAdapter(deps);
   const target = namedOpenShellGateway(input.gatewayName);
   for (const attachedProvider of attachedProviders) {
+    // These fresh providers were already observed. An empty update changes their resource versions.
+    if (input.hermesSwitchyard?.bindings.providers.some((p) => p.providerName === attachedProvider))
+      continue;
     if (providersRequiringExistenceProbe.has(attachedProvider)) {
       const observed = await adapter.getProvider({ target, providerName: attachedProvider });
       if (!observed.ok) {

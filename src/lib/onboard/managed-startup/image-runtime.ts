@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  readSwitchyardProviderBindingsEnvironment,
+  assertSwitchyardProviderEnvironment,
+} from "../../hermes-switchyard-routing";
+
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import fs from "node:fs";
@@ -990,7 +995,10 @@ export function installHermesSwitchyardRoutingFiles(
     removeSafeRootFile(paths.switchyardDeploymentTarget);
     return;
   }
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(
+    routing,
+    readSwitchyardProviderBindingsEnvironment(configurationEnvironment, routing),
+  );
   const expectedRelay = Buffer.from(serialized.relayPluginsToml, "utf8");
   const expectedRelayState = Buffer.from(serialized.relayPluginStateJson, "utf8");
   const expectedDeployment = Buffer.from(serialized.switchyardDeploymentToml, "utf8");
@@ -1040,7 +1048,10 @@ export function verifyHermesSwitchyardRoutingFiles(
     assertRoutingFileAbsent(paths.switchyardDeploymentTarget);
     return;
   }
-  const serialized = serializeHermesSwitchyardRouting(routing);
+  const serialized = serializeHermesSwitchyardRouting(
+    routing,
+    readSwitchyardProviderBindingsEnvironment(configurationEnvironment, routing),
+  );
   verifyCommittedRoutingFile(
     paths.relayPluginsTarget,
     Buffer.from(serialized.relayPluginsToml, "utf8"),
@@ -1747,6 +1758,13 @@ export async function applyManagedStartupImageProfile(
   }
   if (profile.agent !== expectedAgent) {
     fail(`managed startup profile targets ${profile.agent}, expected ${expectedAgent}`);
+  }
+  if (profile.agentConfig.agent === "hermes" && profile.agentConfig.switchyardRouting) {
+    if (!profile.agentConfig.switchyardBindings) fail("Switchyard provider bindings are missing");
+    assertSwitchyardProviderEnvironment(env, {
+      routing: profile.agentConfig.switchyardRouting,
+      bindings: profile.agentConfig.switchyardBindings,
+    });
   }
   requireManagedStartupExchangeDirectory();
   const mapped = mapManagedStartupProfileToAgentEnvironment(profile, env);

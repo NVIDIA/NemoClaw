@@ -11,6 +11,7 @@ import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 export {
   encodeHermesSwitchyardRoutingIntent,
   HERMES_SWITCHYARD_ROUTING_ENV,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
   type HermesSwitchyardRoutingIntent,
 } from "../hermes-switchyard-routing";
 export { loadSwitchyardOnboardConfig } from "./switchyard/config";
