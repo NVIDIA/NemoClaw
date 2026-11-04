@@ -37,19 +37,22 @@ term_open() {
   exec 3> "$TTY/in"
 }
 term_mark() { stat -c %s "$TTY/raw"; }
-# What the terminal showed after MARK, without control sequences.
+# What the terminal showed after MARK, without control sequences; a carriage return starts a new line.
 # The C locale makes [@-~] a byte range; in en_US.UTF-8 it misses letters such as K.
 term_shown() {
   tail -c "+$(( ${1:-0} + 1 ))" "$TTY/raw" \
-    | LC_ALL=C sed -E 's#\x1b\[[0-9;?<>=]*[ -/]*[@-~]##g; s#\x1b\][^\x07\x1b]*(\x07|\x1b\\)##g; s#\x1b[()][A-Z0-9]##g; s#\x1b[=>78DEHM]##g' \
-    | tr -d '\r'
+    | LC_ALL=C sed -E 's#\x1b\[[0-?]*[ -/]*[@-~]##g; s#\x1b[]P_^][^\x07\x1b]*(\x07|\x1b\\)##g; s#\x1b[()*+].##g; s#\x1b.##g' \
+    | tr '\r' '\n'
 }
-term_send() { printf '%b' "$1" >&3; }
+# Type KEYS into the terminal. The subshell takes the SIGPIPE if the session has ended.
+term_send() { kill -0 "$TERM_PID" 2> /dev/null && ( printf '%b' "$1" >&3 ) 2> /dev/null; }
 # Wait up to SECONDS for a line after MARK to match the grep -E PATTERN; GREP_FLAGS such as -x apply.
+# After the time runs out or the session ends, check once more.
 term_wait() {
-  local end=$(( $(date +%s) + $3 ))
+  local end=$(( $(date +%s) + $3 )) last=
   until term_shown "$1" | LC_ALL=C grep -qE ${4:-} -- "$2"; do
-    [ "$(date +%s)" -lt "$end" ] && kill -0 "$TERM_PID" 2> /dev/null || return 1
+    [ -z "$last" ] || return 1
+    [ "$(date +%s)" -lt "$end" ] && kill -0 "$TERM_PID" 2> /dev/null || last=1
     sleep 0.5
   done
 }
@@ -88,10 +91,10 @@ term_close() {
    START=$(term_mark); term_send '\r'
    # The answer is a line holding the word alone; the prompt line also says "Reply with exactly".
    term_wait "$START" "[[:space:]▎▌│●•>]*$WORD[[:space:]▎▌│●•>]*" 200 -x && REPLY_=ok || REPLY_=FAIL
-   term_shown "$START" | grep -q 'Interrupted by user' && REPLY_=FAIL
-   # Ctrl-D before the answer finishes interrupts the turn.
+   # Ctrl-D before the answer finishes interrupts the turn, which the UI reports as it quits.
    sleep 3; term_send '\004'
    term_close 30
+   term_shown "$START" | grep -q 'Interrupted by user' && REPLY_=FAIL
    term_shown 0 > "$EVIDENCE/terminal-$WORD.txt"
    printf 'ui %s\nreply %s\nexit %s\n' "$UI" "$REPLY_" "$TERM_EXIT" | tee "$EVIDENCE/terminal.txt"
    rm -rf "$TERMINAL_HOME" "$TTY"
