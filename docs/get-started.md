@@ -129,16 +129,17 @@ See [unchanged apply and recovery](usage.md#updates-and-recovery) before using i
 
 ## 5. Access the Agent
 
+The apply result reports the agent's runtime ID as `agents.assistant.runtimeId`; text output prints the whole command under **Agents**.
 [Select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace), then send the agent a short prompt from the client host:
 
 ```sh
-RUNTIME_ID=$(jq -r '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.name == "assistant") | .runtime_id' .local/first-deployment/state/terraform.tfstate)
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir .local/first-deployment/state .local/first-deployment/deployment.yaml | jq -r '.agents.assistant.runtimeId')
 openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with a short greeting."
 JSON
 ```
 
-The first command reads the agent's runtime ID from the deployment's state with `jq`.
+The first command reads the runtime ID again from a plan, which changes no runtime resources.
 Verify that `result.status` is `succeeded` and read the reply in `result.output`; it tests this endpoint, model, and harness together.
 It does not establish general model quality or tool reliability.
 The request may incur inference charges and is added to the agent's conversation history.

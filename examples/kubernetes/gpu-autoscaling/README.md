@@ -125,11 +125,11 @@ With the `oidc` profile:
 
 1. [Reach the gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
 2. [Select the gateway and workspace](../../../docs/interfaces.md#select-the-gateway-and-workspace).
-3. From the deployment directory, read a sandbox's runtime ID from the state, then send one prompt, as [Run One Headless OpenClaw Request](../../../docs/agents.md#run-one-headless-openclaw-request) describes:
+3. Copy a sandbox's command from apply's **Agents** list, or, from the deployment directory, read its runtime ID from a plan's JSON result, then send one prompt, as [Run One Headless OpenClaw Request](../../../docs/agents.md#run-one-headless-openclaw-request) describes:
 
 ```sh
 sandbox=user-0000
-RUNTIME_ID=$(jq -r --arg sandbox "$sandbox" '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.sandbox.name == $sandbox) | .runtime_id' state/terraform.tfstate)
+RUNTIME_ID=$(nemoclaw plan -o json --progress off --non-interactive --state-dir state deployment.yaml | jq -r --arg sandbox "$sandbox" '.agents[$sandbox].runtimeId')
 openshell sandbox exec -n "$sandbox" --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - <<'JSON'
 "Reply with exactly READY."
 JSON

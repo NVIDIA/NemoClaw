@@ -60,6 +60,22 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## Invoke an Agent
 
 After [selecting the gateway and workspace](#select-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
+Plan and apply print the command for each agent, with its current runtime ID:
+
+```text
+Agents:
+  In each terminal, select this deployment's gateway and workspace:
+    unset OPENSHELL_GATEWAY
+    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
+    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
+  claw: agent main, runtime RUNTIME_ID
+    Invoke:   openshell sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
+  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents.md.
+```
+
+JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
+A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
+An agent without a recorded runtime, such as before the first apply, is listed with `no runtime recorded` and has no `runtimeId`.
 [Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
 The selected Fabric adapter owns how the harness handles the request.
 
@@ -130,10 +146,6 @@ After apply, NemoClaw lists each enabled interface with the commands to reach it
 
 ```text
 Agent interfaces:
-  In each terminal, select this deployment's gateway and workspace:
-    unset OPENSHELL_GATEWAY
-    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671
-    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw/dashboard on port 18789
     Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
     Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
@@ -141,11 +153,12 @@ Agent interfaces:
 ```
 
 JSON results carry the same facts under `interfaces`.
-The gateway selection follows [Select the Gateway and Workspace](#select-the-gateway-and-workspace); for a gateway that needs an OpenShell profile, the output asks for your profile's name.
+Run these commands under the gateway selection that apply prints once, under **Agents**, as [Invoke an Agent](#invoke-an-agent) shows.
+The selection follows [Select the Gateway and Workspace](#select-the-gateway-and-workspace); for a gateway that needs an OpenShell profile, the output asks for your profile's name.
 
 1. Run the forward in its own terminal and keep it running.
 2. Read the token with the `Token` command, in another terminal with the same selection.
-   The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that the deployment state records.
+   The token is at `/sandbox/artifacts/.fabric/ADAPTER/runtimes/RUNTIME_ID/interfaces/NAME.token`, where `RUNTIME_ID` is the agent's runtime ID that apply reports under **Agents**.
    For an agent that [keeps its state](state.md#agent-files), such as Hermes, it is at `/sandbox/artifacts/.fabric/state/ADAPTER_ID/AGENT/interfaces/NAME.token` for every runtime.
    The adapter generates it each time the runtime starts and writes it once its interfaces are up, readable only by the sandbox's user; stopping the runtime removes it.
    After the runtime restarts, apply prints the new path; read the token again.
@@ -174,10 +187,6 @@ After apply, NemoClaw prints the command that opens it, with the current runtime
 
 ```text
 Agent interfaces:
-  In each terminal, select this deployment's gateway and workspace:
-    unset OPENSHELL_GATEWAY
-    export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17681
-    export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   assistant/terminal
     Open:     openshell sandbox exec -n assistant --tty -- /sandbox/artifacts/.fabric/deepagents-code/runtimes/RUNTIME_ID/interfaces/terminal
               (on a noexec mount: openshell sandbox exec -n assistant --tty -- sh /sandbox/artifacts/.fabric/deepagents-code/runtimes/RUNTIME_ID/interfaces/terminal)

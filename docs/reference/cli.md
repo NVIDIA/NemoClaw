@@ -86,6 +86,7 @@ Text output also summarizes advertised models and credential-reference availabil
 JSON output preserves the full discovery report, including query provenance and separate runtime/deployment resource scopes.
 
 Apply summarizes actual changes; a successful operation does not establish working model or agent responses.
+Plan and apply text list each sandbox's agent with the runtime ID that state records, and print the command that invokes it; a plan lists the runtimes the last apply left.
 For each enabled agent interface, apply text also prints the commands that forward it and read its token, and how to sign in; it never prints a token.
 Destroy distinguishes removed resources from retained storage.
 The retained list describes tracked resources, not every surviving host file or external service.
@@ -125,6 +126,7 @@ The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployme
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
 | `serviceUrls` | Apply-only URLs the gateway reports for sandbox service exposures, by sandbox and service name, with `""` for the unnamed endpoint; the URLs carry no credential, so the service must authenticate its own clients; omitted when empty, and when apply can't read them, `warnings` says so |
+| `agents` | Each sandbox's agent, by sandbox name: `agent`, its name, and `runtimeId`, the runtime ID that `fabric-agent-ctl invoke --runtime-id` takes; a plan reports the runtimes the last apply left, and apply the runtimes after its changes; `runtimeId` is omitted while state records no runtime; never a credential; omitted when empty, and when apply can't read state, `warnings` says so; see [invoke an agent](../interfaces.md#invoke-an-agent) |
 | `deferred` | Unresolved planning prerequisites; omitted when empty |
 | `resourceSources` | Authored provider `name` and definition `path`, keyed by opaque scoped resource address; intent metadata, not proof of an established resource; omitted when empty |
 | `unverified` | Apply-time service-readiness checks; does not change `complete`; omitted when empty |
