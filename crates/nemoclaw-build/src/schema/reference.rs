@@ -226,7 +226,9 @@ fn guide(name: &str) -> &'static str {
         name if name.starts_with("Policy") => "[Sandbox policy](../security/sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
         | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../agents-inference/recipes.md)",
-        "ServicePlacement" | "ServicePublication" => "[SSH model service](../agents-inference/remote-service.md)",
+        "ServicePlacement" | "ServicePublication" => {
+            "[SSH model service](../agents-inference/remote-service.md)"
+        }
         "Service" | "Model" | "Serving" | "Memory" | "ServiceHardware" | "ServiceContainer"
         | "ServiceIpc" | "DedicatedHardware" | "HardwareProfile" => {
             "[Managed models](../agents-inference/models.md)"
@@ -251,7 +253,9 @@ fn guide(name: &str) -> &'static str {
         "ImagePullPolicy" => {
             "[Container image downloads](../build-deploy/usage.md#control-container-image-downloads)"
         }
-        _ => "[Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials)",
+        _ => {
+            "[Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials)"
+        }
     }
 }
 
