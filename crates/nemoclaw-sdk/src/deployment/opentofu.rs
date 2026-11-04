@@ -43,19 +43,22 @@ impl Deployment {
     /// 1.12.9 keeps an interrupted apply's progress only when the file existed
     /// before the apply began: without it, the snapshot that OpenTofu saves
     /// when stopped holds only the last resource it updated (#14155). A
-    /// refresh writes the file and changes no resource, and refreshing before
-    /// the plan keeps the saved plan current.
+    /// refresh-only apply writes the file and changes no resource, and creating
+    /// it before the plan keeps the saved plan current. It applies an empty
+    /// configuration: the deployment's data sources read a managed gateway
+    /// that the first apply has yet to create. `initialize` then writes the
+    /// deployment's configuration.
     pub(super) async fn create_state(
         &self,
         bundle: &Bundle,
         store: &Store,
-        document: &Document,
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
         if store.directory.join("terraform.tfstate").exists() {
             return Ok(());
         }
-        let env = self.provider_environment(document, &store.directory, false)?;
+        self.prepare(bundle, store, &serde_json::json!({}))?;
+        let env = crate::state::schema_environment(&store.directory);
         self.timed(
             "tofu.state",
             crate::process::run(

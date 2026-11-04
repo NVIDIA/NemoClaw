@@ -33,8 +33,10 @@ use std::{
 /// because a shell that waits for a child can lose it),
 /// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
 /// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
-/// prints an empty state or plan. `apply -refresh-only` creates an empty state
-/// file where there is none, as OpenTofu does, and ends; until the next
+/// prints an empty state or plan. `apply -refresh-only` fails when the
+/// configuration declares data sources, as OpenTofu fails to read a managed
+/// gateway that a first apply has yet to create; otherwise it creates an empty
+/// state file where there is none, as OpenTofu does, and ends; until the next
 /// `apply`, `show -json` prints that empty state instead of the canned one,
 /// which stands for the state after an apply. An `apply` that finds
 /// the saved record, `intent.json`, creates the control file
@@ -59,6 +61,7 @@ case "$1" in
     if [ -f "$canned" ]; then cat "$canned"; else printf '{"format_version":"1.0"}\n'; fi ;;
   apply)
     if [ "$2" = -refresh-only ]; then
+      if grep -q '"data"' main.tf.json; then printf 'observation transport failed\n' >&2; exit 1; fi
       [ -f terraform.tfstate ] || printf '{"version":4,"resources":[]}\n' > terraform.tfstate
       : > "$control/$stage.refreshed"
       exit 0

@@ -72,7 +72,7 @@ NemoClaw keeps these by decision, as its own promises:
 
 NemoClaw works around these upstream gaps until the components it pins close them:
 
-- OpenTofu 1.12.9 keeps an interrupted apply's progress only in a state directory that already holds a state file; without one, the snapshot it saves when stopped lists only the last resource it updated. The SDK has OpenTofu create the file with a refresh before an apply's first plan ([#14155](https://github.com/NVIDIA/NemoClaw/issues/14155)).
+- OpenTofu 1.12.9 keeps an interrupted apply's progress only in a state directory that already holds a state file; without one, the snapshot it saves when stopped lists only the last resource it updated. The SDK has OpenTofu create the file with a refresh-only apply of an empty configuration before an apply's first plan ([#14155](https://github.com/NVIDIA/NemoClaw/issues/14155)).
 - The Helm provider 3.3.0 returns a failed install's error without the release's state, so OpenTofu binds nothing while Helm keeps the release's record and refuses its name. The SDK records each gateway install it starts until destroy finishes; apply refuses to install a release that the cluster records and the state does not bind, and destroy removes it through the Helm provider in a separate OpenTofu configuration, only when the record names it ([#14155](https://github.com/NVIDIA/NemoClaw/issues/14155)).
 
 ## Ownership and Recovery

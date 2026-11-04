@@ -287,12 +287,11 @@ impl Deployment {
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
         (self.progress)(Progress::Validating);
+        if apply {
+            self.create_state(&bundle, &store, cancel).await?;
+        }
         self.initialize(&bundle, &store, &compiled.graph, cancel)
             .await?;
-        if apply {
-            self.create_state(&bundle, &store, &document, cancel)
-                .await?;
-        }
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
         let expected = expected_bindings(&compiled, &bindings)?;
         (self.progress)(Progress::Planning);
