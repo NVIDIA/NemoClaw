@@ -53,6 +53,16 @@ import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-
 import { configuredAgentIds } from "../sandbox/agents/model-selections";
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
+const DEADLINE_REACHED = Symbol("telemetry-observation-deadline");
+
+function collectionInterruption(
+  options: { signal: AbortSignal; deadlineAt: number },
+  remaining = options.deadlineAt - Date.now(),
+): "deadline" | "cancelled" | undefined {
+  if (options.signal.aborted)
+    return options.signal.reason === DEADLINE_REACHED ? "deadline" : "cancelled";
+  return remaining <= 0 ? "deadline" : undefined;
+}
 
 function booleanSetting(value: unknown): {
   value: "true" | "false" | "unknown";
@@ -257,9 +267,10 @@ async function collectRuntime(
   let osObservation: Promise<void> | undefined;
   let routeObservation: Promise<void> | undefined;
   const failureReason = (error: unknown): CollectionReadFailure => {
-    if (Date.now() >= options.deadlineAt) return "deadline";
-    if (options.signal.aborted) return "cancelled";
-    return error instanceof NativeTelemetryReadError ? error.reason : "failed";
+    return (
+      collectionInterruption(options) ??
+      (error instanceof NativeTelemetryReadError ? error.reason : "failed")
+    );
   };
   let failureStage:
     | "runtime_authority.failed"
@@ -276,8 +287,9 @@ async function collectRuntime(
     let route = options.routes.get(routeKey);
     if (!route) {
       const remaining = options.deadlineAt - Date.now();
-      if (options.signal.aborted || remaining <= 0) {
-        options.diagnostics?.record(`route_read.${remaining <= 0 ? "deadline" : "cancelled"}`);
+      const interruption = collectionInterruption(options, remaining);
+      if (interruption) {
+        options.diagnostics?.record(`route_read.${interruption}`);
         throw new Error("Telemetry observation deadline reached");
       }
       route = observe(
@@ -501,13 +513,7 @@ export async function collectOperationSnapshot(options: {
         }
       } catch {
         inventoryError = true;
-        options.diagnostics?.record(
-          options.signal.aborted
-            ? "inventory.cancelled"
-            : Date.now() >= options.deadlineAt
-              ? "inventory.deadline"
-              : "inventory.failed",
-        );
+        options.diagnostics?.record(`inventory.${collectionInterruption(options) ?? "failed"}`);
       }
     }
   } catch {
@@ -539,11 +545,13 @@ export async function collectOperationSnapshot(options: {
   );
   const controller = new AbortController();
   const parentSignal = options.signal;
-  const cancel = () => controller.abort();
+  const cancel = () => controller.abort(parentSignal.reason);
+  const expire = () => controller.abort(DEADLINE_REACHED);
   parentSignal.addEventListener("abort", cancel, { once: true });
   const remaining = options.deadlineAt - Date.now();
-  const timer = setTimeout(cancel, Math.max(0, remaining));
-  if (parentSignal.aborted || remaining <= 0) cancel();
+  const timer = setTimeout(expire, Math.max(0, remaining));
+  if (parentSignal.aborted) cancel();
+  else if (remaining <= 0) expire();
   options = { ...options, signal: controller.signal };
   const reader = createSupervisedSandboxCommandReader(options.signal);
   const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
@@ -556,12 +564,9 @@ export async function collectOperationSnapshot(options: {
         async () => {
           while (nextIndex < entries.length) {
             const index = nextIndex++;
-            if (options.signal.aborted || Date.now() >= options.deadlineAt) {
-              options.diagnostics?.record(
-                Date.now() >= options.deadlineAt
-                  ? "runtime.not_started_deadline"
-                  : "runtime.not_started_cancelled",
-              );
+            const interruption = collectionInterruption(options);
+            if (interruption) {
+              options.diagnostics?.record(`runtime.not_started_${interruption}`);
               markRuntimeNotObserved(snapshot.configurations[index]);
               observationIncomplete = true;
               continue;
