@@ -902,6 +902,12 @@ a five-second kill grace. A failed command or timeout marks cleanup as failed, r
 directory and recovery instructions, and allows policy and capture cleanup to continue.
 The same target writes an npm cache marker under the DCode native home before its existing rebuild.
 After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
+The thread-approval check also saves a preference through the pinned DCode writer before its first named rebuild.
+It requires comment removal and byte-identical restoration of the saved config through production state transfer.
+Before and after rebuild, all three identity aliases must exit successfully and report the configured route,
+provider, model, and endpoint. Both installed identity files must remain root-owned with mode `0444`,
+and the sandbox user must be unable to open them for writing. Wrapper unit tests own metadata parsing,
+legacy fallback, unsafe-file rejection, and output filtering; this live check owns installed startup and restore composition.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
