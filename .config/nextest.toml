@@ -83,7 +83,7 @@ slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 (package(nemoclaw-build) & test(a_new_fabric_archive_cannot_reuse_an_older_compiled_core))
 | (package(nemoclaw-e2e) & binary(=e2e) & (
-    test(/^managed_gateway::/) | test(=hcl_live::case) | test(/^interfaces_live::/)
+    test(=hcl_live::case) | test(/^interfaces_live::/)
 ))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
 '''

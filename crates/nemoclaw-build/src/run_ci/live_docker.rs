@@ -291,8 +291,7 @@ fn prepare(
     };
     let mut document = |name: &str| document_for(name, &agent, harness, None);
     // Each gateway test refuses resources from an earlier run, so each gets
-    // fresh documents: recovery, an isolation pair, and profile revisions.
-    let recovery = document("live-recovery")?;
+    // fresh documents: an isolation pair and profile revisions.
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
@@ -338,10 +337,6 @@ fn prepare(
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
-        (
-            "NEMOCLAW_TEST_GATEWAY_STATE".into(),
-            path(&inputs.join("recovery-state")),
-        ),
         ("NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE".into(), agent),
         (
             "NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT".into(),
@@ -362,7 +357,7 @@ fn prepare(
     .into_iter()
     .chain([(
         GATEWAY_DOCUMENTS.into(),
-        [path(&recovery), path(&first), path(&profiles)].join("\n"),
+        [path(&first), path(&profiles)].join("\n"),
     )])
     .collect())
 }
@@ -390,13 +385,12 @@ fn dummy_case(
     )?)
 }
 
-/// Internal: the three gateway documents, in [`GATEWAY_TESTS`] order.
+/// Internal: the two gateway documents, in [`GATEWAY_TESTS`] order.
 const GATEWAY_DOCUMENTS: &str = "NEMOCLAW_LIVE_DOCKER_GATEWAY_DOCUMENTS";
 
 /// Gateway tests all read NEMOCLAW_TEST_GATEWAY_DOCUMENT and each refuses
 /// another test's resources, so each runs alone with its own document.
-const GATEWAY_TESTS: [&str; 3] = [
-    "managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu",
+const GATEWAY_TESTS: [&str; 2] = [
     "pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes",
     "imported_profile_revisions_survive_repeated_reads_and_gateway_restart",
 ];

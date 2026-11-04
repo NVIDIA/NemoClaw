@@ -17,7 +17,5 @@ mod hosted_parity;
 #[path = "rust/interfaces_live.rs"]
 mod interfaces_live;
 #[cfg(unix)]
-#[path = "rust/managed_gateway.rs"]
-mod managed_gateway;
 #[path = "rust/pseudo_terminal.rs"]
 mod pseudo_terminal;

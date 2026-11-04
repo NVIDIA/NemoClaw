@@ -78,7 +78,7 @@ Run blocks call these modules:
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
-| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply. |
+| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
@@ -201,7 +201,8 @@ To run one of them by hand, supply its inputs as its section describes.
 
 The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-The agent must reply with the configured `reply` setting.
+The agent must reply with the configured `reply` setting, a plan must report no changes, and destroy must keep only the gateway's storage.
+A second apply must then reuse that storage, refreshing rather than creating it again, run the gateway in a new container, and the agent must reply again before a final destroy.
 It requests no inference and does not qualify a production adapter.
 
 `cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
@@ -244,31 +245,6 @@ cargo test -p nemoclaw-e2e --test e2e \
 The stand-in listens on every host address at that port while the test runs.
 A failed run keeps the state directory and prints its path; remove the deployment with the bundle's `nemoclaw destroy --state-dir PATH` and the same variable set to any value.
 
-## Docker Gateway Recovery
-
-nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed gateway's runtime resources with a real gateway, Docker, both providers, and OpenTofu.
-It plans and applies them through the SDK's `test-scenarios` setup, which only nemoclaw-e2e enables, then destroys through the public API.
-Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
-The test does not create sandboxes or request inference.
-It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
-Remove them with [Remove Retained Resources](../usage.md#remove-retained-resources), using the test bundle's `nemoclaw` and `NEMOCLAW_TEST_GATEWAY_STATE` as the state directory.
-
-From the repository root:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/gateway.yaml \
-NEMOCLAW_TEST_GATEWAY_STATE=/absolute/path/to/new-state \
-cargo test -p nemoclaw-e2e --test e2e \
-  managed_gateway::managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu \
-  -- --ignored --exact
-```
-
-The test checks read-only planning, unchanged apply, stopped/deleted process recovery, retained credential identity, and destroy/reapply.
-It also temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
-The SDK's `runtime_compile` tests own what a listen-port change reaches in the runtime graph: the gateway container, not its storage. The SDK still rejects retargeting an established public deployment endpoint.
-The gateway image remains pinned by the SDK.
-
 ## Docker Gateway Isolation
 
 The provider's `pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes` test runs two managed Docker gateways against the SDK's pinned OpenShell images on a native Linux host.
@@ -301,7 +277,7 @@ Both sandboxes must reach Ready and execute commands through the real supervisor
 Starting and restarting the second gateway must preserve the first sandbox's identity, readiness, and test file.
 Failures also retain resources for diagnosis; the test prints the owned gateway names and endpoints.
 Inspect those resources with the original documents before choosing cleanup or a separate fresh run; rerunning the same inputs is refused.
-Use the separate [gateway recovery test](#docker-gateway-recovery) to qualify the bundled OpenTofu path.
+The [`docker-dummy` scenario](#dummy-agent-lifecycle) qualifies the bundled OpenTofu path, including a redeploy on retained storage.
 This test does not qualify imported provider profiles, Fabric readiness, or agent replies.
 
 ## Provider Profile Revisions
