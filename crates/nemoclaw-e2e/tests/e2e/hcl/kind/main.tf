@@ -4,10 +4,11 @@
 # The cluster objects a kind case needs before its first apply, released
 # with the bundled Helm provider, as a platform or operator provides them:
 # the deployment's namespace, prepared as OpenShift prepares a project with
-# its UID range, holding the registry pull Secret and the issuer's CA; a stub
-# model in its own namespace that answers every chat completion with
-# `reply`; and an existing OIDC issuer in its own namespace. The test runner
-# removes the release, and with it the three namespaces, after the case.
+# its UID range when the case selects the OpenShift profile, holding the
+# registry pull Secret; a stub model in its own namespace that answers every
+# chat completion with `reply`; and, when the case selects the oidc
+# profile, an existing OIDC issuer in its own namespace and its CA. The test
+# runner removes the release, and with it these namespaces, after the case.
 
 terraform {
   required_version = "= 1.12.9"
@@ -73,10 +74,11 @@ locals {
   pull_secret = jsonencode({ auths = { (local.registry) = {
     auth = base64encode("${var.pull_credentials.username}:${var.pull_credentials.password}")
   } } })
+  openshift = local.document.spec.gateway.runtime.provider == "openshift"
   # The existing issuer the gateway trusts, which the SDK's development
   # issuer image stands in for: its service is <name>-oidc in its namespace.
-  oidc   = local.document.spec.gateway.config["openshell.gateway.oidc"]
-  issuer = regex("^https://(?P<name>[a-z0-9-]+)-oidc\\.(?P<namespace>[a-z0-9-]+)\\.svc\\.cluster\\.local:8443$", local.oidc.issuer)
+  oidc   = try(local.document.spec.gateway.config["openshell.gateway.oidc"], null)
+  issuer = local.oidc == null ? null : regex("^https://(?P<name>[a-z0-9-]+)-oidc\\.(?P<namespace>[a-z0-9-]+)\\.svc\\.cluster\\.local:8443$", local.oidc.issuer)
 }
 
 # OpenTofu cannot sign the token, which must come from the issuer's key, so
@@ -85,6 +87,7 @@ locals {
 # cli and verifier modules export each file there as the variable it names,
 # which is the case's token.env; the token never enters OpenTofu values.
 resource "terraform_data" "issuer" {
+  count = local.oidc == null ? 0 : 1
   provisioner "local-exec" {
     command = "\"$NEMOCLAW_HCL_PROBE\" hcl_live::issuer --exact --ignored --quiet"
     environment = {
@@ -103,11 +106,13 @@ resource "terraform_data" "issuer" {
 locals {
   # The issuer's NetworkPolicy admits only a gateway in the issuer's own
   # namespace, so an existing issuer that serves other namespaces omits it.
-  issuer_objects = [
-    for object in jsondecode(file("${var.context.work_dir}/${terraform_data.issuer.id}.issuer.json")) :
-    object if object.kind != "NetworkPolicy"
-  ]
-  issuer_ca = one([
+  issuer_objects = flatten([
+    for issuer in terraform_data.issuer : [
+      for object in jsondecode(file("${var.context.work_dir}/${issuer.id}.issuer.json")) :
+      object if object.kind != "NetworkPolicy"
+    ]
+  ])
+  issuer_ca = local.oidc == null ? null : one([
     for object in local.issuer_objects : object.data["ca.crt"]
     if object.kind == "ConfigMap" && object.metadata.name == "${local.issuer.name}-oidc-ca"
   ])
@@ -131,14 +136,14 @@ resource "helm_release" "model" {
     deploymentNamespace = local.kubernetes.namespace
     # kind does not enforce OpenShift's constraints; the SDK and OpenShell
     # read this range as they do on OpenShift.
-    uidRange = "1000680000/10000"
+    uidRange = local.openshift ? "1000680000/10000" : null
     image    = local.image
     stream   = local.stream
     pullSecret = {
       name             = local.kubernetes.imagePullSecrets[0]
       dockerconfigjson = local.pull_secret
     }
-    issuer = {
+    issuer = local.oidc == null ? null : {
       namespace   = local.issuer.namespace
       objects     = local.issuer_objects
       caConfigMap = local.kubernetes.authentication.caConfigMap

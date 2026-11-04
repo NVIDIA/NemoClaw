@@ -1,14 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The deployment's namespace, annotated as OpenShift annotates a project.
+# The deployment's namespace, prepared by the operator; with the OpenShift
+# profile, annotated as OpenShift annotates a project.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.deploymentNamespace }}
+{{- if .Values.uidRange }}
   annotations:
     openshift.io/sa.scc.uid-range: {{ .Values.uidRange | quote }}
     openshift.io/sa.scc.supplemental-groups: {{ .Values.uidRange | quote }}
+{{- end }}
 ---
 # The operator's pull Secret for the private registry the sandbox images name.
 apiVersion: v1
@@ -19,6 +22,7 @@ metadata:
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: {{ .Values.pullSecret.dockerconfigjson | b64enc }}
+{{- if .Values.issuer }}
 ---
 # The CA the gateway trusts for the existing issuer's HTTPS endpoint.
 apiVersion: v1
@@ -38,6 +42,7 @@ metadata:
 {{- range .Values.issuer.objects }}
 ---
 {{ toYaml . }}
+{{- end }}
 {{- end }}
 ---
 apiVersion: v1

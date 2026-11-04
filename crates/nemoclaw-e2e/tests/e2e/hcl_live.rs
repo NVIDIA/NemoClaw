@@ -109,9 +109,7 @@ async fn probe() {
                 state: state.join("kubernetes"),
                 openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
             };
-            let (forward, client) = crate::kubernetes_live::gateway(&operations, &recorded)
-                .await
-                .unwrap();
+            let (forward, client) = kubernetes_gateway(&operations, &recorded).await;
             (Some(forward), client)
         }
         None => {
@@ -134,6 +132,53 @@ async fn probe() {
     });
     fs::write(input("REPLY"), reply).unwrap();
     fs::write(input("REPORT"), report.to_string()).unwrap();
+}
+
+/// The managed Kubernetes gateway that `binding` records, reached as the
+/// SDK's providers reach it: through the port-forward the returned connection
+/// holds, with the token and TLS files in its environment.
+async fn kubernetes_gateway(
+    operations: &nemoclaw_sdk::kubernetes::operations::Operations,
+    binding: &nemoclaw_sdk::backend::Row,
+) -> (nemoclaw_sdk::kubernetes::Connection, OpenShell) {
+    use nemoclaw_sdk::{
+        ObservationError,
+        config::{ExternalGateway, FileRef, Gateway, SecretRef, TLS},
+        kubernetes::{CA_ENV, CERT_ENV, KEY_ENV, Spec, TOKEN_ENV},
+    };
+    struct Values(std::collections::BTreeMap<String, String>);
+    impl openshell_provider::Secrets for Values {
+        fn resolve(&self, key: &str) -> Result<String, ObservationError> {
+            self.0
+                .get(key)
+                .cloned()
+                .ok_or(ObservationError::Authentication)
+        }
+    }
+    let spec: Spec = binding
+        .get("gateway_kubernetes")
+        .and_then(|spec| serde_json::from_str(spec).ok())
+        .expect("the binding names a managed Kubernetes gateway");
+    let connection = operations.connect(&spec).await.unwrap();
+    let file = |env: &str| FileRef { env: env.into() };
+    let gateway = Gateway::External(ExternalGateway {
+        endpoint: connection.endpoint().to_owned(),
+        credential: Some(SecretRef {
+            env: TOKEN_ENV.into(),
+        }),
+        tls: Some(TLS {
+            ca: file(CA_ENV),
+            certificate: Some(file(CERT_ENV)),
+            key: Some(file(KEY_ENV)),
+        }),
+        ..Default::default()
+    });
+    let client = OpenShell::connect(
+        &gateway.connection(),
+        Arc::new(Values(connection.environment())),
+    )
+    .unwrap();
+    (connection, client)
 }
 
 /// Create the existing OIDC issuer a kind case names: the SDK's development
@@ -379,8 +424,8 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
         ("destroy".to_owned(), Duration::from_millis(33_800)),
     ];
     assert_eq!(
-        timing_table("kind-openshift-agents", &runs),
-        "#### Runs of the kind-openshift-agents case: 74.0 s\n\n\
+        timing_table("kind-openshift-oidc", &runs),
+        "#### Runs of the kind-openshift-oidc case: 74.0 s\n\n\
          | Run | Time |\n|---|---|\n\
          | apply | 40.2 s |\n\
          | destroy | 33.8 s |\n"

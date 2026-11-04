@@ -16,8 +16,6 @@ mod hosted_parity;
 
 #[path = "rust/interfaces_live.rs"]
 mod interfaces_live;
-#[path = "rust/kubernetes_live.rs"]
-mod kubernetes_live;
 #[cfg(unix)]
 #[path = "rust/managed_gateway.rs"]
 mod managed_gateway;
