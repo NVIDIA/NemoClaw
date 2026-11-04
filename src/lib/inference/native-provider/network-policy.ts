@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { parseCheckedInProviderProfileContract } from "../../adapters/openshell/provider-profile";
-import { parseOpenShellPolicy } from "../../adapters/openshell/policy-boundary";
+import {
+  assertOpenShellPolicyEndpointPins,
+  parseOpenShellPolicy,
+} from "../../adapters/openshell/policy-boundary";
+import { ROOT } from "../../state/paths";
 import { nativeProviderLifecycle } from "./index";
 import { boundHermesNativeProfile } from "./hermes-profile";
 import { boundCustomNativeProfile } from "./custom";
@@ -52,13 +57,33 @@ export function buildNativeHostedSandboxPolicy(
     binaries: profile.boundary.binaries.map((path) => ({ path })),
   };
   const policies = policy.network_policies ?? {};
+  let replacedBundledRule = false;
+  if (definition.custom && definition.endpoint === "https://integrate.api.nvidia.com/v1") {
+    const bundled = parseOpenShellPolicy(
+      fs.readFileSync(
+        path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        "utf8",
+      ),
+    ).policy.network_policies?.nvidia;
+    // The selected pinned profile supersedes only the unchanged bundled rule.
+    // Operator-owned policies retain their authority and must pass admission.
+    if (bundled !== undefined && isDeepStrictEqual(policies.nvidia, bundled)) {
+      delete policies.nvidia;
+      replacedBundledRule = true;
+    }
+    assertOpenShellPolicyEndpointPins(
+      YAML.stringify(policy),
+      definition.endpoint,
+      definition.allowedIps ?? [],
+    );
+  }
   const existing = policies[NATIVE_HOSTED_INFERENCE_POLICY_KEY];
   if (existing !== undefined && !isDeepStrictEqual(existing, entry)) {
     throw new Error(
       "The native hosted inference policy conflicts with the selected provider profile",
     );
   }
-  if (existing !== undefined) return basePolicy;
+  if (existing !== undefined && !replacedBundledRule) return basePolicy;
   policy.network_policies = { ...policies, [NATIVE_HOSTED_INFERENCE_POLICY_KEY]: entry };
   return YAML.stringify(policy);
 }
