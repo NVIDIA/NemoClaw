@@ -4,26 +4,33 @@
 # Wall-clock budgets for each test step, in seconds, enforced on the Linux CI
 # runners; other platforms report their times without failing. wall_seconds
 # bounds a step's nextest run, the live-docker step's nextest commands together,
-# or each lifecycle partition; test_seconds bounds any one test in it. The
+# or each contract or integration partition; test_seconds bounds any one test
+# in it. The
 # step's profile in .config/nextest.toml must use test_seconds as its
 # slow-timeout period; it stops a test at a multiple of it. Lower a budget when
 # a change makes the step faster; raising one needs the reason in the pull
 # request. See docs/contributing/testing.md.
 #
-# binaries budgets test binaries by their nextest name: summed_seconds bounds
-# the binary's test times added up across a platform's lifecycle partitions,
-# and test_seconds bounds any one of its tests. Each binary's override in the
-# lifecycle profile in .config/nextest.toml must use its test_seconds as the
-# slow-timeout period.
+# binaries budgets the providers' contract binaries by their nextest name, in
+# the contract step: summed_seconds bounds the binary's test times added up
+# across a platform's contract partitions, and test_seconds bounds any one of
+# its tests. Each binary's override in the contract profile in
+# .config/nextest.toml must use its test_seconds as the slow-timeout period.
 
 # Unit and integration tests: 27 s on linux_amd64, slowest test 5.1 s.
 test:
   wall_seconds: 45
   test_seconds: 8
 
-# Each lifecycle partition: at most 207 s on linux_amd64 and linux_arm64,
-# slowest test 67 s.
-lifecycle:
+# Each contract and each integration partition. Before they split, a lifecycle
+# partition that held both took at most 207 s on linux_amd64 and linux_arm64,
+# with the slowest test, an integration test, at 67 s; contract tests stop at
+# their binaries' test_seconds below. Lower these from the split steps' runs.
+contract:
+  wall_seconds: 300
+  test_seconds: 16
+
+integration:
   wall_seconds: 300
   test_seconds: 90
 

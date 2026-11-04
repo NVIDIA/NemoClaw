@@ -3,22 +3,23 @@
 
 # Run Integration Tests
 
-This page covers the [contract and system layers](testing.md#test-layers): tests that run pinned OpenTofu from a bundle against local fixtures and temporary state.
+This page covers the [contract and integration layers](testing.md#test-layers): tests that run pinned OpenTofu from a bundle against local fixtures and temporary state.
 They create no Docker, OpenShell, Kubernetes, or inference resources; tests that use a real Docker engine are [live tests](live-tests.md#docker-live-suite).
 Complete the [build prerequisites](../build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
 
-The contract and system tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
+The contract and integration tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
 The bundle supplies the OpenTofu version pinned in `versions.json`, the CLI, and the providers.
 Each provider's contract tests run instead the provider Cargo built with them, so they test the checkout without a new bundle; the other providers they need come from the bundle.
-System tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
+Integration tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
 
-To run the whole layer pair as CI does, four tests at a time, run from the repository root:
+To run each whole layer as CI does, four tests at a time, run from the repository root:
 
 ```sh
 cargo ci bundle
-cargo ci lifecycle
+cargo ci contract
+cargo ci integration
 ```
 
 To run one binary or module with Cargo, build the fixture executables first; tests find them beside the test executables:
@@ -29,11 +30,11 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.150` on `PATH` and narrow the `lifecycle` profile with a filter:
+Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.150` on `PATH` and narrow the `contract` or `integration` profile with a filter:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo nextest run --workspace --all-targets --profile lifecycle --run-ignored only \
+  cargo nextest run --workspace --all-targets --profile contract --run-ignored only \
   -E 'binary_id(=openshell-provider::contract)'
 ```
 
@@ -44,7 +45,7 @@ On failure, read the OpenTofu diagnostic in the test output and check that the b
 ## Contract Tests
 
 Each production provider's `contract` binary, under `tests/contract`, applies its types through OpenTofu against fakes.
-Its coverage test is not ignored and runs with the unit tests; the remaining tests are ignored and run in the `lifecycle` step.
+Its coverage test is not ignored and runs with the unit tests; the remaining tests are ignored and run in the `contract` step.
 
 Each `tests/contract` directory separates the two kinds of test:
 
@@ -54,7 +55,7 @@ Each `tests/contract` directory separates the two kinds of test:
 `main.rs` starts each module's fakes and runs it; the other Rust files hold shared fakes and checks of plans and state that `tofu test` cannot show.
 A Rust test starts the module's fixtures and runs its test files with `TofuWorkspace`; `openshell::test_against_gateways` runs them side by side, each against its own fake OpenShell gateway.
 To run one module, name its Rust test, for example `cargo test -p openshell-provider --test contract standalone_resources -- --ignored`.
-A module that observes the fake gateway reads `data.fixture_state` from `nemoclaw-fixture-control`; the system tests read the same observations, from `openshell::State::observations`.
+A module that observes the fake gateway reads `data.fixture_state` from `nemoclaw-fixture-control`; the integration tests read the same observations, from `openshell::State::observations`.
 The data source depends on the module's resources, so OpenTofu reads it after they change and each run checks its own result.
 A run that only targets the data source can change the gateway outside OpenTofu, such as `{ change = { forget_registrations = true } }`, before the run that should meet the change.
 `tofu test` keeps the state in memory and fails a run on any provider error, so Rust tests keep the checks that need a failed command, a saved plan or its planned actions, or the state file.
@@ -132,9 +133,9 @@ The tests in `failures/agent.rs` check failures: an invalid configuration fails 
 On Unix, the `capabilities` test runs the `capabilities` module, which reads `fabric_harnesses` from a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 
-## System Tests
+## Integration Tests
 
-The system tests are the ignored tests in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which the `lifecycle` profile selects whole.
+The integration tests are the ignored tests in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which the `integration` profile selects whole.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts.
 
 Choose the directory by what the behavior needs:
@@ -144,7 +145,7 @@ Choose the directory by what the behavior needs:
 
 The binary's other modules are offline checks of the fixtures and clients these tests use, and run with the unit tests.
 
-To run the Rust system tests:
+To run the Rust integration tests:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
@@ -241,13 +242,13 @@ OpenTofu 1.12's test framework sets these limits:
 
 Docker scenarios mock the Docker provider by its generated alias and give mocked resources the IDs the `fixtures` module declares.
 On Unix, one fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
-On Windows, the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh` relay that the lifecycle step puts on `PATH` forwards. Managed Docker gateway storage takes only a local engine socket, so Windows skips scenarios with a managed Docker gateway and runs the others.
+On Windows, the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh` relay that the integration step puts on `PATH` forwards. Managed Docker gateway storage takes only a local engine socket, so Windows skips scenarios with a managed Docker gateway and runs the others.
 
-The runner deals the scenarios round-robin across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the lifecycle per-test budget. They share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
+The runner deals the scenarios round-robin across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the integration per-test budget. They share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
 Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, naming any it finds, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
-In CI / Bundle, each `Lifecycle` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
+In CI / Bundle, each `Integration` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
 An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/integration/tofu_test/fixtures.rs`.
 
 Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:

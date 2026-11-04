@@ -921,7 +921,7 @@ See [compatibility](compatibility.md) for the supported examples, import, adopti
 
 Every resource and data source takes inputs that can be written in HCL.
 [`examples/hcl/travel`](../examples/hcl/travel/main.tf) is a complete hand-written configuration: a Pi agent in an OpenShell sandbox, answering with a local Ollama server placed with Docker, and allowed only HTTPS `GET` requests to one site.
-A system test applies it unchanged against the bundle's providers.
+An integration scenario applies it unchanged against the bundle's providers.
 [`examples/hcl/travel-team`](../examples/hcl/travel-team/README.md) scales the same pattern to a team of six agents with their own sandboxes, models, and grants.
 Writing one by hand:
 

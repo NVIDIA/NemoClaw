@@ -1,0 +1,130 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The Docker and Kubernetes live suites for one Linux platform, from the test
+# inputs and bundle that its Bundle platform run uploaded. CI / Bundle calls it
+# on v1 pushes and run-live/ branches, and on a pull request labeled run-e2e;
+# no required check depends on it.
+name: E2E platform
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      tests:
+        description: The Bundle platform run's test inputs artifact.
+        type: string
+        required: true
+      bundle:
+        description: The Bundle platform run's bundle artifact.
+        type: string
+        required: true
+      live-images-commit:
+        description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
+        type: string
+        default: ""
+permissions:
+  contents: read
+  packages: read
+defaults:
+  run:
+    shell: bash
+env:
+  TEST_PLATFORM: ${{ inputs.platform }}
+  CARGO_INCREMENTAL: "0"
+jobs:
+  # The live suites' images, built once per platform alongside the build and
+  # bundle jobs; both live jobs load them instead of building their own. When
+  # no image input changed since a v1 commit that pushed them, the live jobs
+  # pull that commit's images instead.
+  live-images:
+    name: Build live images
+    if: inputs.live-images-commit == ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ inputs.platform }}
+          save-cache: "false"
+      - uses: ./.github/actions/containerd-store
+      - name: Build and save the live images
+        run: cargo ci live-images
+      - name: Identify live images artifact
+        id: identity
+        run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Upload live images
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: .build/ci/live-images.tar.zst
+          include-hidden-files: true
+          # Already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # Like the contract and integration shards, the live suites run this
+  # platform's archived test executables and bundle, load its live images, and
+  # compile nothing. No required check depends on them.
+  live-docker:
+    name: Live / Docker
+    needs: [live-images]
+    # Runs after Build live images, or in its place when the plan names a v1
+    # commit's images.
+    if: >-
+      ${{ !cancelled() &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-docker
+          tests: ${{ inputs.tests }}
+          bundle: ${{ inputs.bundle }}
+          images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}
+
+  live-kind:
+    name: Live / Kind
+    needs: [live-images]
+    # Runs after Build live images, or in its place when the plan names a v1
+    # commit's images.
+    if: >-
+      ${{ !cancelled() &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-kind
+          tests: ${{ inputs.tests }}
+          bundle: ${{ inputs.bundle }}
+          images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}

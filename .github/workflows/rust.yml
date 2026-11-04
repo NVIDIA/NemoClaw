@@ -7,6 +7,7 @@ on:
     # outside a pull request; dispatch needs this file on the default branch.
     branches: [v1, run-live/**]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
+  # On pull requests, the live suites run only on request, in e2e.yml.
   pull_request:
   workflow_dispatch:
 # The planner and the Linux live suites read the per-commit image package for
@@ -33,8 +34,7 @@ jobs:
       platform: linux_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ needs.plan.outputs.live == 'true' }}
-      live-images-commit: ${{ needs.plan.outputs.live_images }}
+      live: ${{ github.event_name != 'pull_request' && needs.plan.outputs.live == 'true' }}
   linux_amd64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -43,8 +43,7 @@ jobs:
       platform: linux_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ needs.plan.outputs.live == 'true' }}
-      live-images-commit: ${{ needs.plan.outputs.live_images }}
+      live: ${{ github.event_name != 'pull_request' && needs.plan.outputs.live == 'true' }}
   darwin_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -61,12 +60,115 @@ jobs:
       platform: windows_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      # Windows lifecycle tests run longest after its slower bundle build, so it
-      # uses a third partition to keep that path closer to the other platforms.
-      lifecycle-shards: "[1, 2, 3]"
-  # Keep the v1 ruleset's check names. A skipped, cancelled, or failed platform
-  # must never become a successful required check. Each platform's shards start
-  # after its own build, not after the slowest member of a global build matrix.
+      # Windows runs its tests longest after its slower bundle build, so its
+      # integration tests use a third partition to keep that path closer to
+      # the other platforms.
+      integration-shards: "[1, 2, 3]"
+  # The live suites, on v1 pushes, run-live/ branches, and dispatches when the
+  # plan selects them. No required check depends on them; on pull requests,
+  # e2e.yml runs them on request.
+  e2e_linux_arm64:
+    name: E2E / linux_arm64
+    needs: [plan, linux_arm64]
+    if: >-
+      ${{ !cancelled() && needs.linux_arm64.outputs.tests != '' && needs.linux_arm64.outputs.bundle != '' &&
+      (github.event_name != 'pull_request' && needs.plan.outputs.live == 'true') }}
+    uses: ./.github/workflows/e2e-platform.yml
+    with:
+      runner: ubuntu-24.04-arm
+      platform: linux_arm64
+      tests: ${{ needs.linux_arm64.outputs.tests }}
+      bundle: ${{ needs.linux_arm64.outputs.bundle }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
+  e2e_linux_amd64:
+    name: E2E / linux_amd64
+    needs: [plan, linux_amd64]
+    if: >-
+      ${{ !cancelled() && needs.linux_amd64.outputs.tests != '' && needs.linux_amd64.outputs.bundle != '' &&
+      (github.event_name != 'pull_request' && needs.plan.outputs.live == 'true') }}
+    uses: ./.github/workflows/e2e-platform.yml
+    with:
+      runner: ubuntu-24.04
+      platform: linux_amd64
+      tests: ${{ needs.linux_amd64.outputs.tests }}
+      bundle: ${{ needs.linux_amd64.outputs.bundle }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
+  # One required check per test layer, across every platform. A skipped,
+  # cancelled, or failed platform must never become a successful check: a
+  # missing result fails it. A layer the plan did not select passes.
+  unit:
+    name: Unit
+    if: ${{ !cancelled() }}
+    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require unit tests on every platform
+        env:
+          RESULTS: >-
+            ${{ needs.linux_arm64.outputs.unit }}
+            ${{ needs.linux_amd64.outputs.unit }}
+            ${{ needs.darwin_arm64.outputs.unit }}
+            ${{ needs.windows_amd64.outputs.unit }}
+        run: |
+          set -- $RESULTS
+          test "$#" = 4
+          for result; do
+            case "$result" in
+              success) ;;
+              *) echo "a platform reported $result"; exit 1 ;;
+            esac
+          done
+  contract:
+    name: Contract
+    if: ${{ !cancelled() }}
+    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require contract tests on every platform
+        env:
+          RESULTS: >-
+            ${{ needs.linux_arm64.outputs.contract }}
+            ${{ needs.linux_amd64.outputs.contract }}
+            ${{ needs.darwin_arm64.outputs.contract }}
+            ${{ needs.windows_amd64.outputs.contract }}
+        run: |
+          set -- $RESULTS
+          test "$#" = 4
+          for result; do
+            case "$result" in
+              success | not-selected) ;;
+              *) echo "a platform reported $result"; exit 1 ;;
+            esac
+          done
+  integration:
+    name: Integration
+    if: ${{ !cancelled() }}
+    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require integration tests on every platform
+        env:
+          RESULTS: >-
+            ${{ needs.linux_arm64.outputs.integration }}
+            ${{ needs.linux_amd64.outputs.integration }}
+            ${{ needs.darwin_arm64.outputs.integration }}
+            ${{ needs.windows_amd64.outputs.integration }}
+        run: |
+          set -- $RESULTS
+          test "$#" = 4
+          for result; do
+            case "$result" in
+              success | not-selected) ;;
+              *) echo "a platform reported $result"; exit 1 ;;
+            esac
+          done
+  # Keep the v1 ruleset's check names until it requires the layer checks. Each
+  # platform's check covers its build, bundle, unit, contract, and integration
+  # tests, not the live suites. Each platform's shards start after its own
+  # build, not after the slowest member of a global build matrix.
   native:
     name: Test / ${{ matrix.platform }}
     # Unlike always(), this reports a cancelled run's gates as cancelled, not failed;

@@ -945,7 +945,8 @@ fn full_ci_explicitly_selects_every_step_without_pr_discovery() {
             "test",
             "schema",
             "bundle",
-            "lifecycle"
+            "contract",
+            "integration"
         ])
     );
     assert!(!called);

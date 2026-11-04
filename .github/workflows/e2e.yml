@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The Docker and Kubernetes live suites on a pull request, on request: add the
+# run-e2e label, and each later push runs them again until the label is
+# removed. No required check depends on them, and CI / Bundle runs the unit,
+# contract, and integration tests that guard the pull request. This run builds
+# its own test inputs and bundle on each Linux platform.
+name: E2E
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  plan:
+    if: contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    uses: ./.github/workflows/validation-plan.yml
+    with:
+      full: true
+  linux_arm64:
+    name: E2E inputs / linux_arm64
+    needs: plan
+    if: needs.plan.result == 'success'
+    uses: ./.github/workflows/bundle-platform.yml
+    with:
+      runner: ubuntu-24.04-arm
+      platform: linux_arm64
+      bundle: true
+      lifecycle: false
+      live: true
+  linux_amd64:
+    name: E2E inputs / linux_amd64
+    needs: plan
+    if: needs.plan.result == 'success'
+    uses: ./.github/workflows/bundle-platform.yml
+    with:
+      runner: ubuntu-24.04
+      platform: linux_amd64
+      bundle: true
+      lifecycle: false
+      live: true
+  e2e_linux_arm64:
+    name: E2E / linux_arm64
+    needs: [plan, linux_arm64]
+    if: ${{ !cancelled() && needs.linux_arm64.outputs.tests != '' && needs.linux_arm64.outputs.bundle != '' }}
+    uses: ./.github/workflows/e2e-platform.yml
+    with:
+      runner: ubuntu-24.04-arm
+      platform: linux_arm64
+      tests: ${{ needs.linux_arm64.outputs.tests }}
+      bundle: ${{ needs.linux_arm64.outputs.bundle }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
+  e2e_linux_amd64:
+    name: E2E / linux_amd64
+    needs: [plan, linux_amd64]
+    if: ${{ !cancelled() && needs.linux_amd64.outputs.tests != '' && needs.linux_amd64.outputs.bundle != '' }}
+    uses: ./.github/workflows/e2e-platform.yml
+    with:
+      runner: ubuntu-24.04
+      platform: linux_amd64
+      tests: ${{ needs.linux_amd64.outputs.tests }}
+      bundle: ${{ needs.linux_amd64.outputs.bundle }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
