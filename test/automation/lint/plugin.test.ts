@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { writeLocalHookConfig } from "./hook-config";
 
 it.each([
   {
@@ -73,7 +74,7 @@ it.each([
     fs.symlinkSync(path.resolve("node_modules"), path.join(root, "node_modules"), "dir");
     fs.copyFileSync("oxlint.config.ts", path.join(root, "oxlint.config.ts"));
     fs.copyFileSync("oxc.ignore-patterns.ts", path.join(root, "oxc.ignore-patterns.ts"));
-    fs.copyFileSync(".pre-commit-config.yaml", path.join(root, ".pre-commit-config.yaml"));
+    writeLocalHookConfig(root);
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.copyFileSync("nemoclaw/src/tsconfig.json", path.join(root, "nemoclaw/src/tsconfig.json"));
     fs.copyFileSync("nemoclaw/tsconfig.json", path.join(root, "nemoclaw/tsconfig.json"));
@@ -90,6 +91,7 @@ it.each([
     const hookEnv = {
       ...process.env,
       PREK_NO_FAST_PATH: "1",
+      PREK_HOME: path.join(root, ".cache/prek"),
     };
     const syntax = spawnSync(
       path.resolve("node_modules/.bin/prek"),

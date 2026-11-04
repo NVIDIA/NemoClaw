@@ -881,7 +881,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
-  it.each(["ollama-local", "vllm-local"])(
+  it.each(["ollama-local", "vllm-local", "nvidia-router"])(
     "blocks a legacy %s target before backup (#2519)",
     async (provider) => {
       const harness = createRebuildFlowHarness({

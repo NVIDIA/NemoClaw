@@ -38,12 +38,14 @@ export async function runTerminalAgentConnectProbe({
   agentName,
   commandExecutor,
   ensureInferenceRoute,
+  gatewayName,
   sandboxName,
 }: {
   agent: AgentDefinition;
   agentName: string;
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   ensureInferenceRoute: EnsureTerminalInferenceRoute;
+  gatewayName: string;
   sandboxName: string;
 }): Promise<void> {
   const routeResult = ensureInferenceRoute(sandboxName, { quiet: true });
@@ -54,7 +56,7 @@ export async function runTerminalAgentConnectProbe({
     );
     process.exit(1);
   }
-  const smokeResult = await runAgentSmokeCommands(sandboxName, agent, commandExecutor);
+  const smokeResult = await runAgentSmokeCommands(sandboxName, agent, commandExecutor, gatewayName);
   if (!smokeResult.ok) {
     console.error(
       `  Probe failed: ${agentName} terminal smoke command failed: ${smokeResult.command}`,
@@ -65,6 +67,7 @@ export async function runTerminalAgentConnectProbe({
     process.exit(1);
   }
   await enforceTerminalAgentVersion(sandboxName, agent, commandExecutor, {
+    gatewayName,
     onFailure: async (message) => {
       console.error(`  Probe failed: ${message}.`);
       process.exit(1);

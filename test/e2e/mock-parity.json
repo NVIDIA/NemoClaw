@@ -64,6 +64,7 @@
         "test/e2e/lib/issue-4462-admin-request-selector.py",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/gpu-e2e-ollama.ts",
         "test/e2e/fixtures/llama-cpp-runtime-diagnostics.ts"
       ],
       "fast": [
@@ -250,7 +251,8 @@
         "test/e2e/live/sandbox-credential-boundary.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
-        "test/e2e/fixtures/admin-approval-connect.sh"
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/fixtures/native-plugin-evidence.ts"
       ],
       "fast": [
         "src/lib/onboard/gateway-host-runtime.test.ts",
@@ -263,6 +265,7 @@
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/full-e2e-native-model.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
+        "test/e2e/support/native-plugin-evidence.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
@@ -585,6 +588,7 @@
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/common-egress-agent-retry.test.ts",
+        "test/e2e/support/unavailable-search-reply.test.ts",
         "test/e2e/support/openclaw-agent-assertion.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
@@ -605,11 +609,13 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openshell-sandbox-list.test.ts",
-        "test/e2e/support/forward-restart-observation.test.ts"
+        "test/e2e/support/forward-restart-observation.test.ts",
+        "test/e2e/support/onboard-interactive-pty.test.ts"
       ],
       "liveSources": [
         "test/e2e/fixtures/openshell-sandbox-list.ts",
-        "test/e2e/fixtures/forward-restart-observation.ts"
+        "test/e2e/fixtures/forward-restart-observation.ts",
+        "test/e2e/live/onboard-interactive-pty.ts"
       ]
     },
     {
@@ -638,8 +644,14 @@
     },
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
-      "liveSources": ["test/e2e/fixtures/native-local-chat.ts"],
+      "liveSources": [
+        "test/e2e/fixtures/native-local-chat.ts",
+        "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/gpu-e2e-ollama.ts"
+      ],
       "fast": [
+        "test/e2e/support/gpu-double-onboard-cleanup.test.ts",
+        "test/e2e/support/gpu-ollama-cleanup.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/gpu-e2e-helpers.test.ts",
@@ -650,6 +662,7 @@
       "live": "test/e2e/live/gpu-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/gpu-e2e-ollama.ts",
         "test/e2e/live/hermes-cli-adapter-live.ts",
         "test/e2e/fixtures/native-local-chat.ts"
       ],
@@ -1035,6 +1048,8 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "test/e2e/support/sandbox-survival-timeout-contract.test.ts",
+        "test/e2e/support/native-plugin-evidence.test.ts",
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "src/lib/actions/sandbox/destroy-flow.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
@@ -1157,6 +1172,7 @@
       "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
       "liveSources": ["test/e2e/fixtures/hermes-switchyard-package.ts"],
       "fast": [
+        "src/lib/hermes-switchyard-routing.test.ts",
         "test/agents/hermes/hermes-switchyard-package.test.ts",
         "test/agents/hermes/hermes-runtime-api-key.test.ts",
         "test/agents/hermes/hermes-start.test.ts",

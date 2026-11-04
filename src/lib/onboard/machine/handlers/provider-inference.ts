@@ -408,7 +408,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 
 export interface ProviderInferenceStateResult {
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   sandboxName: string | null;
   model: string;
   provider: string;
@@ -613,6 +613,8 @@ function canResumeInferenceRoute(input: {
   // another sandbox on a reused gateway can own the same shared route.
   return (
     !input.needsBedrockRuntimeAdapter &&
+    // Reconcile the managed router and reverify its native profile on resume.
+    !(input.provider === "nvidia-router" && input.selectsNativeLocal) &&
     input.provider !== OPENROUTER_PROVIDER_NAME &&
     !input.hasHostLocalInference &&
     !input.forceProviderSelection &&
@@ -1513,7 +1515,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let stagedNativeLocalRecreation:
     | import("../../inference-providers/types").StagedNativeLocalRecreation
     | undefined;
-  let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
+  let deferredInferenceRoute:
+    | import("../../inference-providers/types").DeferredInferenceRoute
+    | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
     HostLocalInferenceStartupSelection | null

@@ -119,7 +119,7 @@ function createDeps() {
     getOpenshellBinary: () => "/usr/bin/openshell",
     needsBedrockRuntimeAdapter: () => false,
     isInferenceRouteReady: () => true,
-    isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
+    isRoutedInferenceProvider: (provider) => ["nvidia-router", "custom-router"].includes(provider),
     reconcileModelRouter: calls.reconcileRouter,
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
     reserveSandboxInferenceRoute: calls.reserveRoute,
@@ -355,15 +355,15 @@ describe("provider route containment", () => {
   });
 
   it("allows routed-provider repair across a valid peer-route difference (#6315)", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    const session = createSession({ provider: "custom-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
-    reportDifferentRoute(calls, "nvidia-router", "router/model");
+    reportDifferentRoute(calls, "custom-router", "router/model");
 
     const options = resumeOptions(deps, session);
     options.initial.endpointSource = "inference-set";
     await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
     });
 
@@ -371,7 +371,7 @@ describe("provider route containment", () => {
       gatewayName: "nemoclaw-9090",
       sandboxName: "target-sandbox",
       route: {
-        provider: "nvidia-router",
+        provider: "custom-router",
         model: "router/model",
         endpointUrl: null,
         credentialEnv: null,
@@ -382,7 +382,7 @@ describe("provider route containment", () => {
     expect(calls.surfaceReady).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.reserveRoute).toHaveBeenCalledWith("target-sandbox", {
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       endpointUrl: "http://host.openshell.internal:4000/v1",
       endpointSource: "inference-set",
@@ -396,7 +396,7 @@ describe("provider route containment", () => {
   });
 
   it("rechecks routed repair after waiting for the gateway lock (#6315)", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    const session = createSession({ provider: "custom-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
     let releaseLock!: () => void;
@@ -415,17 +415,17 @@ describe("provider route containment", () => {
 
     const repair = handleProviderInferenceState(resumeOptions(deps, session));
     await lockEntered;
-    reportDifferentRoute(calls, "nvidia-router", "router/model");
+    reportDifferentRoute(calls, "custom-router", "router/model");
     releaseLock();
 
-    await expect(repair).resolves.toMatchObject({ provider: "nvidia-router" });
+    await expect(repair).resolves.toMatchObject({ provider: "custom-router" });
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("waits for a cross-gateway teardown port lock before publishing routed resume repair (#9098)", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    const session = createSession({ provider: "custom-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
     let insideGatewayLock = false;
@@ -482,7 +482,7 @@ describe("provider route containment", () => {
     expect(calls.reserveRoute).not.toHaveBeenCalled();
 
     releaseTeardownPortLock();
-    await expect(repair).resolves.toMatchObject({ provider: "nvidia-router" });
+    await expect(repair).resolves.toMatchObject({ provider: "custom-router" });
 
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
