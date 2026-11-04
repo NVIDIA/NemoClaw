@@ -14,6 +14,7 @@ import {
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { BEARERLESS_VLLM_READINESS_SCRIPT } from "../fixtures/bearerless-vllm-readiness.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
@@ -886,12 +887,7 @@ docker('create', '--name', 'nemoclaw-vllm', '--cidfile', cidfile,
 const id = fs.readFileSync(cidfile, 'utf8').trim();
 docker('start', id);
 const inspection = JSON.parse(docker('inspect', id));
-// Readiness retries only the idempotent fixture GET while Node starts.
-// Six attempts, a ten-second retry budget, and per-attempt errors are retained.
-execFileSync('curl', ['--noproxy', '*', '--silent', '--show-error', '--fail',
-  '--retry', '5', '--retry-connrefused', '--retry-delay', '1', '--retry-max-time', '10',
-  '--connect-timeout', '1', '--max-time', '2', 'http://127.0.0.1:18080/v1/models'],
-  { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'inherit'] });
+${BEARERLESS_VLLM_READINESS_SCRIPT}
 const command = local.getLocalProviderContainerReachabilityCheck('vllm-local');
 assert(command?.includes('host.openshell.internal:' + bridge), 'the production probe must select the published bridge');
 const result = local.validateLocalProvider('vllm-local');

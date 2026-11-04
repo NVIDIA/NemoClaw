@@ -902,6 +902,12 @@ a five-second kill grace. A failed command or timeout marks cleanup as failed, r
 directory and recovery instructions, and allows policy and capture cleanup to continue.
 The same target writes an npm cache marker under the DCode native home before its existing rebuild.
 After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
+The thread-approval check also saves a preference through the pinned DCode writer before its first named rebuild.
+It requires comment removal and byte-identical restoration of the saved config through production state transfer.
+Before and after rebuild, all three identity aliases must exit successfully and report the configured route,
+provider, model, and endpoint. Both installed identity files must remain root-owned with mode `0444`,
+and the sandbox user must be unable to open them for writing. Wrapper unit tests own metadata parsing,
+legacy fallback, unsafe-file rejection, and output filtering; this live check owns installed startup and restore composition.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
@@ -2539,6 +2545,13 @@ and the workflow reserves eight minutes for registry removal, source restoration
 and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
 fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
 NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
+NIM and vLLM readiness probes attempt to retain bounded, redacted container state and the last 200
+log lines when they fail or receive SIGTERM or SIGINT. Diagnostics use the verified full container
+ID before owner cleanup removes the container. The existing command timeout and kill grace bound
+diagnostic collection: after supervisor termination, it has only the remaining grace period.
+A hung diagnostic command is killed when that grace expires, so evidence may be partial.
+Successful readiness does not collect logs. The AMD64 cache upload uses fast compression for its
+uncompressed Docker image archive; image identities and offline-build checks remain unchanged.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
@@ -2718,7 +2731,9 @@ The `inference-routing` target runs TC-INF-09 compatible-endpoint routing on Doc
 Its Docker-only bearerless companion validates the production provider against private bindings on port 18080 with distinct default/OpenShell gateways.
 Podman skips only that companion.
 Artifacts retain inspected bindings, the probe command, validation result, container requests and ID-based cleanup.
-Readiness retries cover only the fixture's idempotent startup GET.
+Readiness retries cover only refused or reset connections during the fixture's idempotent startup GET.
+The check permits at most six attempts within ten seconds, with a one-second delay, and records each failure.
+HTTP, timeout and TLS errors stop the check without retrying. Provider validation runs once after readiness succeeds.
 Source tests own authentication, ownership and port permutations.
 
 ## DCode Native Local Inference

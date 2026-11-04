@@ -1050,6 +1050,8 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "test/e2e/support/sandbox-survival-timeout-contract.test.ts",
+        "test/e2e/support/native-plugin-evidence.test.ts",
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "src/lib/actions/sandbox/destroy-flow.test.ts",
         "test/agents/native-gateway-lifecycle.test.ts",
