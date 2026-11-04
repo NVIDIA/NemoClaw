@@ -10,7 +10,7 @@ description: Create or update a NemoClaw v1 pull request with its authoring-sess
 
 Adapted from main's PR creation skill at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`, without its npm, governance, and draft steps, and with a session report added.
 
-1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`; keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
+1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`, then apply the [clarity pass](#description-clarity-pass); keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
 2. Validate the comment:
 
    ```sh
@@ -27,6 +27,17 @@ CI fetches the description and all comment pages on PR opening, updates, reopeni
 The check uses the candidate checkout's validator and workflow. It does not protect against a PR changing its own validation; trusted-base enforcement is outside this check's scope.
 
 Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
+
+## Description Clarity Pass
+
+Before publishing or updating the description, read it as a reviewer who knows the project but has not followed this work.
+Keep the template's Failure, Decision, and Validation sections and a professional, direct tone.
+
+- Explain the condition that exposes the problem and its effect on the user or contributor. For improvements without a bug, describe the current limitation.
+- Describe what changes and why this approach was chosen. Use a concrete before-and-after example when it helps explain the change.
+- Connect completed checks and their results to the claims they support; keep untested behavior and checks deferred to CI explicit.
+- Replace abstract summaries and unnecessary jargon with concrete actions. Keep enough explanation for the reviewer to understand the change; brevity alone is not the goal.
+- Preserve facts, commands, paths, identifiers, results, decisions, limitations, and uncertainty. This pass changes the explanation without adding claims or strengthening the evidence.
 
 ## Session Report
 
