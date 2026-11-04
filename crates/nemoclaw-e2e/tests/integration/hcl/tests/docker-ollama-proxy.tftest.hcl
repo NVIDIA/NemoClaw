@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # An authenticating proxy in front of an existing Ollama daemon. The proxy's
-# key lives in a retained volume, and the agent's registration reads it from
-# there. Replacing the proxy container keeps the volume, the key, and the
+# key lives in a retained volume, the agent's registration reads it from
+# there, and it never reaches OpenTofu state. An unchanged apply changes
+# nothing. Replacing the proxy container keeps the volume, the key, and the
 # registration, and leaves the agent alone.
 
 # Docker is mocked. Its alias follows from the runner's engine socket, and
@@ -67,6 +68,44 @@ run "verify" {
   assert {
     condition     = contains(module.observed.engine.volumes, "${module.fixtures.prefix}-ollama-proxy-ollama-auth-auth")
     error_message = "The proxy's key volume was not created."
+  }
+
+  # The readiness check reads the key, but neither it nor any resource that
+  # names the proxy keeps it, so it never reaches OpenTofu state.
+  assert {
+    condition = !anytrue([
+      for value in [
+        data.ollama_proxy_readiness.ollama_proxy_ollama-auth,
+        data.ollama_proxy_runtime.ollama_proxy_ollama-auth,
+        ollama_proxy_credential_storage.ollama-auth,
+        docker_container.ollama_proxy_ollama-auth,
+        openshell_inference.inference_local-5834fdcc94534d6506776906,
+        fabric_agent.assistant,
+      ] : strcontains(jsonencode(value), module.fixtures.key)
+    ])
+    error_message = "The proxy's key reached OpenTofu state."
+  }
+}
+
+# Verify's apply changed nothing: no gateway change, no new registration, and
+# no agent started again. var.baseline is what verify observed after deploy.
+run "unchanged" {
+  command = plan
+
+  module {
+    source = "./cases/docker-ollama-proxy"
+  }
+
+  variables {
+    baseline = run.verify.baseline
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.effects == var.baseline.effects
+      && module.observed.openshell.fabric_starts == var.baseline.fabric_starts
+    )
+    error_message = "An unchanged apply changed the gateway or started the agent again."
   }
 }
 

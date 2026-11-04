@@ -88,6 +88,11 @@ output "prefix" {
   value       = local.prefix
 }
 
+output "key" {
+  description = "The key every authenticated service holds, which must never reach OpenTofu state."
+  value       = local.key
+}
+
 output "services" {
   description = "Each service's container name and ID, by service."
   value       = { for name, service in local.services : name => { name = service.container, id = service.container_id } }

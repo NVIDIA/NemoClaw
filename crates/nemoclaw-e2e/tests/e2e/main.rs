@@ -14,8 +14,6 @@ mod hcl_live;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
 
-#[path = "rust/docker_provider_proxy.rs"]
-mod docker_provider_proxy;
 #[path = "rust/interfaces_live.rs"]
 mod interfaces_live;
 #[path = "rust/kubernetes_chart.rs"]
