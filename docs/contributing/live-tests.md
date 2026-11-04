@@ -42,7 +42,7 @@ The `kind-openshift-agents` [HCL E2E scenario](#hcl-e2e-scenarios) deploys two a
 Before the scenario, `cargo ci live-kind` starts a pinned registry that requires a login on the run's kind network and pushes the agent image there under a new image-index digest.
 The node may pull from that registry over HTTP, and its configuration for it holds no credentials, so a pod can pull the image only with a pull Secret.
 The new digest makes the node fetch the index from the registry, although the node already has the image's layers.
-Before its first apply, the `tests/e2e/hcl/kind` module releases a chart with the bundled Helm provider, as a platform and an operator would prepare the cluster:
+Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice with the bundled Helm provider, as a platform and an operator would prepare the cluster: once for the namespaces, the pull Secret, and the CA, and once for the stub model and the issuer, whose release waits until both are ready:
 
 - The deployment's namespace with OpenShift UID-range annotations, as OpenShift prepares a project. It holds the registry's image pull Secret and the CA of the existing issuer.
 - A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
@@ -52,7 +52,7 @@ Before its first apply, the `tests/e2e/hcl/kind` module releases a chart with th
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
-The test runner then uninstalls the release, which deletes the three namespaces.
+The test runner then uninstalls both releases, which deletes the three namespaces; it does not wait for Kubernetes to finish deleting them.
 `cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
