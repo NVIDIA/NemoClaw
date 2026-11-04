@@ -13,7 +13,11 @@ This skill drives one Fabric-managed agent the way its user does: through its na
 It checks desired-state assertions: each check records whether the agent does what a user of that agent expects through NemoClaw, not what the selected revision happens to support.
 It reuses [verify-yaml-deployment](../verify-yaml-deployment/SKILL.md) for the run's identity, build, inference, base YAML, plan and apply, doctor, credential scan, and cleanup, and owns only the Fabric-boundary additions.
 It owns one deployment per run and never touches another.
+
 The [live tests](../../../internal-docs/contributing/live-tests.md) stay the gate; when a check must hold on every change, add a test at the layer the `write-tests` skill picks.
+Use existing automated tests for configuration mapping and provider planning rules; do not repeat those assertions as skill checks.
+The feature files retain native discovery, registration, fresh use, and physical lifecycle evidence that those tests cannot prove.
+Keep the configuration and identity needed to drive a run as prerequisites, not separate proof of native behavior.
 
 ## Scope
 
