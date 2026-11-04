@@ -37,6 +37,15 @@ describe("normalizeRoutedEndpointUrl (#4564)", () => {
     );
   });
 
+  it.each([
+    "http://localhost.attacker.test:4000/v1",
+    "http://attacker.test:4000/localhost",
+    "http://user:secret@localhost:4000/v1",
+    "https://localhost:4000/v1",
+  ])("does not grant the host alias to %s (#13560)", (endpoint) => {
+    expect(normalizeRoutedEndpointUrl(endpoint)).toBe(endpoint);
+  });
+
   it("omits the colon when the endpoint has no explicit port and preserves query/hash", async () => {
     expect(normalizeRoutedEndpointUrl("http://localhost/v1?x=1#frag")).toBe(
       "http://host.openshell.internal/v1?x=1#frag",
@@ -209,6 +218,24 @@ describe("setupRoutedInference route mutation", () => {
     endpointUrl: "http://localhost:4000/v1",
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   };
+
+  it("awaits native registration without changing the shared route (#13560)", async () => {
+    const deps = makeRoutedSetupDeps();
+    const events: string[] = [];
+    deps.reconcileModelRouter.mockImplementation(async () => {
+      events.push("router");
+    });
+    deps.routedInference.upsertRoutedProvider.mockImplementation(async () => {
+      events.push("native-provider");
+      return { ok: true, result: { ok: true } };
+    });
+    await setupRoutedInference(args, {
+      ...deps,
+      nativeLocalInference: true,
+    } as unknown as RoutedDeps);
+    expect(events).toEqual(["router", "native-provider"]);
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+  });
 
   it("sends the exact route to the named gateway", async () => {
     const deps = makeRoutedSetupDeps();

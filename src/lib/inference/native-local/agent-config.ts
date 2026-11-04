@@ -46,11 +46,16 @@ export function nativeLocalCredentialReference(
   agentName?: string | null,
 ): string | null {
   if (
-    !["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
-      provider ?? "",
-    )
+    ![
+      "ollama-local",
+      "vllm-local",
+      "llama-cpp-local",
+      "compatible-endpoint",
+      "nvidia-router",
+    ].includes(provider ?? "")
   )
     return null;
+  if (provider === "nvidia-router" && agentName !== "openclaw") return null;
   const qualified = qualifiedNativeLocalEndpointUrl(endpointUrl);
   // Canonical custom-hosted selection includes private IP endpoints. Dedicated
   // local providers still use private bridge IPs; compatible local routes use
