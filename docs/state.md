@@ -19,6 +19,7 @@ They are implementation details for identifying retained state, not a manual edi
 | `terraform.tfstate` | OpenTofu resource state and durable bindings |
 | `main.tf.json`, `providers.tfrc` | SDK-generated graph and provider configuration |
 | `helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the OpenTofu state until recovery or removal completes |
+| `helm-install.json` | The gateway release that an apply started to install; kept until destroy finishes, so that destroy can remove a release that an unfinished install left without a binding |
 | `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |
 
 The [state store](../crates/nemoclaw-sdk/src/state/mod.rs), [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs), and [OpenTofu configuration](../crates/nemoclaw-sdk/src/deployment/opentofu.rs) define these files.

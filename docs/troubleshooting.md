@@ -47,6 +47,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
 | Managed model replacement is refused by `updatePolicy: Preserve` | The update requires replacing a running Docker model container. Keep the current configuration, or explicitly choose `spec.services.<name>.updatePolicy: Recreate` after reviewing the [downtime and recovery limits](inference.md#set-container-limits-and-update-policy) |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
+| Plan, apply, or destroy names the gateway's Helm release that an apply failed or stopped while installing | Follow [recovery from an unfinished Helm install](usage.md#recover-from-an-unfinished-helm-install): destroy removes a release that the install record names, then apply again |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | `Fabric runtime operation failed at STAGE (CODE)` | Read Fabric's message in the file the error names, in the state directory's `diagnostics` directory; it can contain secrets, so read it privately. Then follow [agent interface diagnosis](interfaces.md#diagnose-failures) |

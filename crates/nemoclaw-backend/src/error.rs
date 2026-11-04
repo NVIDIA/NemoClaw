@@ -19,6 +19,20 @@ pub enum Error {
     DockerModelUpdateRefused { service: String },
     #[error("gateway is incompatible with this configuration: {0}")]
     GatewayIncompatible(String),
+    /// The gateway's Helm release exists without a binding, and this
+    /// deployment's install record names it: an apply that installed it
+    /// failed or stopped. Destroy removes it.
+    #[error(
+        "the gateway's Helm release {release} in namespace {namespace} is left from an apply that failed or stopped while Helm installed it, and the state does not record it; run destroy with the same state directory to remove it, then apply; resources retained"
+    )]
+    LeftoverRelease { release: String, namespace: String },
+    /// The gateway's Helm release exists without a binding, and no install
+    /// record of this deployment names it, so NemoClaw can't establish that
+    /// the release is its own.
+    #[error(
+        "the gateway's Helm release {release} in namespace {namespace} exists, but neither the state nor an install record of this deployment names it, so NemoClaw leaves it; if it is this deployment's, remove it with Helm and rerun; resources retained"
+    )]
+    UnclaimedRelease { release: String, namespace: String },
     #[error(
         "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}{guidance}; resources retained",
         guidance = sandbox_startup_guidance(.reason)

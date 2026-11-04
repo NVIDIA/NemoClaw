@@ -393,6 +393,7 @@ OpenShell creates workspace claims in the cluster's default StorageClass; to cho
 Destroy keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
 To remove them and any released workspace volumes, follow [Remove Retained Resources](usage.md#remove-retained-resources).
 If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).
+If an apply failed or stopped while Helm installed the gateway release, follow [Recover from an Unfinished Helm Install](usage.md#recover-from-an-unfinished-helm-install).
 
 ### If Destroy Refuses
 

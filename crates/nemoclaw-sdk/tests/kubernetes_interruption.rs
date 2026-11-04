@@ -18,8 +18,8 @@
 #![cfg(unix)]
 
 use crate::scripted_tofu::{
-    Events, Scripted, destroy_plan_json, destroying, kubernetes_document, placeholder_generations,
-    plan_json, planning, state_json,
+    Events, Scripted, destroy_plan_json, destroying, kubernetes_document, leftover_plan_json,
+    placeholder_generations, plan_json, planning, state_json,
 };
 use nemoclaw_sdk::{
     CancellationToken, Deployment, Error, OperationResult, Outcome, Progress,
@@ -355,6 +355,83 @@ async fn a_first_apply_starts_opentofu_with_a_state_file() {
         position("root refresh") < position("root plan"),
         "the state file was created after the first plan: {commands:?}"
     );
+}
+
+/// A deployment whose first apply bound storage and authentication and then
+/// failed while Helm installed the gateway release, so the release is a record
+/// in the cluster that the state does not bind: the next plan refreshes
+/// authentication, which observes the record.
+async fn failed_during_the_helm_install(scripted: &Scripted) -> Deployment {
+    scripted.set("root.apply", "fail");
+    let deployment = scripted.deployment(&missing(scripted));
+    assert!(
+        matches!(
+            deployment.apply(&original(), &uncancelled()).await,
+            Err(Error::Execution { .. })
+        ),
+        "the first apply must fail in OpenTofu"
+    );
+    let generations = scripted.generations();
+    let targets: Vec<Target> = compile::runtime_targets(&original(), &generations)
+        .unwrap()
+        .into_iter()
+        .chain(compile::targets(&original(), &generations).unwrap())
+        .filter(|target| !target.address.starts_with("data."))
+        .collect();
+    let bound: Vec<Target> = targets
+        .iter()
+        .filter(|target| matches!(target.kind.as_str(), STORAGE_KIND | AUTH_KIND))
+        .cloned()
+        .collect();
+    let addresses: Vec<&str> = bound.iter().map(|target| target.address.as_str()).collect();
+    scripted.set("root.state", state_json(&bound));
+    scripted.set("root.apply.plan", leftover_plan_json(&targets, &addresses));
+    deployment
+}
+
+/// After an apply failed while Helm installed the gateway release, plan and
+/// apply stop before OpenTofu applies anything and name the release that the
+/// deployment's install record claims, which destroy removes.
+///
+/// Catches an apply that plans a second install, which Helm refuses with
+/// "cannot re-use a name that is still in use" after the apply has started.
+#[tokio::test]
+async fn plan_and_apply_after_a_failed_helm_install_name_the_leftover_release() {
+    let scripted = fresh();
+    let deployment = failed_during_the_helm_install(&scripted).await;
+    let applies = count(&scripted.commands(), "root apply");
+    let planned = deployment.plan(&original(), &uncancelled()).await;
+    let applied = deployment.apply(&original(), &uncancelled()).await;
+    for (operation, result) in [("plan", planned), ("apply", applied)] {
+        match result {
+            Err(Error::LeftoverRelease { release, namespace }) => {
+                assert_eq!(namespace, "agents", "{operation}");
+                assert!(release.ends_with("-gateway"), "{operation}: {release}");
+            }
+            other => panic!("{operation}: expected the leftover release, got {other:?}"),
+        }
+    }
+    assert_applies(&scripted, applies, "after the failed install");
+}
+
+/// Without an install record, for example in state that an earlier version
+/// wrote, the release is not claimed: apply stops and names it, and says that
+/// NemoClaw leaves it.
+///
+/// Catches an SDK that claims a release by its name alone.
+#[tokio::test]
+async fn a_leftover_release_without_an_install_record_is_named_but_not_claimed() {
+    let scripted = fresh();
+    let deployment = failed_during_the_helm_install(&scripted).await;
+    // An earlier version writes no install record.
+    let _ = fs::remove_file(scripted.state().join("helm-install.json"));
+    match deployment.apply(&original(), &uncancelled()).await {
+        Err(Error::UnclaimedRelease { release, namespace }) => {
+            assert_eq!(namespace, "agents");
+            assert!(release.ends_with("-gateway"), "{release}");
+        }
+        other => panic!("expected an unclaimed release, got {other:?}"),
+    }
 }
 
 /// OpenTofu has started creating the storage resource.
