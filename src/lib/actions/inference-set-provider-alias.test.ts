@@ -8,8 +8,8 @@
 //     used different vocabularies for the same provider.
 //   Facet 3 — `inference set` on a Deep Agents (dcode /
 //     langchain-deepagents-code) sandbox refused with a blunt message and no
-//     next step. dcode bakes its model at image-build time, so the fix is an
-//     actionable error pointing at re-onboard.
+//     next step. Selection changes need a new sandbox name because recreation
+//     restores saved native preferences.
 
 import { describe, expect, it, vi } from "vitest";
 import { shellQuote } from "../core/shell-quote";
@@ -331,27 +331,30 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
 });
 
 describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
-  it("points Deep Agents users at re-onboard instead of a dead-end refusal", async () => {
+  it("guides Deep Agents selection changes through a new name and default recovery", async () => {
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: { name: "dcode-sb", agent: "langchain-deepagents-code" },
     });
+    const error = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: "dcode-sb" },
+      deps,
+    ).catch((error: Error) => error);
 
-    await expect(
-      runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: "dcode-sb" },
-        deps,
-      ),
-    ).rejects.toThrow(/re-onboard with the new selection/);
-
-    // The message keeps the original "supports OpenClaw and Hermes" statement
-    // for compatibility with anything matching on it, and adds the dcode hint.
-    await expect(
-      runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-a", sandboxName: "dcode-sb" },
-        deps,
-      ),
-    ).rejects.toThrow(/supports OpenClaw and Hermes sandboxes/);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("supports OpenClaw and Hermes sandboxes");
+    expect((error as Error).message).toContain("saved native preferences");
+    expect((error as Error).message).toContain("record the current default");
+    expect((error as Error).message).toContain(
+      "onboard --agent dcode --name <new-sandbox-name> --fresh",
+    );
+    expect((error as Error).message).toContain("After any onboarding attempt");
+    expect((error as Error).message).toContain("use <previous-default-sandbox-name>");
+    expect((error as Error).message).toContain("After successful onboarding");
+    expect((error as Error).message).toContain("<new-sandbox-name> status");
+    expect((error as Error).message).toContain("<new-sandbox-name> inference get");
+    expect((error as Error).message).toContain("use <new-sandbox-name>");
+    expectNoInferenceMutation(deps.calls);
   });
 
   it("does NOT add the dcode hint for other unsupported agents", async () => {
@@ -367,13 +370,7 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
     ).rejects.toThrow(/supports OpenClaw and Hermes sandboxes; 'spark-sb' uses 'spark'\.$/);
   });
 
-  it("shell-quotes the sandbox name in the dcode re-onboard hint (#6321)", async () => {
-    // The hint embeds the sandbox name inside a copy-pasteable `onboard` command.
-    // validateName currently restricts names to a metacharacter-free shape, so
-    // shellQuote is defense-in-depth: it must still wrap the name so the command
-    // stays safe if a name ever reaches this path unvalidated or the name policy
-    // loosens. Lock in that the wrapper is applied (single-quoted form present),
-    // not raw interpolation.
+  it("does not recommend replacing the existing Deep Agents sandbox to switch selections", async () => {
     const name = "dcode-sb";
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
@@ -384,12 +381,10 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
       deps,
     );
 
-    // shellQuote always single-quotes, so the hint carries the quoted form.
-    // `toThrow(string)` does a substring match on the error message.
-    expect(shellQuote(name)).toBe("'dcode-sb'");
-    await expect(attempt).rejects.toThrow(`--name ${shellQuote(name)} --fresh`);
-    // The bare, unquoted name must not sit directly after --name.
-    await expect(attempt).rejects.not.toThrow(`--name ${name} --fresh`);
+    await expect(attempt).rejects.toThrow("--name <new-sandbox-name> --fresh");
+    await expect(attempt).rejects.not.toThrow(`--name ${shellQuote(name)}`);
+    await expect(attempt).rejects.not.toThrow(`--name ${name}`);
+    expectNoInferenceMutation(deps.calls);
   });
 
   // PRA-2: validateName blocks metacharacter names before the recovery hint, so

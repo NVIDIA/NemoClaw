@@ -298,15 +298,18 @@ It then exits without starting the interactive UI.
 `dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
 The sandbox name resolves when you run the command from a `nemo-deepagents <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
 
-Inspect the generated Deep Agents configuration from the host:
+Inspect the native Deep Agents configuration from the host:
 
 ```bash
 nemo-deepagents <sandbox-name> config get
 ```
 
+NemoClaw generates the initial `config.toml`.
+Native preference saves can update it, and native-home restoration preserves those saved preferences.
+Current images keep managed route and upstream provider metadata in protected files outside the native home.
 NemoClaw parses `config.toml`, removes gateway auth data, and redacts credential-shaped values before printing it.
-`config set` is not supported for this image-baked configuration.
-Re-onboard the named sandbox to change its managed provider or model selection.
+`config set` is not supported for Deep Agents sandboxes.
+To change the provider or model without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
 
 ## Related Topics
 
