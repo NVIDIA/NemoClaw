@@ -3,10 +3,10 @@
 
 import { readFileSync } from "node:fs";
 import YAML from "yaml";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { asExportedConfig } from "../../../../test/support/config-export-document";
-import { validateConfigExportWithPinnedV1 } from "../../../../test/support/v1-config-consumer";
+import { createPinnedV1Consumer } from "../../../../test/support/v1-config-consumer";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   braveSnapshot,
@@ -19,6 +19,9 @@ import {
   tavilySnapshot,
   tunedSnapshot,
 } from "./export-source-test-fixture";
+
+const { validate: validateConfigExportWithPinnedV1, dispose } = createPinnedV1Consumer();
+afterAll(dispose);
 
 function enabledHermesSnapshot(port: number, internalPort: number, tui: boolean, apiPort: number) {
   return hermesSnapshot({

@@ -30,6 +30,14 @@ The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 OpenRouter keys must be non-empty and begin with `sk-or-`.
 Other provider keys use provider-aware validation during the retry flow.
 
+## Local Server Readiness
+
+Local vLLM and NIM probes that use `/v1/models` require HTTP `200` and a JSON body with a `data` array.
+An empty array passes this availability check; model selection and inference validation remain separate checks.
+Redirects and other HTTP statuses fail readiness even when the body contains a model list.
+Managed NIM also requires its recorded container to be running.
+If NemoClaw cannot inspect that container, it stops the health wait.
+
 ## Native Local Provider Profile Verification
 
 During native local endpoint onboarding, NemoClaw retains the expected OpenShell provider profile after a successful inspection and checks it again after attaching the provider.
