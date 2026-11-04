@@ -1680,7 +1680,7 @@ jobs:
       DOCKERFILE: agents/pi/Dockerfile
       LOCAL_BASE_REFERENCE: nemoclaw-managed-candidate/pi-base:${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       PLATFORM: ${{ matrix.platform }}
-      PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+      PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
       REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
       # Qualification receipts compare image sources with the PR head, never GitHub's synthetic merge.
       SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
