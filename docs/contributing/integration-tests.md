@@ -149,7 +149,7 @@ To run the Rust system tests:
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
+  cargo test -p nemoclaw-e2e --test integration -- container_service:: deployment:: export_observations:: fabric_deployment:: multi_agent:: --ignored
 ```
 
 Append a test name to run one scenario, or `--test-threads=4` to match CI's concurrency.
@@ -163,6 +163,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `multi_agent` | Three OpenClaw agents: one agent's rejected start is reported alone and its retry replaces only it, and another owner's label on one sandbox stops every operation before it changes anything |
 | `fabric_bridge` | The provider's `fabric-agent-ctl` client: the image's own command and environment, input on stdin, and uncertain invocations never replayed. These tests are not ignored and run with the unit tests |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
+| `container_service` | On Unix, `kind: container` services behind a managed Docker gateway, with the bundle's Docker provider against a fake engine that keeps what it creates: apply waits for HTTP, runtime-status, and Docker HEALTHCHECK readiness and leaves nothing observing the engine; an unchanged apply changes nothing; unhealthy, unknown, timed-out, and interrupted setups fail with the provider's reason, and a retry creates no second container; a changed application replaces only its container and keeps its volume; apply refuses to remove a service; destroy deletes the application containers and volumes, keeps the gateway's storage and another owner's objects, and the deployment applies again |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
 | `hcl_integration` | Each scenario in `crates/nemoclaw-e2e/tests/integration/hcl/tests` under `tofu test`; see [`tofu test` cases](#tofu-test-cases) |
 

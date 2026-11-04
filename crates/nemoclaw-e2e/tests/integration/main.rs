@@ -16,6 +16,9 @@
 
 #[path = "agent_compatibility.rs"]
 mod agent_compatibility;
+#[cfg(unix)]
+#[path = "rust/container_service.rs"]
+mod container_service;
 #[path = "rust/deployment.rs"]
 mod deployment;
 #[path = "../../../test-support/docker_engine.rs"]
