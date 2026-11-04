@@ -40,6 +40,7 @@ import {
   observeRebuildSandbox,
   openRebuildRecreateJournal,
   recordRebuildRecoveryBackup,
+  RebuildRecoveryMarkerSyncError,
   retireRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 
@@ -822,6 +823,19 @@ describe("rebuild replacement recovery backup", () => {
     );
 
     clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    expect(fs.existsSync(recordPath)).toBe(false);
+  });
+
+  it("reports marker removal when the directory sync fails afterward", () => {
+    recordRebuildRecoveryBackup({ ...recordedIdentity(), backupManifest: manifest }, deps());
+    const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw new Error("injected backup directory sync failure");
+    });
+
+    expect(() =>
+      clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps()),
+    ).toThrow(RebuildRecoveryMarkerSyncError);
     expect(fs.existsSync(recordPath)).toBe(false);
   });
 
