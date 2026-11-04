@@ -42,6 +42,11 @@ export async function applyGeneratedPolicy(
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): Promise<void> {
+  if (entry.policyConflict) {
+    throw new McpBridgeError(
+      `Refusing to apply generated MCP policy '${entry.policyName}': ${entry.policyConflict}`,
+    );
+  }
   const addresses = assertMcpBridgePolicyTarget(entry, target);
   if (addresses.length === 0) {
     throw new McpBridgeError(

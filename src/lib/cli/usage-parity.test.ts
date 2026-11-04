@@ -33,7 +33,7 @@ describe("public display usage parity", () => {
       expect(usage).toBe(command?.usage);
       const helpLine = publicHelp
         .split("\n")
-        .find((line) => line.trimStart().startsWith(usage));
+        .find((line) => line.trimStart().replace(/\x1b\[[0-9;]*m/g, "").startsWith(usage));
       expect(helpLine).toBeDefined();
       expect(helpLine ?? "").toContain(flags ?? "");
     },
