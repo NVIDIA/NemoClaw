@@ -63,6 +63,15 @@ jobs:
       # the other platforms.
       integration-shards: "[1, 2, 3]"
   # The live suites, on each push to v1 only. No required check depends on them.
+  # E2E / HCL builds its own candidate and runs the HCL E2E cases that need a
+  # model; E2E / PLATFORM runs the Docker and Kubernetes suites from the
+  # platform's test archive and bundle.
+  e2e_hcl:
+    name: E2E / HCL
+    if: github.event_name == 'push' && github.ref == 'refs/heads/v1'
+    uses: ./.github/workflows/hcl-e2e.yml
+    # The hosted cases read NVIDIA_API_KEY.
+    secrets: inherit
   e2e_linux_arm64:
     name: E2E / linux_arm64
     needs: [plan, linux_arm64]
