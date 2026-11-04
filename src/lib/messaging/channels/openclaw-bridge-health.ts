@@ -115,9 +115,6 @@ export function createOpenClawBridgeHealthHook(
       const credentialWarnings = lines.filter((line) => OPENCLAW_BRIDGE_WARNING_PATTERN.test(line));
       if (credentialWarnings.length > 0) {
         log(`  ⚠ '${spec.channelId}' bridge logged credential/startup warnings:`);
-        for (const line of credentialWarnings.slice(0, 3)) {
-          log(`    ${line}`);
-        }
         log(
           `    Verify the OpenShell provider for ${spec.channelId} holds a valid credential and re-run the sandbox rebuild if needed.`,
         );

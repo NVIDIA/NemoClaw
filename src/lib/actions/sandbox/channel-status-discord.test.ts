@@ -119,6 +119,52 @@ describe("OpenClaw Discord channel status", () => {
     },
   );
 
+  it.each([
+    ["unavailable", null, "ready", 2],
+    ["missing", [], "terminal", 1],
+  ] as const)(
+    "handles %s gateway policy during --wait",
+    async (_condition, presets, state, attempts) => {
+      let nowMs = 0;
+      const sleep = vi.fn(async (milliseconds: number) => {
+        nowMs += milliseconds;
+      });
+      const { deps: base } = makeDeps({
+        sandbox: entry(["discord"]),
+        appliedPresets: ["discord"],
+        exec: () => ({ status: 0, stdout: openClawDiscordStatus(), stderr: "" }),
+        nowMs: () => nowMs,
+        sleep,
+      });
+      const getGatewayPresets = vi
+        .fn(async (): Promise<string[] | null> => ["discord"])
+        .mockResolvedValueOnce(presets === null ? null : [...presets]);
+
+      const report = await showSandboxChannelStatus("alpha", {
+        deps: {
+          ...base,
+          getGatewayPresets,
+          execSandbox: async (...args) => base.execSandbox(...args),
+        },
+        channel: "discord",
+        wait: true,
+        timeoutSeconds: 2,
+        pollIntervalMs: 100,
+        asJson: true,
+        quietJson: true,
+      });
+
+      expect(report).toMatchObject({ readiness: { state, attempts } });
+      expect(getGatewayPresets).toHaveBeenCalledTimes(attempts);
+      expect(sleep).toHaveBeenCalledTimes(attempts - 1);
+      const nativeProbes = base.execSandbox.mock.calls.filter(([, command]) =>
+        command.startsWith("openclaw channels status --channel discord "),
+      );
+      expect(nativeProbes).toHaveLength(state === "ready" ? 1 : 0);
+      expect(report && exitCodeFor(report)).toBe(state === "ready" ? 0 : 1);
+    },
+  );
+
   it("reports a paused Discord channel as terminal with --wait (#13624)", async () => {
     const { deps: base } = makeDeps({
       sandbox: entry(["discord"], ["discord"]),

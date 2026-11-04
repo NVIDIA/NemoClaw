@@ -113,10 +113,17 @@ function healthReport(
 ): ChannelHealthReport {
   const registered = inputs.channelEnabledInRegistry === true;
   const policy = inputs.presetApplied === true && inputs.presetOnGateway === true;
+  const policyStatusUnavailable =
+    agent === "openclaw" &&
+    registered &&
+    inputs.presetApplied === true &&
+    inputs.presetOnGateway === null;
   const verdict = !registered
     ? "unconfigured"
     : !policy
-      ? "policy_gap"
+      ? policyStatusUnavailable
+        ? "unknown"
+        : "policy_gap"
       : state === "auth_failed"
         ? "credential_rejected"
         : state === "connected"
@@ -167,7 +174,9 @@ function healthReport(
         severity: policy ? "ok" : "warn",
         detail: policy
           ? "discord preset applied"
-          : "discord policy coverage is missing or unverified",
+          : policyStatusUnavailable
+            ? "discord preset recorded; gateway policy could not be inspected"
+            : "discord policy coverage is missing or unverified",
       },
       {
         label:
@@ -195,15 +204,16 @@ function healthReport(
     );
     report.readiness = {
       state: verdict === "healthy" ? "ready" : terminal ? "terminal" : "waiting",
-      category:
-        verdict === "healthy"
+      category: policyStatusUnavailable
+        ? "network"
+        : verdict === "healthy"
           ? null
           : verdict === "credential_rejected"
             ? "credential"
             : verdict === "policy_gap"
               ? "policy"
               : "runtime",
-      reason: verdict,
+      reason: policyStatusUnavailable ? "policy_status_unavailable" : verdict,
       retryable: !terminal && verdict !== "healthy",
       lastTransitionAt: null,
     };
