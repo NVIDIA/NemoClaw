@@ -246,7 +246,7 @@ describe("rebuildSandbox flow: target session", () => {
     },
   );
 
-  it.each(["0.1.5", null])(
+  it.each(["0.1.5", "0.1.7", null])(
     "refuses retained legacy NVIDIA rebuild before mutation on OpenShell %s",
     async (version) => {
       const harness = createRebuildFlowHarness({

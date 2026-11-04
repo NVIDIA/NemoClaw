@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { OPENSHELL_V015_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { OPENSHELL_V017_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const TLS_SERVER_NAME_REMOVE = "remove(openshell_core::sandbox_env::GATEWAY_TLS_SERVER_NAME);";
@@ -213,6 +213,27 @@ export const OPENSHELL_V015_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServer
     },
   ]);
 
+// OpenShell 0.1.7 preserves the reviewed environment filtering and regression tests.
+export const OPENSHELL_V017_TLS_SERVER_NAME_SOURCES: readonly OpenShellTlsServerNameSource[] =
+  Object.freeze([
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[0]!,
+      blobSha: "6b761f2f599e49fd8fae5e47239465f92cdb3a92",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[1]!,
+      blobSha: "92d20739f35ce7f27326df3c54c8e90de6596707",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[2]!,
+      blobSha: "2f606dfa6e26f1667d6412db86de3b05cc763f77",
+    },
+    {
+      ...OPENSHELL_V012_TLS_SERVER_NAME_SOURCES[3]!,
+      blobSha: "f7946c34c29ee75f49fb5a131ab873f3e91683c5",
+    },
+  ]);
+
 function gitBlobSha(source: string): string {
   const content = Buffer.from(source, "utf8");
   const header = Buffer.from(`blob ${String(content.byteLength)}\0`, "utf8");
@@ -270,11 +291,11 @@ type VerificationResult = {
 
 export async function verifyOpenShellTlsServerNameSourceBoundary(
   fetchSource: typeof fetch = fetch,
-  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V015_TLS_SERVER_NAME_SOURCES,
+  reviewedSources: readonly OpenShellTlsServerNameSource[] = OPENSHELL_V017_TLS_SERVER_NAME_SOURCES,
   qualification: Readonly<{
     sourceRevision: string;
     version: string;
-  }> = OPENSHELL_V015_QUALIFICATION,
+  }> = OPENSHELL_V017_QUALIFICATION,
 ): Promise<{
   drivers: VerificationResult[];
   regressions: VerificationResult[];

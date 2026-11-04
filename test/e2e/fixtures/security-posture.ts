@@ -117,7 +117,7 @@ const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
 const CAPABILITY_SURFACE_MARKER = "NEMOCLAW_SECURITY_CAPABILITY_SURFACE";
-const EXPECTED_OPENSHELL_VERSION = "0.1.5";
+const EXPECTED_OPENSHELL_VERSION = "0.1.7";
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 function workloadBoundaryArgv(providerId: string): string[] {
   const executable =

@@ -3,10 +3,10 @@
 
 # OpenShell SDK archive
 
-This directory carries the reviewed `@nvidia/openshell-sdk@0.1.5` package under its upstream Apache-2.0 license.
+This directory carries the reviewed `@nvidia/openshell-sdk@0.1.7` package under its upstream Apache-2.0 license.
 The archive matches the GitHub Packages URL and SHA-512 integrity in the root `package-lock.json`.
-Its source is NVIDIA/OpenShell tag `v0.1.5`, commit `bdb956f2cd65a635f1294fccf1d138d263bf650f`.
-The included `LICENSE.v0.1.5` is copied from that source.
+Its source is NVIDIA/OpenShell tag `v0.1.7`, commit `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c`.
+The included `LICENSE.v0.1.7` is copied from that source.
 
 The installer and `npm run dev:setup` verify this archive, seed npm's cache offline, and run the normal dependency installation.
 Users do not need GitHub credentials or an SDK build toolchain.
@@ -32,12 +32,12 @@ Do not substitute a locally repacked archive: its compressed bytes can differ fr
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
 
-The `0.0.116` archive and `LICENSE` remain for the current baseline packaging tests.
+The `0.0.116` and `0.1.5` archives and their license files remain for historical packaging evidence.
 
 ## Trusted E2E Setup
 
-The production SDK is `0.1.5`.
-`ci/reviewed-npm-audit.json` admits the `0.0.116` baseline and the reviewed `0.1.5` replacement for the OpenShell upgrade.
+The production SDK is `0.1.7`.
+`ci/reviewed-npm-audit.json` admits the `0.0.116` baseline and the reviewed `0.1.7` replacement for the OpenShell upgrade.
 When compiling the candidate CLI and plugin, the E2E planner requires successful SDK packaging, downloads that run's archive bundle, and uses explicit artifact mode.
 Explicit candidate dispatches that select only `llama-cpp-dgx-spark-qualification` or `native-runtime-qualification-producer`, with no target selector, skip SDK packaging and candidate compilation.
 Those dispatches use their trusted producer plans.

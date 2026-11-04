@@ -15,7 +15,7 @@ The direct OpenClaw blueprint runner can attach a provider-neutral runtime ident
 The shipped blueprint and normal `nemoclaw onboard` do not enable or configure this experimental capability.
 
 <Warning>
-The direct runner's identity apply path remains unqualified for OpenShell 0.1.5 until its protected conformance tests pass.
+The direct runner's identity apply path remains unqualified for OpenShell 0.1.7 until its protected conformance tests pass.
 The runner now uses sandbox-attached native inference providers.
 Keep this experimental flow disabled until the inference compatibility work in [NemoClaw#12558](https://github.com/NVIDIA/NemoClaw/issues/12558) and its conformance tests are complete.
 </Warning>
@@ -41,7 +41,7 @@ Runtime identity profiles may use DNS-backed HTTPS only within a provider type's
 NemoClaw resolves every destination before import and rejects private or internal addresses.
 OpenShell performs connect-time server-side request forgery (SSRF) and L7 enforcement before it injects the provider credential.
 
-OpenShell 0.1.5's gateway refresh client verifies the HTTPS hostname but does not pin the address that NemoClaw resolved during import. The 0.1.5 identity apply path remains unqualified.
+OpenShell 0.1.7's gateway refresh client verifies the HTTPS hostname but does not pin the address that NemoClaw resolved during import. The 0.1.7 identity apply path remains unqualified.
 Only identity-platform-controlled DNS namespaces such as `okta.com`, `login.microsoftonline.com`, and `graph.microsoft.com` belong in this trust table.
 An attacker-controlled or customer-controlled suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>
@@ -66,7 +66,7 @@ Expanding the trusted hostname policy requires upstream pinning and new conforma
 
 ## Enable Provider-Derived Policy
 
-OpenShell `0.1.5` composes attached-provider policies automatically when no active global policy overrides them.
+OpenShell `0.1.7` composes attached-provider policies automatically when no active global policy overrides them.
 The `providers_v2_enabled` setting no longer exists.
 Use a gateway without an active global policy override for this experimental flow.
 Ask the gateway operator to review an existing override before retrying; changing global policy can affect other sandboxes.

@@ -13,8 +13,8 @@ const INSTALLER_SOURCE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const TRUSTED_V015_TEMPLATE_DIGEST =
-  "32226056dbea5585861eddd7b1dd50bfd7dd79345bac04ecbf6194b9ef4e7677";
+const TRUSTED_V017_TEMPLATE_DIGEST =
+  "63ffbb3d9a1081e0f8b89df0d892cec55891a2083242f70131c02155218a88f0";
 const originalCurl =
   'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
 const boundedCurl = [
@@ -74,21 +74,21 @@ function expectTrustedTemplate(source: string, digest: string): void {
 
 describe("installer Homebrew formula reuse trust", () => {
   const supersededV00106Template = INSTALLER_SOURCE.replace(
-    'MIN_VERSION="0.1.5"',
+    'MIN_VERSION="0.1.7"',
     'MIN_VERSION="0.0.106"',
   )
-    .replace('MAX_VERSION="0.1.5"', 'MAX_VERSION="0.0.106"')
-    .replace('DEV_MIN_VERSION="0.1.5"', 'DEV_MIN_VERSION="0.0.106"');
+    .replace('MAX_VERSION="0.1.7"', 'MAX_VERSION="0.0.106"')
+    .replace('DEV_MIN_VERSION="0.1.7"', 'DEV_MIN_VERSION="0.0.106"');
   const untrustedTemplate = INSTALLER_SOURCE.replace(
     'info "Detected $OS_LABEL ($ARCH_LABEL)"',
     'info "Detected $OS_LABEL ($ARCH_LABEL)"\n# unlisted installer template',
   );
 
   // source-shape-contract: security -- Exact current installer bytes must be base-authorized before trusted CI can admit the dependent runtime change
-  it("accepts only the reviewed OpenShell 0.1.5 installer template", () => {
-    expect(INSTALLER_SOURCE).toContain('MIN_VERSION="0.1.5"');
-    expect(INSTALLER_SOURCE).toContain('MAX_VERSION="0.1.5"');
-    expectTrustedTemplate(boundedInstaller, TRUSTED_V015_TEMPLATE_DIGEST);
+  it("accepts only the reviewed OpenShell 0.1.7 installer template", () => {
+    expect(INSTALLER_SOURCE).toContain('MIN_VERSION="0.1.7"');
+    expect(INSTALLER_SOURCE).toContain('MAX_VERSION="0.1.7"');
+    expectTrustedTemplate(boundedInstaller, TRUSTED_V017_TEMPLATE_DIGEST);
   });
 
   it.each([
@@ -102,7 +102,7 @@ describe("installer Homebrew formula reuse trust", () => {
       "download retry policy",
       boundedInstaller.replace("--retry 3 --retry-delay 2", "--retry 4 --retry-delay 2"),
     ],
-  ])("rejects an unreviewed mutation of the OpenShell 0.1.5 %s", (_name, source) => {
+  ])("rejects an unreviewed mutation of the OpenShell 0.1.7 %s", (_name, source) => {
     const result = runTrustCheck(source);
 
     expect(result.status).toBe(1);
@@ -114,7 +114,7 @@ describe("installer Homebrew formula reuse trust", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "installer pin-table release 0.1.5 must match installer MIN_VERSION 0.0.106",
+      "installer pin-table release 0.1.7 must match installer MIN_VERSION 0.0.106",
     );
   });
 });

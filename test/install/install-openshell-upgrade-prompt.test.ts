@@ -507,12 +507,19 @@ esac`,
   });
 
   it.each(
-    ["0.0.116", "0.1.2", "0.1.4"].flatMap((version) =>
-      ["automatic", "prepared"].map((mode) => ({ version, mode })),
+    ["0.1.5", "0.1.7"].flatMap((targetVersion) =>
+      [
+        "0.0.116",
+        "0.1.2",
+        "0.1.4",
+        ...(targetVersion === "0.1.7" ? ["0.1.5", "0.1.6"] : []),
+      ].flatMap((version) =>
+        ["automatic", "prepared"].map((mode) => ({ version, mode, targetVersion })),
+      ),
     ),
   )(
-    "preserves a registered $version gateway before the 0.1.5 $mode cutover (#12558)",
-    async ({ version, mode }) => {
+    "preserves a registered $version gateway before the $targetVersion $mode cutover (#12558)",
+    async ({ version, mode, targetVersion }) => {
       const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
         {
           NON_INTERACTIVE: "1",
@@ -521,8 +528,8 @@ esac`,
           ...(mode === "prepared" ? { NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1" } : {}),
         },
         {
-          currentMinOpenshellVersion: "0.1.5",
-          currentMaxOpenshellVersion: "0.1.5",
+          currentMinOpenshellVersion: targetVersion,
+          currentMaxOpenshellVersion: targetVersion,
           finishInstallMode: "source",
           openshellVersion: version,
         },
@@ -746,7 +753,7 @@ esac`,
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it.each(["0.0.85", "0.1.5"])(
+  it.each(["0.0.85", "0.1.5", "0.1.7"])(
     "keeps a backed-up gateway on supported OpenShell %s",
     async (version) => {
       const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(

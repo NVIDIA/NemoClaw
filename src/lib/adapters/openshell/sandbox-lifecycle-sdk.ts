@@ -224,6 +224,19 @@ async function mutate(
       }
       const phase = current.phase.toLowerCase();
       if (phase === (action === "start" ? "ready" : "stopped")) break;
+      // A successful stop RPC can preserve the terminal process result when
+      // compute is missing. That result does not establish the Stopped state
+      // required before NemoClaw records an intentional stop.
+      if (action === "stop" && (phase === "completed" || phase === "error")) {
+        return {
+          kind: "failed",
+          error: {
+            kind: "command",
+            reason: "failed",
+            message: `OpenShell sandbox is ${current.phase} after the stop request; Stopped was not confirmed.`,
+          },
+        };
+      }
       if (action === "start" && !allowInitialError(phase) && isTerminalSandboxPhase(phase)) {
         return {
           kind: "failed",

@@ -75,11 +75,11 @@ OpenShell supplies the direct provider credential or Bedrock adapter token at eg
 Pi configuration contains a non-secret placeholder or environment reference.
 Bedrock AWS credentials stay in its host-local adapter.
 Remaining custom shared selections and unchanged published Pi shared-route selections retain `inference.local`.
-Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.5` removes `inference.local`.
-On OpenShell `0.1.5`, NemoClaw refuses to resume or rebuild a retained Pi local selection without a native attachment.
+Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.5` removed `inference.local`.
+On OpenShell `0.1.7`, NemoClaw refuses to resume or rebuild a retained Pi local selection without a native attachment.
 Back up required state before recreating the sandbox with `nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox`.
 NemoClaw preserves legacy volumes and does not automatically copy their data.
-Pi native local onboarding on `0.1.5` remains unqualified for this upgrade.
+Pi native local onboarding on `0.1.7` remains unqualified for this upgrade.
 A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
 For OpenRouter, Pi uses `https://openrouter.ai/api/v1` through its recorded native provider. Readiness requires a successful bounded inference request for the selected model.
@@ -99,7 +99,7 @@ A rebuild replays the recorded values. Pi does not support `NEMOCLAW_REASONING_E
 
 The baseline network policy permits only the managed inference endpoint and the required Chat Completions routes. Network capability is limited to the root-owned Pi and Node runtime binaries.
 
-For an OpenShell `0.1.5` native provider route, Pi startup and managed shells clear inherited proxy and bypass variables.
+For an OpenShell `0.1.7` native provider route, Pi startup and managed shells clear inherited proxy and bypass variables.
 OpenShell mediates DNS and applies destination policy.
 `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` do not configure this Pi route.
 

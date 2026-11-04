@@ -538,7 +538,7 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
-On OpenShell 0.1.5, the full-suite DNS fixture selects the workload's supervisor by sandbox ID and namespace, then verifies its cgroup and upstream resolver.
+On OpenShell 0.1.7, the full-suite DNS fixture selects the workload's supervisor by sandbox ID and namespace, then verifies its cgroup and upstream resolver.
 A loopback DNS forwarder overrides only the selected fixture hostname with an IPv4 address and returns no AAAA answer for it.
 Other queries use the supervisor's existing upstream resolver over UDP or TCP.
 Temporary owned `iptables` or `ip6tables` rules redirect queries to the loopback forwarder.
@@ -547,7 +547,7 @@ The host `/etc/hosts` mapping remains for host-side admission checks.
 Denial checks require generated override answers as well as the existing policy-denial and no-arrival evidence; IP pins remain unchanged.
 Cleanup verifies that owned rules are absent, restores the host's hosts file, and closes the forwarder.
 Unconfirmed cleanup fails the fixture.
-The trusted-private fixture uses its existing host HTTPS listener for the default OpenShell 0.1.5
+The trusted-private fixture uses its existing host HTTPS listener for the default OpenShell 0.1.7
 host-network supervisor. Its discovered interface address must be routed-private,
 not the Podman gateway's link-local alias. Legacy bridged workloads retain the relay.
 The trusted-private HTTPS fixture records bounded TLS, request-header, and completed-body counters
@@ -868,7 +868,7 @@ The support test owns the shell fixture's two-attempt output.
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.1.5 gateway over HTTPS with an explicit CA. The target confirms
+OpenShell 0.1.7 gateway over HTTPS with an explicit CA. The target confirms
 that its configured authentication file path does not exist before and after
 the health request. A successful request proves that public health does not
 require a credential read or make an authenticated gateway call.
@@ -888,7 +888,7 @@ Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
 For Docker, the shared fake messaging API fixture publishes its credential-free proxy on
-`127.0.0.1` for the default OpenShell 0.1.5 host networking. Podman retains `0.0.0.0` publication.
+`127.0.0.1` for the default OpenShell 0.1.7 host networking. Podman retains `0.0.0.0` publication.
 The API container remains on an internal network without published ports.
 
 The `network-policy` target also owns live configuration-export evidence for #10938, #11854, and PR #11065.
@@ -1168,14 +1168,14 @@ When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 Its native OpenClaw configuration probe requires loading the proxy environment, validating the configuration, and reading `gateway.mode` to succeed in sequence.
 The returned mode must be `local`; a failure in any step fails the probe.
-For OpenShell 0.1.5, its process report identifies the non-root workload boundary at PID 1 separately from the `nemoclaw-start` children.
+For OpenShell 0.1.7, its process report identifies the non-root workload boundary at PID 1 separately from the `nemoclaw-start` children.
 The probe runs as the managed image's declared sandbox owner and requires zero capabilities and `NoNewPrivs=1`.
 It records denied PID-1 executable-link access as `null`; it does not infer an executable path from the command line.
 Child executable links must remain readable and identify system Bash. Missing processes and denied child inspection fail the probe.
 The report's `processScope: workload-container` identifies the process census; it does not attest the PID-1 executable binary.
 Separate `containerPair` evidence binds engine launch metadata to that workload and its uniquely labelled supervisor before and after the census.
 It checks running identities, entrypoints, non-root users, capability drops, no-new-privileges, and provider-specific network settings.
-The supervisor must use the pinned 0.1.5 image and pass its native health command. Docker also requires its read-only root filesystem.
+The supervisor must use the pinned 0.1.7 image and pass its native health command. Docker also requires its read-only root filesystem.
 The inspection selects metadata fields and excludes environments, supervisor arguments, credentials, and health logs.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
 The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`

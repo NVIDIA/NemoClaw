@@ -30,6 +30,13 @@ export const OPENSHELL_V015_QUALIFICATION = Object.freeze({
   version: "0.1.5",
 });
 
+export const OPENSHELL_V017_QUALIFICATION = Object.freeze({
+  sourceRevision: "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c",
+  supervisorImage:
+    "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
+  version: "0.1.7",
+});
+
 export function exactGatewayRelease(versionOutput: string): string | null {
   const tokens = versionOutput.match(/(?:^|\s)v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)(?=\s|$)/gu);
   if (tokens?.length !== 1) return null;

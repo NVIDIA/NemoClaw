@@ -52,8 +52,9 @@ const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = 
   "0.1.2": "sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
   "0.1.3": "sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4",
   "0.1.5": "sha256:fabcd01f656e9d23df4386f82e80b4f48b90f3452d7d5c58889007643a069161",
+  "0.1.7": "sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
 };
-const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.5";
+const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.7";
 
 /** Resolve the canonical gateway name without bypassing the binding owner. */
 export function resolveDockerDriverGatewayName(gatewayPort: number): string {

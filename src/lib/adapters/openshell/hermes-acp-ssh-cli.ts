@@ -13,7 +13,10 @@ import { accessSync, constants } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
+import {
+  HERMES_LIFECYCLE_DEFINITION,
+  HERMES_CLI_OPENSHELL_VERSION,
+} from "../../domain/lifecycle/hermes-definition";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   createTempSshConfig,
@@ -608,7 +611,7 @@ function resolveBinaries(
         versionOptions,
         deps.captureOpenShell ?? captureOpenShell,
       );
-  return result === HERMES_LIFECYCLE_DEFINITION.openshellVersion ? { openshell, ssh } : null;
+  return result === HERMES_CLI_OPENSHELL_VERSION ? { openshell, ssh } : null;
 }
 
 /** Create the OpenShell CLI implementation of the Hermes ACP SSH boundary. */
@@ -623,7 +626,7 @@ export function createCliHermesAcpSshTransport(
       if (!binaries) {
         return failure(
           "unavailable",
-          `Hermes ACP requires OpenShell ${HERMES_LIFECYCLE_DEFINITION.openshellVersion} and the system SSH client.`,
+          `Hermes ACP requires OpenShell ${HERMES_CLI_OPENSHELL_VERSION} and the system SSH client.`,
           69,
         );
       }

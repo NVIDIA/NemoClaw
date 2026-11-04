@@ -56,7 +56,7 @@ describe("docker-driver-gateway auth contract", () => {
       }
     },
   );
-  it("emits an OpenShell 0.1.5 sandbox JWT bundle with non-expiring sessions", () => {
+  it("emits an OpenShell 0.1.7 sandbox JWT bundle with non-expiring sessions", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
@@ -156,7 +156,7 @@ describe("docker-driver-gateway auth contract", () => {
     }
   });
 
-  it("preserves user mTLS without exposing client credentials to OpenShell 0.1.5 sandboxes", () => {
+  it("preserves user mTLS without exposing client credentials to OpenShell 0.1.7 sandboxes", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);

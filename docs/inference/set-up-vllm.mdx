@@ -12,7 +12,7 @@ content:
 
 NemoClaw can connect to an existing vLLM server or, when Docker is available on `PATH`, install and start a managed vLLM container on supported NVIDIA GPU hosts.
 It also provides a Deferred N1x preview pending a physical NemoClaw Express E2E run.
-OpenShell `0.1.5` GPU qualification remains pending; the network changes below do not establish Docker Desktop, Windows WSL, or Jetson/Tegra qualification.
+OpenShell `0.1.7` GPU qualification remains pending; the network changes below do not establish Docker Desktop, Windows WSL, or Jetson/Tegra qualification.
 
 <Note>
 NemoClaw forces the Chat Completions API path for vLLM.
@@ -22,7 +22,7 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 <Warning>
 Local vLLM does not require authentication by default.
 Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, for host-loopback validation.
-With OpenShell `0.1.5` and its default Docker supervisor network mode, the supervisor reaches an authenticated managed server through the same loopback listener.
+With OpenShell `0.1.7` and its default Docker supervisor network mode, the supervisor reaches an authenticated managed server through the same loopback listener.
 After onboarding, `status` and `doctor` probe an authenticated managed single-host vLLM container on its published loopback port.
 For a bearerless server, they use the port in the sandbox's recorded `http://host.openshell.internal:<port>/v1` route.
 When that route is valid, no later port environment override is required.
@@ -41,7 +41,7 @@ New OpenClaw, Hermes, Deep Agents Code, and Pi standalone vLLM selections use th
 OpenShell supplies the credential at egress; the sandbox receives only a credential reference.
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
 For Pi's release-candidate and platform restrictions, refer to [Pi Support and Security](/user-guide/pi/reference/pi-support).
-Pi native local onboarding on OpenShell `0.1.5` remains unqualified.
+Pi native local onboarding on OpenShell `0.1.7` remains unqualified.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 Older OpenClaw sandboxes without a native attachment retain their recorded shared route, which requires OpenShell `0.0.x`.

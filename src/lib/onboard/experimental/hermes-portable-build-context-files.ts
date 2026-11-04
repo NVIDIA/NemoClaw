@@ -148,7 +148,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/security/standalone-security-package-inventory.mts", mode: "100644" },
   { path: "scripts/upgrade-bundled-npm.mts", mode: "100755" },
   {
-    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.5.json",
+    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.7.json",
     mode: "100644",
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },

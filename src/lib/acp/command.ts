@@ -21,7 +21,10 @@ import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitiz
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../adapters/openshell/sandbox-ssh-host";
 import { getVersion } from "../core/version";
 import { waitUntilAsync } from "../core/wait";
-import { HERMES_LIFECYCLE_DEFINITION } from "../domain/lifecycle/hermes-definition";
+import {
+  HERMES_LIFECYCLE_DEFINITION,
+  HERMES_CLI_OPENSHELL_VERSION,
+} from "../domain/lifecycle/hermes-definition";
 import { recoverNamedGatewayRuntime } from "../gateway-runtime-action";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
@@ -161,7 +164,7 @@ function compatibleEntry(entry: HostGatewayRegistryEntry["entry"], version: stri
   return (
     entry.agent === HERMES_LIFECYCLE_DEFINITION.agent &&
     entry.agentVersion === HERMES_LIFECYCLE_DEFINITION.agentVersion &&
-    entry.openshellVersion === HERMES_LIFECYCLE_DEFINITION.openshellVersion &&
+    entry.openshellVersion === HERMES_CLI_OPENSHELL_VERSION &&
     entry.nemoclawVersion === version &&
     (entry.fromDockerfile === undefined || entry.fromDockerfile === null) &&
     typeof entry.lifecycleGeneration === "string" &&

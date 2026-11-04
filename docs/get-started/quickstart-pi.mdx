@@ -59,8 +59,8 @@ OpenShell supplies the direct provider credential or Bedrock adapter token at eg
 Pi configuration contains a non-secret placeholder or environment reference.
 Bedrock AWS credentials stay in its host-local adapter.
 Remaining custom shared selections and unchanged published Pi shared-route selections retain `inference.local`.
-Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.5` removes `inference.local`.
-Pi native local onboarding on `0.1.5` remains unqualified for this upgrade.
+Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.5` removed `inference.local`.
+Pi native local onboarding on `0.1.7` remains unqualified for this upgrade.
 A failed native selection stops without falling back to the shared route. For direct provider routes, the credential remains in OpenShell provider state across rebuild and sandbox destruction. When no sandbox needs that provider, remove it explicitly with `nemoclaw credentials reset <provider> --yes`.
 
 Stock onboarding selects a Pi managed-image digest. It does not build the Pi Dockerfile on the host. The reviewed Dockerfile is a trusted CI image-build source, not a user onboarding mechanism. A missing, incomplete, mutable, or inconsistent image contract fails before sandbox creation.

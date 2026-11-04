@@ -26,13 +26,20 @@ NemoClaw detects Ollama on the host and can install, start, or upgrade it on sup
 
 Fresh Hermes Portable onboarding does not use the host Ollama setup described in the remaining sections.
 It creates a receipt-owned Ollama runner through the current user's rootless Podman authority.
-On OpenShell `0.1.5`, fresh onboarding attaches a native provider for `http://host.openshell.internal:11434/v1` to the Hermes sandbox.
+On OpenShell `0.1.7`, fresh onboarding attaches a native provider for `http://host.openshell.internal:11434/v1` to the Hermes sandbox.
 The supervisor supplies a credential reference through `NEMOCLAW_LOCAL_INFERENCE_TOKEN`; its stored value is the nonsecret Ollama sentinel.
 The private publication journal binds the transaction to the provider name, endpoint profile, immutable provider ID, and resource version.
 Recovery and cleanup stop when that authority changes.
 Existing shared-route journals are preserved for their recorded cleanup and are not adopted as native providers.
 Back up an existing sandbox before retiring its old runtime and creating a native replacement.
-The OpenShell `0.1.5` upgrade remains unqualified until the complete runtime E2E suite passes.
+The OpenShell `0.1.7` upgrade remains unqualified until the complete runtime E2E suite passes.
+
+Portable CLI operations require exactly OpenShell `0.1.7`.
+A retained lifecycle receipt that records a `0.1.5` executable is rejected without rewriting the receipt or deleting its recorded resources.
+There is no automatic migration of that receipt.
+Preserve the receipt and sandbox data, and follow the [OpenShell upgrade restrictions](../../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning a replacement.
+Do not edit the recorded version to bypass the refusal.
+
 Run the fresh Portable command in the [Hermes quickstart](../../get-started/quickstart#use-portable-ollama) with `NEMOCLAW_PROVIDER=ollama` and an explicit `NEMOCLAW_MODEL`.
 
 This experimental profile requires exactly Podman `5.7.0` for both the client and the local rootless engine.

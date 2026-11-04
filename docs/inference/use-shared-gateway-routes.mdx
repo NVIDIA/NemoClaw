@@ -12,7 +12,8 @@ content:
 
 These rules apply to providers that still use the shared route, including retained custom shared routes and retained shared local selections.
 They require an OpenShell `0.0.x` gateway.
-OpenShell `0.1.5` removes `inference.local`, so do not use these procedures with that runtime.
+OpenShell `0.1.5` removed `inference.local`, and `0.1.7` also lacks that route.
+Do not use these procedures with either runtime.
 NVIDIA Endpoints, fixed hosted providers, and qualifying custom hosted endpoints use sandbox-attached providers.
 New Ollama, standalone vLLM, llama.cpp, and Local NVIDIA NIM selections use these attachments for Deep Agents Code, Hermes, OpenClaw, and Pi.
 Deep Agents Code, Hermes, OpenClaw, and Pi also use attachments for qualifying host-local compatible endpoints.

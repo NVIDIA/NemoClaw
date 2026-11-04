@@ -473,7 +473,7 @@ export function hasNativeCustomProviderWebConflict(sandboxName: string): boolean
 // web endpoint (NVIDIA/OpenShell#4662). Refuse before submitting the policy.
 function refusePersonalBesideNativeCustomProvider(): never {
   console.error(
-    "  The Personal tier cannot be applied because this sandbox's attached custom provider overlaps ports 80 or 443, or its endpoint cannot be verified. OpenShell 0.1.5 requires a compatible runtime policy for overlapping endpoints. Choose another tier.",
+    "  The Personal tier cannot be applied because this sandbox's attached custom provider overlaps ports 80 or 443, or its endpoint cannot be verified. OpenShell 0.1.7 requires a compatible runtime policy for overlapping endpoints. Choose another tier.",
   );
   process.exit(1);
 }

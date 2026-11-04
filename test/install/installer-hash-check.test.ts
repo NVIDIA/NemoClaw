@@ -535,8 +535,8 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
   const template = BREV_TEMPLATE.replaceAll(
-    /0\.0\.116|0\.1\.2|0\.1\.3|0\.1\.5/g,
-    ["0.1.2", "0.1.3", "0.1.5"].includes(openshellVersion) ? openshellVersion : "0.0.116",
+    /0\.0\.116|0\.1\.2|0\.1\.3|0\.1\.5|0\.1\.7/g,
+    ["0.1.2", "0.1.3", "0.1.5", "0.1.7"].includes(openshellVersion) ? openshellVersion : "0.0.116",
   );
   const selected = template.replace(
     /^(\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION=")v[0-9]+\.[0-9]+\.[0-9]+("\s*;;\s*)$/m,

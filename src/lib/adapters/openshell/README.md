@@ -87,7 +87,7 @@ detachment, deletion, replacement cleanup, and other lifecycle operations keep t
 adapters until the remaining #9806 migration slices land. This does not claim SDK qualification for
 those operations.
 
-Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.1.5 does not expose a transport receive-size option.
+Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.1.7 does not expose a transport receive-size option.
 
 ## User file transfers
 
@@ -109,7 +109,7 @@ retry an interrupted or indeterminate transfer. Session exports, onboarding down
 copy remain assigned to later #9810 deliveries.
 
 Native NVIDIA and local inference setup verify the named gateway's global policy
-history before publishing credentials. OpenShell 0.1.5 composes attached provider
+history before publishing credentials. OpenShell 0.1.7 composes attached provider
 policies automatically when no global policy override is active. Setup accepts
 verified empty history or a superseded current global revision. It rejects an
 active override, an unreadable response, or malformed policy data without changing

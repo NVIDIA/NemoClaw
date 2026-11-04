@@ -28,8 +28,8 @@ test(
       `#!/bin/sh
 printf '%s\\n' '${JSON.stringify([
         { tagName: "v0.0.99" },
-        { tagName: "v0.1.6" },
-        { tagName: "v0.1.5" },
+        { tagName: "v0.1.8" },
+        { tagName: "v0.1.7" },
       ])}'`,
     );
 
@@ -44,8 +44,8 @@ printf '%s\\n' '${JSON.stringify([
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
 const deps = {
-  getBlueprintMinOpenshellVersion: () => "0.1.5",
-  getBlueprintMaxOpenshellVersion: () => "0.1.5",
+  getBlueprintMinOpenshellVersion: () => "0.1.7",
+  getBlueprintMaxOpenshellVersion: () => "0.1.7",
   versionGte: version.versionGte,
 };
 const resolution = pin.resolveOpenshellInstallPin(deps);
@@ -70,12 +70,12 @@ process.stdout.write(JSON.stringify({
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
         installed: "0.0.99",
-        resolution: { kind: "pin", version: "0.1.5", latest: "0.1.6", reason: "max-cap" },
+        resolution: { kind: "pin", version: "0.1.7", latest: "0.1.8", reason: "max-cap" },
         replacement: {
           INSTALLED_OPENSHELL_VERSION: "0.0.99",
-          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.1.5",
-          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.1.5",
-          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.1.5",
+          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.1.7",
+          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.1.7",
+          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.1.7",
         },
       });
     } finally {
@@ -91,7 +91,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.1.5 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.1.7 release uses. A fake
 // sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -343,7 +343,7 @@ exec /usr/bin/mktemp "$@"`,
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.1.5");
+    createFakeTar(fakeBin, "0.1.7");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
 
@@ -366,10 +366,10 @@ exec /usr/bin/mktemp "$@"`,
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(options.expectedDecision);
 
-    // Assertion 2: download-log-contains-v0.1.5 — pinned release tag was
+    // Assertion 2: download-log-contains-v0.1.7 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.1.5");
+    expect(downloads).toContain("v0.1.7");
 
     // Assertion 3: download-log-excludes-installed-version — the existing
     // release is never re-fetched in place of the pinned replacement.
@@ -378,23 +378,23 @@ exec /usr/bin/mktemp "$@"`,
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
       // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.1.5");
+      expect(downloads).toContain("gh download-fail v0.1.7");
       expect(downloads).toContain("curl ");
     } else {
-      expect(downloads).toContain("gh download v0.1.5");
+      expect(downloads).toContain("gh download v0.1.7");
       expect(downloads).not.toContain("curl ");
     }
 
-    // Assertion 4: replaced-openshell-reports-0.1.5 — the binary on disk in
+    // Assertion 4: replaced-openshell-reports-0.1.7 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.1.5 build.
+    // there and it is writable) was overwritten with the pinned 0.1.7 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
       killSignal: "SIGKILL",
       timeout: 30_000,
     });
     expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.1.5");
+    expect(replacedVersion.stdout).toContain("0.1.7");
     expect(replacedVersion.stdout).not.toContain(options.installedVersion);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -408,9 +408,9 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.5/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.7/u,
       ghDownloadMode: "success",
-      installedVersion: "0.1.6",
+      installedVersion: "0.1.8",
     });
   },
 );
@@ -422,21 +422,21 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.5/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.1\.7/u,
       ghDownloadMode: "fail",
-      installedVersion: "0.1.6",
+      installedVersion: "0.1.8",
     });
   },
 );
 
 test(
-  "replaces an installed OpenShell 0.0.106 with the pinned 0.1.5 release (#11229)",
+  "replaces an installed OpenShell 0.0.106 with the pinned 0.1.7 release (#11229)",
   {
     timeout: TEST_TIMEOUT_MS,
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /below minimum 0\.1\.5.*upgrading/u,
+      expectedDecision: /below minimum 0\.1\.7.*upgrading/u,
       ghDownloadMode: "success",
       installedVersion: "0.0.106",
     });

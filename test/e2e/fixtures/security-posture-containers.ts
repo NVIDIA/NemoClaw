@@ -8,7 +8,7 @@ import type {
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../src/lib/onboard/runtime-provider/current.ts";
 import { requireRuntimeProviderBundleForSandbox } from "../../../src/lib/onboard/runtime-provider/selection.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
-import { OPENSHELL_V015_QUALIFICATION } from "./openshell-v0116-qualification.ts";
+import { OPENSHELL_V017_QUALIFICATION } from "./openshell-v0116-qualification.ts";
 
 type Capture = (args: readonly string[]) => RuntimeProviderCommandCapture;
 type Owner = { uid: number; gid: number };
@@ -210,7 +210,7 @@ export function observeSecurityContainerPair(
     "inspect",
     "--format",
     '{"id":{{json .Id}}}',
-    OPENSHELL_V015_QUALIFICATION.supervisorImage,
+    OPENSHELL_V017_QUALIFICATION.supervisorImage,
   ]);
   requireObservation(supervisor.image === contentId(image.id));
   const socket =

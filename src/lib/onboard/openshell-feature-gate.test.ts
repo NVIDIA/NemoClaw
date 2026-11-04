@@ -30,6 +30,41 @@ exit 0
 describe("OpenShell MCP feature gate", () => {
   it.each([
     {
+      digest: "b4ae1d60b238c84e290bcd08a962997e5c36ed04237fa59b09b5799b11363feb",
+      version: "0.1.7",
+      cliVersion: "0.1.7",
+      markers: true,
+      accepted: true,
+    },
+    {
+      digest: "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21",
+      version: "0.1.7",
+      cliVersion: "0.1.7",
+      markers: true,
+      accepted: true,
+    },
+    {
+      digest: "a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2",
+      version: "0.1.7",
+      cliVersion: "0.1.7",
+      markers: true,
+      accepted: false,
+    },
+    {
+      digest: "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21",
+      version: "0.1.5",
+      cliVersion: "0.1.5",
+      markers: true,
+      accepted: false,
+    },
+    {
+      digest: "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21",
+      version: "0.1.7",
+      cliVersion: "0.1.7",
+      markers: false,
+      accepted: false,
+    },
+    {
       digest: "a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2",
       version: "0.1.5",
       cliVersion: "0.1.5",

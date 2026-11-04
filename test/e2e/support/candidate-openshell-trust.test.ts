@@ -59,7 +59,7 @@ describe("reviewed candidate OpenShell trust", () => {
         readFileSync(join(root, path), "utf8"),
       ]),
     ) as Record<keyof typeof CANDIDATE_OPENSHELL_SOURCES, string>;
-    expect(validateInstallerSources(sources, releases).releaseVersion).toBe("0.1.5");
+    expect(validateInstallerSources(sources, releases).releaseVersion).toBe("0.1.7");
   });
 
   it.each(

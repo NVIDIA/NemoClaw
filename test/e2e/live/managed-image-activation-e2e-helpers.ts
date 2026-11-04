@@ -801,24 +801,64 @@ export async function waitForManagedActivationSandboxAbsence(
   });
 }
 
+const RUNTIME_SANDBOX_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
+export async function inspectActivationSandboxId(
+  host: HostCliClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+  observation: "before-cleanup" | "before-rebuild" | "after-rebuild",
+): Promise<string> {
+  const engine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
+  const result = await host.command(
+    engine,
+    [
+      "ps",
+      "-a",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
+      "--format",
+      '{{.Label "openshell.ai/sandbox-id"}}',
+    ],
+    {
+      artifactName: `activation-runtime-sandbox-id-${sandboxName}-${observation}`,
+      env,
+      timeoutMs: 30_000,
+    },
+  );
+  const id = result.stdout.trim();
+  expect(
+    result.exitCode === 0 && !result.timedOut && RUNTIME_SANDBOX_ID_PATTERN.test(id),
+    `Runtime sandbox identity must be unambiguous before cleanup: ${resultText(result)}`,
+  ).toBe(true);
+  return id;
+}
+
 export async function verifyExactCleanup(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
+  runtimeSandboxIds: readonly string[],
 ): Promise<void> {
+  expect(
+    runtimeSandboxIds.length > 0 &&
+      runtimeSandboxIds.every((id) => RUNTIME_SANDBOX_ID_PATTERN.test(id)),
+    "Cleanup requires the observed runtime sandbox identities",
+  ).toBe(true);
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
   await pollUntil({
     artifactPrefix: `post-destroy-absence-${sandboxName}`,
     deadlineMs: 60_000,
     delayMs: 1_000,
     probe: async (_attempt, artifactName) => {
-      const openshellList = await sandbox.list({
+      const openshellList = sandbox.list({
         artifactName: `${artifactName}-openshell-list`,
         env,
         timeoutMs: 30_000,
       });
-      const containers = await host.command(
+      const containers = host.command(
         containerEngine,
         ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${sandboxName}`],
         {
@@ -827,19 +867,48 @@ export async function verifyExactCleanup(
           timeoutMs: 30_000,
         },
       );
-      return { containers, openshellList };
+      const volumes = [];
+      for (const id of new Set(runtimeSandboxIds)) {
+        volumes.push(
+          host.command(
+            containerEngine,
+            ["volume", "ls", "-q", "--filter", `label=openshell.ai/sandbox-id=${id}`],
+            {
+              artifactName: `${artifactName}-${containerEngine}-volumes-${id}`,
+              env,
+              timeoutMs: 30_000,
+            },
+          ),
+        );
+      }
+      const [observedList, observedContainers, observedVolumes] = await Promise.all([
+        openshellList,
+        containers,
+        Promise.all(volumes),
+      ]);
+      return {
+        containers: observedContainers,
+        openshellList: observedList,
+        volumes: observedVolumes,
+      };
     },
-    terminal: ({ containers, openshellList }) => {
+    terminal: ({ containers, openshellList, volumes }) => {
       if (openshellList.exitCode !== 0) {
         return `list OpenShell sandboxes after managed activation destroy failed: ${resultText(openshellList)}`;
       }
       if (containers.exitCode !== 0) {
         return `inspect ${containerEngine} inventory after managed activation destroy failed: ${resultText(containers)}`;
       }
+      const failedVolumes = volumes.find((result) => result.exitCode !== 0 || result.timedOut);
+      if (failedVolumes) {
+        return `inspect ${containerEngine} runtime volumes after managed activation destroy failed: ${resultText(failedVolumes)}`;
+      }
       return undefined;
     },
-    accept: ({ containers, openshellList }) =>
-      !outputContainsSandbox(openshellList, sandboxName) && containers.stdout.trim() === "",
+    accept: ({ containers, openshellList, volumes }) =>
+      !outputContainsSandbox(openshellList, sandboxName) &&
+      containers.stdout.trim() === "" &&
+      volumes.every((result) => result.stdout.trim() === ""),
   });
 }
 
@@ -1088,12 +1157,18 @@ export async function qualifyAgent(
   await runManagedActivationAgentTurn(sandbox, agent, sandboxName, "after", env, observeRequests);
 
   phases.agents[agent].cleanup();
+  const runtimeSandboxId = await inspectActivationSandboxId(
+    host,
+    sandboxName,
+    env,
+    "before-cleanup",
+  );
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
     timeoutMs: 120_000,
   });
-  await verifyExactCleanup(host, sandbox, sandboxName, env);
+  await verifyExactCleanup(host, sandbox, sandboxName, env, [runtimeSandboxId]);
 }
 
 export async function qualifyExternalImage(
@@ -1203,6 +1278,12 @@ export async function qualifyExternalImage(
     }
   }
 
+  const previousRuntimeSandboxId = await inspectActivationSandboxId(
+    host,
+    sandboxName,
+    env,
+    "before-rebuild",
+  );
   const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
     artifactName: `external-image-${agent}-rebuild`,
     env,
@@ -1232,13 +1313,22 @@ export async function qualifyExternalImage(
   registryEntry = registryDocument().sandboxes?.[sandboxName];
   receipt = registryEntry?.workload;
 
+  const runtimeSandboxId = await inspectActivationSandboxId(
+    host,
+    sandboxName,
+    env,
+    "after-rebuild",
+  );
   const destroy = await host.destroySandbox(sandboxName, {
     artifactName: `external-image-destroy-${agent}`,
     env,
     redactionValues: [API_KEY],
     timeoutMs: 15 * 60_000,
   });
-  await verifyExactCleanup(host, sandbox, sandboxName, env);
+  await verifyExactCleanup(host, sandbox, sandboxName, env, [
+    previousRuntimeSandboxId,
+    runtimeSandboxId,
+  ]);
   const afterInspection = await inspectRuntimeImageId(
     host,
     containerEngine,

@@ -6,6 +6,7 @@
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 24,
       "src/lib/actions/sandbox/process-recovery.ts": 12,
       "src/lib/adapters/docker/index.ts": 40,
+      "src/lib/adapters/fs/regular-file.ts": 21,
       "src/lib/adapters/openshell/client.ts": 18,
       "src/lib/adapters/openshell/command-argv.ts": 17,
       "src/lib/adapters/openshell/resolve.ts": 22,

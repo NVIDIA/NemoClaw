@@ -24,7 +24,7 @@ const roots = managedStartupStateRoots({
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe.each(["0.1.3", "0.1.5"])("OpenShell %s projection", (version) => {
+describe.each(["0.1.3", "0.1.5", "0.1.7"])("OpenShell %s projection", (version) => {
   beforeEach(() => {
     runtime.version = version;
   });

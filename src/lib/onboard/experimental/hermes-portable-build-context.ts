@@ -102,7 +102,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/security/standalone-security-package-inventory.mts",
   "scripts/upgrade-bundled-npm.mts",
   "ci/reviewed-npm-audit.json",
-  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.5.json",
+  "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.7.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/hermes-switchyard-routing.ts",
   "src/lib/inference/native-local/agent-config.ts",

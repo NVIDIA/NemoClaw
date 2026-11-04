@@ -20,7 +20,7 @@ import {
 import { redactFull } from "../../../src/lib/security/redact";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { OPENSHELL_V015_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { OPENSHELL_V017_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
@@ -36,7 +36,7 @@ import {
 
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
 export const GATEWAY_NAME = "nemoclaw-18080";
-export const OPENSHELL_VERSION = OPENSHELL_V015_QUALIFICATION.version;
+export const OPENSHELL_VERSION = OPENSHELL_V017_QUALIFICATION.version;
 export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;

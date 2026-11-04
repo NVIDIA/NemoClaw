@@ -141,7 +141,7 @@ describe("OpenShell sandbox identity reading", () => {
     expect(() => readIdentityPage("more")).toThrow("selector-output-malformed");
   });
 
-  it.each(["0.0.116", "0.1.3", "0.1.5"])(
+  it.each(["0.0.116", "0.1.3", "0.1.5", "0.1.7"])(
     "binds the first ID to an exact create-attempt label on %s (#9833)",
     (version) => {
       runtime.version = version;

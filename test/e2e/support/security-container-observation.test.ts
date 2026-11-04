@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { observeSecurityContainerPair } from "../fixtures/security-posture-containers.ts";
-import { OPENSHELL_V015_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { OPENSHELL_V017_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 
 const WORKLOAD = "a".repeat(64);
 const SUPERVISOR = "b".repeat(64);
@@ -102,7 +102,7 @@ describe("OpenShell security container observations", () => {
         "container",
         "container",
       ]);
-      expect(capture.mock.calls[3]?.[0].at(-1)).toBe(OPENSHELL_V015_QUALIFICATION.supervisorImage);
+      expect(capture.mock.calls[3]?.[0].at(-1)).toBe(OPENSHELL_V017_QUALIFICATION.supervisorImage);
       expect(capture.mock.calls[4]?.[0]).toEqual([
         "exec",
         SUPERVISOR,

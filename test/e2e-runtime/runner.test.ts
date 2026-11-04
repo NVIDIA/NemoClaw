@@ -1165,7 +1165,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.1.5"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.7"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -1282,7 +1282,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.1.5"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.1.7"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;

@@ -22,7 +22,7 @@ import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
   exactGatewayRelease,
-  OPENSHELL_V015_QUALIFICATION,
+  OPENSHELL_V017_QUALIFICATION,
 } from "../fixtures/openshell-v0116-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -540,7 +540,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   const version = run(gatewayBin, ["--version"]);
   expect(version.status, commandOutput(version)).toBe(0);
-  expect(exactGatewayRelease(commandOutput(version))).toBe(OPENSHELL_V015_QUALIFICATION.version);
+  expect(exactGatewayRelease(commandOutput(version))).toBe(OPENSHELL_V017_QUALIFICATION.version);
 
   await requireDockerDaemon({ dockerBin, host, skip });
 
@@ -575,7 +575,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     OPENSHELL_BIND_ADDRESS: "127.0.0.1",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
     OPENSHELL_DOCKER_NETWORK_NAME: networkName,
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_V015_QUALIFICATION.supervisorImage,
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_V017_QUALIFICATION.supervisorImage,
     OPENSHELL_DRIVERS: "docker",
     OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${port}`,
     OPENSHELL_LOCAL_TLS_DIR: certBundle.localTlsDir,

@@ -131,7 +131,7 @@ beforeEach(async () => {
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -141,7 +141,7 @@ beforeEach(async () => {
     } as any);
   mocks.capture.mockImplementation((args: readonly string[]) =>
     args[0] === "--version"
-      ? "openshell 0.1.5"
+      ? "openshell 0.1.7"
       : commands.mock.calls.some(
             ([command, args]: [string, readonly string[]]) =>
               command === "openshell" && args[0] === "sandbox" && args[1] === "delete",
@@ -219,6 +219,7 @@ it.each([
   ["0.0.116", "--limit"],
   ["0.1.3", "--page-size"],
   ["0.1.5", "--page-size"],
+  ["0.1.7", "--page-size"],
 ])("confirms strict absence with OpenShell %s before continuing cleanup", async (version, flag) => {
   mocks.capture
     .mockReset()
@@ -371,7 +372,7 @@ it("rejects ambiguous network inspection instead of deleting recovery state", as
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any);
   await expect(cleanupInterruptedManagedImageOpenShellE2e(input, scope)).rejects.toThrow(
@@ -452,7 +453,7 @@ it("continues cleanup after a post-deletion failure without deleting the sandbox
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -660,7 +661,7 @@ it("cleans setup before any create submission without issuing sandbox deletion",
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -736,7 +737,7 @@ it("cleans partial setup when no exact sandbox container was created", async () 
       stdout: `sha256:${"b".repeat(64)}`,
       stderr: "",
     } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({
@@ -786,7 +787,7 @@ it("removes the exact leftover container without removing a foreign container", 
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: content, stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({
       status: 0,
       stdout: "owned-container foreign-container",
@@ -796,7 +797,7 @@ it("removes the exact leftover container without removing a foreign container", 
     .mockReturnValueOnce({ status: 0, stdout: foreign, stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" } as any)
     .mockReturnValueOnce({ status: 0, stdout: content, stderr: "" } as any)
-    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.5", stderr: "" } as any)
+    .mockReturnValueOnce({ status: 0, stdout: "openshell 0.1.7", stderr: "" } as any)
     .mockReturnValueOnce({
       status: 0,
       stdout: "foreign-container",

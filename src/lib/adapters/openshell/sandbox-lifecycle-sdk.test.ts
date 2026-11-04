@@ -22,8 +22,22 @@ function harness() {
     sandbox: { get, waitReady },
   }));
   const waitForStartPoll = vi.fn(async () => undefined);
-  const lifecycle = createSdkOpenShellSandboxStateLifecycle({ connect, waitForStartPoll });
-  return { connect, get, lifecycle, startSandbox, stopSandbox, waitForStartPoll, waitReady };
+  const waitForStopPoll = vi.fn(async () => undefined);
+  const lifecycle = createSdkOpenShellSandboxStateLifecycle({
+    connect,
+    waitForStartPoll,
+    waitForStopPoll,
+  });
+  return {
+    connect,
+    get,
+    lifecycle,
+    startSandbox,
+    stopSandbox,
+    waitForStartPoll,
+    waitForStopPoll,
+    waitReady,
+  };
 }
 
 describe("OpenShell SDK sandbox lifecycle", () => {
@@ -363,6 +377,27 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(stopSandbox).toHaveBeenCalledOnce();
     expect(get).toHaveBeenCalledOnce();
   });
+
+  it.each(["Completed", "Error"])(
+    "reports %s after a successful stop RPC without waiting for the deadline",
+    async (phase) => {
+      const { lifecycle, get, stopSandbox, waitForStopPoll } = harness();
+      get.mockResolvedValueOnce({ id: sandboxId, phase: "ready" });
+      get.mockResolvedValue({ id: sandboxId, phase });
+
+      await expect(lifecycle.stopSandbox(request)).resolves.toEqual({
+        kind: "failed",
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: `OpenShell sandbox is ${phase} after the stop request; Stopped was not confirmed.`,
+        },
+      });
+      expect(stopSandbox).toHaveBeenCalledOnce();
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(waitForStopPoll).not.toHaveBeenCalled();
+    },
+  );
 
   it("waits through both container stop periods and confirms the same sandbox is Stopped", async () => {
     vi.useFakeTimers();

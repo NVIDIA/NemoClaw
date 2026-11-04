@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
-import { HERMES_LIFECYCLE_DEFINITION } from "../domain/lifecycle/hermes-definition";
+import {
+  HERMES_LIFECYCLE_DEFINITION,
+  HERMES_CLI_OPENSHELL_VERSION,
+} from "../domain/lifecycle/hermes-definition";
 import type { HostGatewayRegistryEntry } from "../state/gateway-registry";
 import {
   type HermesAcpCommandDeps,
@@ -42,7 +45,7 @@ function registryEntry(
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       nemoclawVersion: VERSION,
-      openshellVersion: HERMES_LIFECYCLE_DEFINITION.openshellVersion,
+      openshellVersion: HERMES_CLI_OPENSHELL_VERSION,
       ...overrides,
     },
   };
@@ -196,6 +199,11 @@ describe("Hermes ACP command", () => {
     [
       "wrong OpenShell",
       [registryEntry("alpha", 8080, { openshellVersion: "0.0.106" })],
+      "incompatible",
+    ],
+    [
+      "the frozen headless API version",
+      [registryEntry("alpha", 8080, { openshellVersion: "0.1.5" })],
       "incompatible",
     ],
     [

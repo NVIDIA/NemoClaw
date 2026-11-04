@@ -85,9 +85,9 @@ The following table compares custom OpenShell integration with `nemo-deepagents 
 | Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, and uninstall workflows. |
 
 <Note>
-Fresh installations without retained legacy state can install OpenShell `0.1.5` and use sandbox-attached native providers.
+Fresh installations without retained legacy state can install OpenShell `0.1.7` and use sandbox-attached native providers.
 The installer refuses to migrate registered OpenShell `0.0.x` sandboxes, including shared `inference.local` routes, and preserves their state.
-OpenShell `0.1.5` removes the shared route.
+OpenShell `0.1.5` removed the shared route.
 GPU compatibility and native local lifecycle qualification remain incomplete.
 Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
 </Note>

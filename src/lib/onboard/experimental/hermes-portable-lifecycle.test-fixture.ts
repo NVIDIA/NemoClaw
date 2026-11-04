@@ -32,7 +32,7 @@ const PODMAN_BYTES = Buffer.from("podman-5.7.0-test", "utf8");
 
 export function testOpenShellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.1.5",
+    version: "0.1.7",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",
@@ -374,7 +374,7 @@ export function createHermesPortableLifecycleTestDeps(
           gatewayName: GATEWAY,
           lifecycleGeneration: GENERATION,
           lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
-          openshellVersion: "0.1.5",
+          openshellVersion: "0.1.7",
           ...options.registry,
         }) as SandboxEntry,
       captureOpenShell,

@@ -29,7 +29,7 @@ const PROXY_NAMES = [
 ];
 
 describe("Hermes native network environment", () => {
-  it("resolves certifi to the OpenShell 0.1.5 workload CA bundle", () => {
+  it("resolves certifi to the OpenShell 0.1.7 workload CA bundle", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-certifi-"));
     try {
       const dockerfile = fs.readFileSync(path.join(ROOT, "agents/hermes/Dockerfile"), "utf8");
@@ -37,7 +37,7 @@ describe("Hermes native network environment", () => {
       const target = instructions
         .find((line) => line.startsWith("ARG SSL_CERT_FILE="))!
         .slice("ARG SSL_CERT_FILE=".length);
-      // OpenShell v0.1.5 installs CA material here before it starts the workload.
+      // OpenShell v0.1.7 installs CA material here before it starts the workload.
       const bundle = path.join(directory, "run/openshell-supervisor-ca/material/ca-bundle.crt");
       fs.mkdirSync(path.dirname(bundle), { recursive: true });
       fs.writeFileSync(bundle, "supervisor CA bundle\n");

@@ -149,7 +149,7 @@ Resuming onboarding reapplies the saved selection; skipping optional setup prese
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 
-With OpenShell `0.1.5`, NemoClaw refuses Personal when an attached custom provider uses port `80` or `443`.
+With OpenShell `0.1.7`, NemoClaw refuses Personal when an attached custom provider uses port `80` or `443`.
 The provider's restricted address list conflicts with Personal's broader address list on those ports.
 Choose another tier for these endpoints.
 Custom endpoints on other ports retain their provider restrictions and do not trigger this refusal when their recorded attachment is valid.

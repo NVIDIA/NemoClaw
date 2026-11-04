@@ -418,7 +418,7 @@ export function providerShapeDetail(
       allowLegacyGeneric: true,
     })
   ) {
-    return `Provider type '${inspection.type}' does not declare its MCP credential for OpenShell 0.1.5. Remove this MCP server, then add it again with '${expectedCredential ?? "<missing>"}' exported.`;
+    return `Provider type '${inspection.type}' does not declare its MCP credential for OpenShell 0.1.7. Remove this MCP server, then add it again with '${expectedCredential ?? "<missing>"}' exported.`;
   }
   const type = inspection.type ?? "unparseable";
   const keys = inspection.credentialKeys?.join(", ") || "none or unparseable";
@@ -450,7 +450,7 @@ export async function assertMcpProviderRecoverable(
       })
     ) {
       throw new McpBridgeError(
-        `OpenShell provider '${entry.providerName}' uses the legacy ${inspection.type} profile, which cannot bind its credential to an MCP endpoint on OpenShell 0.1.5. Run mcp remove for '${entry.server}', then add it again with '${expectedCredential}' exported.`,
+        `OpenShell provider '${entry.providerName}' uses the legacy ${inspection.type} profile, which cannot bind its credential to an MCP endpoint on OpenShell 0.1.7. Run mcp remove for '${entry.server}', then add it again with '${expectedCredential}' exported.`,
       );
     }
     if (!providerMatchesCredential(inspection, expectedCredential, entry.providerId)) {

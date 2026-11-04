@@ -17,7 +17,7 @@ vi.mock("./openshell-version", async (importOriginal) => ({
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
 it.each(
-  ["0.0.116", "0.1.5"].flatMap((version) =>
+  ["0.0.116", "0.1.5", "0.1.7"].flatMap((version) =>
     [false, true].map((directGpu) => ({ version, directGpu })),
   ),
 )(
@@ -55,9 +55,11 @@ it.each([
   { agent: "langchain-deepagents-code", version: "0.0.116", mode: "unchanged" },
   { agent: "langchain-deepagents-code", version: "0.1.3", mode: "hard_requirement" },
   { agent: "langchain-deepagents-code", version: "0.1.5", mode: "hard_requirement" },
+  { agent: "langchain-deepagents-code", version: "0.1.7", mode: "hard_requirement" },
   { agent: "pi", version: "0.0.116", mode: "unchanged" },
   { agent: "pi", version: "0.1.3", mode: "hard_requirement" },
   { agent: "pi", version: "0.1.5", mode: "hard_requirement" },
+  { agent: "pi", version: "0.1.7", mode: "hard_requirement" },
 ])("preserves required Landlock enforcement for $agent on $version", ({ agent, version, mode }) => {
   runtime.version = version;
   const source = path.resolve(

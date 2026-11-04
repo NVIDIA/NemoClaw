@@ -127,7 +127,7 @@ function nativeQualificationFixture(
 beforeEach(() => {
   runtime.version = "0.1.3";
 });
-describe.each(["0.1.3", "0.1.5"])("OpenShell %s native inference", (version) => {
+describe.each(["0.1.3", "0.1.5", "0.1.7"])("OpenShell %s native inference", (version) => {
   beforeEach(() => {
     runtime.version = version;
   });

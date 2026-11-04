@@ -589,7 +589,7 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ### Resume Native Local Inference on a Reused Gateway
 
-OpenShell `0.1.5` composes attached-provider policies automatically when no active global policy overrides them.
+OpenShell `0.1.7` composes attached-provider policies automatically when no active global policy overrides them.
 The `providers_v2_enabled` setting no longer exists.
 If onboarding reports a global policy override, ask the gateway administrator to review it before resuming.
 For a gateway named `nemoclaw`, inspect its policy history with:
@@ -867,7 +867,7 @@ Rerunning onboarding with a different provider recreates the sandbox because the
 
 ### Sandbox containers cannot reach the gateway
 
-OpenShell `0.1.5` Docker supervisors use host networking by default, and their workloads have no direct network interface.
+OpenShell `0.1.7` Docker supervisors use host networking by default, and their workloads have no direct network interface.
 Onboarding skips the legacy bridge-to-gateway probe for this runtime, even when an old `openshell-docker` network remains.
 This check does not remove the retained network or change firewall rules.
 
@@ -1996,7 +1996,7 @@ $$nemoclaw: recent network policy denial detected for example.com:443 inside san
 If the log probe fails, no breadcrumb is added. Unsafe endpoint data is omitted from the breadcrumb, and an invalid sandbox name is shown as `<name>`.
 The breadcrumb reports a recent denial. Match its destination and time to the failed request before treating policy as the cause.
 
-On OpenShell `0.1.5`, a fresh `NET:REFUSE` audit event with `policy_dns_ineligible` also produces the hint, without a destination.
+On OpenShell `0.1.7`, a fresh `NET:REFUSE` audit event with `policy_dns_ineligible` also produces the hint, without a destination.
 A DNS resolution error alone does not confirm a policy denial.
 
 An IPv6 target is named in its RFC 3986 bracketed form:
@@ -2018,6 +2018,8 @@ $$nemoclaw <name> logs --tail 50
 These logs combine gateway and OpenShell entries. Match the denial's destination and time to the failed request before adding a preset. A denial for another request does not confirm this request was blocked. If the last 50 lines have no match, inspect more log lines before deciding why the request failed.
 
 Reading sandbox logs, or checking for a policy denial after a failed `$$nemoclaw <name> exec` when policy hints are enabled, attempts to enable OpenShell OCSF JSON audit logging for that sandbox. NemoClaw prints a notice before attempting to update `ocsf_json_enabled`.
+OpenShell `0.1.7` emits Open Cybersecurity Schema Framework (OCSF) `1.8.0` JSON records.
+Its schema-version selectors are deprecated and ignored; the `ocsf_json_enabled` switch and shorthand audit output remain available.
 
 To keep the current OpenShell audit setting, set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` before running either command. Policy denial hints may be unavailable if audit logging is disabled. You can enable it explicitly with `openshell settings set <name> --key ocsf_json_enabled --value true`.
 
@@ -2316,7 +2318,7 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 OpenClaw onboarding validates a custom OpenAI-compatible endpoint from inside the sandbox, even when you select no messaging channel.
 For a qualifying custom hosted selection, validation uses its sandbox-attached native provider.
 Custom loopback and `host.openshell.internal` selections do not qualify for that hosted path.
-Retained shared-route selections use `inference.local` on OpenShell `0.0.x`; their migration to `0.1.5` is incomplete and blocks upgrade qualification.
+Retained shared-route selections use `inference.local` on OpenShell `0.0.x`; their migration to `0.1.7` is incomplete and blocks upgrade qualification.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
 
@@ -2635,7 +2637,7 @@ Use an HTTPS IP-literal endpoint whose certificate is valid for that address. If
 
 <AgentOnly variant="deepagents">
 
-For managed Deep Agents Code on OpenShell `0.1.5`, check the sandbox network policy and recent denial logs when an external request fails.
+For managed Deep Agents Code on OpenShell `0.1.7`, check the sandbox network policy and recent denial logs when an external request fails.
 The launchers clear inherited proxy variables, and OpenShell mediates the request.
 Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
 Rebuild an older Deep Agents sandbox to install the updated launchers.
@@ -2643,20 +2645,20 @@ Rebuild an older Deep Agents sandbox to install the updated launchers.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-For managed OpenClaw on OpenShell `0.1.5`, check the sandbox network policy and recent denial logs when an external request fails.
+For managed OpenClaw on OpenShell `0.1.7`, check the sandbox network policy and recent denial logs when an external request fails.
 OpenClaw starts without application proxy settings, and OpenShell mediates outbound requests.
 Normal sandbox startup clears inherited proxy variables and removes obsolete global and Telegram proxy settings from restored configuration.
 Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
-If the gateway already runs OpenShell `0.1.5`, rebuild the OpenClaw sandbox to remove previous proxy settings.
+If the gateway already runs OpenShell `0.1.7`, rebuild the OpenClaw sandbox to remove previous proxy settings.
 Rebuilding a registered sandbox on an OpenShell `0.0.x` gateway does not upgrade that gateway; follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning replacement.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For managed Hermes on OpenShell `0.1.5`, check the sandbox network policy and recent denial logs when an external request fails.
+For managed Hermes on OpenShell `0.1.7`, check the sandbox network policy and recent denial logs when an external request fails.
 Hermes startup and managed connect shells clear inherited proxy variables, and OpenShell mediates outbound requests.
 Do not set `NEMOCLAW_PROXY_HOST` or `NEMOCLAW_PROXY_PORT` to repair this route.
-If the gateway already runs OpenShell `0.1.5`, rebuild the Hermes sandbox to install the updated startup and shell environment.
+If the gateway already runs OpenShell `0.1.7`, rebuild the Hermes sandbox to install the updated startup and shell environment.
 Rebuilding a registered sandbox on an OpenShell `0.0.x` gateway does not upgrade that gateway; follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before planning replacement.
 
 Corporate certificate authority (CA) trust remains separate from application proxy settings.

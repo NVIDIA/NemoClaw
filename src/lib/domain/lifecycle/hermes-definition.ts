@@ -7,3 +7,6 @@ export const HERMES_LIFECYCLE_DEFINITION = Object.freeze({
   agentVersion: "0.21.3" as const,
   openshellVersion: "0.1.5" as const,
 });
+
+/** OpenShell runtime selected by the Hermes CLI; independent of the first lifecycle API. */
+export const HERMES_CLI_OPENSHELL_VERSION = "0.1.7" as const;

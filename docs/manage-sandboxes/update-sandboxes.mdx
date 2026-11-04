@@ -44,7 +44,7 @@ Run the maintained installer to update the host CLI and reconcile registered san
 
 <Warning>
 When installing OpenShell `0.1.x` with registered sandboxes, the installed OpenShell version must already be within the target release's supported range.
-This release requires `0.1.5`; any other installed OpenShell version stops the installer.
+This release requires `0.1.7`; any other installed OpenShell version stops the installer.
 After sandbox-name validation passes, the installer lists the registered sandbox names and exits before backup or gateway retirement.
 It leaves the existing gateway and sandboxes unchanged.
 Keep the existing installation available until you can recreate those sandboxes through an approved migration path.
@@ -61,7 +61,7 @@ If the installer finds incompatible names, it lists each name and exits before i
 - Prepare the NemoClaw CLI for the upgrade.
 - Start a backup of the registered sandboxes.
 - Retire the selected OpenShell gateway.
-- Install OpenShell 0.1.5.
+- Install OpenShell 0.1.7.
 - Recreate a sandbox.
 
 NemoClaw does not automatically truncate or change the sandbox name.
@@ -95,9 +95,9 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_I
 ```
 
 The backup and reconciliation steps below run only after the sandbox-name and installed-version checks pass.
-For this release, registered sandboxes must already use OpenShell `0.1.5`.
+For this release, registered sandboxes must already use OpenShell `0.1.7`.
 When sandboxes are registered, an out-of-range installation stops before CLI preparation, backup, forward retirement, or gateway retirement.
-The installer does not automatically migrate registered `0.0.x` sandboxes to `0.1.5`.
+The installer does not automatically migrate registered `0.0.x` sandboxes to `0.1.7`.
 
 After those checks pass, the automatic path prepares the current NemoClaw CLI and requires a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
@@ -128,7 +128,7 @@ Keep the existing sandbox and volume available; refer to [Legacy Managed State V
 ## Resume a Manually Prepared Upgrade
 
 <Warning>
-`NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` does not enable migration of registered sandboxes from an out-of-range OpenShell version to `0.1.5`.
+`NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` does not enable migration of registered sandboxes from an out-of-range OpenShell version to `0.1.7`.
 The installer checks the installed OpenShell version before it accepts the flag.
 When the selected gateway has registered sandboxes, an out-of-range, missing, or unreadable OpenShell version stops the installer before it accepts prepared state.
 Passing this version check does not permit component replacement while NemoClaw sandbox records remain.
@@ -147,7 +147,7 @@ openshell --version
 ```
 
 For registered sandboxes on the selected gateway, the installed version must be verifiable and within the target release's supported range.
-This release requires `0.1.5`.
+This release requires `0.1.7`.
 Component replacement still stops if any NemoClaw sandbox registry retains records.
 All preparation steps must have completed successfully.
 A successful manual backup alone does not establish those conditions.

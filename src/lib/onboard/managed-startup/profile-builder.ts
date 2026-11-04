@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
-import { createHash, X509Certificate } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { assertNoPerAgentMaxSpawnDepth } from "../../extra-agents-validation";
 import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../inference/ollama-runtime-context";
@@ -13,13 +13,8 @@ import {
   HERMES_SWITCHYARD_ROUTING_ENV,
   readHermesSwitchyardRoutingEnvironment,
 } from "../../hermes-switchyard-routing";
-import {
-  MAX_CORPORATE_CA_BYTES,
-  MAX_CORPORATE_CA_CERTS,
-  PEM_CERTIFICATE_RE_GLOBAL,
-} from "../corporate-ca-policy";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
-import { normalizeCertificateBlocks } from "../corporate-ca-validation";
+import { validateCorporateCaPem } from "../corporate-ca-validation";
 import {
   encodeManagedStartupProfile,
   MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY,
@@ -499,30 +494,11 @@ function resolveCorporateCaMaterial(corporateCa: ResolvedCorporateCa | null | un
   readonly corporateCaB64?: string;
 } {
   if (!corporateCa) return { bundleSha256: null };
-  const bytes = Buffer.byteLength(corporateCa.pem, "utf8");
-  if (bytes === 0 || bytes > MAX_CORPORATE_CA_BYTES) {
-    fail(`corporate CA material must be between 1 and ${String(MAX_CORPORATE_CA_BYTES)} bytes`);
-  }
-  const blocks = corporateCa.pem.match(PEM_CERTIFICATE_RE_GLOBAL);
-  if (!blocks || blocks.length === 0 || blocks.length > MAX_CORPORATE_CA_CERTS) {
-    fail(
-      `corporate CA material must contain between 1 and ${String(MAX_CORPORATE_CA_CERTS)} certificates`,
-    );
-  }
-  for (const block of blocks) {
-    let certificate: X509Certificate;
-    try {
-      certificate = new X509Certificate(block);
-    } catch {
-      fail("corporate CA material contains an invalid X.509 certificate");
-    }
-    if (!certificate.ca) {
-      fail("corporate CA material contains a certificate without CA basic constraints");
-    }
-  }
-  const normalizedPem = normalizeCertificateBlocks(blocks);
-  if (corporateCa.pem.trim() !== normalizedPem.trim()) {
-    fail("corporate CA material must contain only normalized PEM certificate blocks");
+  let normalizedPem: string;
+  try {
+    normalizedPem = validateCorporateCaPem(corporateCa.pem);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   return {
     bundleSha256: createHash("sha256").update(normalizedPem, "utf8").digest("hex"),

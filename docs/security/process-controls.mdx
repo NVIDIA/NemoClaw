@@ -52,7 +52,7 @@ Refer to [Review Sandbox Hardening](../../manage-sandboxes/configure-sandboxes/r
 
 Gateway and agent UID isolation depends on the container process topology.
 The stock OpenClaw image defaults to the `sandbox` user for OpenShell compatibility.
-OpenShell 0.1.5's Docker driver separates the supervisor from the workload container.
+OpenShell 0.1.7's Docker driver separates the supervisor from the workload container.
 The workload container launches `nemoclaw-start` as a non-root process, so the OpenClaw gateway and agent share the `sandbox` UID.
 The managed-image publication workflow explicitly sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` for its reviewed release images.
 A direct container runtime can override the image user to `root`.
@@ -61,7 +61,7 @@ That root-entrypoint topology runs the gateway as the separate `gateway` user an
 | Aspect | Detail |
 |---|---|
 | Default | A stock Dockerfile build declares `USER sandbox`. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the non-root entrypoint from changing users. |
-| What you can change | Keep `USER sandbox` for NemoClaw's managed OpenClaw image contract with OpenShell 0.1.5. A direct container runtime outside OpenShell can still override the image user to `root`. |
+| What you can change | Keep `USER sandbox` for NemoClaw's managed OpenClaw image contract with OpenShell 0.1.7. A direct container runtime outside OpenShell can still override the image user to `root`. |
 | Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. Native restart and host health checks prove service availability, not provenance against a malicious same-user process. |
 | Recommendation | Keep the OpenShell-managed image user as `sandbox`. Use a direct root-entrypoint deployment only outside OpenShell when separate gateway and agent UIDs are required. Treat native lifecycle and readiness checks as availability controls, not proof that the target process is trustworthy. |
 
@@ -70,7 +70,7 @@ That root-entrypoint topology runs the gateway as the separate `gateway` user an
 
 ## Gateway Process Isolation
 
-The stock Hermes image and the managed-image publication workflow set the OCI default user to `sandbox` for OpenShell 0.1.5.
+The stock Hermes image and the managed-image publication workflow set the OCI default user to `sandbox` for OpenShell 0.1.7.
 The Hermes gateway and agent commands share that UID in the workload container; OpenShell's Docker supervisor runs in a separate container.
 
 | Aspect | Detail |
@@ -86,7 +86,7 @@ The Hermes gateway and agent commands share that UID in the workload container; 
 ## Gateway Process Isolation
 
 The stock Deep Agents image defaults to the `sandbox` user.
-The managed-image publication workflow also sets the OCI default user to `sandbox` for OpenShell 0.1.5.
+The managed-image publication workflow also sets the OCI default user to `sandbox` for OpenShell 0.1.7.
 Deep Agents does not use a separate agent gateway UID in this topology.
 
 | Aspect | Detail |
@@ -213,7 +213,7 @@ The managed headless path automatically approves non-shell tool requests such as
 
 The sandbox runs agent processes as a dedicated `sandbox` user and group.
 The stock OpenClaw image starts the entrypoint as `sandbox` for OpenShell compatibility.
-A build from the managed-image publication workflow keeps the entrypoint, gateway, and agent commands under the sandbox UID for OpenShell 0.1.5.
+A build from the managed-image publication workflow keeps the entrypoint, gateway, and agent commands under the sandbox UID for OpenShell 0.1.7.
 A direct runtime can override the image user to `root`, which lets the entrypoint separate the `gateway` and `sandbox` UIDs before it runs agent commands.
 
 | Aspect | Detail |
@@ -228,7 +228,7 @@ A direct runtime can override the image user to `root`, which lets the entrypoin
 
 ## Non-Root User
 
-The Hermes entrypoint, agent gateway, dashboard, and agent commands run as `sandbox` under OpenShell 0.1.5.
+The Hermes entrypoint, agent gateway, dashboard, and agent commands run as `sandbox` under OpenShell 0.1.7.
 
 | Aspect | Detail |
 |---|---|

@@ -72,6 +72,24 @@ It returns success only after OpenShell reports the sandbox ready, the agent run
 If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.
 </AgentOnly>
 
+### Stop Reports a Terminal Phase
+
+If `stop` reports `Completed` or `Error` followed by `Stopped was not confirmed`, NemoClaw exits nonzero immediately.
+It requires OpenShell to confirm `Stopped` for the same sandbox before recording a successful intentional stop.
+OpenShell can preserve a terminal process result when the sandbox's compute resource is missing, even after accepting the stop request.
+The message alone does not prove that the compute resource is absent.
+
+Inspect the sandbox before another lifecycle operation:
+
+```bash
+$$nemoclaw <sandbox-name> status
+$$nemoclaw <sandbox-name> logs --tail 100
+```
+
+Preserve the reported phase and error, then correct the reported OpenShell or provider condition.
+If the container is missing, follow the [state-preservation limits for rebuild](#rebuild-while-preserving-state) before replacing it.
+Do not edit the intentional-stop record or treat `Completed` or `Error` as confirmation of `Stopped`.
+
 ## Recover the Agent Runtime
 
 <AgentOnly variant="openclaw,hermes">
@@ -313,7 +331,7 @@ When NemoClaw can identify the exact stopped Docker container and prove its immu
 
 When that provider-owned capture is not available, rebuild asks OpenShell to start the exact stopped sandbox for the duration of the pre-recreate state backup and asks OpenShell to return it to `Stopped` afterward, the same lifecycle path `$$nemoclaw backup-all` uses. If OpenShell cannot start the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-backup notice only when a partial backup was retained. If the backup succeeds but OpenShell cannot return the sandbox to `Stopped`, rebuild also aborts and reports the failed transition. If neither path can establish stopped-source authority, repair the OpenShell lifecycle state or recover the data manually before retrying; NemoClaw does not fall back to a selective directory copy.
 
-OpenShell 0.1.5 can restart a sandbox in `Phase: Error` when it records a failed main process and its exit code.
+OpenShell 0.1.7 can restart a sandbox in `Phase: Error` when it records a failed main process and its exit code.
 It also permits retry after a provisioning timeout once compute cleanup completes.
 Other `Error` states remain rejected; inspect the reported failure instead of assuming every error is restartable.
 
