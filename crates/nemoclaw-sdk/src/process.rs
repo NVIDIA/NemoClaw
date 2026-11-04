@@ -723,10 +723,12 @@ mod tests {
         // `sh apply` runs this script from the working directory. On an
         // interrupt it takes 5.2 s, longer than the former 5 s grace, to
         // finish. It waits in short foreground sleeps: a shell that waits for a
-        // background child can miss the interrupt.
+        // background child can miss the interrupt. The wait ends after 30 s,
+        // because a shell started with interrupts ignored cannot trap them.
         std::fs::write(
             directory.path().join("apply"),
-            "trap 'sleep 5.2; : > finished; exit 1' INT\n: > ready\nwhile :; do sleep 0.1; done\n",
+            "trap 'sleep 5.2; : > finished; exit 1' INT\n: > ready\n\
+             i=0; while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n",
         )
         .unwrap();
         let token = CancellationToken::new();
