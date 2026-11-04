@@ -22,7 +22,6 @@ import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-pr
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import { isObjectRecord } from "../core/json-types";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
@@ -49,6 +48,12 @@ import {
   type OllamaRouteHolder,
   writeLocalAdapterJsonFile,
 } from "./local-adapter-lifecycle";
+import {
+  buildModelListProbeCommand,
+  isLocalProviderProbeOutputHealthy,
+  MODEL_LIST_STATUS_WRITE_OUT,
+  parseModelInventory,
+} from "./serving/model-inventory";
 import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
@@ -947,33 +952,6 @@ export function probeVllmModels(
 // `{ "models": [...] }`. An empty array is fine — that just means no models
 // pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
 // not come from Ollama and the probe should not call it healthy. (#4275)
-function parseModelInventory(provider: string, body: string): string[] | null {
-  try {
-    const parsed = JSON.parse(body);
-    if (!isObjectRecord(parsed)) return null;
-    const entries = provider === "ollama-local" ? parsed.models : parsed.data;
-    if (!Array.isArray(entries)) return null;
-    if (provider !== "ollama-local") {
-      return entries.flatMap((entry) => {
-        if (!isObjectRecord(entry)) return [];
-        return typeof entry.id === "string" && entry.id !== "" ? [entry.id] : [];
-      });
-    }
-    const inventory: string[] = [];
-    for (const entry of entries) {
-      if (!isObjectRecord(entry)) return null;
-      const values = [entry.name, entry.model];
-      const names = values.filter(
-        (value): value is string => typeof value === "string" && value.trim() !== "",
-      );
-      if (names.length === 0) return null;
-      inventory.push(...names);
-    }
-    return inventory;
-  } catch {
-    return null;
-  }
-}
 
 export function isValidOllamaTagsResponseBody(body: string): boolean {
   return parseOllamaModelInventory(body) !== null;
@@ -1327,11 +1305,7 @@ export function getLocalProviderAvailabilityEndpoint(provider: string): string |
   return getLocalProviderHealthEndpoint(provider);
 }
 
-export function isLocalProviderProbeOutputHealthy(endpoint: string, output: string): boolean {
-  const normalized = output.trim();
-  if (!normalized || normalized === "000") return false;
-  return endpoint.endsWith("/health") ? normalized === "200" : true;
-}
+export { isLocalProviderProbeOutputHealthy };
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderAvailabilityEndpoint(provider);
@@ -1351,6 +1325,7 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
     ];
   }
   if (!endpoint) return null;
+  if (endpoint.endsWith("/models")) return buildModelListProbeCommand([], endpoint);
   const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
   return ["curl", ...curlArgs];
 }
@@ -1707,7 +1682,7 @@ export function getLocalProviderContainerReachabilityCheck(
         "10",
         ...(managedBaseUrl ? ["--noproxy", "*"] : []),
         "-sf",
-        ...(managedBaseUrl ? ["-w", "%{http_code}"] : []),
+        ...(managedBaseUrl ? ["-w", "%{http_code}"] : MODEL_LIST_STATUS_WRITE_OUT),
         managedBaseUrl
           ? `${managedBaseUrl}/health`
           : `http://host.openshell.internal:${VLLM_PORT}/v1/models`,

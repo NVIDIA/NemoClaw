@@ -759,7 +759,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         redactOutputInFailure: true,
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         prompt: `Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.
-Format the answer as JSON with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).`,
+Reply with only one JSON object, and no other text, with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).`,
         recordReplyEvidence: async (reply, attempt, finalVisibleReply) => {
           await artifacts.writeJson(`actions/c1-unavailable-search-reply-attempt-${attempt}.json`, {
             ...projectUnavailableSearchReplyArtifact(reply),
