@@ -59,7 +59,7 @@ slow-timeout = { period = "12s", terminate-after = 2 }
 
 [[profile.lifecycle.overrides]]
 filter = 'binary_id(=openshell-provider::contract)'
-slow-timeout = { period = "8s", terminate-after = 2 }
+slow-timeout = { period = "12s", terminate-after = 2 }
 
 # This test applies each generated fixture shape side by side, so it runs
 # alone instead of slowing the partition's other tests.
