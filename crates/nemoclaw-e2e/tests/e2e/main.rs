@@ -27,5 +27,3 @@ mod kubernetes_live;
 mod managed_gateway;
 #[path = "rust/pseudo_terminal.rs"]
 mod pseudo_terminal;
-#[path = "rust/spark.rs"]
-mod spark;
