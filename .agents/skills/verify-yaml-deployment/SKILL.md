@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 This skill drives the `nemoclaw` CLI the way a configuration author does: start from a repository example, edit it into one YAML file, plan, apply, talk to the agent, export, reapply, and destroy.
 It owns one deployment per run and never touches another.
-The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a journey that must hold on every change into a Rust live test.
+The [live tests](../../../docs/contributing/live-tests.md) stay the gate; when a journey must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## Scope
 
@@ -207,6 +207,7 @@ docker volume ls --filter "$owner_label" --format '{{.Name}}'
 docker network ls --filter "$owner_label" --format '{{.Name}}'
 ```
 
+Ask the user before the removal below deletes a model this run downloaded; keeping it is the user's decision.
 Continue only when every name starts with `$WORKSPACE` and no container is running, then:
 
 ```sh
@@ -215,32 +216,43 @@ docker volume ls --quiet --filter "$owner_label" | xargs -r docker volume rm
 docker network ls --quiet --filter "$owner_label" | xargs -r docker network rm
 { docker container ls --all --quiet --filter "$owner_label"; docker volume ls --quiet --filter "$owner_label"; docker network ls --quiet --filter "$owner_label"; } | wc -l
 docker ps --all --format '{{.Names}}' | grep -c "^openshell-$WORKSPACE--" || true
+```
+
+Both counts must be 0; otherwise keep the state directory and the bundle, as [Remove Retained Resources](../../../docs/usage.md#remove-retained-resources) requires.
+Then remove them and check that the evidence still lists:
+
+```sh
 rm -rf "$STATE" "$BUNDLE" "$RUN_DIR/pw"
 ls "$EVIDENCE"
 ```
 
-Both counts must be 0, and the evidence must still list.
 Remove images only when this run built them and no other deployment uses them.
-Keep a downloaded model when the user may reuse it; removing it is the user's decision.
 Never remove anything without this run's UID; never stop processes or containers by name.
 Run cleanup after a failed run too.
 
 ### Without State
 
 If the state directory is lost, NemoClaw can't destroy the deployment: there is no adoption workflow.
-Remove its parts by the run's identity, in this order, after confirming each name belongs to `$WORKSPACE`:
+Remove its parts by the run's identity. First check that the workspace is this run's:
 
 ```sh
+owner_label="label=nemoclaw.nvidia.com/uid=$UID_"
 export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:$GATEWAY_PORT OPENSHELL_WORKSPACE=$WORKSPACE
 openshell workspace list
-openshell sandbox delete assistant
 openshell provider list
-openshell provider delete REPLACE_WITH_PROVIDER_NAME
 docker container ls --all --filter "$owner_label" --format '{{.Names}} {{.Status}}'
-docker container stop "$WORKSPACE-gateway"
 ```
 
-`openshell workspace list` must show `$WORKSPACE` labeled with `$UID_`; stop otherwise.
+Continue only when `openshell workspace list` shows `$WORKSPACE` labeled with `$UID_` and every container name starts with `$WORKSPACE`, then:
+
+```sh
+openshell sandbox delete assistant
+timeout 120 sh -c 'while openshell sandbox list | grep -q "^assistant "; do sleep 2; done'
+openshell provider delete REPLACE_WITH_PROVIDER_NAME
+docker container ls --quiet --filter "$owner_label" | xargs -r docker container stop
+```
+
+Sandbox deletion finishes in the background, and OpenShell refuses to delete a provider that a sandbox still uses; the wait covers that.
 Then run the removal above; with its gateway stopped, the volume and network come off too.
 
 ## Report

@@ -191,7 +191,7 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
 
    Save the runtime ID, the sandbox container ID, the installed tree's hashes, and the enablement record in `$CHECK_DIR/before.txt`.
    Run [Plan and Apply](../../verify-yaml-deployment/SKILL.md#plan-and-apply) with the unchanged YAML, saving the plan and apply output in `$CHECK_DIR/`, then the [doctor](../SKILL.md#doctor), and read `RUNTIME_ID` again.
-   Save the same four values in `$CHECK_DIR/after.txt`, then send step 8's request for the plugin's effect in this `CHECK_DIR`.
+   Save the same four values in `$CHECK_DIR/after.txt`, write a fresh nonce as [fresh phase input](README.md#driving-conventions) does, then send step 8's request for the plugin's effect in this `CHECK_DIR`.
    Result: `unchanged`; the plan lists no change to the declared configuration; the sandbox container ID is the same; the installed hashes and enablement in `after.txt` match `before.txt`; registration and the fresh effect hold as in step 8.
    Overwritten enablement is Failed, even under a documented reset policy. Don't export the change back into YAML or re-enable the plugin to make it pass.
 ## Gotchas

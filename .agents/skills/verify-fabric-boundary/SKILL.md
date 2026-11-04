@@ -13,7 +13,7 @@ This skill drives one Fabric-managed agent the way its user does: through its na
 It checks desired-state assertions: each check records whether the agent does what a user of that agent expects through NemoClaw, not what the selected revision happens to support.
 It reuses [verify-yaml-deployment](../verify-yaml-deployment/SKILL.md) for the run's identity, build, inference, base YAML, plan and apply, doctor, credential scan, and cleanup, and owns only the Fabric-boundary additions.
 It owns one deployment per run and never touches another.
-The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a check that must hold on every change into a Rust live test.
+The [live tests](../../../docs/contributing/live-tests.md) stay the gate; when a check must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## Scope
 
@@ -22,8 +22,8 @@ The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
 - **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes` and `openclaw`, 131 for `deepagents-code`.
 
-[Proven Pairs](#proven-pairs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome.
-A pair that isn't listed is unproven: say so with the result.
+[Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
+A pair that isn't listed has no completed run: say so with the result.
 
 ## Choose the Agent and Target
 
@@ -232,6 +232,7 @@ Write each finding in `findings.md` as:
 - **What happened:** the observed behavior against the expected, with exact inputs.
 - **Revision:** the commit, image digest, and adapter or harness version it was observed at.
 - **Evidence:** paths under $EVIDENCE.
+- **Owner:** the component that must change to resolve it, NemoClaw or an upstream one, per [upstream boundaries](../../../docs/design/scope.md#upstream-boundaries).
 - **Next step:** what would resolve it.
 ```
 
@@ -272,10 +273,10 @@ grep -c '^| [a-z-]* | [A-Z][^|]* | *|' "$EVIDENCE/checks.md"
 The last count is the checks still without an outcome; it must be 0 for a complete run.
 Include the `checks.md` table and `findings.md`, with each finding's affected checks.
 A run is complete when every selected check has an outcome and cleanup finished; a complete run is not a claim that every check passed.
-Add the pair to [Proven Pairs](#proven-pairs) only after a complete run, including cleanup, and record its inference source and counts by outcome there.
+Add the pair to [Completed Runs](#completed-runs) only after a complete run, including cleanup, and record its inference source and counts by outcome there.
 Mark an interrupted run as interrupted, keep its evidence, and don't add it.
 
-## Proven Pairs
+## Completed Runs
 
 | Agent | Target | Inference source | Revision | Date | Passed | Failed | Not tested | Notes |
 |---|---|---|---|---|---|---|---|---|

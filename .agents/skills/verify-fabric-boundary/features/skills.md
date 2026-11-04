@@ -119,10 +119,11 @@ MARKER=%s
    ```
 
    Record whether the request completed in `$CHECK_DIR/create.status.txt`, separately from whether a skill was created: a timed-out or failed request may still have saved it.
-   Resolve the save location yourself from `create.calls.txt`, the authoring call's result, native discovery, and the native state and skill roots in `bindings.md`, then search the sandbox for the run-named skill:
+   Resolve the save location yourself from `create.calls.txt`, the authoring call's result, native discovery, and the native state and skill roots in `bindings.md`, then search the sandbox for the run-named skill.
+   The sandbox's filesystem policy hides `/`, so search the writable roots that `openshell sandbox get assistant` lists under `read_write`; the agent can save a file only there:
 
    ```sh
-   openshell sandbox exec -n assistant --no-tty -- sh -c 'find / ( -path /proc -o -path /sys -o -path /dev ) -prune -o -type f -path "*$1*" -print 2>/dev/null | xargs -r grep -lF -- "$2"' sh "$SKILL_NAME" "$MARKER" | tee "$CHECK_DIR/found.txt"
+   openshell sandbox exec -n assistant --no-tty -- sh -c 'find /sandbox /tmp /home/node -type f -path "*$1*" -print 2>/dev/null | xargs -r grep -lF -- "$2"' sh "$SKILL_NAME" "$MARKER" | tee "$CHECK_DIR/found.txt"
    ```
 
    Set `GENERATED_SKILL_FILE` to the skill file that the authoring result and native discovery name, append it to `$EVIDENCE/generated-skill.env`, and seal its hash:
