@@ -246,6 +246,35 @@ describe("rebuildSandbox flow: target session", () => {
     },
   );
 
+  it.each(["0.1.5", null])(
+    "refuses retained legacy NVIDIA rebuild before mutation on OpenShell %s",
+    async (version) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "openclaw",
+          provider: "nvidia-nim",
+          model: "nvidia/model",
+          createdAt: "2026-09-01T00:00:00Z",
+          nativeNvidiaProviderAttachment: undefined,
+        },
+      });
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+        version === null
+          ? { ok: false, error: { kind: "unavailable", message: "OpenShell binary not found." } }
+          : { ok: true, version },
+      );
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared NVIDIA inference cannot be rebuilt safely");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
+
   it("uses the exact preflighted agent base image only for the recreate", async () => {
     const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
     const restoreEnv = snapshotEnv([overrideEnvVar]);

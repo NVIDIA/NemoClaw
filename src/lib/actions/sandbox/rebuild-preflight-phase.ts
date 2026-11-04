@@ -147,13 +147,14 @@ export function blockRebuildOnLegacySharedRoute(
 ): boolean {
   const local = hasLegacySharedLocalInferenceRoute(sandboxEntry);
   const custom = hasLegacySharedCustomInferenceRoute(sandboxEntry);
-  if (!local && !custom) return false;
+  const legacyNvidia = sandboxEntry.provider === "nvidia-nim";
+  if (!local && !custom && !legacyNvidia) return false;
   if (
-    (local ? isPersistedPiSharedLocalInferenceRoute(sandboxEntry) : custom) &&
+    (local ? isPersistedPiSharedLocalInferenceRoute(sandboxEntry) : custom || legacyNvidia) &&
     /^0\.0\.\d+$/.test(getInstalledOpenshellVersion() ?? "")
   )
     return false;
-  const route = local ? "local" : "custom";
+  const route = local ? "local" : legacyNvidia ? "NVIDIA" : "custom";
   printRebuildPreflightFailure(
     `sandbox '${sandboxName}' uses a legacy shared ${route} inference route without a native provider attachment.`,
     "Back up the sandbox, then re-onboard it with --fresh --name <name> --recreate-sandbox.",

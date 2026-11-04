@@ -345,6 +345,43 @@ describe("rebuild legacy local route preflight", () => {
 });
 
 describe("retained shared rebuild compatibility", () => {
+  it("keeps a verified older runtime eligible for shared NVIDIA rebuild", () => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+      ok: true,
+      version: "0.0.116",
+    });
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    expect(
+      blockRebuildOnLegacySharedRoute(
+        "alpha",
+        { name: "alpha", agent: "openclaw", provider: "nvidia-nim" } as RebuildSandboxEntry,
+        bail,
+      ),
+    ).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
+
+  it("leaves native NVIDIA selections on their existing preflight path", () => {
+    const installedVersion = vi.spyOn(
+      cliOpenShellInstalledVersionObserver,
+      "observeInstalledVersion",
+    );
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    expect(
+      blockRebuildOnLegacySharedRoute(
+        "alpha",
+        { name: "alpha", agent: "openclaw", provider: "nvidia-prod" } as RebuildSandboxEntry,
+        bail,
+      ),
+    ).toBe(false);
+    expect(installedVersion).not.toHaveBeenCalled();
+    expect(bail).not.toHaveBeenCalled();
+  });
+
   it("keeps a verified older runtime eligible for shared custom rebuild", () => {
     vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
       ok: true,
