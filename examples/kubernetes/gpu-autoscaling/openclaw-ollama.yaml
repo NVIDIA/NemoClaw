@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
 # One OpenClaw sandbox per user on a managed Kubernetes gateway. Every agent
-# uses the GPU inference Service that the nemoclaw-community
-# kubernetes-gpu-autoscaling chart runs, with the Ollama runtime, in the
-# namespace nemoclaw-gpu; Kubernetes scales its GPU pods.
+# uses the GPU inference pods that the nemoclaw-community
+# kubernetes-gpu-autoscaling chart runs, with the Ollama runtime, through the
+# chart's Envoy load balancer; Kubernetes scales the GPU pods.
 # NemoClaw creates nothing for the chart. Install it first; see README.md.
 # Replace the deployment UID, the context, and the image digests before applying.
 # Set GPU_INFERENCE_API_KEY to the chart's inference key where you run nemoclaw.
@@ -32,8 +32,10 @@ spec:
     gpu:
       provider: openai
       api: openai-completions
-      # The chart's metrics proxy Service, <release>-metrics-proxy, in the chart's namespace.
-      endpoint: http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1
+      # The Envoy Service for the chart's Gateway, release nemoclaw-gpu in the
+      # namespace nemoclaw-gpu. Its name ends in a hash; README.md shows how to
+      # find it, and the Service to use when the chart runs without Envoy.
+      endpoint: http://envoy-nemoclaw-gpu-nemoclaw-gpu-metrics-proxy-4620f768.envoy-gateway-system.svc.cluster.local:80/v1
       credential: {env: GPU_INFERENCE_API_KEY}
   inferences:
     chat:

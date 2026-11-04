@@ -43,14 +43,22 @@ kubectl --namespace nemoclaw-gpu get pods,hpa
 
 ## Find the Service and Key
 
-The sandboxes reach the chart's metrics proxy Service, `<release>-metrics-proxy`, on port 8081:
+The sandboxes send requests to Envoy, which `install-hpa.sh` installs unless `ENABLE_ENVOY_LB=0`.
+Envoy Gateway serves the chart's Gateway, `<release>-metrics-proxy`, through a Service in `envoy-gateway-system` whose name ends in a hash.
+Find it by the Gateway's labels:
 
 ```sh
-kubectl --namespace nemoclaw-gpu get service nemoclaw-gpu-metrics-proxy
+kubectl --namespace envoy-gateway-system get service \
+  -l gateway.envoyproxy.io/owning-gateway-namespace=nemoclaw-gpu,gateway.envoyproxy.io/owning-gateway-name=nemoclaw-gpu-metrics-proxy
 ```
 
-In the configuration, its address is `http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1`.
-Requests to the Service bypass the chart's Envoy route, so Kubernetes, not Envoy's LeastRequest policy, spreads connections across the pods.
+For the release `nemoclaw-gpu` in `nemoclaw-gpu`, the Service is `envoy-nemoclaw-gpu-nemoclaw-gpu-metrics-proxy-4620f768`, and the configuration's address is `http://envoy-nemoclaw-gpu-nemoclaw-gpu-metrics-proxy-4620f768.envoy-gateway-system.svc.cluster.local:80/v1`.
+For another release or namespace, put the name the command prints in `endpoint`.
+Envoy sends each request to the inference pod with the fewest requests in flight, so pods the autoscaler adds take load.
+Its route for in-cluster callers has no authentication of its own; the metrics proxy in each pod checks the key.
+
+If the chart runs without Envoy, set `endpoint` to its metrics proxy Service instead, `http://nemoclaw-gpu-metrics-proxy.nemoclaw-gpu.svc.cluster.local:8081/v1`.
+Kubernetes then balances connections, not requests, so an open connection stays on its pod after the autoscaler adds more.
 
 The proxy accepts requests that carry the key the chart generated.
 The chart keeps the key in the Secret `nemoclaw-gpu-metrics-proxy-inference-api`, which survives `helm uninstall`.
@@ -136,7 +144,7 @@ JSON
 ```
 
 Check `result.status` and `result.output.response`.
-The request goes through the chart's proxy to a GPU pod.
+The request goes through Envoy and the chart's metrics proxy to a GPU pod.
 Watch the autoscaler's metric and replica count while agents work:
 
 ```sh
@@ -154,11 +162,11 @@ nemoclaw plan --destroy --state-dir state
 nemoclaw destroy --state-dir state
 ```
 
-Then remove the chart release and its key:
+Then remove the chart release and the Secrets it keeps, the inference key and Envoy's sign-in:
 
 ```sh
 helm uninstall nemoclaw-gpu --namespace nemoclaw-gpu
-kubectl --namespace nemoclaw-gpu delete secret nemoclaw-gpu-metrics-proxy-inference-api
+kubectl --namespace nemoclaw-gpu delete secret nemoclaw-gpu-metrics-proxy-inference-api nemoclaw-gpu-metrics-proxy-ingress-auth
 ```
 
 The chart's [uninstall section](https://github.com/NVIDIA/nemoclaw-community/blob/ae756c28bda501eb9c4b7ec26d977e6f0c6fd2fc/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#full-recipe-uninstall) lists the Prometheus stack, Prometheus Adapter and Envoy Gateway that remain installed.
