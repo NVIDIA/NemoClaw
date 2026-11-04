@@ -9,6 +9,11 @@ import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
 } from "../../adapters/openshell/policy-boundary";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
+import {
+  buildNativeHostedSandboxPolicy,
+  usesAttachedCustomNvidiaPolicy,
+} from "../../inference/native-provider/network-policy";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
@@ -322,20 +327,32 @@ export function materializeRebuildPolicyHandoff(input: {
   readonly removedNetworkPolicyKeys?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
   readonly authorizedCredentialBindingProviders?: readonly string[];
+  readonly inferenceProvider?: string | null;
+  readonly nativeHostedProviderAttachment?: NativeProviderAttachment;
 }): InitialSandboxPolicy {
   const liveSource = input.livePolicySource ?? fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
     input.replacementPolicy.sourceBytes?.toString("utf8") ??
     fs.readFileSync(input.replacementPolicy.policyPath, "utf8");
+  // Compare only base grants; OpenShell recreates provider-composed rules from attachments.
+  const reconciledSource =
+    input.inferenceProvider &&
+    usesAttachedCustomNvidiaPolicy(input.inferenceProvider, input.nativeHostedProviderAttachment)
+      ? buildNativeHostedSandboxPolicy(
+          stripProviderComposedPolicies(liveSource),
+          input.inferenceProvider,
+          input.nativeHostedProviderAttachment,
+        )
+      : liveSource;
   const merged = mergeReplacementPolicyAccess(
-    liveSource,
+    reconciledSource,
     replacementSource,
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
     input.sandboxName,
   );
-  if (!merged.changed && input.livePolicySource === undefined) {
+  if (!merged.changed && reconciledSource === liveSource && input.livePolicySource === undefined) {
     return {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,

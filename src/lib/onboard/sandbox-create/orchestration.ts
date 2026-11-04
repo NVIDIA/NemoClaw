@@ -411,6 +411,8 @@ export function selectRebuildCreatePolicy(
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
+    inferenceProvider,
+    nativeHostedProviderAttachment,
     requiredNetworkPolicyKeys: [
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),

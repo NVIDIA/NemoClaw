@@ -10,7 +10,12 @@ import YAML from "yaml";
 
 import { prepareInitialSandboxCreatePolicy } from "../initial-policy";
 import { selectRebuildCreatePolicy } from "./orchestration";
-import { customNativeProvider } from "../../inference/native-provider/custom";
+import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
+import {
+  customNativeProvider,
+  boundCustomNativeProfile,
+} from "../../inference/native-provider/custom";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 
 const roots: string[] = [];
@@ -74,6 +79,7 @@ function rebuild(
     replacement: YAML.parse(fs.readFileSync(replacement.policyPath, "utf8")),
     livePath,
     source,
+    replacementPolicy: replacement,
   };
 }
 
@@ -166,4 +172,87 @@ it("keeps custom NVIDIA pins owned by the attached provider through rebuild (#14
   expect(result.selected.network_policies).toEqual({ host_rule: hostPolicy });
   expect(result.replacement.network_policies).not.toHaveProperty("native_hosted_inference");
   expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
+});
+
+describe("retained custom NVIDIA base access", () => {
+  function fixture(api: "openai-completions" | "openai-responses" = "openai-completions") {
+    const custom = customNativeProvider({
+      provider: "compatible-endpoint",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      api,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      allowedIps: ["8.8.8.8"],
+    });
+    const receipt: NativeProviderAttachment = {
+      schemaVersion: 1,
+      providerName: custom.providerName,
+      profileId: custom.profileId,
+      providerId: "owned-custom",
+      endpointUrl: custom.endpointUrl,
+      allowedIps: custom.allowedIps,
+      custom: custom.custom,
+    };
+    const profile = YAML.parse(
+      boundCustomNativeProfile(custom, nativeProviderLifecycle(custom).nativeProviderProfilePath()),
+    );
+    const legacy = {
+      name: "native_hosted_inference",
+      endpoints: profile.endpoints,
+      binaries: profile.binaries.map((binary: string) => ({ path: binary })),
+    };
+    return { custom, receipt, legacy };
+  }
+
+  it.each(["openai-completions", "openai-responses"] as const)(
+    "removes only the generated %s base grant during rebuild (#14013)",
+    (api) => {
+      const { custom, receipt, legacy } = fixture(api);
+      const result = rebuild(custom.providerName, undefined, legacy, receipt);
+      expect(result.selected.network_policies).toEqual({ host_rule: hostPolicy });
+      expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
+      expect(YAML.parse(result.source).network_policies.native_hosted_inference).toEqual(legacy);
+    },
+  );
+
+  it("materializes cleanup when reading the retained policy directly from disk (#14013)", () => {
+    const { custom, receipt, legacy } = fixture();
+    const result = rebuild(custom.providerName, undefined, legacy, receipt);
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: result.livePath,
+      replacementPolicy: result.replacementPolicy,
+      inferenceProvider: custom.providerName,
+      nativeHostedProviderAttachment: receipt,
+    });
+    cleanups.push(() => handoff.cleanup?.());
+    expect(handoff.policyPath).not.toBe(result.livePath);
+    expect(YAML.parse(fs.readFileSync(handoff.policyPath, "utf8")).network_policies).toEqual({
+      host_rule: hostPolicy,
+    });
+    expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
+  });
+
+  it.each([
+    ["rules", { rules: [{ allow: { method: "GET", path: "/v1/models" } }] }],
+    ["pins", { allowed_ips: ["1.1.1.1"] }],
+  ])("refuses rebuild without deleting an operator's changed %s (#14013)", (_name, changes) => {
+    const { custom, receipt, legacy } = fixture();
+    Object.assign(legacy.endpoints[0], changes);
+    expect(() => rebuild(custom.providerName, undefined, legacy, receipt)).toThrow(/conflict/u);
+    const saved = YAML.parse(fs.readFileSync(path.join(roots.at(-1)!, "live.yaml"), "utf8"));
+    expect(saved.network_policies).toEqual({
+      host_rule: hostPolicy,
+      native_hosted_inference: legacy,
+    });
+  });
+
+  it("refuses rebuild without deleting an operator's changed binaries (#14013)", () => {
+    const { custom, receipt, legacy } = fixture();
+    legacy.binaries = [{ path: "/usr/bin/operator-client" }];
+    expect(() => rebuild(custom.providerName, undefined, legacy, receipt)).toThrow(/conflict/u);
+    const saved = YAML.parse(fs.readFileSync(path.join(roots.at(-1)!, "live.yaml"), "utf8"));
+    expect(saved.network_policies).toEqual({
+      host_rule: hostPolicy,
+      native_hosted_inference: legacy,
+    });
+  });
 });

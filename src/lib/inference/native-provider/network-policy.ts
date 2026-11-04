@@ -99,7 +99,8 @@ export function buildNativeHostedSandboxPolicy(
   if (usesAttachedCustomNvidiaPolicy(providerName, receipt)) {
     // Sandbox creation attaches the verified profile, including its IP pins.
     // A second base grant would survive detachment and conflict with native NVIDIA.
-    return replacedBundledRule ? YAML.stringify(policy) : basePolicy;
+    delete policies[NATIVE_HOSTED_INFERENCE_POLICY_KEY];
+    return replacedBundledRule || existing !== undefined ? YAML.stringify(policy) : basePolicy;
   }
   if (existing !== undefined && !replacedBundledRule) return basePolicy;
   policy.network_policies = { ...policies, [NATIVE_HOSTED_INFERENCE_POLICY_KEY]: entry };
