@@ -136,9 +136,27 @@ pub struct OperationResult {
     /// map is empty and apply emits a `Progress::Warning`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub service_urls: BTreeMap<String, BTreeMap<String, String>>,
+    /// Each sandbox's agent with the runtime ID that state records for it, by
+    /// sandbox: the applied state for a plan, and the state after the changes
+    /// for apply. If apply can't read its state, the map is empty and apply
+    /// emits a `Progress::Warning`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agents: BTreeMap<String, AgentRuntime>,
     /// After apply, how to reach each enabled agent interface; never a token.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub interfaces: Vec<InterfaceAccess>,
+}
+/// What `fabric-agent-ctl invoke` needs to reach a sandbox's agent; never a
+/// credential.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntime {
+    /// The agent's name, its `--agent`.
+    pub agent: String,
+    /// The ID Fabric gave the agent's current runtime, its `--runtime-id`;
+    /// absent while state records no runtime for the agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_id: Option<String>,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -152,6 +170,7 @@ impl OperationResult {
             retained: Vec::new(),
             discovery: DiscoveryReport::default(),
             service_urls: BTreeMap::new(),
+            agents: BTreeMap::new(),
             interfaces: Vec::new(),
         }
     }
@@ -328,6 +347,7 @@ impl Deployment {
             result.discovery = discovery;
             result.deferred.sort();
             result.deferred.dedup();
+            result.agents = reporting::agents(&document, &bindings);
             if fresh {
                 store.save(&record)?;
             }
@@ -383,24 +403,21 @@ impl Deployment {
         record.finish_apply();
         record.mark_succeeded();
         store.save(&record)?;
-        // The apply is saved; a failed or cancelled read of the URLs leaves
-        // them out of its result rather than reporting the apply as failed.
-        // Without exposures there are none to read.
-        let exposed = document
-            .spec
-            .sandboxes
-            .values()
-            .any(|sandbox| !sandbox.service_exposures.is_empty());
-        if exposed {
-            match store.bindings(&bundle.tofu(), cancel).await {
-                Ok(bindings) => result.service_urls = reporting::service_urls(&bindings),
-                Err(_) => (self.progress)(Progress::Warning {
-                    message: reporting::SERVICE_URLS_UNREAD.into(),
-                }),
+        // The apply is saved; a failed or cancelled read of its state leaves
+        // the URLs and runtime IDs out of its result rather than reporting the
+        // apply as failed.
+        let state = store.bindings(&bundle.tofu(), cancel).await;
+        match &state {
+            Ok(bindings) => {
+                result.service_urls = reporting::service_urls(bindings);
+                result.agents = reporting::agents(&document, bindings);
             }
+            Err(_) => (self.progress)(Progress::Warning {
+                message: reporting::STATE_UNREAD.into(),
+            }),
         }
         result.outcome = Outcome::Succeeded;
-        result.interfaces = interface_access(&document, &store, &bundle, cancel).await?;
+        result.interfaces = interface_access(&document, state)?;
         Ok(result)
     }
     async fn state_bindings(
@@ -440,12 +457,10 @@ impl Deployment {
     }
 }
 /// How to reach each sandbox's enabled interfaces, with the runtime IDs the
-/// applied state records. A deployment without interfaces reads no state.
-async fn interface_access(
+/// applied state records. A deployment without interfaces needs no state.
+fn interface_access(
     document: &Document,
-    store: &Store,
-    bundle: &Bundle,
-    cancel: &CancellationToken,
+    state: Result<BTreeMap<String, StateBinding>, Error>,
 ) -> Result<Vec<InterfaceAccess>, Error> {
     let mut configurations = Vec::new();
     for sandbox in document.sandboxes() {
@@ -461,7 +476,7 @@ async fn interface_access(
     if configurations.is_empty() {
         return Ok(Vec::new());
     }
-    let bindings = store.bindings(&bundle.tofu(), cancel).await?;
+    let bindings = state?;
     Ok(configurations
         .into_iter()
         .flat_map(|(sandbox, configuration)| {

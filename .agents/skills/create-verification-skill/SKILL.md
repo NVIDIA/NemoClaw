@@ -13,7 +13,7 @@ disable-model-invocation: true
 
 This skill generates `.agents/skills/verify-<surface>/`, a scripted way for an agent to drive NemoClaw the way a user does and capture evidence.
 Write it for an agent who reads it cold, mid-task.
-It complements the [live tests](../../../docs/contributing/live-tests.md), which stay the gate: when a journey must hold on every change, turn it into a Rust live test instead.
+It complements the [live tests](../../../docs/contributing/live-tests.md), which stay the gate: when a journey must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## 1. Interview the Repository
 

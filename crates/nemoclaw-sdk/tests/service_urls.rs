@@ -85,10 +85,9 @@ async fn apply_reports_service_urls_on_creation_and_unchanged_reapply_but_plan_d
     );
 }
 
-/// Without exposures there are no URLs to read, so apply doesn't read state
-/// for them and can't warn that it failed to.
+/// Without exposures, the state records no URLs to report.
 #[tokio::test]
-async fn apply_without_exposures_leaves_service_urls_out_without_reading_them() {
+async fn apply_without_exposures_leaves_service_urls_out() {
     let scripted = Scripted::new();
     let document = Document::parse(
         serde_json::to_vec(&crate::support::fixture("local.yaml"))
@@ -98,11 +97,9 @@ async fn apply_without_exposures_leaves_service_urls_out_without_reading_them() 
     .unwrap();
     let declared = targets(&document, &placeholder_generations());
     scripted.set("root.apply.plan", plan_json(&declared, "create"));
-    scripted.set("root.state", "not json");
-    let events = Events::default();
+    scripted.set("root.state", state_json(&declared));
     let result = scripted
         .deployment(&scripted.path("unused-kubeconfig"))
-        .with_progress(events.recording())
         .apply(&document, &CancellationToken::new())
         .await
         .unwrap();
@@ -112,10 +109,6 @@ async fn apply_without_exposures_leaves_service_urls_out_without_reading_them() 
             .unwrap()
             .get("serviceUrls")
             .is_none()
-    );
-    assert!(
-        !events.contains(|event| matches!(event, Progress::Warning { .. })),
-        "a deployment without exposures warned"
     );
 }
 

@@ -7,7 +7,7 @@
 # its UID range, holding the registry pull Secret and the issuer's CA; a stub
 # model in its own namespace that answers every chat completion with
 # `reply`; and an existing OIDC issuer in its own namespace. The test runner
-# removes the release, and with it the three namespaces, after the case.
+# removes both releases, and with them the three namespaces, after the case.
 
 terraform {
   required_version = "= 1.12.9"
@@ -120,15 +120,11 @@ provider "helm" {
   }
 }
 
-resource "helm_release" "model" {
-  name             = "model"
-  chart            = "${path.module}/model"
-  namespace        = local.model
-  create_namespace = true
-  wait             = true
-  timeout          = 180
-  values = [yamlencode({
+locals {
+  # Both releases render the one chart; `part` selects their objects.
+  values = {
     deploymentNamespace = local.kubernetes.namespace
+    modelNamespace      = local.model
     # kind does not enforce OpenShift's constraints; the SDK and OpenShell
     # read this range as they do on OpenShift.
     uidRange = "1000680000/10000"
@@ -144,5 +140,31 @@ resource "helm_release" "model" {
       caConfigMap = local.kubernetes.authentication.caConfigMap
       ca          = local.issuer_ca
     }
-  })]
+  }
+}
+
+# The three namespaces, the pull Secret, and the issuer's CA, which are ready
+# once created. Removing the release deletes the namespaces without waiting
+# for Kubernetes to finalize them, about 10 s of the case, because nothing
+# after the case needs them gone and the runner deletes the cluster. Its
+# record is in `default`, which outlives the namespaces it deletes.
+resource "helm_release" "namespaces" {
+  name      = "${local.kubernetes.namespace}-namespaces"
+  chart     = "${path.module}/model"
+  namespace = "default"
+  wait      = false
+  timeout   = 180
+  values    = [yamlencode(merge(local.values, { part = "namespaces" }))]
+}
+
+# The stub model and the issuer. The release waits until both are ready,
+# before the case's first apply.
+resource "helm_release" "model" {
+  depends_on = [helm_release.namespaces]
+  name       = "model"
+  chart      = "${path.module}/model"
+  namespace  = local.model
+  wait       = true
+  timeout    = 180
+  values     = [yamlencode(merge(local.values, { part = "workloads" }))]
 }
