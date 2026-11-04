@@ -213,7 +213,8 @@ export function createDeps(
       needsBedrockRuntimeAdapter: () => false,
       isInferenceRouteReady: calls.routeReady,
       hasNativeLocalProviderAuthority: vi.fn(() => true),
-      isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
+      isRoutedInferenceProvider: (provider: string) =>
+        ["nvidia-router", "custom-router"].includes(provider),
       reconcileModelRouter: calls.reconcileRouter,
       reupsertRoutedProvider: calls.reupsertRoutedProvider,
       reserveSandboxInferenceRoute: calls.reserveRoute,

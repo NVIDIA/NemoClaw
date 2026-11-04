@@ -92,7 +92,7 @@ evidence that its create branch works with an empty catalog.
 | [vllm-local.ts](../../src/lib/onboard/inference-providers/vllm-local.ts) | Standalone native vLLM is intercepted. Local NIM is deliberately excluded and retains the shared route, owned by #13116 and #12975. It still depends on `openai`. |
 | [bedrock-runtime.ts](../../src/lib/onboard/bedrock-runtime.ts) | Legacy pending retirement for existing shared-route custom sandboxes. Fresh hosted Bedrock uses native custom setup, including a profile check before adapter startup. The leaf `openai` upsert is not evidence of a fresh native gap. |
 | [openrouter-runtime.ts](../../src/lib/onboard/openrouter-runtime.ts) | Legacy runtime-adapter branch. The fixed hosted OpenRouter selection returns through native setup first. The retained branch uses catalog type `openai`. |
-| [routed-inference.ts](../../src/lib/onboard/routed-inference.ts) | Retained experimental Model Router route. It can create `nvidia-router` with catalog type `openai`; it has no owned import here. #12558 has no Model Router slice. [#13560](https://github.com/NVIDIA/NemoClaw/issues/13560) owns the disposition: import and verify a restricted owned profile before creation, or retire or refuse the selection before creation. The path stays catalog-dependent until #13560 records and delivers that choice. |
+| [routed-inference.ts](../../src/lib/onboard/routed-inference.ts) | The OpenShell `0.1.5` migration uses the native local lifecycle for Model Router selections on OpenClaw, Hermes, Deep Agents Code, and Pi. The configured routed blueprint supplies the provider name and endpoint. Fresh setup and resume verify router ownership and credentials, then import and verify the restricted profile before creation. They do not mutate a shared route. Live qualification remains pending. |
 | [compatible-endpoint-gateway-route.ts](../../src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.ts) | Legacy recovered-provider URL repair. It first checks that the provider exists; a later disappearance can still expose the helper's create branch. No owned profile import is established by this wrapper. |
 | [hermes-provider-auth.ts](../../src/lib/hermes-provider-auth.ts) | Native Hermes setup injects a native credential registrar. The fallback `openai` create remains for explicit custom Hermes endpoints and legacy rebuilds without a native receipt. The [rebuild credential preflight](../../src/lib/actions/sandbox/rebuild-credential-preflight.ts) reaches it when the Hermes Provider is missing before rebuild. These are retained legacy catalog paths. |
 | [hermes-tool-gateway-broker.ts](../../src/lib/hermes-tool-gateway-broker.ts) | Supported owned-profile create, imported before upsert. Exact legacy `generic` reuse passes `knownExists: true`; it does not create a new unowned profile. |
@@ -137,7 +137,38 @@ used commit `19d994a0086c59e945a2456b1264ca1444a37fc7`.
   retains its recorded separate disposition and catalog dependency. Runtime identity uses its separate verified path.
 - Pending #13528 owns Personal-tier custom routing; pending #13556 owns credential mismatch diagnostics.
   Their proposed behavior is absent from this baseline. #13504 owns native-provider authority cleanup.
-- [#13560](https://github.com/NVIDIA/NemoClaw/issues/13560) owns the Model Router profile disposition.
+- [#13560](https://github.com/NVIDIA/NemoClaw/issues/13560) supplies the native OpenClaw Model Router profile described below.
+
+## Native Model Router
+
+The native Model Router path reuses the local profile and ownership lifecycle.
+The OpenShell `0.1.5` migration applies it to OpenClaw, Hermes, Deep Agents Code, and Pi.
+`nativeModelRouterEndpoint` requires `nvidia-router` or the provider name configured by the routed blueprint.
+It verifies the configured host port and API prefix before normalizing the endpoint to the managed host alias.
+The profile binds that endpoint and the selected agent executables.
+It permits model listing and chat completions.
+Generic endpoint selections cannot use router port authority.
+Other control-plane ports remain denied, including when the router is configured on one.
+
+Fresh setup and resume hold the gateway and router-port locks while reconciling the router and preparing its provider.
+Router process ownership and its host credential must match before and after provider preparation.
+The sandbox receives an opaque credential reference and the native endpoint.
+The host credential store and OpenShell provider retain the key outside the sandbox.
+Router startup reads the host credential into its process environment.
+Matching profiles and owned provider instances are reused.
+Import failure, profile collision, or missing ownership stops mutation.
+Existing shared-route sandboxes require explicit recreation on OpenShell `0.1.5`; legacy data remains available for recovery.
+OpenClaw `inference set` reuses a verified native router attachment for model changes.
+When switching from a different local or hosted provider, it can prepare a router attachment after verifying router process and credential ownership.
+If a legacy sandbox already selects that router but lacks its native attachment, the command stops and requires explicit recreation.
+
+[Native local tests](../../src/lib/inference/native-local.test.ts) cover profile ordering, attachment, reuse,
+credential isolation, temporary-file cleanup, configured ports, and denied endpoints.
+[Routed setup tests](../../src/lib/onboard/routed-inference.test.ts) cover endpoint normalization and shared-route containment.
+[Resume tests](../../src/lib/onboard/machine/handlers/provider-inference-native-local-resume.test.ts) require native setup on resume.
+The shared lifecycle retains ambiguous-creation reconciliation and owned-only cleanup.
+These source contracts do not establish live Model Router qualification for this upgrade.
+[#14066](https://github.com/NVIDIA/NemoClaw/issues/14066) owns replacement-model API checks and complete native router inference E2E.
 
 ## Warning evidence and focused follow-up
 

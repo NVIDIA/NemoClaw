@@ -25,6 +25,21 @@ import { setupRoutedInference } from "./inference-providers/routed";
 import type { RoutedDeps } from "./inference-providers/types";
 
 describe("normalizeRoutedEndpointUrl (#4564)", () => {
+  it("rewrites the IPv6 loopback host", () => {
+    expect(normalizeRoutedEndpointUrl("http://[::1]:4000/v1")).toBe(
+      "http://host.openshell.internal:4000/v1",
+    );
+  });
+
+  it.each([
+    "http://localhost.example:4000/v1",
+    "http://example.com/localhost",
+    "https://localhost:4000/v1",
+    "http://user:pass@localhost:4000/v1",
+  ])("preserves the non-router URL %s", (url) => {
+    expect(normalizeRoutedEndpointUrl(url)).toBe(url);
+  });
+
   it("rewrites localhost to the sandbox-facing host alias", async () => {
     expect(normalizeRoutedEndpointUrl("http://localhost:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",

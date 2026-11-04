@@ -53,6 +53,76 @@ it.each([
 });
 
 describe("OpenClaw native local live selection", () => {
+  it.each(["local", "hosted", "legacy router"])(
+    "rejects a router switch from %s without verified ownership before mutation",
+    async (previous) => {
+      const deps =
+        previous === "local"
+          ? fixture()
+          : createDeps({
+              config: {},
+              entry: {
+                name: "alpha",
+                agent: "openclaw",
+                provider: previous === "legacy router" ? "nvidia-router" : "nvidia-prod",
+                model: "old-model",
+              },
+            });
+      vi.spyOn(routerProcess, "doesModelRouterProcessOwnPort").mockReturnValue(false);
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+        routerPort: 4000,
+        routerPid: 123,
+        routerCredentialHash: hashCredential("test-router-key"),
+      } as ReturnType<typeof onboardSession.loadSession>);
+      deps.getNativeLocalProviderAuthority ??= () => undefined;
+      deps.setNativeLocalProviderAuthority ??= vi.fn();
+      deps.resolveLocalSwitchRuntime = () => ({
+        endpointUrl: "http://host.openshell.internal:4000/v1",
+        credentialValue: "test-router-key",
+        authMode: "authenticated",
+        ownedProxy: false,
+      });
+      const create = vi.spyOn(deps.providerAdapter, "createProvider");
+      const update = vi.spyOn(deps.providerAdapter, "updateProvider");
+      const attach = vi.spyOn(deps.providerAdapter, "attachProvider");
+      const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+      const deletion = vi.spyOn(deps.providerAdapter, "deleteProvider");
+      const route = vi.spyOn(deps.inferenceRouteMutator, "setInferenceRoute");
+
+      await expect(
+        runInferenceSet(
+          {
+            provider: "nvidia-router",
+            model: "routed-model",
+            sandboxName: "alpha",
+            noVerify: true,
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({
+        ...(previous === "legacy router" ? { exitCode: 2 } : {}),
+        message: expect.stringContaining(
+          previous === "legacy router"
+            ? "Recreate this legacy Model Router sandbox"
+            : "ownership could not be verified",
+        ),
+      });
+
+      expect(create).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
+      expect(detach).not.toHaveBeenCalled();
+      expect(deletion).not.toHaveBeenCalled();
+      expect(route).not.toHaveBeenCalled();
+      expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(deps.calls.updateSession).not.toHaveBeenCalled();
+      expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
+      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     { provider: "vllm-local", expected: {} },
     { provider: "ollama-local", expected: { prepare: true } },
@@ -150,6 +220,24 @@ describe("OpenClaw native local live selection", () => {
       deps,
     );
     expect(result.provider).toBe("team-router");
+    expect(JSON.stringify(deps.calls.setOpenClawConfigValues.mock.calls)).toContain(
+      "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    );
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nativeProvider: true,
+        nativeLocalProviderAttachment: receipt,
+        agentName: "openclaw",
+        model: "new-router-model",
+      }),
+    );
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalled();
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+      ),
+    ).toBe(false);
+
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({

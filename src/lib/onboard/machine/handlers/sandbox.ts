@@ -123,6 +123,8 @@ import {
 import {
   assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
+  ensureResumedNativeLocalProviderAttached,
+  restoreNativeRouterAttachment,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
@@ -347,6 +349,9 @@ export interface SandboxStateOptions<
       type: string,
       credentialEnv: string,
     ): boolean | Promise<boolean>;
+    nativeLocalProviderAdapter?: Parameters<
+      typeof ensureResumedNativeLocalProviderAttached
+    >[0]["adapter"];
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
@@ -1476,6 +1481,16 @@ class SandboxStateFlow<
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
+      await restoreNativeRouterAttachment({
+        sandboxName: state.sandboxName,
+        provider: this.options.provider,
+        endpointUrl: this.options.endpointUrl,
+        readRegistration: this.deps.getSandboxRegistryEntry,
+        observe: this.deps.getSandboxRecreateObservation,
+        acceptsReservation: (entry, name) => this.acceptsNativeLocalReservation(entry, name),
+        assertGatewayRouteCompatible: (name) => this.assertGatewayRouteCompatible(name),
+        adapter: this.deps.nativeLocalProviderAdapter,
+      });
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,

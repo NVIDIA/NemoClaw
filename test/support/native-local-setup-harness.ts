@@ -84,11 +84,12 @@ export function createNativeLocalSetupHarness() {
         return { ok: true };
       },
     ),
-    inspectProviderProfile: vi.fn(unsupported),
+    inspectProviderProfile: vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(unsupported),
     listProviders: vi.fn(unsupported),
-    listProviderAttachments: vi.fn(unsupported),
-    attachProvider: vi.fn(unsupported),
-    detachProvider: vi.fn(unsupported),
+    listProviderAttachments:
+      vi.fn<OpenShellProviderAdapter["listProviderAttachments"]>(unsupported),
+    attachProvider: vi.fn<OpenShellProviderAdapter["attachProvider"]>(unsupported),
+    detachProvider: vi.fn<OpenShellProviderAdapter["detachProvider"]>(unsupported),
     configureProviderRefresh: vi.fn(unsupported),
     getProviderRefreshStatus: vi.fn(unsupported),
   } satisfies OpenShellProviderAdapter;

@@ -1100,6 +1100,17 @@ function createGatewayRouteStager(input: {
   };
 }
 
+function nativeRouterSetupResult(
+  routedProvider: boolean,
+  attachment: NativeLocalProviderAttachment | undefined,
+  credentialEnv: string | undefined,
+): Pick<SetupInferenceResult, "nativeInference"> {
+  if (!routedProvider || !attachment) return {};
+  return {
+    nativeInference: { endpointUrl: attachment.endpointUrl, credentialEnv: credentialEnv! },
+  };
+}
+
 export function createSetupInference(
   defaults: SetupInferenceDeps,
   overrides: Partial<SetupInferenceDeps> = {},
@@ -1262,6 +1273,7 @@ export function createSetupInference(
         let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
         let nativeProviderEndpoint: string | undefined;
+        let nativeProviderSmokeEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
         let retainedNativeHostedCredential = false;
@@ -1468,6 +1480,13 @@ export function createSetupInference(
                 nativeLocalProviderAttachment.providerName !== recordedAttachment.providerName)
             )
               throw new Error("Published native provider ownership changed before sandbox backup.");
+            if (routedProvider) {
+              nativeProviderEndpoint = hostReachableEndpoint;
+              const hostSmokeUrl = new URL(hostReachableEndpoint);
+              hostSmokeUrl.hostname = "127.0.0.1";
+              nativeProviderSmokeEndpoint = hostSmokeUrl.href;
+              nativeHostedCredentialEnv = sourceCredentialEnv;
+            }
             return { ok: true };
           }
           const reused = routeStager.reusePublishedProvider(args[0]);
@@ -1973,6 +1992,7 @@ export function createSetupInference(
               provider,
               model,
               endpointUrl:
+                nativeProviderSmokeEndpoint ??
                 nativeProviderEndpoint ??
                 nativeHostedProviderAttachment?.endpointUrl ??
                 hostedNativeProvider(provider)?.endpoint ??
@@ -2048,6 +2068,12 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
+          const nativeRouterInference = nativeRouterSetupResult(
+            routedProvider,
+            nativeLocalProviderAttachment,
+            nativeHostedCredentialEnv,
+          );
+
           if (
             nativeLocalRecreationSource &&
             nativeLocalProviderAttachment &&
@@ -2057,13 +2083,14 @@ export function createSetupInference(
           ) {
             return {
               ok: true,
+              ...nativeRouterInference,
               stagedNativeLocalRecreation: {
                 source: nativeLocalRecreationSource,
                 attachment: nativeLocalProviderAttachment,
               },
             };
           }
-          return routeStager.successResult();
+          return { ...routeStager.successResult(), ...nativeRouterInference };
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) {
             return rejectNativeLocalSetupFailure({
