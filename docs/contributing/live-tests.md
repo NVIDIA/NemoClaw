@@ -131,12 +131,7 @@ Afterward, run `nemoclaw destroy --state-dir /absolute/path/to/new-run/deploymen
 The `docker-openclaw-hermes-vllm` [HCL E2E scenario](#hcl-e2e-scenarios) covers several sandboxes served by one local model on the `Live / HCL` NVIDIA GPU runner.
 Spark hardware has no CI runner yet.
 
-The Spark image-change test reads a copy of `examples/spark/deepagents-team.yaml`, which serves Nemotron 3.5 Lightning through the generic vLLM image to two Deep Agents sandboxes.
-Use an available GB10 host, build the runtime and agent images, and set their immutable image references in the YAML.
-
-Run `spark::spark_image_change_plans_and_applies_replacement` with `NEMOCLAW_LIVE_SPARK_CONFIG`, `NEMOCLAW_LIVE_SPARK_STATE`, and `NEMOCLAW_TEST_BUNDLE` set to absolute paths, against an established, running deployment.
-Change only the inference image pin in the YAML.
-The test compares the input with exported configuration, then requires plan and apply to replace the service's `docker_container.inference_service_inference_<service>` and reconcile its image resource while retaining storage.
+The SDK's `runtime_compile::an_image_pin_or_gateway_port_change_reaches_only_replaceable_processes` test owns what changing only a model's image pin reaches: its container and image, not its storage.
 Storage retention and watchdog recovery have separate tests under [runtime boundaries](integration-tests.md#runtime-boundaries) and [generic models](#generic-models).
 
 Use an immutable bundle copy for a long live run.
@@ -304,8 +299,8 @@ cargo test -p nemoclaw-e2e --test e2e \
 ```
 
 The test checks read-only planning, unchanged apply, stopped/deleted process recovery, retained credential identity, and destroy/reapply.
-It also replaces the listen port inside the runtime-stage test and temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
-That internal replacement test does not authorize retargeting an established public deployment endpoint; the SDK still rejects that operation.
+It also temporarily substitutes the owned encryption key to verify rejection without state changes, then restores the original key.
+The SDK's `runtime_compile` tests own what a listen-port change reaches in the runtime graph: the gateway container, not its storage. The SDK still rejects retargeting an established public deployment endpoint.
 The gateway image remains pinned by the SDK.
 
 ## Docker Gateway Isolation
