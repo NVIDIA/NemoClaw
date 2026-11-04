@@ -60,7 +60,7 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## Invoke an Agent
 
 After [selecting the gateway and workspace](#select-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
-Plan and apply print the command for each agent, with its current runtime ID:
+Plan and apply print a command for each agent with a recorded runtime ID. The following illustrative output preserves the CLI's literal `docs/agents.md` hint, which names the pre-migration source path; use [Configure and Access Native Agents](agents.md#run-one-deep-agents-or-pi-request) instead:
 
 ```text
 Agents:
@@ -73,7 +73,7 @@ Agents:
   FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents.md.
 ```
 
-JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`.
+JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`. If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 An agent without a recorded runtime, such as before the first apply, is listed with `no runtime recorded` and has no `runtimeId`.
 [Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
@@ -142,7 +142,7 @@ Changing an agent's settings, including its interfaces, replaces its sandbox, de
 
 ### Forward, Read the Token, and Sign In
 
-After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token:
+After apply, NemoClaw lists each enabled interface with the commands to reach it, and never prints a token. The following illustrative excerpt shows interface selection commands in isolation; in an apply result that also reports a recorded agent runtime, the **Agents** block supplies those commands instead:
 
 ```text
 Agent interfaces:

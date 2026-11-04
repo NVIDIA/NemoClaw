@@ -8,7 +8,7 @@ Keep the documentation, configuration schema, and runtime bundle matched to the 
 
 ## Documentation for Coding Agents
 
-Repository Markdown and the [source-pinned v1 field reference](../references/v1-configuration.md) are available in this checkout. The generated reference at `docs/reference/configuration.md` belongs to this documentation checkout's older SDK, not to the v1 implementation documented here.
+Repository Markdown and the [source-pinned v1 field reference](../references/v1-configuration.md) are available in this checkout. The generated reference at `docs/reference/configuration.md` belongs to this checkout's source revision. Its named-map shape matches the pinned v1 source, but three optional field types differ; consult the schema from the bundle's revision for validation.
 Use [CLI reference](../references/cli.md) for accepted commands and [migration](../get-started/migration.md) for earlier-product boundaries.
 
 ### Choose the v1 Sources

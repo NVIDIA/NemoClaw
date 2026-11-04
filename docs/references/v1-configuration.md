@@ -5,7 +5,7 @@
 
 <!-- Snapshot of origin/v1 SDK-generated reference at 86b8d94273a76a696e06b300dc29f7035b163667. Regenerate only from that revision's SDK; do not edit generated field facts here. -->
 
-This is a source-pinned snapshot of the SDK-generated reference at [`origin/v1` revision `86b8d94273a76a696e06b300dc29f7035b163667`](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/docs/reference/configuration.md). Use it with a bundle and the [JSON Schema from that same revision](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/schemas/nemoclaw-v1alpha1.schema.json). The [checkout-generated reference](../reference/configuration.md) describes the older, array-shaped SDK in this documentation checkout; it does not validate the named-map v1 examples.
+This is a source-pinned snapshot of the SDK-generated reference at [`origin/v1` revision `86b8d94273a76a696e06b300dc29f7035b163667`](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/docs/reference/configuration.md). Use it with a bundle and the [JSON Schema from that same revision](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/schemas/nemoclaw-v1alpha1.schema.json). The [checkout-generated reference](../reference/configuration.md) uses the same named-map shape. It differs from this snapshot on the input types of `spec.services.{key}.readiness.path`, `.runtimeStatus`, and `spec.services.{key}.command`; use the reference and JSON Schema generated from your bundle's source revision for field validation.
 
 This snapshot retains the v1 generator’s field descriptions and validation limits without editing them. Its relative guide links were updated for the reorganized pages. For schema generation and validation, use the [matching v1 source worktree](../get-started/first-deployment.md#prepare-the-tools-and-services) rather than running this checkout’s generator.
 
@@ -17,6 +17,8 @@ Defaults describe SDK normalization or backend behavior; JSON Schema validation 
 Empty or zero selects a default only where stated.
 
 ## Validation Beyond the Schema
+
+The parser and semantic checks below apply to the pinned source revision, in addition to JSON Schema validation.
 
 - Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.
 - The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.
