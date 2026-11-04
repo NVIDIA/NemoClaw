@@ -466,8 +466,9 @@ Review events run a signal workflow with `permissions: {}` and no checkout. Its 
 wakes the default-branch controller, which reads current reviews through GitHub's API.
 The signal provides no approval authority or candidate artifacts.
 When `check-hash` is required, both that status and the native hash check must pass.
-A review refreshes the commit status and candidate SDK packaging. If the native hash
-check failed before approval, rerun that job after approval.
+Review events refresh the commit status. Candidate SDK packaging runs only when admission
+succeeds and the PR requires a new SDK archive. Rejected admission produces no candidate
+SDK artifact. If the native hash check failed before approval, rerun that job after approval.
 An interrupted refresh remains pending or fails; it cannot reuse an earlier success.
 
 For a new OpenShell TypeScript SDK version, the same approval also binds the root
