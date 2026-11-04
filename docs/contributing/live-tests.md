@@ -212,24 +212,8 @@ It checks that the collected architecture matches the selected Docker daemon's r
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Docker provider, dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the dummy agent, agent interface, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
-
-## Docker Provider Lifecycle
-
-On Linux with local Docker, provide a verified bundle and an already loaded digest-pinned image containing the Ollama proxy executable.
-Run from the repository root:
-
-```sh
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
-  cargo test -p nemoclaw-e2e --test e2e docker_provider_proxy:: -- --ignored
-```
-
-This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
-It checks SDK apply, export/reapply, failed readiness, a removed container recreated with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes. The `docker-ollama-proxy` integration scenario owns a replaced proxy keeping its key volume and registration.
-OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
-
 
 ## Dummy Agent Lifecycle
 

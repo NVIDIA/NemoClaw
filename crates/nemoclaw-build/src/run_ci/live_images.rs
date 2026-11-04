@@ -34,10 +34,10 @@ pub(super) fn agent() -> (&'static str, &'static str) {
     nemoclaw_build::ci::LIVE_AGENT
 }
 
-/// The platform's agent image, Hermes, Deep Agents Code, the reference dummy,
-/// then the proxy image.
-pub(super) fn names() -> [&'static str; 5] {
-    [agent().0, HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a"]
+/// The platform's agent image, Hermes, Deep Agents Code, then the reference
+/// dummy.
+pub(super) fn names() -> [&'static str; 4] {
+    [agent().0, HERMES, DEEPAGENTS_CODE, DUMMY]
 }
 
 /// The Deep Agents Code agent image, whose terminal the interface test opens.
@@ -105,29 +105,6 @@ fn timed_build(tag: &str, build: impl FnOnce() -> Result<()>) -> Result<()> {
     result
 }
 
-/// The proxy image the Docker provider lifecycle test runs: the Bake proxy
-/// target, labelled as [`pull`] derives it.
-pub(super) fn build_proxies(platform: &str, prefix: &str) -> Result<()> {
-    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    let tag = format!("{prefix}:proxy-a");
-    timed_build(&tag, || {
-        run(docker()
-            .env("AGENT_PLATFORM", &docker_platform)
-            .args([
-                "buildx",
-                "bake",
-                "ollama-proxy",
-                "--load",
-                "--progress",
-                "plain",
-            ])
-            .arg("--set")
-            .arg(format!("ollama-proxy.tags={tag}"))
-            .arg("--set")
-            .arg("ollama-proxy.labels.org.nemoclaw.test=proxy-a"))
-    })
-}
-
 /// Build the platform's images under the shared names and save them to [`ARCHIVE`].
 pub(super) fn build(platform: &str) -> Result<()> {
     if !platform.starts_with("linux_") {
@@ -137,7 +114,6 @@ pub(super) fn build(platform: &str) -> Result<()> {
     build_hermes(platform, SHARED)?;
     build_deepagents_code(platform, SHARED)?;
     build_dummy(platform, SHARED)?;
-    build_proxies(platform, SHARED)?;
     let tags = names().map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;
     let start = Instant::now();
@@ -312,8 +288,7 @@ fn pull_one(commit: &str, platform: &str, prefix: &str, name: &str) -> Result<()
 
 /// Pull the images `commit` pushed for this platform instead of building
 /// them, and name each `PREFIX:NAME`, recording each name in `owned` before
-/// the next. The proxy image is the pushed proxy with a label, as
-/// [`build_proxies`] makes it.
+/// the next.
 pub(super) fn pull(
     commit: &str,
     platform: &str,
@@ -324,14 +299,6 @@ pub(super) fn pull(
         owned.push(format!("{prefix}:{name}"));
         pull_one(commit, platform, prefix, name)?;
     }
-    let tag = format!("{prefix}:proxy-a");
-    owned.push(tag.clone());
-    build_layer(
-        &tag,
-        &format!("FROM {prefix}:ollama-proxy\nLABEL org.nemoclaw.test=proxy-a\n"),
-        &[],
-    )
-    .map_err(|_| format!("cannot derive {tag} from the pushed proxy"))?;
     Ok(())
 }
 
@@ -388,10 +355,7 @@ mod tests {
     #[test]
     fn a_step_drops_only_the_platform_archive_images_it_does_not_name() {
         let target = agent().0;
-        assert_eq!(
-            unused(&[target]),
-            [HERMES, DEEPAGENTS_CODE, DUMMY, "proxy-a"]
-        );
+        assert_eq!(unused(&[target]), [HERMES, DEEPAGENTS_CODE, DUMMY]);
         assert!(unused(&names()).is_empty());
     }
 }
