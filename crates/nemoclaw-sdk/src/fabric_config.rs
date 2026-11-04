@@ -71,14 +71,28 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         result["runtime"]["keep_state"] = true.into();
     }
     for route in &selection.inference.routes {
-        // Authored tuning must not be discarded or sent to an adapter that
-        // rejects it. Model extensions can declare fields outside config.accepts.
-        for (field, authored) in [
-            ("max_tokens", route.overrides.tuning.max_tokens.is_some()),
-            ("temperature", route.overrides.tuning.temperature.is_some()),
-            ("top_p", route.overrides.tuning.top_p.is_some()),
+        // Match Fabric's adapter_config_compatibility_issues until it is public.
+        // Model extensions can declare legacy sampling fields outside config.accepts.
+        for (field, authored, input_name) in [
+            (
+                "max_tokens",
+                route.overrides.tuning.max_tokens.is_some(),
+                "maxTokens",
+            ),
+            (
+                "temperature",
+                route.overrides.tuning.temperature.is_some(),
+                "temperature",
+            ),
+            ("top_p", route.overrides.tuning.top_p.is_some(), "topP"),
         ] {
-            if authored
+            let extension = route
+                .overrides
+                .extensions
+                .as_ref()
+                .and_then(|values| values.get(field))
+                .is_some_and(|value| !value.is_null());
+            if (authored || extension)
                 && descriptor.is_some_and(|descriptor| {
                     let path = format!("models.{field}");
                     !descriptor["config"]["accepts"]
@@ -90,9 +104,14 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
                                 .is_some())
                 })
             {
+                let source = if authored {
+                    input_name.to_owned()
+                } else {
+                    format!("extensions.{field}")
+                };
                 return Err(ConfigError(format!(
-                    "sandbox {} route {}: the adapter does not accept models.{field}",
-                    sandbox.name, route.name
+                    "{}.overrides.{source}: the adapter does not accept this model field",
+                    selection.route_path(route)
                 )));
             }
         }

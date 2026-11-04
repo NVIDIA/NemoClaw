@@ -2078,7 +2078,7 @@
           "type": "string"
         },
         "maxTokens": {
-          "description": "Maximum output tokens requested from the native adapter.",
+          "description": "Maximum output tokens requested from the native adapter. Planning rejects this field when the bundled adapter does not accept it.",
           "format": "uint32",
           "maximum": 4294967295,
           "minimum": 1,
@@ -2095,12 +2095,12 @@
           "type": "object"
         },
         "temperature": {
-          "description": "Sampling temperature, passed to Fabric's temperature; Fabric validates the range.",
+          "description": "Sampling temperature, passed to Fabric's temperature. Planning checks bundled adapter field support; Fabric validates the range.",
           "format": "double",
           "type": "number"
         },
         "topP": {
-          "description": "Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.",
+          "description": "Nucleus sampling probability, passed to Fabric's top_p. Planning checks bundled adapter field support; Fabric validates the range.",
           "format": "double",
           "type": "number"
         }
