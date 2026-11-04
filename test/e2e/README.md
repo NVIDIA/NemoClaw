@@ -2566,7 +2566,9 @@ Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
 When the candidate needs trust absent from the controller's registry, preparation, both verifications, and restoration recheck the [candidate approval](#candidate-openshell-release-admission).
-The approval must match the open PR, candidate commit, and base commit.
+The approval must cover the open PR's admitted inputs and governing policy.
+A later descendant commit remains eligible only when those inputs and policy are unchanged.
+If governing policy changes on the base branch, synchronize the PR and obtain another review.
 The approved registry and installer sources must match the candidate's committed files.
 Candidates covered by the controller's registry need no additional approval.
 The job exposes its GitHub token as `GITHUB_TOKEN` only to the four trusted source-projection steps, with `contents: read` and `pull-requests: read` permissions.
