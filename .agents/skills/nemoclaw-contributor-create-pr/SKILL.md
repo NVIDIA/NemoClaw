@@ -30,14 +30,9 @@ Preserve historical reports and their cutoffs. Optional later commit or merge re
 
 ## Description Clarity Pass
 
-Before publishing or updating the description, read it as a reviewer who knows the project but has not followed this work.
-Keep the template's Failure, Decision, and Validation sections and a professional, direct tone.
-
-- Explain the condition that exposes the problem and its effect on the user or contributor. For improvements without a bug, describe the current limitation.
-- Describe what changes and why this approach was chosen. Use a concrete before-and-after example when it helps explain the change.
-- Connect completed checks and their results to the claims they support; keep untested behavior and checks deferred to CI explicit.
-- Replace abstract summaries and unnecessary jargon with concrete actions. Keep enough explanation for the reviewer to understand the change; brevity alone is not the goal.
-- Preserve facts, commands, paths, identifiers, results, decisions, limitations, and uncertainty. This pass changes the explanation without adding claims or strengthening the evidence.
+Draft the description from the evidence, then rewrite it in plain language for a colleague who has not followed the work.
+Keep the template sections and enough detail to explain the problem, decision, and validation.
+Compare the rewrite with the draft: preserve facts, commands, identifiers, limitations, and uncertainty; add no claims or stronger conclusions.
 
 ## Session Report
 
