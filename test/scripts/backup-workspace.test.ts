@@ -343,6 +343,7 @@ exit 99
     const backups = fs.readdirSync(backupRoot);
     expect(backups).toHaveLength(1);
     expect(fs.readdirSync(path.join(backupRoot, backups[0])).sort()).toEqual([
+      ".sandbox",
       "AGENTS.md",
       "HEARTBEAT.md",
       "IDENTITY.md",
@@ -450,6 +451,7 @@ exit 0
     expect(backups).toHaveLength(1);
     const backupDir = path.join(backupRoot, backups[0]);
     expect(fs.readdirSync(backupDir).sort()).toEqual([
+      ".sandbox",
       "AGENTS.md",
       "HEARTBEAT.md",
       "IDENTITY.md",
@@ -473,5 +475,93 @@ exit 0
       `${path.join(backupDir, "HEARTBEAT.md")} /sandbox/.openclaw/workspace/`,
     );
     expect(uploaded).not.toContain("POLICY.md");
+  });
+
+  it("restores the newest backup of the named sandbox, not another sandbox's", () => {
+    const openshellCalls = path.join(root, "openshell-calls.txt");
+    writeExecutable(
+      sourceCli,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
+mkdir -p "$4"
+printf 'content-from-%s\n' "$1" > "\${4%/}/$(basename -- "$3")"
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$NEMOCLAW_TEST_OPENSHELL_CALLS"
+exit 0
+`,
+    );
+    const env = {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    };
+    const run = (...args: string[]) =>
+      spawnSync("bash", [sourceScript, ...args], { cwd: sourceRoot, encoding: "utf8", env });
+
+    expect(run("backup", "alice").status).toBe(0);
+    // Backup directories are named by the second, so make bob's strictly newer.
+    const backupRoot = path.join(home, ".nemoclaw", "backups");
+    const [aliceBackup] = fs.readdirSync(backupRoot);
+    fs.renameSync(path.join(backupRoot, aliceBackup), path.join(backupRoot, "20260101-000000"));
+    expect(run("backup", "bob").status).toBe(0);
+    const [bobBackup] = fs.readdirSync(backupRoot).filter((name) => name !== "20260101-000000");
+    expect(bobBackup > "20260101-000000").toBe(true);
+
+    const aliceRestore = run("restore", "alice");
+    expect(aliceRestore.status, aliceRestore.stderr).toBe(0);
+    expect(aliceRestore.stdout).toContain("Using most recent backup of 'alice': 20260101-000000");
+    const uploads = fs.readFileSync(openshellCalls, "utf8");
+    expect(uploads).toContain(path.join(backupRoot, "20260101-000000", "SOUL.md"));
+    expect(uploads).not.toContain(path.join(backupRoot, bobBackup));
+
+    const carolRestore = run("restore", "carol");
+    expect(carolRestore.status).toBe(1);
+    expect(carolRestore.stderr).toContain(`No backups found in ${backupRoot}/ for sandbox 'carol'`);
+  });
+
+  it("warns when an explicit timestamp belongs to a different sandbox", () => {
+    const openshellCalls = path.join(root, "openshell-calls.txt");
+    writeExecutable(
+      sourceCli,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
+mkdir -p "$4"
+printf 'saved\n' > "\${4%/}/$(basename -- "$3")"
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$NEMOCLAW_TEST_OPENSHELL_CALLS"
+exit 0
+`,
+    );
+    const env = {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    };
+    const run = (...args: string[]) =>
+      spawnSync("bash", [sourceScript, ...args], { cwd: sourceRoot, encoding: "utf8", env });
+
+    expect(run("backup", "bob").status).toBe(0);
+    const backupRoot = path.join(home, ".nemoclaw", "backups");
+    const [bobBackup] = fs.readdirSync(backupRoot);
+
+    const restore = run("restore", "alice", bobBackup);
+    expect(restore.status, restore.stderr).toBe(0);
+    expect(restore.stdout).toContain(`was taken from sandbox 'bob', not 'alice'`);
   });
 });

@@ -193,7 +193,10 @@ The helper also deletes the backup when an optional path exists but cannot downl
 Check the reported sandbox path for a symbolic link, unsupported file type, or transfer failure.
 Correct the path, then run the same backup command again.
 
-Restore the most recent backup or a specific timestamp:
+Each backup records the sandbox it came from in a `.sandbox` file.
+Restore the most recent backup of that sandbox or a specific timestamp.
+Without a timestamp, the helper ignores backups of other sandboxes, and it does not pick a backup made before the `.sandbox` file existed.
+If you pass a timestamp from a different sandbox, the helper warns before it restores.
 
 ```bash
 ./scripts/backup-workspace.sh restore my-assistant
