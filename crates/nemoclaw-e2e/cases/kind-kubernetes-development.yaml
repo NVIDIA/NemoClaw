@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One agent on a managed gateway in a kind cluster with the defaults: the
+# kubernetes runtime profile and the development authentication profile, in
+# which the SDK issues the gateway's tokens. Its inference route reaches a
+# stub model in its own namespace, and the agent image comes from a private
+# registry through the pull Secret the operator created. cargo ci live-kind
+# gives each run a fresh identity, port, namespace, kubeconfig context,
+# registry, and agent image.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-kind-development
+  uid: 3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17701
+    kubernetes:
+      kubeconfig:
+        env: NEMOCLAW_TEST_KUBECONFIG
+      context: kind-nemoclaw
+      namespace: nc-hcl-kind
+      imagePullSecrets:
+        - agent-registry
+      authentication:
+        profile: development
+  inferenceProviders:
+    stub:
+      provider: openai
+      endpoint: http://model.nc-hcl-kind-model.svc.cluster.local:8000/v1
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: stub
+          overrides:
+            model: fixture-model
+            maxTokens: 2048
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata:
+          env: NEMOCLAW_TEST_AGENT_METADATA
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inferenceRef: chat

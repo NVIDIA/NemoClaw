@@ -93,7 +93,7 @@ inherits = "ci"
 test-threads = 4
 slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
-package(nemoclaw-e2e) & binary(=e2e) & (test(/^kubernetes_live::/) | test(=hcl_live::case))
+package(nemoclaw-e2e) & binary(=e2e) & test(=hcl_live::case)
 '''
 
 # The live reports are a run's shareable result: outcomes and times only.

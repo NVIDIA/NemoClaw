@@ -131,7 +131,7 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
 `nemoclaw-e2e`'s live tests live in its `e2e` binary, `crates/nemoclaw-e2e/tests/e2e`.
 Its [HCL E2E scenarios](live-tests.md#hcl-e2e-scenarios) are in `tests/e2e/hcl`, and the live tests not yet migrated to them are Rust modules in `tests/e2e/rust`.
-The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` test and its kind HCL E2E scenario.
+The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's kind HCL E2E scenarios.
 The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
 Other ignored tests, such as the Brev and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
@@ -171,7 +171,7 @@ It requests no inference from a model server and needs no GPU or credentials; th
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
-It then runs the `live-kind` profile's gateway test and the `kind-openshift-agents` HCL E2E scenario, which need no Helm CLI.
+It then runs the `kind-kubernetes-development` and `kind-openshift-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 

@@ -20,40 +20,31 @@ cargo ci live-kind
 ```
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
-The gateway test, `kubernetes_live::the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage`, covers what the HCL scenario below cannot.
-It runs the compiled runtime and teardown graphs through the bundled OpenTofu with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
-It requires authenticated `GetGatewayInfo` with the development token and refusal of a token signed by another key.
-It removes and reinstalls the gateway, requiring the namespace, encryption key, and PVCs to keep their UIDs, then deletes its namespace; with kind's `Delete` reclaim policy, that also removes the volumes.
-It creates no agent sandbox.
-To run it alone, use an owned disposable kind cluster with Agent Sandbox and a cluster administrator's kubeconfig that holds its credentials, because OpenTofu runs with an empty `PATH`:
+It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, each in new namespaces.
 
-```sh
-NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
-NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
-NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-e2e --test e2e \
-    kubernetes_live::the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage \
-    -- --ignored --exact --nocapture
-```
+The `kind-kubernetes-development` scenario deploys one agent with the defaults: the `kubernetes` runtime profile and the `development` authentication profile, whose tokens the SDK issues.
+Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
+The agent must answer from its recorded runtime with the stub's reply, and destroy must keep only the gateway's storage.
+A second apply must then reuse that storage, refreshing rather than creating it again, so the namespace, encryption key, and claims kept their identity, and the agent must answer again.
+The runner deletes the cluster with the redeployed deployment.
+That a gateway trusts only the deployment's own issuer is a [contract check](integration-tests.md#openshell-provider-contract) of the rendered chart.
 
-The test prints its private state directory, which holds OpenTofu state and generated key material; remove it when finished.
-On a cluster whose volumes use the `Retain` reclaim policy, the volumes outlive the namespace; delete them as [Remove Retained Resources](../../docs/build-deploy/usage.md#remove-retained-resources) describes.
-The `kind-openshift-agents` [HCL E2E scenario](#hcl-e2e-scenarios) deploys two agents with the OpenShift profile, `assistant` and `researcher`, each sandbox granting one endpoint named for it so that no two have the same policy.
+The `kind-openshift-oidc` scenario deploys two agents with the OpenShift profile, `assistant` and `researcher`, each sandbox granting one endpoint named for it so that no two have the same policy.
 Before the scenario, `cargo ci live-kind` starts a pinned registry that requires a login on the run's kind network and pushes the agent image there under a new image-index digest.
 The node may pull from that registry over HTTP, and its configuration for it holds no credentials, so a pod can pull the image only with a pull Secret.
 The new digest makes the node fetch the index from the registry, although the node already has the image's layers.
 Before its first apply, the `tests/e2e/hcl/kind` module releases a chart twice with the bundled Helm provider, as a platform and an operator would prepare the cluster: once for the namespaces, the pull Secret, and the CA, and once for the stub model and the issuer, whose release waits until both are ready:
 
-- The deployment's namespace with OpenShift UID-range annotations, as OpenShift prepares a project. It holds the registry's image pull Secret and the CA of the existing issuer.
+- The deployment's namespace, which holds the registry's image pull Secret. For `kind-openshift-oidc`, it also has OpenShift UID-range annotations, as OpenShift prepares a project, and holds the CA of the existing issuer.
 - A stub model server in its own namespace: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000. It answers every `POST /v1/chat/completions` with the same streamed chat completion. The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../../docs/build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) describes.
-- An existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
+- For `kind-openshift-oidc`, an existing OIDC issuer in its own namespace: the SDK's development issuer objects, without the NetworkPolicy that admits only a gateway in the issuer's namespace.
 
 `hcl_live::issuer` creates the issuer's key material and one token for the case's audience, which is the deployment UID; OpenTofu cannot sign a token.
 The token stays in a private credentials file in the run's `work` directory, which the `cli` and `verifier` modules export as the case's `token.env` variable.
 The gateway uses the `oidc` authentication profile, so the apply and the replies show that it accepts the issuer's tokens and that each sandbox pulled its image with the pull Secret.
 Each agent must answer from its recorded runtime with the stub's reply, a plan must report no changes, and destroy must keep only the gateway's storage.
-The test runner then uninstalls both releases, which deletes the three namespaces; it does not wait for Kubernetes to finish deleting them.
-`cargo ci live-kind` binds `cases/kind-openshift-agents.yaml` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
+The test runner then uninstalls both releases, which deletes their namespaces; it does not wait for Kubernetes to finish deleting them.
+`cargo ci live-kind` binds each case in `cases/` to the cluster's context, a fresh UID, gateway port, and namespace, and the image in the registry.
 It passes the kubeconfig as `TF_VAR_kubeconfig` and the registry's fixture login as `TF_VAR_pull_credentials`.
 The scenario does not check pod UIDs; kind does not enforce OpenShift security context constraints, and OpenShell applies the range.
 The scenario annotates the namespace itself; don't run it on a cluster that serves the `security.openshift.io` API group, where that would replace the range the cluster assigns.
@@ -88,7 +79,8 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw and Hermes sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply. |
-| `kind-openshift-agents` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
+| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
+| `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:
 
