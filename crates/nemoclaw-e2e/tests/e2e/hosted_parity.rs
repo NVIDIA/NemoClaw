@@ -77,6 +77,16 @@ fn authored_document(raw: &[u8], current: &[u8]) -> Document {
             }
         }
     }
+    // The v1 Hermes image's adapter reads Fabric's relay plugins, so an
+    // explicit filesystem policy must also grant that directory read access.
+    if sandbox["harness"]["kind"] == "nvidia.fabric.hermes"
+        && let Some(read_only) = sandbox
+            .get_mut("network")
+            .and_then(|network| network.pointer_mut("/policy/explicit/filesystem_policy/read_only"))
+            .and_then(|paths| paths.as_array_mut())
+    {
+        read_only.push(json!("/opt/nemo-relay/plugins/switchyard"));
+    }
     // The export records no image; the live case names the image template CI binds.
     if !sandbox.contains_key("image") {
         let image = match sandbox["harness"]["kind"].as_str().unwrap() {

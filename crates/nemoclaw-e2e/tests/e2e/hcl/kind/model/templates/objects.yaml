@@ -4,14 +4,17 @@
 # Two releases render this chart. The `namespaces` part holds what is ready
 # once created; the `workloads` part, what its release waits for.
 {{- if eq .Values.part "namespaces" }}
-# The deployment's namespace, annotated as OpenShift annotates a project.
+# The deployment's namespace, prepared by the operator; with the OpenShift
+# profile, annotated as OpenShift annotates a project.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.deploymentNamespace }}
+{{- if .Values.uidRange }}
   annotations:
     openshift.io/sa.scc.uid-range: {{ .Values.uidRange | quote }}
     openshift.io/sa.scc.supplemental-groups: {{ .Values.uidRange | quote }}
+{{- end }}
 ---
 # The operator's pull Secret for the private registry the sandbox images name.
 apiVersion: v1
@@ -22,6 +25,7 @@ metadata:
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: {{ .Values.pullSecret.dockerconfigjson | b64enc }}
+{{- if .Values.issuer }}
 ---
 # The CA the gateway trusts for the existing issuer's HTTPS endpoint.
 apiVersion: v1
@@ -37,6 +41,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.issuer.namespace }}
+{{- end }}
 ---
 # The stub model's namespace.
 apiVersion: v1
@@ -44,10 +49,12 @@ kind: Namespace
 metadata:
   name: {{ .Values.modelNamespace }}
 {{- else if eq .Values.part "workloads" }}
+{{- if .Values.issuer }}
 # The existing issuer: the SDK's development issuer objects.
 {{- range .Values.issuer.objects }}
 ---
 {{ toYaml . }}
+{{- end }}
 {{- end }}
 ---
 apiVersion: v1

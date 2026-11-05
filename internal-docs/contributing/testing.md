@@ -95,7 +95,7 @@ Put each test in the cheapest layer that can check its behavior, and assert only
 
 Unit tests check one crate's rules: configuration parsing and validation, compilation, planning, provider backends, CLI argument and output handling, and the build tool.
 They live in each crate's `src` modules and in its `integration` test binary, `tests/main.rs`; the providers' `schema` binaries also belong here.
-In `nemoclaw-e2e` alone, `integration` names the system-test binary instead; the tests it and the `e2e` binary don't ignore still run here.
+In `nemoclaw-e2e` alone, the `integration` binary holds the integration layer instead; the tests it and the `e2e` binary don't ignore still run here.
 They use in-process fakes and temporary files and need no bundle; `openshell-provider` and `fabric-provider`, for example, test their backends against the fake OpenShell gateway in `src/fake_gateway_tests.rs` without OpenTofu.
 On Unix, the SDK's `integration` binary also runs `Deployment` over a [scripted OpenTofu](../../crates/nemoclaw-sdk/tests/support/scripted_tofu.rs): a shell script in a temporary directory with a bundle's layout and manifest, which logs its calls and replays canned plans and states.
 The SDK alone decides the stage order and the unfinished-apply and unfinished-destroy state it saves when an operation stops, so those tests need neither OpenTofu nor `NEMOCLAW_TEST_BUNDLE`.
@@ -130,9 +130,8 @@ The profile also selects one ignored test each in `nemoclaw-test-fixtures` and `
 
 Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
 `nemoclaw-e2e`'s live tests live in its `e2e` binary, `crates/nemoclaw-e2e/tests/e2e`.
-Its [HCL E2E scenarios](live-tests.md#hcl-e2e-scenarios) are in `tests/e2e/hcl`, and the live tests not yet migrated to them are Rust modules in `tests/e2e/rust`.
-The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's `kubernetes_live` and `kubernetes_chart` tests and its kind HCL E2E scenario.
-The `live-docker` profile's `managed_gateway` test in `nemoclaw-e2e` plans and applies only a managed gateway's runtime resources with real Docker; [Docker Gateway Recovery](live-tests.md#docker-gateway-recovery) gives its inputs.
+Its [HCL E2E scenarios](live-tests.md#hcl-e2e-scenarios) are in `tests/e2e/hcl`; `hcl_live.rs` runs them and holds their probes.
+The `live-docker` profile selects the Docker tests in `nemoclaw-build`, that `e2e` binary, and `nemoclaw-provider`; the `live-kind` profile selects the `e2e` binary's kind HCL E2E scenarios.
 Other ignored tests, such as the Brev and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
 [Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
 
@@ -151,7 +150,7 @@ The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bund
 `cargo ci test` runs the tests not marked `#[ignore]` with the `ci` nextest profile, then the doctests, which nextest does not run.
 The `ci` profile runs at most eight tests concurrently, retries nothing, and finishes the remaining tests after a failure.
 
-The contract, system, and live tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
+The contract, integration, and live tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
 `cargo ci bundle` builds the host platform's bundle in `dist/PLATFORM`, such as `dist/linux_arm64`, and `cargo ci contract` and `cargo ci integration` pass that path to their profiles.
 Local contract and integration runs use the available CPU count, with a minimum of four workers and a maximum of eight.
 CI keeps the profile's four-worker setting; the runner treats `CI` or `GITHUB_ACTIONS` being set as CI.
@@ -162,16 +161,16 @@ A contract test runs the provider built from the checkout, but an integration te
 
 `cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../../docs/build-deploy/build.md).
 It pulls the pinned OpenShell and Ollama images; downloads the pinned OpenShell CLI by checksum into `.tools`; builds the OpenClaw and Hermes agent images, the reference dummy image, and an image derived from the dummy under a fresh `nc-live-` prefix; and writes gateway documents, and binds the dummy HCL E2E case, with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
-It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
+It runs the `live-docker` profile in five nextest commands: one for the tests that need no gateway document, one for each of the two gateway tests with its own document, then one for each HCL E2E case, `docker-dummy` and `docker-openclaw-hermes-interfaces`, with its bound document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
 Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
 When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
-It requests no inference from a model server and needs no GPU or credentials; the [agent interface test](live-tests.md#agent-interfaces) answers its agents' model requests with a stand-in in the test process.
+It requests no inference from a model server and needs no GPU or credentials.
 
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../../docs/build-deploy/build.md#build-agent-images).
 It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
 It starts a registry that requires a login on the kind network and pushes that image to it for the scenario.
-It then runs the `live-kind` profile's gateway test, the `kind-openshift-agents` HCL E2E scenario, and the chart-render tests, which need no Helm CLI, up to four at a time.
+It then runs the `kind-kubernetes-development` and `kind-openshift-oidc` HCL E2E scenarios, one after the other, which need no Helm CLI.
 It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER` to any value to keep the cluster for inspection.
 [Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
 
@@ -194,8 +193,8 @@ Instead of either, `--images-commit COMMIT` pulls the OpenClaw, Hermes, Deep Age
 | `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
 | `contract` | Each partition's nextest run | 300 s | 16 s | 32 s |
 | `integration` | Each partition's nextest run | 300 s | 90 s | 180 s |
-| `live-docker` | Its four nextest commands together | 360 s | 180 s | 360 s |
-| `live-kind` | The nextest run | 300 s | 180 s | 360 s |
+| `live-docker` | Its five nextest commands together | 360 s | 180 s | 360 s |
+| `live-kind` | Its nextest commands, one per HCL case, together | 300 s | 180 s | 360 s |
 
 Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's contract partitions, and a limit for any one of its tests:
 
@@ -203,7 +202,7 @@ Its `binaries` section budgets each provider's contract binary by its nextest na
 |---|---|---|---|
 | `fabric-provider::contract` | 25 s | 10 s | 20 s |
 | `nemoclaw-provider::contract` | 45 s | 8 s | 16 s |
-| `openshell-provider::contract` | 105 s | 6 s | 12 s |
+| `openshell-provider::contract` | 180 s | 12 s | 24 s |
 
 Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count.
 
@@ -322,7 +321,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 3. When selected and the build and bundle jobs finish, `Contract / Tests N of M` and `Integration / Tests N of M` run their layers in partitions, and `Contract / Timing report` and `Integration / Timing report` then report each whole suite and check the binary budgets.
 4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E / Build images` with `cargo ci live-images`, and `E2E / Docker tests` and `E2E / Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E / HCL`; see [live suites](#live-suites).
 
-When no image input changed since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images.
+When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
 Superseded pull request runs are cancelled, and their checks report as cancelled rather than failed.

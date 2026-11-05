@@ -93,7 +93,7 @@ jobs:
           # This NVIDIA GPU runner is already used by the main E2E workflow.
           gpu='[
             {"case": "docker-openclaw-vllm", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": ""},
-            {"case": "docker-openclaw-hermes-vllm", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": ""},
+            {"case": "docker-openclaw-vllm-shared", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": ""},
             {"case": "docker-openclaw-hermes-ollama", "runner": "linux-amd64-gpu-rtxpro6000-latest-1", "secret": "NVIDIA_API_KEY"}
           ]'
           if [ "$GPU" = true ]; then

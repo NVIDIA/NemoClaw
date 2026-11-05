@@ -509,7 +509,7 @@ pub(super) async fn run_steps(
             };
             live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
         } else if step == Step::LiveDocker {
-            // The interface test forwards and reads tokens with the CLI.
+            // The interface case forwards and reads tokens with the CLI.
             match live_docker::install_openshell(tools.pins, &platform).await {
                 Ok(()) => run_step(&tools, &platform, step, partition, archive_file, images),
                 Err(error) => Err(error),

@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # The reference dummy agent behind a managed Docker gateway: apply, the
-# configured reply, an unchanged plan, and destroy that keeps only the
-# gateway's storage. It needs no model or credentials; cargo ci live-docker
-# runs it.
+# configured reply, an unchanged plan, destroy that keeps only the gateway's
+# storage, then a redeploy that reuses that storage with a new gateway
+# container, the reply again, and destroy. It needs no model or credentials;
+# cargo ci live-docker runs it.
 
 run "apply" {
   module {
@@ -60,6 +61,67 @@ run "unchanged_plan" {
 }
 
 run "destroy" {
+  module {
+    source = "./cli"
+  }
+
+  variables {
+    operation = "destroy"
+  }
+
+  assert {
+    condition = (
+      output.exit_code == 0 && output.result.outcome == "destroyed"
+      && toset(output.result.retained) == toset(["openshell_gateway_storage.runtime"])
+    )
+    error_message = "Destroy failed or retained other resources: ${output.error}"
+  }
+}
+
+# The retained storage, with its encryption key, is refreshed rather than
+# created again, and the gateway runs in a new container.
+run "redeploy" {
+  module {
+    source = "./cli"
+  }
+
+  variables {
+    operation = "apply"
+  }
+
+  assert {
+    condition = (
+      output.exit_code == 0 && output.result.outcome == "succeeded"
+      && !contains(keys(output.changes), "openshell_gateway_storage.runtime")
+      && contains(keys(output.changes), "docker_container.managed_gateway_runtime")
+    )
+    error_message = "Redeploy failed, created the gateway's storage again, or kept no new gateway container: ${output.error}"
+  }
+}
+
+run "reply_after_redeploy" {
+  module {
+    source = "./verifier"
+  }
+
+  variables {
+    targets = {
+      assistant = {
+        agent            = "main"
+        request          = { message = "dummy-lifecycle" }
+        response_pointer = "/output/message"
+        answer           = "dummy-reply"
+      }
+    }
+  }
+
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+run "destroy_after_redeploy" {
   module {
     source = "./cli"
   }

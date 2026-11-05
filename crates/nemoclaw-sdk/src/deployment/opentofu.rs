@@ -105,6 +105,7 @@ impl Deployment {
                     &args,
                     &env,
                     cancel,
+                    Some(&self.force_stop),
                     Some(self.progress.clone()),
                 )
                 .await

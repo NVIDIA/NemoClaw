@@ -199,68 +199,97 @@ pub(super) async fn run_live_kind(
         .push(&node_container, &image, &metadata, &pushed_metadata)
         .await?;
 
-    // The kind HCL E2E case, bound to this cluster and agent image. Its
-    // namespaces are new, and the cluster is deleted afterward.
-    let hcl = inputs.path().join("hcl");
-    let case = inputs.path().join(format!("{KIND_CASE}.yaml"));
-    let mut namespace = [0u8; 6];
-    getrandom::fill(&mut namespace).map_err(|_| "cannot name the case's namespace")?;
-    fs::write(
-        &case,
-        kind_case(
-            &fs::read_to_string(
-                Path::new("crates/nemoclaw-e2e/cases").join(format!("{KIND_CASE}.yaml")),
-            )?,
-            &live::uuid()?,
-            &format!("https://127.0.0.1:{}", live::free_port()?),
-            &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
-            &format!("kind-{name}"),
-            &pushed,
-            harness,
-        )?,
-    )?;
-
-    let mut command = match archive {
-        Some(archive) => archived(Step::LiveKind, archive, configure)?,
-        None => {
-            let [args] = Step::LiveKind.cargo_args() else {
-                unreachable!("live-kind is one nextest command")
-            };
-            let mut command = cargo();
-            configure(&mut command);
-            command.args(*args);
-            command
-        }
+    // Each kind HCL E2E case, bound to this cluster and agent image in new
+    // namespaces, runs as its own nextest command: `hcl_live::case` runs one
+    // case. The cluster is deleted afterward. Each command rewrites the
+    // profile's JUnit report; keep each one, so the step reports all cases.
+    let Some((profile, file)) = Step::LiveKind.junit() else {
+        unreachable!("live-kind writes a JUnit report")
     };
-    command
-        .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
-        .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
-        .env("NEMOCLAW_TEST_BUNDLE", &bundle)
-        .env("NEMOCLAW_TEST_AGENT_METADATA", &pushed_metadata)
-        .env("NEMOCLAW_HCL_CASE", KIND_CASE)
-        .env("NEMOCLAW_HCL_DOCUMENT", &case)
-        .env("NEMOCLAW_HCL_RUN", &hcl)
-        .env("TF_VAR_kubeconfig", &kubeconfig)
-        .env(
-            "TF_VAR_pull_credentials",
-            format!(
-                r#"{{ username = "{}", password = "{}" }}"#,
-                kind_registry::USER,
-                kind_registry::PASSWORD
-            ),
-        )
-        // Only the image pull above needs the registry.
-        .env_remove(REGISTRY_USERNAME)
-        .env_remove(REGISTRY_PASSWORD);
-    let result = run(&mut command);
+    let junit = Path::new("target").join("nextest").join(profile).join(file);
+    let mut reports = Vec::new();
+    let mut result = Ok(());
+    for case_name in KIND_CASES {
+        let case = inputs.path().join(format!("{case_name}.yaml"));
+        let mut namespace = [0u8; 6];
+        getrandom::fill(&mut namespace).map_err(|_| "cannot name the case's namespace")?;
+        fs::write(
+            &case,
+            kind_case(
+                &fs::read_to_string(
+                    Path::new("crates/nemoclaw-e2e/cases").join(format!("{case_name}.yaml")),
+                )?,
+                &live::uuid()?,
+                &format!("https://127.0.0.1:{}", live::free_port()?),
+                &format!("nc-hcl-{}", nemoclaw_build::hex(&namespace)),
+                &format!("kind-{name}"),
+                &pushed,
+                harness,
+            )?,
+        )?;
+        let mut command = match archive {
+            Some(archive) => archived(Step::LiveKind, archive, configure)?,
+            None => {
+                let [args] = Step::LiveKind.cargo_args() else {
+                    unreachable!("live-kind is one nextest command")
+                };
+                let mut command = cargo();
+                configure(&mut command);
+                command.args(*args);
+                command
+            }
+        };
+        command
+            .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
+            .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
+            .env("NEMOCLAW_TEST_BUNDLE", &bundle)
+            .env("NEMOCLAW_TEST_AGENT_METADATA", &pushed_metadata)
+            .env("NEMOCLAW_HCL_CASE", case_name)
+            .env("NEMOCLAW_HCL_DOCUMENT", &case)
+            .env(
+                "NEMOCLAW_HCL_RUN",
+                inputs.path().join("hcl").join(case_name),
+            )
+            .env("TF_VAR_kubeconfig", &kubeconfig)
+            .env(
+                "TF_VAR_pull_credentials",
+                format!(
+                    r#"{{ username = "{}", password = "{}" }}"#,
+                    kind_registry::USER,
+                    kind_registry::PASSWORD
+                ),
+            )
+            // Only the image pull above needs the registry.
+            .env_remove(REGISTRY_USERNAME)
+            .env_remove(REGISTRY_PASSWORD);
+        // A command that writes no report must not repeat the previous one.
+        let _ = fs::remove_file(&junit);
+        // Every case runs; the first failure is the step's.
+        let outcome = run(&mut command);
+        if let Ok(xml) = fs::read_to_string(&junit) {
+            reports.push(xml);
+        }
+        if result.is_ok() {
+            result = outcome;
+        }
+    }
+    if !reports.is_empty() {
+        let joined = ci::timing::join_consecutive(&reports)
+            .and_then(|xml| fs::write(&junit, xml).map_err(|error| error.to_string()));
+        if let Err(error) = joined {
+            eprintln!("cannot join the live-kind JUnit reports: {error}");
+        }
+    }
     drop(registry);
     drop(cluster);
     drop(cleanup);
     result
 }
 
-/// The HCL E2E case that live-kind runs.
-const KIND_CASE: &str = "kind-openshift-agents";
+/// The HCL E2E cases that live-kind runs, in order: the default kubernetes
+/// runtime and development authentication profiles, then the OpenShift
+/// profile with an existing OIDC issuer.
+const KIND_CASES: [&str; 2] = ["kind-kubernetes-development", "kind-openshift-oidc"];
 
 /// The kind case bound to one run: its UID, which is also its token audience,
 /// gateway endpoint, namespace (which also names the stub model's and the
@@ -401,8 +430,23 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    fn the_kind_case_binds_its_cluster_namespace_and_image() {
-        let template = include_str!("../../../nemoclaw-e2e/cases/kind-openshift-agents.yaml");
+    fn the_kind_cases_bind_their_cluster_namespace_and_image() {
+        let development =
+            include_str!("../../../nemoclaw-e2e/cases/kind-kubernetes-development.yaml");
+        let bound = kind_case(
+            development,
+            "u-1",
+            "https://127.0.0.1:1",
+            "nc-n",
+            "kind-c",
+            "nc-registry-1:5000/agent@sha256:1",
+            "h",
+        )
+        .unwrap();
+        assert!(bound.contains("http://model.nc-n-model.svc.cluster.local:8000/v1"));
+        assert!(!bound.contains("nc-hcl-kind") && !bound.contains("@sha256:0000"));
+
+        let template = include_str!("../../../nemoclaw-e2e/cases/kind-openshift-oidc.yaml");
         let bound = kind_case(
             template,
             "u-1",

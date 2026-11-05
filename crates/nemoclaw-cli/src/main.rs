@@ -14,7 +14,13 @@ use clap::Parser;
 use nemoclaw_sdk::CancellationToken;
 use std::{io::Write, process::ExitCode};
 
-fn interrupt() -> std::io::Result<impl std::future::Future<Output = ()>> {
+/// Cancels `cancel` at the first interrupt and `force_stop` at the second: the
+/// first lets OpenTofu finish the resource operations in progress, the second
+/// ends it at once.
+fn interrupts(
+    cancel: CancellationToken,
+    force_stop: CancellationToken,
+) -> std::io::Result<impl std::future::Future<Output = ()>> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -23,13 +29,19 @@ fn interrupt() -> std::io::Result<impl std::future::Future<Output = ()>> {
         let mut interruption = signal(SignalKind::interrupt())?;
         let mut termination = signal(SignalKind::terminate())?;
         Ok(async move {
-            tokio::select! {_=interruption.recv()=>{},_=termination.recv()=>{}}
+            for token in [cancel, force_stop] {
+                tokio::select! {_=interruption.recv()=>{},_=termination.recv()=>{}}
+                token.cancel();
+            }
         })
     }
     #[cfg(not(unix))]
     {
-        Ok(async {
-            let _ = tokio::signal::ctrl_c().await;
+        Ok(async move {
+            for token in [cancel, force_stop] {
+                let _ = tokio::signal::ctrl_c().await;
+                token.cancel();
+            }
         })
     }
 }
@@ -52,18 +64,14 @@ async fn run() -> ExitCode {
     let cli = Cli::parse();
     let output_format = cli.command.output_format();
     let context = formatting::RenderContext::new(&cli);
-    let cancel = CancellationToken::new();
-    let signal = cancel.clone();
-    let interruption = match interrupt() {
+    let (cancel, force_stop) = (CancellationToken::new(), CancellationToken::new());
+    let interruption = match interrupts(cancel.clone(), force_stop.clone()) {
         Ok(interruption) => interruption,
         Err(error) => {
             return report_error(&error, output_format, &context);
         }
     };
-    let signals = tokio::spawn(async move {
-        interruption.await;
-        signal.cancel();
-    });
+    let signals = tokio::spawn(interruption);
     let output_path = match &cli.command {
         args::Command::Export { output } => output.clone(),
         _ => None,
@@ -73,6 +81,7 @@ async fn run() -> ExitCode {
         cli,
         tokio::io::stdin(),
         &cancel,
+        &force_stop,
         context.progress(reporter.callback()),
     )
     .await;
