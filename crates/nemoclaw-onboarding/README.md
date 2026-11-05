@@ -18,6 +18,8 @@ A built CLI takes the same arguments, as `nemoclaw onboard`.
 
 - **Template:** its values become the suggested answers for a new deployment with a fresh `metadata.uid`; onboarding never edits an existing deployment.
   Any single-sandbox example works as a template; templates with several sandboxes do not.
+- **Harnesses:** onboarding offers OpenClaw and Hermes.
+  A template that names another harness keeps it as the suggested answer, and the menu adds it for that run.
 - **No template:** the suggestions describe a managed Docker gateway running OpenClaw with NVIDIA Endpoints inference.
 - **Output:** defaults to `deployment.yaml` and must be a new file; onboarding never overwrites one.
 

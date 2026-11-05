@@ -44,7 +44,7 @@
     },
     "/spec/sandboxes/*/harness/kind": {
       "title": "Choose your agent harness",
-      "description": "The harness is the agent environment NemoClaw installs and isolates."
+      "description": "The harness is the agent environment NemoClaw installs and isolates. More harnesses will be offered later."
     },
     "/spec/sandboxes/*/image/ref": {
       "title": "Sandbox image"

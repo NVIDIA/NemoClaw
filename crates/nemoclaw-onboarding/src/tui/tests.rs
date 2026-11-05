@@ -579,6 +579,17 @@ fn another_harness_omits_its_optional_settings_and_asks_required_ones() {
         "{:?}",
         resolution.questions()
     );
+    // A template's harness outside the offering joins the menu for its run.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    values["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+        serde_json::json!("nvidia.fabric.remote-agent");
+    std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
+    let mut state = load_journey(Source::Template(&path), &capabilities).unwrap();
     state
         .answer(
             &capabilities,
@@ -1726,4 +1737,26 @@ fn review_opens_at_the_top_after_going_back_and_returning() {
     wizard.advance();
     assert!(wizard.question().unwrap().is_none());
     assert_eq!(wizard.review_scroll, 0);
+}
+
+#[test]
+fn the_default_harness_menu_offers_openclaw_then_hermes() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.advance();
+    wizard.advance();
+    let question = wizard.question().unwrap().unwrap();
+    assert_eq!(question.id(), "/spec/sandboxes/assistant/harness/kind");
+    assert_eq!(
+        question.choices(),
+        [
+            serde_json::json!("nvidia.fabric.openclaw"),
+            serde_json::json!("nvidia.fabric.hermes")
+        ]
+    );
+    assert_eq!(
+        question.suggestion(),
+        Some(&serde_json::json!("nvidia.fabric.openclaw"))
+    );
 }
