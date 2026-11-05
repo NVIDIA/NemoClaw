@@ -505,6 +505,8 @@ interpreter inherits the approval wrapper while isolating the script's exit and 
 preserves the credential boundary without feeding a bulk script through terminal line editing.
 Cleanup removes the temporary script after success or failure; a cleanup failure also fails the fixture. The fixture checks
 the transferred bytes against the host's digest before evaluation and rejects a replaced script.
+If approval fails, the fixture records the command exit code and whether that request remains pending.
+It discards raw device records and command output after emitting fixed diagnostic categories.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
@@ -902,6 +904,12 @@ a five-second kill grace. A failed command or timeout marks cleanup as failed, r
 directory and recovery instructions, and allows policy and capture cleanup to continue.
 The same target writes an npm cache marker under the DCode native home before its existing rebuild.
 After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
+The thread-approval check also saves a preference through the pinned DCode writer before its first named rebuild.
+It requires comment removal and byte-identical restoration of the saved config through production state transfer.
+Before and after rebuild, all three identity aliases must exit successfully and report the configured route,
+provider, model, and endpoint. Both installed identity files must remain root-owned with mode `0444`,
+and the sandbox user must be unable to open them for writing. Wrapper unit tests own metadata parsing,
+legacy fallback, unsafe-file rejection, and output filtering; this live check owns installed startup and restore composition.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.

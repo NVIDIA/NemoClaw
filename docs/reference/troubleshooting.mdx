@@ -290,14 +290,26 @@ docker info
 
 The NemoClaw installer does not require `sudo` or root. It installs Node.js via nvm and NemoClaw via npm, both into user-local directories. The installer also handles OpenShell installation automatically using a pinned release.
 
-If you see permission errors during installation, they typically come from Docker, not the NemoClaw installer itself. Docker must be installed and running before you run the installer, and installing Docker may require elevated privileges on Linux.
+If the installer reports `Unsafe user-local executable directory`, `Unsafe npm executable directory`, or `Unsafe executable directory`, inspect the named path and each parent directory.
+Each component must be a real directory owned by you or root, without group or world write access except in a root-owned sticky parent such as `/tmp`.
+The installer leaves existing directory modes unchanged and stops before it publishes executables.
+If you own the named real directory and only its mode is unsafe, run `chmod go-w` on that directory, then rerun the installer.
+Otherwise, ask the directory owner or host administrator to repair the path before you rerun the installer.
+Do not use `sudo` to bypass this error.
+
+For Docker permission errors, verify that Docker is installed and running.
+Installing Docker may require elevated privileges on Linux.
 
 ### npm install fails with permission errors
 
-If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`. Instead, configure npm to use a directory you own:
+If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`.
+Before configuring npm, inspect `~/.npm-global` (if it exists) and every parent directory.
+Each existing directory must meet the ownership and permission requirements in [Permission errors during installation](#permission-errors-during-installation).
+Repair any unsafe directory using that procedure before running these commands.
+Configure npm to use a directory you own:
 
 ```bash
-mkdir -p ~/.npm-global
+(umask g-w,o-w && mkdir -p ~/.npm-global)
 npm config set prefix ~/.npm-global
 export PATH=~/.npm-global/bin:$PATH
 ```
@@ -1815,7 +1827,9 @@ Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
 ### `dcode status` reports a stale inference route
 
-The managed `dcode` runtime reads provider and model settings from `/sandbox/.deepagents/config.toml`. NemoClaw generates that file during onboarding and rebuilds, and Deep Agents provider or model changes require fresh named recreation rather than `inference set`.
+`dcode status` uses managed route and upstream provider metadata from the root-owned files `/usr/local/share/nemoclaw/dcode-provider-route` and `/usr/local/share/nemoclaw/dcode-upstream-provider`.
+Older images without those files use generated comments in `/sandbox/.deepagents/config.toml` as a fallback.
+Model and endpoint settings remain in that native config.
 
 Check the host-recorded route first:
 
@@ -1830,17 +1844,23 @@ nemo-deepagents <name> connect
 dcode status
 ```
 
-If the provider or model does not match the host route, rebuild the sandbox to regenerate `config.toml` from recorded metadata:
+If the route or provider identity is missing or stale, rebuild the sandbox to refresh the managed image metadata.
+Rebuild replaces the sandbox while preserving the saved native home, including `config.toml` and its model and endpoint settings:
 
 ```bash
 nemo-deepagents <name> rebuild
 ```
 
-To intentionally switch provider or model, recreate the named sandbox with fresh onboarding:
+Reconnect and run `dcode status` again to verify the route and provider identity.
+Check model and endpoint values against the saved native config.
+
+Fresh named recreation also restores the saved `config.toml` and can stop if its selection conflicts with the requested provider or model:
 
 ```bash
 nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 ```
+
+To validate a different selection without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
 
 ### Trusted route-probe helper is missing
 

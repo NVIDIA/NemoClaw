@@ -225,7 +225,7 @@
         "packageSpec": "openclaw@2026.10.5",
         "integrity": "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==",
         "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz",
-        "lockSha256": "02f1096028c223c17757b026c92e389a7904178995d588b3e3a4a5d8deb8d15f"
+        "lockSha256": "16b8c902f7760658e54ccc697a6ec7dbe38768e3fcd78876e1b8a1fd018c6a21"
       }
     },
     {
