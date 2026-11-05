@@ -90,10 +90,10 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 5. **After a transition:** set `PHASE` to the next phase's directory, write its [fresh phase input](README.md#driving-conventions), and re-run every check whose Phases list names that phase, in the [map's order](README.md#features).
    The [lifecycle phases](README.md#lifecycle-phases) table gives each After-phase's check count; run exactly those.
    Record the transition's own row in `$EVIDENCE/checks.md` once its result is known.
-6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3, then stop only the runtime through Fabric's supported control, and confirm that plan sees it stopped. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
+6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3, then stop only the runtime through Fabric's supported control. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
 
    Result: the control reports a stop that succeeded, with no error.
-   Run step 4; `plan.txt` must say `agent runtime is not running` and must not replace the sandbox.
+   Run step 4; review the plan before apply and do not proceed if it replaces the sandbox, as the [gotchas](#gotchas) require.
    Pass when `container-before.txt` and `container-after.txt` match, `runtime-after.txt` differs from `runtime-before.txt`, and the request in step 4 succeeds on the new runtime.
    A stop with no supported control is Failed, linked to one missing-implementation finding; a runtime that plan/apply doesn't bring back is Failed.
    Then run step 5 with `PHASE=after-runtime-restart`.

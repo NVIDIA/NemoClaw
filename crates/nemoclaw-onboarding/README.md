@@ -8,7 +8,7 @@ It never plans or applies, creates no deployment state, and keeps no credential 
 
 ## Run Onboarding
 
-With the [build prerequisites](../../docs/build.md) installed, run from the repository root:
+With the [build prerequisites](../../docs/build-deploy/build.md) installed, run from the repository root:
 
 ```sh
 cargo run -p nemoclaw-cli -- onboard examples/onboarding/openclaw.yaml --output my-deployment.yaml
@@ -46,13 +46,13 @@ For an external gateway, set `spec.gateway.engine` in the template to an engine 
 A confirmed conflict, such as an image without the chosen harness, blocks saving until you change the answer.
 A read that fails or cannot run leaves the target unverified, and you can still save.
 None of this establishes that the deployment will run; plan and apply make their own checks.
-The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) defines what is read.
+The [provider reference](../../docs/references/provider.md#engine-and-fabric-discovery) defines what is read.
 
 ## After Onboarding
 
 1. Review the saved YAML; the template's comments and formatting are not kept.
 2. Set the environment variables the YAML references. An interactive `nemoclaw plan` prompts for missing values; `--non-interactive` fails instead.
-3. Plan and apply with a [verified native bundle and the CLI on `PATH`](../../docs/build.md#build-a-native-bundle), following the [deployment guide](../../docs/usage.md):
+3. Plan and apply with a [verified native bundle and the CLI on `PATH`](../../docs/build-deploy/build.md#build-a-native-bundle), following the [deployment guide](../../docs/build-deploy/usage.md):
 
    ```sh
    nemoclaw plan my-deployment.yaml
@@ -61,5 +61,5 @@ The [provider reference](../../docs/provider.md#engine-and-fabric-discovery) def
 
 ## Design and Backlog
 
-The [authoring domain model](../../docs/design/authoring-domain.md) and [onboarding journeys](../../docs/design/onboarding-journeys.md) define how questions are resolved, when **Ctrl+D** can accept suggestions, and what review requires before saving.
+The [authoring domain model](../../internal-docs/design/authoring-domain.md) and [onboarding journeys](../../internal-docs/design/onboarding-journeys.md) define how questions are resolved, when **Ctrl+D** can accept suggestions, and what review requires before saving.
 Journeys onboarding does not offer yet are recorded in [`unsupported_onboarding_journeys.rs`](../nemoclaw-authoring/tests/unsupported_onboarding_journeys.rs).

@@ -17,7 +17,7 @@ pub fn render_reference(schema: &Value) -> Result<String, String> {
         "# YAML Configuration Reference\n\n",
         "<!-- Generated from the SDK schema. Edit Rust field descriptions and constraints, then run cargo run --locked -p nemoclaw-build -- schema. -->\n\n",
         "This reference and the [JSON Schema](../../schemas/nemoclaw-v1alpha1.schema.json) describe authored YAML for this source revision.\n",
-        "See [schema maintenance](../contributing/configuration-schema.md) for generation and validation commands.\n\n",
+        "See [schema maintenance](../../internal-docs/contributing/configuration-schema.md) for generation and validation commands.\n\n",
         "Paths use `[]` for an array element and `{key}` for a map entry.\n",
         "Required fields must appear when their containing object is present; conditional requirements are stated in the table or description.\n",
         "An optional object can contain required fields if you choose to declare it.\n",
@@ -218,18 +218,20 @@ fn guide(name: &str) -> &'static str {
     match name {
         "Management" | "ExternalManagement" | "ManagedManagement" | "ManagedResource"
         | "NetworkReference" | "ExternalNetwork" => {
-            "[Resource ownership](../usage.md#resource-ownership)"
+            "[Resource ownership](../build-deploy/usage.md#resource-ownership)"
         }
         "Network" | "ExplicitPolicy" | "ExplicitPolicySelection" => {
-            "[Sandbox policy](../sandbox-network.md)"
+            "[Sandbox policy](../security/sandbox-network.md)"
         }
-        name if name.starts_with("Policy") => "[Sandbox policy](../sandbox-network.md)",
+        name if name.starts_with("Policy") => "[Sandbox policy](../security/sandbox-network.md)",
         "InlineRecipe" | "Compatibility" | "Tool" | "Resources" | "Settings" | "Compilation"
-        | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../recipes.md)",
-        "ServicePlacement" | "ServicePublication" => "[SSH model service](../remote-service.md)",
+        | "Reuse" | "Manifest" | "File" => "[Inline model recipes](../agents-inference/recipes.md)",
+        "ServicePlacement" | "ServicePublication" => {
+            "[SSH model service](../agents-inference/remote-service.md)"
+        }
         "Service" | "Model" | "Serving" | "Memory" | "ServiceHardware" | "ServiceContainer"
         | "ServiceIpc" | "DedicatedHardware" | "HardwareProfile" => {
-            "[Managed models](../models.md)"
+            "[Managed models](../agents-inference/models.md)"
         }
         "InferenceProvider"
         | "InlineInferenceProvider"
@@ -241,17 +243,19 @@ fn guide(name: &str) -> &'static str {
         | "InferenceApi"
         | "ReasoningEffort"
         | "AgentAuth"
-        | "AuthMethod" => "[Inference configuration](../inference.md)",
+        | "AuthMethod" => "[Inference configuration](../agents-inference/inference.md)",
         "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
         | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
-        | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
+        | "ToolDisclosure" => "[Agent runtimes](../agents-inference/agents.md)",
         "ServiceExposure" | "AuthorizationMode" => {
-            "[Agent interfaces](../interfaces.md#expose-a-service-through-the-gateway)"
+            "[Agent interfaces](../agents-inference/interfaces.md#expose-a-service-through-the-gateway)"
         }
         "ImagePullPolicy" => {
-            "[Container image downloads](../usage.md#control-container-image-downloads)"
+            "[Container image downloads](../build-deploy/usage.md#control-container-image-downloads)"
         }
-        _ => "[Configuration and credentials](../usage.md#configuration-and-credentials)",
+        _ => {
+            "[Configuration and credentials](../build-deploy/usage.md#configuration-and-credentials)"
+        }
     }
 }
 

@@ -24,12 +24,12 @@ If the executable and the documentation disagree, establish which deployment the
 
 | Task | Owning source in a v1 checkout |
 |---|---|
-| First deployment and build | [Prerequisites](../../../docs/prerequisites.md), [get started](../../../docs/get-started.md), [build](../../../docs/build.md) |
-| Plan, change, recover, export, or destroy | [Usage](../../../docs/usage.md), [state](../../../docs/state.md), [troubleshooting](../../../docs/troubleshooting.md) |
-| Inference API, models, recipes, or SSH placement | [Inference](../../../docs/inference.md), [models](../../../docs/models.md), [recipes](../../../docs/recipes.md), [remote service](../../../docs/remote-service.md) |
-| Native agents, dashboards, or integrations | [Agents](../../../docs/agents.md), [interfaces](../../../docs/interfaces.md) |
-| SDK, provider, accepted fields, or flags | [SDK](../../../docs/sdk.md), [provider](../../../docs/provider.md), [configuration](../../../docs/reference/configuration.md), [CLI](../../../docs/reference/cli.md) |
-| Earlier-product migration or security | [Migration](../../../docs/migration.md), [security](../../../docs/security.md), [sandbox policy](../../../docs/sandbox-network.md) |
+| First deployment and build | [Prerequisites](../../../docs/get-started/prerequisites.md), [get started](../../../docs/get-started/first-deployment.md), [build](../../../docs/build-deploy/build.md) |
+| Plan, change, recover, export, or destroy | [Usage](../../../docs/build-deploy/usage.md), [state](../../../docs/build-deploy/state.md), [troubleshooting](../../../docs/observability/troubleshooting.md) |
+| Inference API, models, recipes, or SSH placement | [Inference](../../../docs/agents-inference/inference.md), [models](../../../docs/agents-inference/models.md), [recipes](../../../docs/agents-inference/recipes.md), [remote service](../../../docs/agents-inference/remote-service.md) |
+| Native agents, dashboards, or integrations | [Agents](../../../docs/agents-inference/agents.md), [interfaces](../../../docs/agents-inference/interfaces.md) |
+| SDK, provider, accepted fields, or flags | [SDK](../../../docs/references/sdk.md), [provider](../../../docs/references/provider.md), [v1 configuration](../../../docs/references/v1-configuration.md), [CLI](../../../docs/references/cli.md) |
+| Earlier-product migration or security | [Migration](../../../docs/get-started/migration.md), [security](../../../docs/security/security.md), [sandbox policy](../../../docs/security/sandbox-network.md) |
 
 Read only the sources for the task, and follow their verification and recovery steps.
 **TBD** marks something not yet verified.
