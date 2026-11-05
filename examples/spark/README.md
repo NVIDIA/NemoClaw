@@ -17,7 +17,6 @@ The new scenarios use managed Docker gateways and authenticated vLLM services.
 | [two-models.yaml](two-models.yaml) | Pi with Qwen3-4B and Qwen3.6-27B NVFP4 | Fast/smart route selection with two independently managed services |
 | [local-and-hosted.yaml](local-and-hosted.yaml) | OpenClaw with local Qwen3.8-27B NVFP4 and an operator-selected hosted model | Managed local inference plus a hosted model; the local route is the default |
 | [vllm.yaml](vllm.yaml) | OpenClaw with Qwen3-4B | The original ordinary-vLLM example |
-| [spark-inline.yaml](spark-inline.yaml) | OpenClaw with Qwen3.8-Flash-Next-NVFP4 | Model preparation, CPU offloading, and an inline serving recipe |
 | [remote-vllm.yaml](remote-vllm.yaml) | OpenClaw with SSH-managed Qwen3-4B and an external Podman gateway | Separate sandbox and model engines; the current OpenShell Podman pin has the [TLS initialization blocker](https://github.com/NVIDIA/OpenShell/issues/3427) |
 
 The Deep Agents researcher has `tools.allow: [read]`; the writer retains the harness's default tools.
@@ -31,7 +30,7 @@ These aliases select models explicitly; they are not an automatic cost or diffic
 ## Prepare and Run
 
 Run commands from the repository root.
-Use the [build prerequisites](../../docs/build.md) and [managed-model requirements](../../docs/models.md), including Docker with NVIDIA GPU access and driver major 580 or newer.
+Use the [build prerequisites](../../docs/build-deploy/build.md) and [managed-model requirements](../../docs/agents-inference/models.md), including Docker with NVIDIA GPU access and driver major 580 or newer.
 Apply downloads pinned model weights, creates containers, and reserves model/KV-cache memory.
 Run one example at a time unless the host has capacity for their combined budgets.
 Preserve existing deployments and use available ports and nonoverlapping gateway network ranges.
@@ -39,20 +38,19 @@ Preserve existing deployments and use available ports and nonoverlapping gateway
 Build the ordinary runtime and the harnesses selected by your example:
 
 ```sh
-cargo run -p nemoclaw-build -- runtime runtimes/vllm/build.json
+docker buildx bake vllm
 AGENT_PLATFORM=linux/arm64 docker buildx bake pi deepagents openclaw --load
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The inline recipe has its own [Qwen3.8 image build](../../docs/build.md#build-a-runtime-image).
-The remote example also requires [SSH placement setup](../../docs/remote-service.md).
+The remote example also requires [SSH placement setup](../../docs/agents-inference/remote-service.md).
 
 Copy the selected example, assign a fresh deployment UUID, and replace its local image digests with those reported by your builds.
 The committed local digests identify development artifacts; build the images before applying the examples on another machine.
 Keep the model repository revisions pinned.
 For `local-and-hosted.yaml`, replace `https://hosted.example/v1` and `replace-with-your-hosted-model`, then supply `HOSTED_API_KEY` in the caller's environment.
 The example assumes an OpenAI-compatible hosted Chat Completions endpoint; hosted model requests may incur charges.
-See [credential handling](../../docs/usage.md#configuration-and-credentials).
+See [credential handling](../../docs/build-deploy/usage.md#configuration-and-credentials).
 
 ```sh
 mkdir -p .local/spark-demo
@@ -65,17 +63,17 @@ dist/linux_arm64/bin/nemoclaw apply --state-dir .local/spark-demo/state .local/s
 ```
 
 Apply checks startup and configuration; it does not generate an answer.
-Use the [Deep Agents/Pi request procedure](../../docs/agents.md#run-one-deep-agents-or-pi-request) or [headless OpenClaw request procedure](../../docs/agents.md#run-one-headless-openclaw-request) to ask each agent a question.
+Use the [Deep Agents/Pi request procedure](../../docs/agents-inference/agents.md#run-one-deep-agents-or-pi-request) or [headless OpenClaw request procedure](../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) to ask each agent a question.
 The procedures explain how to select Pi’s `fast`/`smart` routes and OpenClaw’s `local`/`hosted` routes.
 An unchanged apply should report no infrastructure changes.
-If startup fails, retain the state and inspect the [model supervisor's status and logs](../../docs/models.md#diagnose-and-recover-a-stopped-runtime) before retrying the original configuration.
+If startup fails, retain the state and inspect the [model supervisor's status and logs](../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime) before retrying the original configuration.
 Destroy the owned workloads when finished:
 
 ```sh
 dist/linux_arm64/bin/nemoclaw destroy --state-dir .local/spark-demo/state
 ```
 
-Destroy retains managed model downloads and gateway storage under the [retention contract](../../docs/state.md#deletion-and-retention).
+Destroy retains managed model downloads and gateway storage under the [retention contract](../../docs/build-deploy/state.md#deletion-and-retention).
 It does not remove the hosted model or its account credentials.
 
 ## Model Sources and Adaptation
@@ -95,5 +93,5 @@ It does not reproduce the upstream performance configurations: speculative decod
 These are text-agent scenarios; the presence of a vision-capable model does not qualify multimodal agent input.
 
 Validation status: parser, schema, compiled resource topology, export round trips, and maintained adapter contracts are checked by the Rust tests, including this nested directory.
-The [Spark live test](../../docs/contributing/live-tests.md#spark-and-fabric) checks plan and apply on a GB10 host.
+The [Spark live test](../../internal-docs/contributing/live-tests.md#spark-and-fabric) checks plan and apply on a GB10 host.
 Passing configuration checks alone does not establish model loading, tool use, or performance.

@@ -100,7 +100,8 @@ async fn an_existing_object_is_never_adopted() {
     let (fixture, _) = server(Some(foreign)).await;
     assert!(matches!(
         cluster(&fixture).create(settings()).await,
-        Err(ObservationError::BindingMismatch)
+        Err(ObservationError::BindingChanged(detail))
+            if &*detail == "ConfigMap agents/settings already exists, and this deployment does not adopt it"
     ));
 }
 
@@ -116,7 +117,8 @@ async fn a_recorded_object_is_verified_by_uid_and_owner() {
     // A replacement with another UID, or a missing object, is not ours.
     assert!(matches!(
         cluster.verify(&Owned::new(&settings(), "uid-other")).await,
-        Err(ObservationError::BindingMismatch)
+        Err(ObservationError::BindingChanged(detail))
+            if &*detail == "ConfigMap agents/settings was replaced: recorded UID uid-other, found uid-1"
     ));
 }
 
@@ -129,7 +131,8 @@ async fn an_object_without_our_owner_label_is_not_ours() {
         cluster(&fixture)
             .verify(&Owned::new(&settings(), "uid-1"))
             .await,
-        Err(ObservationError::BindingMismatch)
+        Err(ObservationError::BindingChanged(detail))
+            if &*detail == "ConfigMap agents/settings no longer carries this deployment's owner label"
     ));
 }
 
@@ -141,7 +144,8 @@ async fn deletion_requires_the_recorded_uid() {
     let cluster = cluster(&fixture);
     assert!(matches!(
         cluster.delete(&Owned::new(&settings(), "uid-1")).await,
-        Err(ObservationError::BindingMismatch)
+        Err(ObservationError::BindingChanged(detail))
+            if &*detail == "ConfigMap agents/settings was replaced, so it is kept"
     ));
     let (_, _, sent) = log
         .lock()

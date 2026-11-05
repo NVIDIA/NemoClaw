@@ -109,29 +109,34 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         values["gatewayConfig"]["openshell.drivers.kubernetes"]["image_pull_secrets"] =
             json!(target.image_pull_secrets);
     }
-    // An existing issuer replaces the development issuer's settings; its
-    // CA comes from the user's ConfigMap, if any.
+    // An existing issuer's settings are authored in OpenShell's OIDC table,
+    // which passes through below; its CA comes from the user's ConfigMap.
     let authentication = &target.authentication;
     if authentication.profile == crate::config::KubernetesAuthenticationProfile::Oidc {
-        let mut oidc = json!({
-            "issuer": authentication.issuer,
-            "audience": authentication.audience,
-            "jwks_ttl_secs": 3600,
-            "dangerously_allow_insecure_http": false,
-        });
-        for (key, value) in [
-            ("roles_claim", &authentication.roles_claim),
-            ("admin_role", &authentication.admin_role),
-            ("user_role", &authentication.user_role),
-            ("scopes_claim", &authentication.scopes_claim),
-        ] {
-            if let Some(value) = value {
-                oidc[key] = json!(value);
-            }
-        }
-        values["gatewayConfig"]["openshell.gateway.oidc"] = oidc;
+        values["gatewayConfig"]
+            .as_object_mut()
+            .expect("gateway configuration tables")
+            .remove(crate::managed::gateway_config::OIDC_TABLE);
         values["server"]["oidc"]["caConfigMapName"] =
             json!(authentication.ca_config_map.clone().unwrap_or_default());
+    }
+    // Authored tables pass through to the chart. Their fields override
+    // NemoClaw's defaults in the same table; validation rejects the keys
+    // NemoClaw owns.
+    if let Some(config) = &spec.settings.config {
+        let tables = values["gatewayConfig"]
+            .as_object_mut()
+            .expect("gateway configuration tables");
+        for (name, fields) in config {
+            match (tables.get_mut(name), fields) {
+                (Some(Value::Object(defaults)), Value::Object(fields)) => {
+                    defaults.extend(fields.clone());
+                }
+                _ => {
+                    tables.insert(name.clone(), fields.clone());
+                }
+            }
+        }
     }
     Ok(values)
 }
@@ -147,20 +152,24 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
     graph["terraform"]["required_providers"]["helm"] = json!({
         "source": PROVIDER_ADDRESS, "version": format!("= {PROVIDER_VERSION}")
     });
-    graph["variable"][KUBECONFIG_VARIABLE] = json!({
-        "type": "string", "nullable": false, "sensitive": true,
-    });
     graph["provider"]["helm"] = json!({
         "helm_driver": "secret",
         "registry_config_path": ".helm/registry.json",
         "repository_config_path": ".helm/repositories.yaml",
         "repository_cache": ".helm/cache",
         "plugins_path": ".helm/plugins",
-        "kubernetes": {
-            "config_path": format!("${{var.{KUBECONFIG_VARIABLE}}}"),
-            "config_context": literal(&target.context),
-        },
     });
+    // Without a kubeconfig, the provider's client loads the service account
+    // of the pod that runs NemoClaw.
+    if let Some(context) = &target.context {
+        graph["variable"][KUBECONFIG_VARIABLE] = json!({
+            "type": "string", "nullable": false, "sensitive": true,
+        });
+        graph["provider"]["helm"]["kubernetes"] = json!({
+            "config_path": format!("${{var.{KUBECONFIG_VARIABLE}}}"),
+            "config_context": literal(context),
+        });
+    }
     let mut release_values = vec![literal(&values(spec)?.to_string())];
     if spec.settings.runtime.provider == crate::config::ComputeDriver::OpenShift {
         // This expression stays unknown until namespace identity preparation
@@ -175,7 +184,13 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
         "create_namespace": false,
         "take_ownership": false,
         "upgrade_install": false,
-        "atomic": false,
+        // When the install fails or times out, Helm uninstalls the release
+        // before the provider returns, so a failed apply leaves no release
+        // that the state does not bind (#14155). The uninstall removes only
+        // the chart's objects; retained storage is outside them. When an
+        // upgrade fails, Helm rolls the release back, which removes what the
+        // upgrade created, so cleanup_on_fail adds nothing.
+        "atomic": true,
         "cleanup_on_fail": false,
         "wait": true,
         "wait_for_jobs": true,

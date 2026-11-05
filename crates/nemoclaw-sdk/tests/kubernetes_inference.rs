@@ -30,9 +30,10 @@ fn document(driver: &str, managed: bool, endpoint: &str) -> Value {
         });
     }
     if matches!(driver, "kubernetes" | "openshift") {
-        input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env": "TEST_IMAGE_METADATA"});
+        input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+            json!({"env": "TEST_IMAGE_METADATA"});
     }
-    input["spec"]["inferenceProviders"][0]["endpoint"] = json!(endpoint);
+    input["spec"]["inferenceProviders"]["local"]["endpoint"] = json!(endpoint);
     input
 }
 
@@ -68,6 +69,30 @@ fn only<'a>(graph: &'a Value, kind: &str) -> &'a Value {
     objects.values().next().unwrap()
 }
 
+/// `sandbox`'s policy rule for the one inference registration in `graph`.
+fn service_rule<'a>(graph: &'a Value, sandbox: &str) -> &'a Value {
+    let inference = only(graph, "openshell_inference");
+    let name = format!("nemoclaw-inference-{}", inference["name"].as_str().unwrap());
+    graph["resource"]["openshell_sandbox"][sandbox]["policy"]["managed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["name"] == name.as_str())
+        .unwrap()
+}
+
+/// The endpoints of a sandbox rule for `SERVICE`: its host and port, without
+/// addresses.
+fn service_endpoints() -> Value {
+    json!([{
+        "host": "qwen.models.svc.cluster.local",
+        "port": 8000,
+        "path": "/v1/**",
+        "protocol": "rest",
+        "access": "full"
+    }])
+}
+
 /// The registration names the Service literally, and the sandbox's rule for
 /// it names the same host and port without addresses. OpenShell decides which
 /// addresses the name may reach, so NemoClaw adds no grant.
@@ -90,22 +115,9 @@ fn a_cluster_service_compiles_to_a_literal_server_and_an_fqdn_sandbox_rule() {
         assert!(inference.get("cluster_source").is_none(), "{driver}");
         let policy = &graph["resource"]["openshell_sandbox"]["assistant"]["policy"];
         assert!(policy.get("cluster_grants").is_none(), "{driver}");
-        let name = format!("nemoclaw-inference-{}", inference["name"].as_str().unwrap());
-        let rule = policy["managed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|rule| rule["name"] == name.as_str())
-            .unwrap();
         assert_eq!(
-            rule["endpoints"],
-            json!([{
-                "host": "qwen.models.svc.cluster.local",
-                "port": 8000,
-                "path": "/v1/**",
-                "protocol": "rest",
-                "access": "full"
-            }]),
+            service_rule(&graph, "assistant")["endpoints"],
+            service_endpoints(),
             "{driver}"
         );
         let models = only(&graph, "fabric_agent")["models"].as_object().unwrap();
@@ -116,16 +128,85 @@ fn a_cluster_service_compiles_to_a_literal_server_and_an_fqdn_sandbox_rule() {
     }
 }
 
+/// The agent row of each of the three sandboxes in `input`, each named by its
+/// sandbox's `agent.name`, which Fabric receives as `metadata.name`.
+fn agents<'a>(input: &Value, graph: &'a Value) -> Vec<&'a Value> {
+    let rows = graph["resource"]["fabric_agent"].as_object().unwrap();
+    let sandboxes = parse(input).spec.sandboxes;
+    assert_eq!(rows.len(), 3);
+    assert_eq!(sandboxes.len(), 3);
+    sandboxes
+        .iter()
+        .map(|(name, sandbox)| {
+            let row = &rows[name];
+            assert_eq!(row["name"], sandbox.agent.name.as_str(), "{name}");
+            row
+        })
+        .collect()
+}
+
+/// Three agents on one cluster gateway share one registration of the Service,
+/// and each agent's sandbox has its own rule for it. Each agent keeps its
+/// sandbox's agent name.
+#[test]
+fn three_agents_on_a_cluster_gateway_share_one_service_registration_with_their_own_rules() {
+    for example in [
+        "kubernetes/external-gateway.yaml",
+        "openshift/external-gateway.yaml",
+    ] {
+        let mut input = crate::support::example(example);
+        input["spec"]["inferenceProviders"]["inference"]["endpoint"] = json!(SERVICE);
+        let graph = compile(&parse(&input), &generations(), "0.1.0").unwrap();
+        let inference = only(&graph, "openshell_inference");
+        assert_eq!(
+            inference["server"],
+            json!({
+                "type": "inference_server",
+                "endpoint": SERVICE,
+                "credential_env": input["spec"]["inferenceProviders"]["inference"]["credential"]["env"],
+                "credential_source": ""
+            }),
+            "{example}"
+        );
+        assert!(inference.get("cluster_source").is_none(), "{example}");
+        let sandboxes = graph["resource"]["openshell_sandbox"].as_object().unwrap();
+        assert_eq!(sandboxes.len(), 3, "{example}");
+        for (sandbox, resource) in sandboxes {
+            assert!(
+                resource["policy"].get("cluster_grants").is_none(),
+                "{example} {sandbox}"
+            );
+            assert_eq!(
+                service_rule(&graph, sandbox)["endpoints"],
+                service_endpoints(),
+                "{example} {sandbox}"
+            );
+        }
+        for agent in agents(&input, &graph) {
+            let models = agent["models"].as_object().unwrap();
+            assert!(!models.is_empty(), "{example}");
+            for model in models.values() {
+                assert_eq!(model["base_url"], SERVICE, "{example}");
+            }
+        }
+    }
+    // This example's explicit sandbox policies name its hosted endpoint, so it
+    // keeps that endpoint and only its agent names are checked.
+    let input = crate::support::example("kubernetes/managed-development.yaml");
+    let graph = compile(&parse(&input), &generations(), "0.1.0").unwrap();
+    agents(&input, &graph);
+}
+
 /// `input` with its one provider given a key and declared, in turn, in each
 /// place a document can declare an inference provider.
 fn keyed_providers(input: &Value) -> Vec<(&'static str, Value)> {
     fn sandbox(document: &mut Value) -> &mut Value {
-        &mut document["spec"]["sandboxes"][0]
+        &mut document["spec"]["sandboxes"]["assistant"]
     }
-    let mut provider = input["spec"]["inferenceProviders"][0].clone();
+    let mut provider = input["spec"]["inferenceProviders"]["local"].clone();
     provider["credential"] = json!({"env": "QWEN_INFERENCE_KEY"});
     let mut shared = input.clone();
-    shared["spec"]["inferenceProviders"][0] = provider.clone();
+    shared["spec"]["inferenceProviders"]["local"] = provider.clone();
     let mut bare = input.clone();
     bare["spec"]
         .as_object_mut()
@@ -134,9 +215,10 @@ fn keyed_providers(input: &Value) -> Vec<(&'static str, Value)> {
     let mut route = sandbox(&mut bare)["agent"]["inference"]["routes"][0].clone();
     route.as_object_mut().unwrap().remove("providerRef");
     route["provider"] = provider.clone();
+    route["provider"]["name"] = json!("local");
     let inference = json!({"routes": [route]});
     let mut scoped = bare.clone();
-    sandbox(&mut scoped)["inferenceProviders"] = json!([provider]);
+    sandbox(&mut scoped)["inferenceProviders"] = json!({"local": provider});
     let mut inline = bare.clone();
     sandbox(&mut inline)["agent"]["inference"] = inference.clone();
     let named = |mut document: Value, in_sandbox: bool| {

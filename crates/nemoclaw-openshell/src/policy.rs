@@ -124,7 +124,7 @@ pub struct PolicyEndpoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     pub tls: Option<String>,
-    /// enforce or audit; omission follows OpenShell defaults.
+    /// enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "String")]
     pub enforcement: Option<String>,

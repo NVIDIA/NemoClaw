@@ -27,6 +27,7 @@ pub(super) fn collect_required_leaf_questions(
                         target: QuestionTarget::sdk(choice_path.clone()),
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
+                        note: None,
                         id: choice_path,
                         reason: if supplied.is_some() {
                             JourneyQuestionReason::InvalidSupplied
@@ -88,6 +89,7 @@ pub(super) fn collect_required_leaf_questions(
                             target: QuestionTarget::sdk(child_path.clone()),
                             kind: JourneyQuestionKind::Field,
                             reopened_because: None,
+                            note: None,
                             id: child_path,
                             reason: if supplied.is_some() {
                                 JourneyQuestionReason::InvalidSupplied
@@ -120,6 +122,7 @@ pub(super) fn collect_required_leaf_questions(
                     target: QuestionTarget::StructuralForm { path: path.into() },
                     kind: JourneyQuestionKind::StructuralForm,
                     reopened_because: None,
+                    note: None,
                     id,
                     reason: JourneyQuestionReason::Missing,
                     required: true,
@@ -157,6 +160,7 @@ pub(super) fn collect_required_leaf_questions(
                 target: QuestionTarget::sdk(child_path.clone()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: child_path,
                 reason: if supplied.is_some() {
                     JourneyQuestionReason::InvalidSupplied

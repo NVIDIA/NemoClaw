@@ -3,7 +3,7 @@
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
 # Replace the fixture endpoint/model with your own compatible service.
-# See docs/reference/fabric-harnesses.md for protocol requirements and test commands.
+# See docs/references/fabric-harnesses.md for protocol requirements and test commands.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -16,11 +16,11 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
+    local:
       provider: anthropic
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-prototype-fabric@sha256:ad0f0a9bdef6b1d1efd77b850cff8137d257fee03aa29e3b6980d81cd52fb3fb
       network:

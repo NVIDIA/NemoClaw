@@ -24,6 +24,10 @@ pub(crate) struct JourneyWizard {
     /// question, and each step ask for it again.
     resolution: RefCell<Option<Result<JourneyResolution, Diagnostics>>>,
     resolutions: Cell<usize>,
+    /// The configuration of the cached resolution, once built. Building it
+    /// serializes, reads back, and validates the whole document.
+    configuration: RefCell<Option<Option<Result<String, String>>>>,
+    configurations: Cell<usize>,
     /// The engines this machine's environment names, read before the first question.
     pub(super) local_engine_candidates: Vec<DiscoveryRequest>,
     pub(super) input: String,
@@ -31,6 +35,9 @@ pub(crate) struct JourneyWizard {
     pub(super) started: bool,
     pub(super) accepted: bool,
     pub(super) review_scroll: u16,
+    /// The furthest the review can scroll, as of its last render: the view
+    /// alone knows how its wrapped text fits.
+    pub(super) review_scroll_limit: Cell<u16>,
 }
 
 impl JourneyWizard {
@@ -45,12 +52,15 @@ impl JourneyWizard {
             observations: DiscoveryObservations::new(),
             resolution: RefCell::new(None),
             resolutions: Cell::new(0),
+            configuration: RefCell::new(None),
+            configurations: Cell::new(0),
             local_engine_candidates: Vec::new(),
             input: String::new(),
             error: None,
             started: false,
             accepted: false,
             review_scroll: 0,
+            review_scroll_limit: Cell::new(0),
         }
     }
 
@@ -110,12 +120,41 @@ impl JourneyWizard {
         self.resolutions.get()
     }
 
+    /// How many times the saved configuration was built.
+    #[cfg(test)]
+    pub(super) fn configurations(&self) -> usize {
+        self.configurations.get()
+    }
+
+    /// Make the current configuration unsaveable for `reason`, a failure no
+    /// supported document produces.
+    #[cfg(test)]
+    pub(super) fn fail_configuration(&self, reason: &str) {
+        *self.configuration.borrow_mut() = Some(Some(Err(reason.into())));
+    }
+
     fn changed(&mut self) {
         *self.resolution.get_mut() = None;
+        *self.configuration.get_mut() = None;
+        // A changed review starts at its target verdict again.
+        self.review_scroll = 0;
+    }
+
+    /// Whether the journey is complete, its target allows saving, and its
+    /// configuration can be written.
+    pub(super) fn saveable(&self) -> bool {
+        self.resolution()
+            .is_ok_and(|resolution| resolution.ready_document().is_some())
+            && matches!(self.configuration(), Some(Ok(_)))
     }
 
     pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
         Ok(self.resolution()?.next_question().cloned())
+    }
+
+    /// Every question is answered and the review is open.
+    pub(super) fn reviewing(&self) -> bool {
+        self.started && matches!(self.question(), Ok(None))
     }
 
     pub(super) fn choice_index(&self, question: &JourneyQuestion) -> usize {
@@ -199,7 +238,10 @@ impl JourneyWizard {
     pub(super) fn previous(&mut self) {
         match self.question() {
             Ok(None) if self.started => {
-                self.review_scroll = self.review_scroll.saturating_sub(1);
+                self.review_scroll = self
+                    .review_scroll
+                    .min(self.review_scroll_limit.get())
+                    .saturating_sub(1);
             }
             Ok(Some(question)) if !question.choices().is_empty() => {
                 self.selected = self.choice_index(&question).saturating_sub(1);
@@ -212,7 +254,10 @@ impl JourneyWizard {
     pub(super) fn next(&mut self) {
         match self.question() {
             Ok(None) if self.started => {
-                self.review_scroll = self.review_scroll.saturating_add(1);
+                self.review_scroll = self
+                    .review_scroll
+                    .saturating_add(1)
+                    .min(self.review_scroll_limit.get());
             }
             Ok(Some(question)) if !question.choices().is_empty() => {
                 self.selected = (self.choice_index(&question) + 1).min(
@@ -283,24 +328,9 @@ impl JourneyWizard {
             }
         };
         let Some(question) = resolution.next_question().cloned() else {
-            if resolution.ready_document().is_some() {
+            // A review that cannot be saved already says why, so Enter does nothing.
+            if self.saveable() {
                 self.accepted = true;
-            } else {
-                let issues = resolution
-                    .assessment()
-                    .issues()
-                    .iter()
-                    .map(|issue| format!("{}: {}", issue.path(), issue.rule()))
-                    .collect::<Vec<_>>();
-                self.error = Some(format!(
-                    "Cannot save yet: {} {} {}",
-                    resolution.unverified().join("; "),
-                    issues.join("; "),
-                    resolution
-                        .target_assessment()
-                        .map(|assessment| assessment.reasons.join("; "))
-                        .unwrap_or_default()
-                ));
             }
             return;
         };
@@ -326,5 +356,32 @@ impl JourneyWizard {
             .ready_document()
             .cloned()
             .ok_or_else(|| "the journey is not complete".into())
+    }
+
+    /// The configuration the journey saves: the reviewed deployment's
+    /// authored values, leaving what nobody chose to the SDK's defaults.
+    pub(crate) fn saved_yaml(&self) -> Result<String, Box<dyn std::error::Error>> {
+        self.document()?;
+        Ok(self
+            .configuration()
+            .ok_or("the journey is not complete")??)
+    }
+
+    /// The YAML the review shows and saving writes, once the document is
+    /// complete, or why it cannot be written.
+    pub(super) fn configuration(&self) -> Option<Result<String, String>> {
+        if let Some(built) = self.configuration.borrow().as_ref() {
+            return built.clone();
+        }
+        let built = self.resolution().ok().and_then(|resolution| {
+            let document = resolution.materialized_document()?;
+            self.configurations.set(self.configurations.get() + 1);
+            Some(
+                super::saved::authored_yaml(document, self.state.values())
+                    .map_err(|error| error.to_string()),
+            )
+        });
+        *self.configuration.borrow_mut() = Some(built.clone());
+        built
     }
 }

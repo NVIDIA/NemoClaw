@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! gRPC transport stack: channel construction and the insecure-TLS connector.
-//!
-//! mTLS is intentionally out of scope here. Gateways that require client
-//! certificates are handled by `openshell-cli`'s legacy path until the auth
-//! method is retired.
 
 use crate::config::{AuthConfig, ClientConfig};
 use crate::edge_tunnel;
@@ -21,7 +17,7 @@ use std::net::SocketAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 use tracing::debug;
 
 /// Standard endpoint settings used by every dialed connection.
@@ -84,7 +80,7 @@ async fn edge_tunnel_addr(server: &str, token: &str) -> Result<SocketAddr> {
 /// | `http://` | (any)  | (any) | plaintext, ignore tls |
 /// | `https://` | `Some(EdgeJwt)` | (any) | tunnel proxy + plaintext to local proxy |
 /// | `https://` | (any) | `true` | `InsecureTlsConnector`, no verification |
-/// | `https://` | `Some(Oidc)` or `None` | `false` | tonic TLS, pin `ca_cert` if set, system roots otherwise |
+/// | `https://` | `Some(Oidc)` or `None` | `false` | tonic TLS, optionally pin `ca_cert` and present `client_identity` |
 pub async fn build_channel(config: &ClientConfig) -> Result<Channel> {
     let gateway = &config.gateway;
 
@@ -131,10 +127,16 @@ pub async fn build_channel(config: &ClientConfig) -> Result<Channel> {
     // is added by the gRPC interceptor at request time, not here —
     // `build_channel` only owns the TLS layer.
 
-    let tls_config = config.ca_cert.as_ref().map_or_else(
+    let mut tls_config = config.ca_cert.as_ref().map_or_else(
         || ClientTlsConfig::new().with_enabled_roots(),
         |ca_cert| ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca_cert)),
     );
+    if let Some(identity) = &config.client_identity {
+        tls_config = tls_config.identity(Identity::from_pem(
+            identity.certificate.clone(),
+            identity.private_key.clone(),
+        ));
+    }
     standard_endpoint(gateway.clone())?
         .tls_config(tls_config)
         .map_err(|e| SdkError::tls(format!("{e}")))?
@@ -183,7 +185,7 @@ impl ServerCertVerifier for InsecureServerCertVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::aws_lc_rs::default_provider()
+        openshell_crypto::tls::configuration_provider()
             .signature_verification_algorithms
             .supported_schemes()
     }
@@ -195,7 +197,7 @@ impl ServerCertVerifier for InsecureServerCertVerifier {
 /// verification (development, debug). Returns `Result` for symmetry with
 /// future verifying variants; the current implementation cannot fail.
 pub fn build_insecure_rustls_config() -> Result<rustls::ClientConfig> {
-    Ok(rustls::ClientConfig::builder()
+    Ok(openshell_crypto::tls::client_builder()
         .dangerous()
         .with_custom_certificate_verifier(std::sync::Arc::new(InsecureServerCertVerifier))
         .with_no_client_auth())

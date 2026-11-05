@@ -4,7 +4,6 @@
 #[cfg(test)]
 mod tests;
 
-mod context_advisory;
 mod export;
 mod opentofu;
 mod plan;
@@ -20,7 +19,7 @@ use crate::{
     backend::Row,
     bundle::Bundle,
     compile::{self, Target},
-    config::{Credential, Document},
+    config::{Document, SecretRef},
     state::{Record, StateBinding, Store, atomic_write, save_json},
 };
 use plan::{Plan, check_destroy_plan, check_plan};
@@ -33,6 +32,7 @@ use std::{
     sync::Arc,
 };
 
+pub use nemoclaw_fabric::interfaces::{InterfaceAccess, SignIn};
 pub use timing::StepOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +44,11 @@ pub enum Progress {
     /// A mutating OpenTofu subprocess has launched. Emitted synchronously once
     /// per launch, before child output; this does not prove any change completed.
     MutationStarted,
+    /// The operation was cancelled while OpenTofu was applying. OpenTofu
+    /// starts no further resource operations and saves the state after those
+    /// in progress finish; the operation then returns `Error::Cancelled`. The
+    /// deployment's force-stop token ends OpenTofu sooner.
+    Stopping,
     Download(crate::DownloadProgress),
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
@@ -84,6 +89,10 @@ pub enum Outcome {
 pub struct Change {
     pub resource: String,
     pub actions: Vec<String>,
+    /// Why the resource is replaced, when the plan observed a reason, such as
+    /// a sandbox that exited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 /// Gateway and workspace selectors from validated intent, not proof of access.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +100,21 @@ pub struct Change {
 pub struct DeploymentConnection {
     pub gateway_endpoint: String,
     pub workspace: String,
+}
+impl DeploymentConnection {
+    /// Whether the OpenShell CLI can select the gateway by its endpoint alone:
+    /// a plaintext loopback endpoint. Others need an authenticated profile.
+    pub fn plaintext_loopback(&self) -> bool {
+        url::Url::parse(&self.gateway_endpoint).is_ok_and(|url| {
+            url.scheme() == "http"
+                && match url.host() {
+                    Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                    None => false,
+                }
+        })
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,6 +135,33 @@ pub struct OperationResult {
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "DiscoveryReport::is_empty")]
     pub discovery: DiscoveryReport,
+    /// URLs the gateway reported for each sandbox's service exposures, by
+    /// sandbox and service name; the unnamed endpoint's service name is empty.
+    /// Only a successful apply reads them from state. If that read fails, the
+    /// map is empty and apply emits a `Progress::Warning`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub service_urls: BTreeMap<String, BTreeMap<String, String>>,
+    /// Each sandbox's agent with the runtime ID that state records for it, by
+    /// sandbox: the applied state for a plan, and the state after the changes
+    /// for apply. If apply can't read its state, the map is empty and apply
+    /// emits a `Progress::Warning`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agents: BTreeMap<String, AgentRuntime>,
+    /// After apply, how to reach each enabled agent interface; never a token.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interfaces: Vec<InterfaceAccess>,
+}
+/// What `fabric-agent-ctl invoke` needs to reach a sandbox's agent; never a
+/// credential.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntime {
+    /// The agent's name, its `--agent`.
+    pub agent: String,
+    /// The ID Fabric gave the agent's current runtime, its `--runtime-id`;
+    /// absent while state records no runtime for the agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_id: Option<String>,
 }
 impl OperationResult {
     fn planned(changes: Vec<Change>) -> Self {
@@ -123,6 +174,9 @@ impl OperationResult {
             unverified: Vec::new(),
             retained: Vec::new(),
             discovery: DiscoveryReport::default(),
+            service_urls: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            interfaces: Vec::new(),
         }
     }
 }
@@ -135,8 +189,13 @@ pub struct Deployment {
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    /// Ends OpenTofu at once after an operation was cancelled during an apply.
+    force_stop: CancellationToken,
     /// Shared by clones, so a deployment hashes an unchanged bundle once.
     bundle: Arc<crate::bundle::VerifiedBundle>,
+    /// Reads the caller's variables that locate the API server from a pod;
+    /// the process environment outside unit tests.
+    pod_environment: fn(&str) -> Option<String>,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -145,7 +204,9 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
+            force_stop: CancellationToken::new(),
             bundle: Arc::default(),
+            pod_environment: |name| std::env::var(name).ok(),
         }
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
@@ -154,6 +215,15 @@ impl Deployment {
     }
     pub fn with_progress(mut self, progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         self.progress = progress;
+        self
+    }
+    /// Cancelling an operation's token during an apply lets OpenTofu finish
+    /// the resource operations in progress and save the state, which can take
+    /// as long as the slowest of them. Cancelling `token` as well ends
+    /// OpenTofu at once; a resource it was creating can then exist without a
+    /// binding in the state.
+    pub fn with_force_stop(mut self, token: CancellationToken) -> Self {
+        self.force_stop = token;
         self
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
@@ -193,9 +263,6 @@ impl Deployment {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        for message in context_advisory::context_warnings(&document)? {
-            (self.progress)(Progress::Warning { message });
-        }
         let (bundle, store) = self.open()?;
         let prior = store.load()?;
         let fresh = prior.is_none();
@@ -232,7 +299,6 @@ impl Deployment {
         };
         record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
-        record.validate_bound_sandboxes(&document, &bindings)?;
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint().into(),
             workspace: document.workspace(),
@@ -240,6 +306,9 @@ impl Deployment {
         let compiled =
             compile::deployment_graph(&document, &record.generations, &bundle.manifest.version)?;
         (self.progress)(Progress::Validating);
+        if apply {
+            self.create_state(&bundle, &store, cancel).await?;
+        }
         self.initialize(&bundle, &store, &compiled.graph, cancel)
             .await?;
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
@@ -254,6 +323,7 @@ impl Deployment {
             &with_observations(&expected, &compile::observations(&compiled.graph)),
             &bindings,
         )?;
+        runtime::check_install(&plan, &bindings, &document, &record.generations)?;
         // Only OpenShell and Fabric creations can lose their identity with a
         // lost reply; OpenTofu saves every other resource's ID.
         let objects = allowed(&compiled.objects);
@@ -298,6 +368,7 @@ impl Deployment {
             result.discovery = discovery;
             result.deferred.sort();
             result.deferred.dedup();
+            result.agents = reporting::agents(&document, &bindings);
             if fresh {
                 store.save(&record)?;
             }
@@ -353,7 +424,21 @@ impl Deployment {
         record.finish_apply();
         record.mark_succeeded();
         store.save(&record)?;
+        // The apply is saved; a failed or cancelled read of its state leaves
+        // the URLs and runtime IDs out of its result rather than reporting the
+        // apply as failed.
+        let state = store.bindings(&bundle.tofu(), cancel).await;
+        match &state {
+            Ok(bindings) => {
+                result.service_urls = reporting::service_urls(bindings);
+                result.agents = reporting::agents(&document, bindings);
+            }
+            Err(_) => (self.progress)(Progress::Warning {
+                message: reporting::STATE_UNREAD.into(),
+            }),
+        }
         result.outcome = Outcome::Succeeded;
+        result.interfaces = interface_access(&document, state)?;
         Ok(result)
     }
     async fn state_bindings(
@@ -392,6 +477,42 @@ impl Deployment {
         self.teardown_deployment(cancel, preview).await
     }
 }
+/// How to reach each sandbox's enabled interfaces, with the runtime IDs the
+/// applied state records. A deployment without interfaces needs no state.
+fn interface_access(
+    document: &Document,
+    state: Result<BTreeMap<String, StateBinding>, Error>,
+) -> Result<Vec<InterfaceAccess>, Error> {
+    let mut configurations = Vec::new();
+    for sandbox in document.sandboxes() {
+        let configuration = crate::fabric_config::for_sandbox(document, sandbox)?;
+        if configuration
+            .pointer("/harness/settings/interfaces")
+            .and_then(Value::as_object)
+            .is_some_and(|interfaces| !interfaces.is_empty())
+        {
+            configurations.push((sandbox.name, configuration));
+        }
+    }
+    if configurations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let bindings = state?;
+    Ok(configurations
+        .into_iter()
+        .flat_map(|(sandbox, configuration)| {
+            let runtime_id = bindings
+                .get(&format!(
+                    "{}.{sandbox}",
+                    nemoclaw_fabric::agent::RESOURCE_TYPE
+                ))
+                .map(|binding| binding.runtime_id.as_str())
+                .filter(|id| !id.is_empty());
+            nemoclaw_fabric::interfaces::access(sandbox, &configuration, runtime_id)
+        })
+        .collect())
+}
+
 /// The rows a plan may establish. Managed processes keep their bound
 /// specifications; every saved binding must belong to the deployment.
 fn expected_bindings(

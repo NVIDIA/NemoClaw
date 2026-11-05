@@ -65,8 +65,8 @@ impl Client {
     /// missing safetensors and incorrect Git/LFS identities all fail closed.
     pub async fn resolve(&self, repository: &str, revision: &str) -> Result<Manifest, Error> {
         identity(repository, revision)?;
-        if revision.len() != 40 || self.registry {
-            return Err(failure("Hugging Face requires a commit snapshot client"));
+        if revision.len() != 40 {
+            return Err(failure("Hugging Face requires a commit revision"));
         }
         let work = async {
             let mut url =
@@ -210,8 +210,6 @@ mod tests {
         let client = Client {
             base_url: server.endpoint.clone(),
             http: reqwest::Client::new(),
-            registry: false,
-            resume_attempts: 1,
         };
         let manifest = client
             .resolve("another/model", &"a".repeat(40))
@@ -223,23 +221,8 @@ mod tests {
             2,
             "resolution downloaded weights"
         );
-        let root = tempfile::tempdir().unwrap();
-        let cancel = CancellationToken::new();
-        client
-            .ensure(root.path(), &manifest, &cancel, &|_| {})
-            .await
-            .unwrap();
-        let local = observe(root.path(), &manifest).unwrap();
-        assert_eq!(
-            client
-                .ensure(root.path(), &manifest, &cancel, &|_| {})
-                .await
-                .unwrap(),
-            local
-        );
         drop(server);
         let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 4);
         assert!(requests.iter().all(|r| r.contains(&"a".repeat(40))));
         assert!(requests[0].starts_with("GET /api/models/another/model/revision/"));
     }

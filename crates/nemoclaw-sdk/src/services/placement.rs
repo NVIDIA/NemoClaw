@@ -11,6 +11,7 @@ pub struct ServicePlacement {
     /// SSH Docker endpoint used for an explicitly placed service.
     pub engine: String,
     /// Canonical private IPv4 /24 on the selected Docker engine.
+    #[serde(rename = "networkCIDR")]
     pub network_cidr: String,
 }
 
@@ -105,17 +106,8 @@ impl ServicePlacement {
             "invalid service engine",
         )?;
 
-        let network: ipnet::Ipv4Net = self
-            .network_cidr
-            .parse()
-            .map_err(|_| ConfigError::new("invalid service network"))?;
-        let is_private_subnet = network.addr().is_private() && network.prefix_len() == 24;
-        let is_network_address = network.addr() == network.network();
-        require(
-            is_private_subnet && is_network_address,
-            "service network requires a private IPv4 /24",
-        )?;
-        Ok(network)
+        crate::config::private_network(&self.network_cidr)
+            .ok_or_else(|| ConfigError::new("service network requires a private IPv4 /24"))
     }
 }
 

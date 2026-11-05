@@ -195,7 +195,7 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
     )
     .unwrap();
     let mut invalid = serde_json::to_value(&document).unwrap();
-    invalid["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+    invalid["spec"]["inferenceProviders"]["local"]["management"] = serde_json::json!("external");
     let config = directory.path().join("unsupported.yaml");
     fs::write(&config, invalid.to_string()).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
@@ -214,7 +214,7 @@ fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("spec.inferenceProviders[0]")
+        diagnostic.contains("spec.inferenceProviders.local")
             && diagnostic.contains("unknown fields are not allowed"),
         "{diagnostic}"
     );

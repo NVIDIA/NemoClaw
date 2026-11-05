@@ -27,7 +27,7 @@ fn managed_podman_selects_one_driver_and_mounts_the_declared_socket() {
         .find(|t| t.kind == "managed_gateway")
         .unwrap();
     let spec = Spec::from_gateway_row(&target.kind, &target.values).unwrap();
-    let config: toml::Value = toml::from_str(&spec.gateway_config("/owned")).unwrap();
+    let config: toml::Value = toml::from_str(&spec.gateway_config("/owned").unwrap()).unwrap();
     let openshell = &config["openshell"];
     assert_eq!(
         openshell["gateway"]["compute_driver"].as_str(),
@@ -47,12 +47,8 @@ fn managed_podman_selects_one_driver_and_mounts_the_declared_socket() {
         socket_mount.source.as_deref(),
         Some("/run/user/1000/podman/podman.sock")
     );
-    let mut other = value["spec"]["sandboxes"][0].clone();
-    other["name"] = json!("other");
+    let mut other = value["spec"]["sandboxes"]["assistant"].clone();
     other["runtime"]["provider"] = json!("docker");
-    value["spec"]["sandboxes"]
-        .as_array_mut()
-        .unwrap()
-        .push(other);
+    value["spec"]["sandboxes"]["other"] = other;
     assert!(Document::parse(value.to_string().as_bytes()).is_err());
 }

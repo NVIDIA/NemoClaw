@@ -34,13 +34,13 @@ impl JourneyState {
         &mut self,
         preset: ProviderPreset,
     ) -> Result<(), Diagnostics> {
-        let (route_index, provider_index) = self.route_provider().ok_or_else(|| {
+        let (route_index, name) = self.route_provider().ok_or_else(|| {
             diagnostic(
                 "journey",
                 "Inference presets require a selected route using an external provider.",
             )
         })?;
-        let provider_path = format!("/spec/inferenceProviders/{provider_index}");
+        let provider_path = format!("/spec/inferenceProviders/{}", escape_pointer(&name));
         let route_path = format!(
             "{}/{route_index}",
             routes_path(&self.authored.values)
@@ -48,13 +48,6 @@ impl JourneyState {
         );
         let api_path = format!("{provider_path}/api");
         let endpoint_path = format!("{provider_path}/endpoint");
-        let previous_name = self
-            .authored
-            .values
-            .pointer(&format!("{provider_path}/name"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| diagnostic("journey", "The shared provider needs a name."))?
-            .to_owned();
         let previous = self.current_preset();
         if previous == Some(preset) {
             self.decisions.selected_presets.insert(route_index, preset);
@@ -105,11 +98,11 @@ impl JourneyState {
         } else {
             overrides.remove("model");
         }
-        for route in self.routes_for_provider(&previous_name) {
+        for route in self.routes_for_provider(&name) {
             self.decisions.selected_presets.remove(&route);
             self.decisions.accepted_presets.remove(&route);
         }
-        self.reopen_models_for_provider(&previous_name, INFERENCE_PRESET);
+        self.reopen_models_for_provider(&name, INFERENCE_PRESET);
         self.decisions.selected_presets.insert(route_index, preset);
         for field in [
             api_path,

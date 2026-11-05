@@ -98,9 +98,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
             compute_driver: document.spec.gateway.runtime().provider,
         });
     queries.extend(platform.clone().map(DiscoveryQuery::Engine));
-    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
-    sandboxes.sort_by(|left, right| left.name.cmp(&right.name));
-    for sandbox in sandboxes {
+    for sandbox in document.sandboxes() {
         queries.push(DiscoveryQuery::Fabric(FabricRequest {
             engine: engine.into(),
             image: sandbox.image.ref_.clone(),

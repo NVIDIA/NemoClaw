@@ -4,7 +4,7 @@
 //! Inference catalog requests and observations, and direct credential availability.
 use crate::{
     Error, ObservationError, Secrets,
-    config::{Credential, Document, InferenceApi, InferenceProvider, InferenceTarget},
+    config::{Document, InferenceApi, InferenceProvider, InferenceTarget, SecretRef},
     discovery::ObservationStatus,
 };
 use serde::{Deserialize, Serialize};
@@ -46,8 +46,8 @@ impl EndpointRequest {
     fn validate_credential(&self) -> Result<(), Error> {
         if let Some(reference) = &self.credential_env {
             crate::config::schema::validate_definition(
-                "Credential",
-                &Credential {
+                "SecretRef",
+                &SecretRef {
                     env: reference.clone(),
                 },
             )?;
@@ -138,7 +138,7 @@ pub fn observe_credentials(
 pub fn endpoint_requests(document: &Document) -> Result<Vec<EndpointRequest>, Error> {
     document.validate()?;
     let mut requests = Vec::new();
-    for sandbox in &document.spec.sandboxes {
+    for sandbox in document.sandboxes() {
         for provider in document.sandbox_inference_providers(sandbox)? {
             let Some(request) = EndpointRequest::for_external_provider(provider.definition)? else {
                 continue;

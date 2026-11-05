@@ -10,18 +10,18 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-static INPUT_SCHEMA: LazyLock<Value> = LazyLock::new(super::input_schema);
-static INPUT: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&INPUT_SCHEMA));
+static INPUT: LazyLock<jsonschema::Validator> =
+    LazyLock::new(|| compile(super::input_schema_ref()));
 static NORMALIZED: LazyLock<Value> = LazyLock::new(|| super::build_schema(true));
 static DOCUMENT: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&NORMALIZED));
 static DEFINITIONS: LazyLock<Mutex<BTreeMap<String, Arc<jsonschema::Validator>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
-static TUNING_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::to_value(schemars::schema_for!(RouteTuning)).expect("tuning schema")
-});
+static TUNING_SCHEMA: LazyLock<Value> =
+    LazyLock::new(|| schemars::schema_for!(RouteTuning).to_value());
 static TUNING: LazyLock<jsonschema::Validator> = LazyLock::new(|| compile(&TUNING_SCHEMA));
-static NAME: LazyLock<jsonschema::Validator> =
-    LazyLock::new(|| compile(&INPUT_SCHEMA["$defs"]["Metadata"]["properties"]["name"]));
+static NAME: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
+    compile(&super::input_schema_ref()["$defs"]["Metadata"]["properties"]["name"])
+});
 static FIELDS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
     fn collect(value: &Value, fields: &mut BTreeSet<String>) {
         if let Some(properties) = value["properties"].as_object() {
@@ -34,7 +34,7 @@ static FIELDS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
         }
     }
     let mut fields = BTreeSet::new();
-    collect(&INPUT_SCHEMA, &mut fields);
+    collect(super::input_schema_ref(), &mut fields);
     fields
 });
 
@@ -212,27 +212,27 @@ fn instance_path(pointer: &str, root: &Value) -> String {
         } else {
             // Only names in declared application collections can be shown. Invalid
             // names and opaque map keys remain hidden even if they resemble values.
-            let named = match parts[..offset]
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
+            let named = matches!(
+                parts[..offset]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
                 [
                     "spec",
-                    "services" | "harnesses" | "inferences" | "integrations",
-                ] => true,
-                [
+                    "services"
+                        | "sandboxes"
+                        | "harnesses"
+                        | "inferences"
+                        | "inferenceProviders"
+                        | "integrations",
+                ] | [
                     "spec",
                     "sandboxes",
-                    index,
-                    "harnesses" | "inferences" | "integrations",
-                ]
-                | ["spec", "sandboxes", index, "agent", "integrations"] => {
-                    index.parse::<usize>().is_ok()
-                }
-                _ => false,
-            };
+                    _,
+                    "harnesses" | "inferences" | "inferenceProviders" | "integrations",
+                ] | ["spec", "sandboxes", _, "agent", "integrations"]
+            );
             let visible = if named {
                 NAME.is_valid(&Value::String(key.clone()))
             } else {
@@ -254,7 +254,7 @@ fn value(value: &impl Serialize) -> Result<Value, ConfigError> {
 }
 
 pub(crate) fn validate_input(value: &Value, source: Option<&str>) -> Result<(), ConfigError> {
-    check(&INPUT, value, &INPUT_SCHEMA, source)
+    check(&INPUT, value, super::input_schema_ref(), source)
 }
 
 pub(crate) fn validate_document(document: &Document) -> Result<(), ConfigError> {

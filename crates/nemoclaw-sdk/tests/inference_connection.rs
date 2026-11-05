@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::config::ComputeDriver;
-use nemoclaw_sdk::config::{Credential, Document};
+use nemoclaw_sdk::config::{Document, SecretRef};
 
 #[test]
 fn missing_inference_provider_does_not_panic() {
@@ -33,8 +33,9 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
     assert!(published.credential.is_none());
     let mut remote =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
-    remote.spec.inference_providers[0].endpoint = "https://inference.example.test:9443/v1".into();
-    remote.spec.inference_providers[0].credential = Some(Credential {
+    let provider = remote.spec.inference_providers.get_mut("local").unwrap();
+    provider.endpoint = "https://inference.example.test:9443/v1".into();
+    provider.credential = Some(SecretRef {
         env: "MODEL_TOKEN".into(),
     });
     let first = remote.inference_connection().unwrap();
@@ -44,7 +45,12 @@ fn inference_connection_is_resolved_independently_of_the_sandbox_engine() {
     assert_eq!(first.endpoint, "https://inference.example.test:9443/v1");
     assert_eq!(first.credential.unwrap().env, "MODEL_TOKEN");
     // Resolution is pure: this address need not be reachable by the CLI host.
-    remote.spec.inference_providers[0].endpoint = "https://unreachable.invalid/v1".into();
+    remote
+        .spec
+        .inference_providers
+        .get_mut("local")
+        .unwrap()
+        .endpoint = "https://unreachable.invalid/v1".into();
     remote.validate().unwrap();
     assert_eq!(
         remote.inference_connection().unwrap().endpoint,

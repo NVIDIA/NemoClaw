@@ -36,7 +36,10 @@ fn a_different_model_uses_generic_serving_without_recipe_settings() {
     ] {
         assert!(!args.iter().any(|a| a == flag));
     }
-    doc.spec.sandboxes[0]
+    doc.spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
         .agent
         .inference
         .as_mut()

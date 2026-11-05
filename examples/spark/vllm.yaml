@@ -41,11 +41,11 @@ spec:
         freeGateGiB: 12
         consecutiveSamples: 5
   inferenceProviders:
-    - name: qwen
+    qwen:
       provider: openai
       serviceRef: qwen
   sandboxes:
-    - name: assistant
+    assistant:
       network:
         tier: isolated
       harness:

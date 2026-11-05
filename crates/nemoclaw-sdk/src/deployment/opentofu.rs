@@ -39,6 +39,45 @@ impl Deployment {
         .await?;
         Ok(())
     }
+    /// Creates OpenTofu's state file before an apply's first plan. OpenTofu
+    /// 1.12.9 keeps an interrupted apply's progress only when the file existed
+    /// before the apply began: without it, the snapshot that OpenTofu saves
+    /// when stopped holds only the last resource it updated (#14155). A
+    /// refresh-only apply writes the file and changes no resource, and creating
+    /// it before the plan keeps the saved plan current. It applies an empty
+    /// configuration: the deployment's data sources read a managed gateway
+    /// that the first apply has yet to create. `initialize` then writes the
+    /// deployment's configuration.
+    pub(super) async fn create_state(
+        &self,
+        bundle: &Bundle,
+        store: &Store,
+        cancel: &CancellationToken,
+    ) -> Result<(), Error> {
+        if store.directory.join("terraform.tfstate").exists() {
+            return Ok(());
+        }
+        self.prepare(bundle, store, &serde_json::json!({}))?;
+        let env = crate::state::schema_environment(&store.directory);
+        self.timed(
+            "tofu.state",
+            crate::process::run(
+                &store.directory,
+                &bundle.tofu(),
+                &[
+                    "apply",
+                    "-refresh-only",
+                    "-auto-approve",
+                    "-input=false",
+                    "-no-color",
+                ],
+                &env,
+                cancel,
+            ),
+        )
+        .await?;
+        Ok(())
+    }
     pub(super) fn prepare(
         &self,
         bundle: &Bundle,
@@ -105,6 +144,7 @@ impl Deployment {
                     &args,
                     &env,
                     cancel,
+                    Some(&self.force_stop),
                     Some(self.progress.clone()),
                 )
                 .await
@@ -162,6 +202,15 @@ impl Deployment {
         } else {
             command_environment(document, self.secrets.as_ref(), directory)?
         };
+        // Providers keep backends' own messages about failed operations here,
+        // in the deployment's private state, and diagnostics name the file.
+        let diagnostics = std::path::absolute(&self.state_directory)
+            .map_err(|_| Error::State("cannot resolve the deployment's state directory"))?
+            .join("diagnostics");
+        environment.insert(
+            nemoclaw_backend::DIAGNOSTICS_ENV.into(),
+            diagnostics.to_string_lossy().into_owned(),
+        );
         if let Some(target) = document.spec.gateway.as_kubernetes() {
             let state = std::path::absolute(&self.state_directory)
                 .map_err(|_| Error::State("cannot resolve Kubernetes state directory"))?
@@ -170,18 +219,37 @@ impl Deployment {
                 crate::kubernetes::STATE_ENV.into(),
                 state.to_string_lossy().into_owned(),
             );
-            let kubeconfig = crate::kubernetes::kubeconfig_path(
-                environment
-                    .get(&target.kubeconfig.env)
-                    .ok_or(Error::State("explicit Kubernetes credential is missing"))?,
-            )?
-            .to_string_lossy()
-            .into_owned();
-            environment.insert(target.kubeconfig.env.clone(), kubeconfig.clone());
-            environment.insert(
-                crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
-                kubeconfig,
-            );
+            match &target.kubeconfig {
+                Some(reference) => {
+                    let kubeconfig = crate::kubernetes::kubeconfig_path(
+                        environment
+                            .get(&reference.env)
+                            .ok_or(Error::State("explicit Kubernetes credential is missing"))?,
+                    )?
+                    .to_string_lossy()
+                    .into_owned();
+                    environment.insert(reference.env.clone(), kubeconfig.clone());
+                    environment.insert(
+                        crate::kubernetes::gateway::KUBECONFIG_ENV.into(),
+                        kubeconfig,
+                    );
+                }
+                // Providers use the pod's service account, as kube-rs and
+                // client-go do when no kubeconfig is configured. They read only
+                // these variables from the caller.
+                None => {
+                    for name in crate::kubernetes::POD_VARIABLES {
+                        let value = (self.pod_environment)(name)
+                            .filter(|value| !value.is_empty())
+                            .ok_or(Error::State(
+                                "the pod's in-cluster Kubernetes configuration is missing: \
+                                 KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be set; \
+                                 outside a pod, name gateway.kubernetes.kubeconfig and context",
+                            ))?;
+                        environment.insert(name.into(), value);
+                    }
+                }
+            }
         }
         Ok(environment)
     }
@@ -203,20 +271,24 @@ pub(super) fn gateway_environment(
     let gateway = &document.spec.gateway;
     let mut names = BTreeSet::new();
     if let Some(kubernetes) = gateway.as_kubernetes() {
-        names.insert(kubernetes.kubeconfig.env.as_str());
+        names.extend(kubernetes.kubeconfig.iter().map(|file| file.env.as_str()));
         names.extend(kubernetes.environment.iter().map(String::as_str));
         // An existing issuer's token authenticates every gateway request.
-        names.extend(kubernetes.authentication.token_env.as_deref());
+        names.extend(
+            kubernetes
+                .authentication
+                .token
+                .as_ref()
+                .map(|token| token.env.as_str()),
+        );
     }
     if let Some(credential) = gateway.credential() {
         names.insert(credential.env.as_str());
     }
     if let Some(tls) = gateway.tls() {
-        names.extend([
-            tls.ca.env.as_str(),
-            tls.certificate.env.as_str(),
-            tls.key.env.as_str(),
-        ]);
+        names.insert(tls.ca.env.as_str());
+        names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
+        names.extend(tls.key.iter().map(|file| file.env.as_str()));
     }
     credential_environment(names, secrets, directory)
 }
@@ -234,6 +306,7 @@ pub(super) fn credential_environment<'a>(
             "PLUGIN_",
             "HELM_",
             "KUBE_",
+            "KUBERNETES_SERVICE_",
             "NEMOCLAW_INTERNAL_",
             "NEMOCLAW_MANAGED_K8S_",
         ]

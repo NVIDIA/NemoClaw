@@ -24,7 +24,7 @@ pub const NEMOCLAW_PROVIDERS: [&str; 4] = ["openshell", "fabric", "vllm", "ollam
 
 /// The kind of the `terraform_data` that holds an agent's configuration. A
 /// changed configuration replaces the agent's sandbox through
-/// `replace_triggered_by`, because Fabric starts one agent runtime per sandbox.
+/// `replace_triggered_by`, rather than starting another runtime beside the first.
 pub const AGENT_CONFIGURATION: &str = "agent_configuration";
 
 /// The address of the `terraform_data` holding a sandbox's agent configuration.
@@ -116,9 +116,7 @@ fn targets_with_plans(
             generations,
         )?);
     }
-    let mut sandboxes: Vec<_> = document.spec.sandboxes.iter().collect();
-    sandboxes.sort_by_key(|sandbox| &sandbox.name);
-    for sandbox in sandboxes {
+    for sandbox in document.sandboxes() {
         document.sandbox_harness(sandbox)?;
         let web_search = document.web_search(sandbox)?;
         let image_scope = document.image_scope(sandbox)?;
@@ -143,7 +141,7 @@ fn targets_with_plans(
         }
 
         let mut values: Row = [
-            ("name".into(), sandbox.name.clone()),
+            ("name".into(), sandbox.name.to_owned()),
             ("workspace".into(), workspace.clone()),
             ("owner".into(), document.metadata.uid.clone()),
             (
@@ -171,6 +169,29 @@ fn targets_with_plans(
                 serde_json::to_string(config).expect("driver configuration"),
             );
         }
+        if !sandbox.service_exposures.is_empty() {
+            // OpenShell's terms, as in the HCL service block: the map key is
+            // the service name.
+            let exposures: Vec<_> = sandbox
+                .service_exposures
+                .iter()
+                .map(|(name, service)| {
+                    let mut exposure = serde_json::json!({
+                        "name": name,
+                        "target_port": service.target_port,
+                    });
+                    if let Some(mode) = service.authorization_mode {
+                        exposure["authorization_mode"] =
+                            serde_json::to_value(mode).expect("authorization mode");
+                    }
+                    exposure
+                })
+                .collect();
+            values.insert(
+                "services_json".into(),
+                serde_json::to_string(&exposures).expect("service exposures"),
+            );
+        }
         {
             // The agent's inputs are Fabric's configuration sections; the
             // sandbox fields name the sandbox whose ref the graph passes.
@@ -178,7 +199,10 @@ fn targets_with_plans(
             let mut values = nemoclaw_fabric::agent::decompose(&configuration);
             values.extend([
                 ("workspace".into(), workspace.clone()),
-                (nemoclaw_fabric::agent::SANDBOX.into(), sandbox.name.clone()),
+                (
+                    nemoclaw_fabric::agent::SANDBOX.into(),
+                    sandbox.name.to_owned(),
+                ),
                 ("owner".into(), document.metadata.uid.clone()),
                 (
                     "generation".into(),
@@ -196,7 +220,7 @@ fn targets_with_plans(
             });
             result.push(Target {
                 kind: AGENT_CONFIGURATION.into(),
-                address: agent_configuration_address(&sandbox.name),
+                address: agent_configuration_address(sandbox.name),
                 values: [("input".into(), configuration.to_string())].into(),
             });
         }
@@ -494,8 +518,14 @@ fn objects_graph(
         generations,
         crate::services::InstallStage::Deployment,
     )?;
-    let raw = targets_with_plans(document, generations, &service_plans)?;
+    let mut raw = targets_with_plans(document, generations, &service_plans)?;
     let mut graph = compile_with_plans(document, generations, version, &service_plans, &raw)?;
+    // Docker pulls sandbox images with the logins `spec.registries` selects.
+    for (_, pull) in sandbox_image_pulls(document) {
+        if !raw.iter().any(|target| target.address == pull.address) {
+            raw.push(pull);
+        }
+    }
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
     crate::docker_compute::authenticate(&mut graph, &document.spec.registries);
@@ -583,8 +613,10 @@ pub(crate) fn gateway_connection(
     }
     if let Some(tls) = gateway.tls() {
         provider["tls_ca_env"] = json!(tls.ca.env);
-        provider["tls_certificate_env"] = json!(tls.certificate.env);
-        provider["tls_key_env"] = json!(tls.key.env);
+        if let (Some(certificate), Some(key)) = (&tls.certificate, &tls.key) {
+            provider["tls_certificate_env"] = json!(certificate.env);
+            provider["tls_key_env"] = json!(key.env);
+        }
     }
     Ok(provider)
 }
@@ -619,7 +651,7 @@ fn graph_base(
     let connection = gateway_connection(document, generations)?;
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
-        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
+        "terraform":{"required_providers":{
             "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")},
             "vllm":{"source":VLLM_PROVIDER_ADDRESS,"version":format!("= {version}")},
@@ -633,6 +665,35 @@ fn graph_base(
     });
     crate::discovery_graph::populate(&mut graph, document)?;
     Ok(graph)
+}
+
+/// On Docker and Podman, the pull that precedes each sandbox image's reads, by
+/// sandbox name. A Kubernetes sandbox, or one with a metadata bundle, reads
+/// verified metadata instead and pulls nothing.
+pub(crate) fn sandbox_image_pulls(document: &Document) -> BTreeMap<String, Target> {
+    let engine = match &document.spec.gateway {
+        _ if document.spec.gateway.runtime().provider.is_kubernetes() => return BTreeMap::new(),
+        crate::config::Gateway::Managed(gateway) => gateway.engine.clone(),
+        crate::config::Gateway::External(gateway) => gateway.engine.clone(),
+    };
+    document
+        .sandboxes()
+        .filter(|sandbox| sandbox.image.metadata.is_none() && !engine.is_empty())
+        .map(|sandbox| {
+            let name = sandbox.image.ref_.clone();
+            (
+                sandbox.name.to_owned(),
+                Target {
+                    kind: "docker_image".into(),
+                    address: format!(
+                        "docker_image.image_{}",
+                        crate::docker_compute::digest(&engine, &name)
+                    ),
+                    values: Row::from([("engine".into(), engine.clone()), ("name".into(), name)]),
+                },
+            )
+        })
+        .collect()
 }
 
 fn compile_with_plans(
@@ -657,11 +718,38 @@ fn compile_with_plans(
         .collect();
     let mut runtime_sources = BTreeMap::new();
     let mut profile_sources = BTreeMap::new();
-    let mut ordered: Vec<_> = document.spec.sandboxes.iter().collect();
-    ordered.sort_by_key(|sandbox| &sandbox.name);
-    for (index, sandbox) in ordered.iter().enumerate() {
-        let source = format!("data.fabric_harnesses.sandbox_{index}");
-        runtime_sources.insert(sandbox.name.clone(), source.clone());
+    let pulls = sandbox_image_pulls(document);
+    for sandbox in document.sandboxes() {
+        let read = crate::discovery_graph::harness_read(sandbox.name);
+        let mut source = format!("data.fabric_harnesses.{read}");
+        if let Some(pull) = pulls.get(sandbox.name) {
+            // The sandbox and its agent use reads that wait for the pull: an
+            // unknown image ID defers them to apply. The plan-time discovery
+            // read stays, and accepts an image the engine doesn't hold yet.
+            let image_id = json!(format!("${{{}.image_id}}", pull.address));
+            let discovered = graph["data"]["fabric_harnesses"][read.as_str()].clone();
+            let mut acquired = discovered.clone();
+            acquired["image_id"] = image_id.clone();
+            acquired["lifecycle"]["postcondition"][1]["condition"] =
+                json!("${self.runtime_json != \"\"}");
+            graph["data"]["fabric_harnesses"][format!("{read}_acquired")] = acquired;
+            let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
+            let requirements =
+                crate::fabric_capabilities::requirements_for_sandbox(document, sandbox)?;
+            graph["data"]["fabric_harness"][format!("{}_acquired", sandbox.name)] = json!({
+                "image": discovered["image"],
+                "engine": discovered["engine"],
+                "image_id": image_id,
+                "adapter_id": literal(
+                    requirements.configuration["harness"]["adapter_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                ),
+                "agent_name": literal(&sandbox.agent.name),
+            });
+            source = format!("data.fabric_harnesses.{read}_acquired");
+        }
+        runtime_sources.insert(sandbox.name.to_owned(), source.clone());
         for provider in document.sandbox_inference_providers(sandbox)? {
             profile_sources
                 .entry(format!("nemoclaw-inference-{}", provider.key))
@@ -777,8 +865,13 @@ fn compile_with_plans(
             // An agent's harness is the one its sandbox's image read selects.
             if reference.kind == nemoclaw_fabric::agent::HARNESS_TYPE {
                 let sandbox = &target.values[nemoclaw_fabric::agent::SANDBOX];
+                let harness = if pulls.contains_key(sandbox) {
+                    format!("{sandbox}_acquired")
+                } else {
+                    sandbox.clone()
+                };
                 attributes[reference.attribute] =
-                    json!(format!("${{data.fabric_harness.{sandbox}.ref}}"));
+                    json!(format!("${{data.fabric_harness.{harness}.ref}}"));
                 continue;
             }
             let Some(encoded) = carried.into_iter().next() else {

@@ -4,9 +4,7 @@ mod config;
 pub use config::{ManagedOllama, OllamaMemory, OllamaModel, OllamaServing};
 pub mod constraints;
 pub mod hardware_capacity;
-pub mod model_source;
 pub mod policy;
-pub mod registry;
 #[cfg(all(feature = "execution", target_os = "linux"))]
 pub mod runtime;
 pub const MODEL_PATTERN: &str = r"^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$";
@@ -43,7 +41,9 @@ pub fn constrain_schema(defs: &mut serde_json::Map<String, serde_json::Value>, n
              crate::schema::at("hardware/minGpuMemoryBytes",serde_json::json!({}),true),
              crate::schema::at("hardware/profile",serde_json::json!({"not":{"enum":super::vllm::HardwareProfile::UNIFIED_MEMORY}}),false),
              crate::schema::at("memory/gpuMemoryGiB",serde_json::json!({"const":0}),false)
-         ]}}
+         ]}},
+        {"if":crate::schema::at("hardware/profile",serde_json::json!({"enum":super::vllm::HardwareProfile::UNIFIED_MEMORY}),true),
+         "then":crate::schema::at("memory/hostReserveGiB",serde_json::json!({"anyOf":crate::schema::bounds(constraints::UNIFIED_HOST_RESERVE_MIN,constraints::HOST_RESERVE.max,normalized)}),false)}
     ]);
     for (name, field, rule) in [
         ("OllamaServing", "port", &constraints::PORT),

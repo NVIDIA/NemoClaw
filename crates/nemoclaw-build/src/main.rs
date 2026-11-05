@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod assessment_cli;
 #[cfg(feature = "sdk")]
 mod platform;
 mod run_ci;
-mod runtime;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sdk")]
 use nemoclaw_sdk::bundle::{self, Manifest};
@@ -26,6 +26,49 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Assess saved release SBOMs without authorizing or publishing a release.
+    ReleaseAssess {
+        #[command(flatten)]
+        inputs: assessment_cli::Inputs,
+        #[arg(long, value_enum, default_value = "text")]
+        format: AssessmentFormat,
+    },
+    /// Freshly assess and bind private release evidence; never publish anything.
+    ReleaseGate(assessment_cli::GateArgs),
+    /// Verify index and platform digests against the expected release inventory.
+    ReleaseVerifyPromotion {
+        #[arg(long)]
+        expected: PathBuf,
+        #[arg(long)]
+        actual: PathBuf,
+    },
+    /// Select explicitly supported release tags for a monitoring matrix.
+    ReleaseMonitorPlan {
+        #[arg(long)]
+        supported: PathBuf,
+    },
+    /// Validate the candidate's inert image catalog with the trusted controller.
+    ReleaseCatalog {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        candidate_revision: String,
+        #[arg(long)]
+        source_revision: String,
+    },
+    /// Check public release metadata and immutable monitoring inputs.
+    ReleaseMonitorVerify {
+        #[arg(long)]
+        supported: PathBuf,
+        #[arg(long)]
+        tag: String,
+        #[arg(long)]
+        release_metadata: PathBuf,
+        #[arg(long)]
+        inventory: PathBuf,
+        #[arg(long)]
+        sboms: PathBuf,
+    },
     /// Render repository Markdown into Fern pages and check local links.
     #[cfg(feature = "sdk")]
     Docs {
@@ -53,36 +96,37 @@ enum Action {
         #[arg(long)]
         platform: Option<String>,
     },
-    Runtime {
-        manifest: PathBuf,
-    },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
     /// Build this command without default features (`cargo ci`), so it can
     /// install the pinned Protocol Buffers compiler before anything needs it.
     Ci {
-        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
-        /// archive, live-docker, and live-kind run only when named.
+        /// One step: tools, fmt, clippy, build, test, schema, bundle, contract,
+        /// or integration; archive, live-docker, and live-kind run only when named.
         step: Option<String>,
         /// Override the detected PR base (fallback: origin/v1), including local edits.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
         base: Option<String>,
         /// Run every local check without impact analysis or PR discovery.
-        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images"])]
+        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images", "images_commit"])]
         full: bool,
         /// Print the selected steps and their plan as JSON without running checks.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
         dry_run: bool,
-        /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
+        /// Nextest partition for an explicitly selected contract or integration run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
-        /// Run lifecycle tests from a nextest archive instead of compiling them.
+        /// Run contract, integration, or live tests from a nextest archive instead of compiling them.
         #[arg(long)]
         archive_file: Option<PathBuf>,
         /// Load the live suites' images from this `ci live-images` archive
         /// instead of building them.
         #[arg(long)]
         images: Option<PathBuf>,
+        /// Pull the live suites' images that this `v1` commit pushed to the
+        /// per-commit package instead of building them.
+        #[arg(long)]
+        images_commit: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -103,11 +147,14 @@ enum Action {
         #[arg(long)]
         base: String,
     },
-    /// Report a platform's whole lifecycle suite from its partitions' JUnit
-    /// artifacts, and add the report to the GitHub job summary. On the Linux
-    /// CI runners, fail when a test binary exceeds its budget.
-    LifecycleTiming {
-        /// Directory holding the downloaded lifecycle-PLATFORM-SHARD-ATTEMPT
+    /// Report a platform's whole contract or integration suite from its
+    /// partitions' JUnit artifacts, and add the report to the GitHub job
+    /// summary. On the Linux CI runners, fail when a test binary exceeds its
+    /// budget.
+    SuiteTiming {
+        /// The step: contract or integration.
+        step: String,
+        /// Directory holding the downloaded STEP-PLATFORM-SHARD-ATTEMPT
         /// artifacts, one subdirectory each.
         directory: PathBuf,
         #[arg(long)]
@@ -118,13 +165,21 @@ enum Action {
     },
 }
 #[derive(Clone, clap::ValueEnum)]
+enum AssessmentFormat {
+    Text,
+    Json,
+    Sarif,
+}
+#[derive(Clone, clap::ValueEnum)]
 enum ChangedWorkflow {
     /// All expensive validation, as JSON decisions with reasons.
     Plan,
     /// `CI / Images`.
     Images,
-    /// `Live / Docker` and `Live / Kind`.
+    /// The live suites: `E2E Docker tests` and `E2E Kubernetes (kind) tests`.
     Live,
+    /// The `v1` commit whose pushed images the live suites can pull, or none.
+    LiveImages,
 }
 #[cfg(feature = "sdk")]
 #[derive(Subcommand)]
@@ -172,21 +227,22 @@ enum ImageAction {
         #[arg(required = true)]
         targets: Vec<String>,
     },
-    /// Run the command contract inside each labeled local image.
+    /// Run the reference image's runtime contract: NemoClaw's test adapter through fabric-agent-ctl, offline.
     Qualify {
         #[arg(required = true)]
         images: Vec<String>,
-        /// Also start, invoke and stop a runtime through fabric-agent-ctl with this adapter's offline configuration.
-        #[arg(long, value_enum)]
-        lifecycle: Option<nemoclaw_build::images::Lifecycle>,
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
-        /// A local image, by tag or digest.
+        /// A local image, by tag or digest, or with --registry an image in a
+        /// registry, as HOST/REPOSITORY@sha256:DIGEST. Its bundle covers every
+        /// Linux platform it lists.
         image: String,
-        /// linux/arm64 or linux/amd64.
+        /// Read IMAGE from its registry instead of the local Docker engine.
+        /// NEMOCLAW_REGISTRY_USERNAME and NEMOCLAW_REGISTRY_PASSWORD, when set,
+        /// answer the registry's token challenge.
         #[arg(long)]
-        platform: String,
+        registry: bool,
         /// Where to write the bundle; refuses an existing file.
         #[arg(long)]
         output: PathBuf,
@@ -215,10 +271,25 @@ struct Pins {
     #[serde(default)]
     images: std::collections::BTreeMap<String, String>,
 }
-/// A Cargo command without the package description that `cargo run` gives this
-/// tool. Cargo sets those variables per package, but some build scripts, such
-/// as ring's, rerun when an inherited CARGO_MANIFEST_DIR differs from the
-/// environment their cached output was built in.
+/// A Cargo command without the variables that `cargo run` set for this tool.
+///
+/// This works around ring's build script (ring 0.17.14). It declares
+/// `cargo:rerun-if-env-changed` for variables that Cargo sets for every build
+/// script: CARGO_MANIFEST_DIR, CARGO_PKG_*, and OUT_DIR. The Cargo book says
+/// that directive is for global variables such as CC, and that Cargo compares
+/// those it names in the environment of the `cargo` process, not the build
+/// script's. `cargo ci` runs this tool through `cargo run`, which sets the
+/// package variables and, because this package has a build script, OUT_DIR.
+/// A Cargo started from here would inherit them, so ring and its dependents,
+/// such as rustls, tonic, reqwest, and kube, would be stale for any `cargo`
+/// started another way. The docs job's `cargo run -p nemoclaw-build`, for
+/// example, recompiled them from the bundle job's cache.
+///
+/// The list must cover every variable ring tracks that `cargo run` sets. If
+/// CI logs show `Dirty ring ...: the env variable ... changed`, add that
+/// variable and bump the cache prefixes in `.github/actions/setup-rust`,
+/// because caches saved before the change keep the stale artifacts. Remove
+/// this once ring stops tracking variables that Cargo sets.
 fn cargo() -> Command {
     let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
     for (name, _) in std::env::vars_os() {
@@ -229,6 +300,7 @@ fn cargo() -> Command {
             || name.starts_with("CARGO_BIN_")
             || name == "CARGO_CRATE_NAME"
             || name == "CARGO_PRIMARY_PACKAGE"
+            || name == "OUT_DIR"
         {
             command.env_remove(name);
         }
@@ -287,6 +359,7 @@ async fn download(artifact: &Artifact) -> Result<Vec<u8>> {
     temporary.persist(path)?;
     Ok(bytes)
 }
+#[cfg(feature = "sdk")]
 fn target(platform: &str) -> Result<&'static str> {
     Ok(match platform {
         "linux_arm64" => "aarch64-unknown-linux-gnu",
@@ -486,6 +559,84 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Action::ReleaseCatalog {
+        catalog,
+        candidate_revision,
+        source_revision,
+    } = &cli.command
+    {
+        let catalog = assessment_cli::catalog(catalog, candidate_revision, source_revision)?;
+        println!("{}", serde_json::to_string(&catalog)?);
+        return Ok(());
+    }
+    if let Action::ReleaseMonitorPlan { supported } = &cli.command {
+        match assessment_cli::monitor_plan(supported) {
+            Ok(releases) => println!("{}", serde_json::json!({"include":releases})),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(3);
+            }
+        }
+        return Ok(());
+    }
+    if let Action::ReleaseMonitorVerify {
+        supported,
+        tag,
+        release_metadata,
+        inventory,
+        sboms,
+    } = &cli.command
+    {
+        let verified =
+            assessment_cli::monitor_verify(supported, tag, release_metadata, inventory, sboms)
+                .is_ok();
+        println!(
+            "{}",
+            serde_json::json!({"verified":verified,"publication_authorized":false})
+        );
+        std::process::exit(if verified { 0 } else { 3 });
+    }
+    if let Action::ReleaseGate(args) = &cli.command {
+        let status = assessment_cli::gate(args).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            nemoclaw_build::release_assessment::Status::Incomplete
+        });
+        println!(
+            "{}",
+            serde_json::json!({"status": status, "publication_authorized":false})
+        );
+        std::process::exit(assessment_cli::exit_code(status));
+    }
+    if let Action::ReleaseVerifyPromotion { expected, actual } = &cli.command {
+        let valid = assessment_cli::verify_promotion(expected, actual).is_ok();
+        println!(
+            "{}",
+            serde_json::json!({"verified":valid, "publication_authorized":false})
+        );
+        std::process::exit(if valid { 0 } else { 3 });
+    }
+    if let Action::ReleaseAssess { inputs, format } = cli.command {
+        use nemoclaw_build::release_assessment::{self, Assessment};
+        let result = inputs.assess().map(|(_, assessment)| assessment);
+        let assessment = result.unwrap_or_else(Assessment::incomplete);
+        match format {
+            AssessmentFormat::Text => {
+                print!("{}", release_assessment::report::text(&assessment));
+            }
+            AssessmentFormat::Json => {
+                serde_json::to_writer_pretty(std::io::stdout().lock(), &assessment)?;
+                println!();
+            }
+            AssessmentFormat::Sarif => {
+                serde_json::to_writer_pretty(
+                    std::io::stdout().lock(),
+                    &release_assessment::sarif::document(&assessment),
+                )?;
+                println!();
+            }
+        }
+        std::process::exit(assessment_cli::exit_code(assessment.status));
+    }
     #[cfg(feature = "sdk")]
     if let Action::Docs { check, revision } = cli.command {
         return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
@@ -527,27 +678,42 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
-            ImageAction::Qualify { images, lifecycle } => images.iter().try_for_each(|image| {
+            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image, lifecycle)
+                nemoclaw_build::images::qualify(image)
             }),
             ImageAction::ExportMetadata {
                 image,
-                platform,
+                registry: false,
                 output,
-            } => nemoclaw_build::images::export_metadata(&image, &platform, &output),
+            } => nemoclaw_build::images::export_metadata(&image, &output),
+            ImageAction::ExportMetadata {
+                image,
+                registry: true,
+                output,
+            } => {
+                let credentials = std::env::var("NEMOCLAW_REGISTRY_USERNAME")
+                    .ok()
+                    .zip(std::env::var("NEMOCLAW_REGISTRY_PASSWORD").ok());
+                let bundle = nemoclaw_build::images::registry_metadata(&image, credentials).await?;
+                nemoclaw_build::images::write_bundle(&bundle, &output)
+            }
         }
         .map_err(Into::into);
     }
-    if let Action::LifecycleTiming {
+    if let Action::SuiteTiming {
+        step,
         directory,
         platform,
         shards,
     } = &cli.command
     {
+        let step = nemoclaw_build::ci::Step::parse(step)
+            .filter(|step| nemoclaw_build::ci::Step::BUNDLED.contains(step))
+            .ok_or("the step must be contract or integration")?;
         let shards: Vec<u32> = serde_json::from_str(shards)
             .map_err(|error| format!("--shards must be a JSON list of numbers: {error}"))?;
-        return run_ci::report_lifecycle_suite(directory, platform, &shards);
+        return run_ci::report_partitioned_suite(step, directory, platform, &shards);
     }
     if let Action::Changes {
         workflow,
@@ -563,8 +729,22 @@ async fn main() -> Result<()> {
         if *worktree {
             return Err("--worktree requires changes plan".into());
         }
+        if matches!(workflow, ChangedWorkflow::LiveImages) {
+            let (commit, reason) =
+                nemoclaw_build::changes::live_images(Path::new("."), base, |reference| {
+                    Command::new("docker")
+                        .args(["buildx", "imagetools", "inspect", reference])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .is_ok_and(|status| status.success())
+                });
+            eprintln!("{reason}");
+            println!("live-images={}", commit.unwrap_or_default());
+            return Ok(());
+        }
         let (workflow, name) = match workflow {
-            ChangedWorkflow::Plan => unreachable!(),
+            ChangedWorkflow::Plan | ChangedWorkflow::LiveImages => unreachable!(),
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
             ChangedWorkflow::Live => (nemoclaw_build::changes::Workflow::Live, "live"),
         };
@@ -578,24 +758,43 @@ async fn main() -> Result<()> {
         partition,
         archive_file,
         images,
+        images_commit,
         base,
         full,
         dry_run,
     } = &cli.command
     {
-        if partition.is_some() && step.as_deref() != Some("lifecycle") {
-            return Err("--partition requires ci lifecycle".into());
+        if partition.is_some() && !matches!(step.as_deref(), Some("contract" | "integration")) {
+            return Err("--partition requires ci contract or integration".into());
         }
         if archive_file.is_some()
             && !matches!(
                 step.as_deref(),
-                Some("lifecycle" | "live-docker" | "live-kind")
+                Some("contract" | "integration" | "live-docker" | "live-kind")
             )
         {
-            return Err("--archive-file requires ci lifecycle, live-docker, or live-kind".into());
+            return Err(
+                "--archive-file requires ci contract, integration, live-docker, or live-kind"
+                    .into(),
+            );
         }
         if images.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
             return Err("--images requires ci live-docker or live-kind".into());
+        }
+        if let Some(commit) = images_commit {
+            if !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
+                return Err("--images-commit requires ci live-docker or live-kind".into());
+            }
+            if images.is_some() {
+                return Err("--images and --images-commit are alternatives".into());
+            }
+            if commit.len() != 40
+                || !commit
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            {
+                return Err("--images-commit must be a full lowercase commit hash".into());
+            }
         }
         let plan = if *full {
             Some(nemoclaw_build::changes::Plan::full("explicit --full"))
@@ -636,6 +835,7 @@ async fn main() -> Result<()> {
             partition.as_deref(),
             archive_file.as_deref(),
             images.as_deref(),
+            images_commit.as_deref(),
             plan.as_ref(),
         )
         .await;
@@ -654,9 +854,15 @@ async fn main() -> Result<()> {
             unreachable!("documentation generation returned before build tool checks")
         }
         Action::Ci { .. }
+        | Action::ReleaseGate(..)
+        | Action::ReleaseVerifyPromotion { .. }
+        | Action::ReleaseMonitorPlan { .. }
+        | Action::ReleaseCatalog { .. }
+        | Action::ReleaseMonitorVerify { .. }
+        | Action::ReleaseAssess { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
-        | Action::LifecycleTiming { .. } => {
+        | Action::SuiteTiming { .. } => {
             unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]
@@ -670,6 +876,5 @@ async fn main() -> Result<()> {
 
             bundle(&pins, &platform::select(platform, bundle::platform)?).await
         }
-        Action::Runtime { manifest } => runtime::build_runtime(&pins, &manifest).await,
     }
 }

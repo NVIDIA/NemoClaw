@@ -4,6 +4,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.claude",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -38,6 +47,41 @@
               "timeout_seconds": {
                 "minimum": 0,
                 "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "usage": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "nemo_fabric.detailed_token_usage.v1": {
+                "additionalProperties": false,
+                "properties": {
+                  "cache_write_input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "cached_input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "input_tokens_include_cache": {
+                    "type": "boolean"
+                  },
+                  "output_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "output_tokens_include_reasoning": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
               }
             },
             "type": "object"
@@ -101,10 +145,34 @@
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
           "properties": {
+            "insecure_http_model_hosts": {
+              "description": "Hosts trusted for credential-free HTTP model forwarding through NeMo Relay >=0.11.0; no schemes, ports, paths, wildcards, brackets, or zone identifiers.",
+              "items": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$"
+                  },
+                  {
+                    "format": "ipv6",
+                    "pattern": "^[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*$"
+                  }
+                ],
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
             "max_budget_usd": {
               "description": "Maximum amount in US dollars that Claude may spend during one invocation.",
               "exclusiveMinimum": 0,
               "type": "number"
+            },
+            "max_buffer_size": {
+              "description": "Size limit the Claude Agent SDK applies to one JSON message from Claude Code. Omit to use the SDK default.",
+              "minimum": 1,
+              "type": "integer"
             },
             "permission_mode": {
               "description": "Claude permission handling mode.",
@@ -115,6 +183,17 @@
                 "plan",
                 "dontAsk",
                 "auto"
+              ],
+              "type": "string"
+            },
+            "reasoning_effort": {
+              "description": "Claude reasoning effort. Omit to preserve the harness default.",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
               ],
               "type": "string"
             },
@@ -161,6 +240,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.codex",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -278,6 +366,25 @@
               "minLength": 1,
               "type": "string"
             },
+            "insecure_http_model_hosts": {
+              "description": "Hosts trusted for credential-free HTTP model forwarding through NeMo Relay >=0.11.0; no schemes, ports, paths, wildcards, brackets, or zone identifiers.",
+              "items": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$"
+                  },
+                  {
+                    "format": "ipv6",
+                    "pattern": "^[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*$"
+                  }
+                ],
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
             "output_schema": {
               "description": "JSON Schema that constrains the final assistant message for each turn.",
               "type": "object"
@@ -299,7 +406,9 @@
                 "low",
                 "medium",
                 "high",
-                "xhigh"
+                "xhigh",
+                "max",
+                "ultra"
               ],
               "type": "string"
             },
@@ -353,6 +462,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.hermes",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -362,6 +480,7 @@
             "models.max_tokens",
             "instructions.system",
             "runtime.max_turns",
+            "runtime.keep_state",
             "tools.enabled",
             "tools.blocked",
             "mcp",
@@ -393,6 +512,55 @@
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
           "properties": {
+            "interfaces": {
+              "additionalProperties": false,
+              "description": "Native interfaces served by the runtime as child processes.",
+              "properties": {
+                "api": {
+                  "additionalProperties": false,
+                  "description": "Hermes's API server, run by a gateway child. After every enabled interface starts, the adapter writes its bearer token to interfaces/api.token in the Hermes home: <artifact root>/.fabric/hermes/runtimes/<runtime-id>, or the agent's state folder with runtime.keep_state.",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "description": "Serve Hermes's OpenAI-compatible API server. A present api interface is on unless this is false.",
+                      "type": "boolean"
+                    },
+                    "port": {
+                      "description": "Exact loopback port for the API server. Start fails if it is in use.",
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "port"
+                  ],
+                  "type": "object"
+                },
+                "dashboard": {
+                  "additionalProperties": false,
+                  "description": "Hermes's dashboard, which has no sign-in when bound to loopback. It needs a built frontend at HERMES_WEB_DIST.",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "description": "Serve Hermes's dashboard and browser chat. A present dashboard is on unless this is false.",
+                      "type": "boolean"
+                    },
+                    "port": {
+                      "description": "Exact loopback port for the dashboard. Start fails if it is in use.",
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "port"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "max_tokens": {
               "default": 512,
               "description": "Maximum number of tokens in each Hermes model response.",
@@ -440,6 +608,13 @@
               "description": "Whether Hermes saves its native conversation trajectories as JSONL.",
               "type": "boolean"
             },
+            "startup_timeout_seconds": {
+              "default": 60,
+              "description": "Time from the start of the runtime for every enabled interface to pass its health check, within NeMo Fabric's 90-second start limit.",
+              "exclusiveMinimum": 0,
+              "maximum": 75,
+              "type": "number"
+            },
             "terminal_timeout": {
               "default": 60,
               "description": "Maximum number of seconds for a Hermes terminal operation.",
@@ -472,6 +647,15 @@
       "descriptor": {
         "adapter_id": "nvidia.fabric.langchain.deepagents",
         "adapter_kind": "python",
+        "capabilities": {
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          }
+        },
         "config": {
           "accepts": [
             "models",
@@ -720,6 +904,18 @@
               },
               "required": [],
               "type": "object"
+            },
+            "reasoning_effort": {
+              "description": "Reasoning effort passed to ChatOpenAI. Requires an OpenAI-compatible provider; omit to preserve the model default.",
+              "enum": [
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
             }
           },
           "required": [],
@@ -741,6 +937,148 @@
               ]
             }
           }
+        }
+      },
+      "provenance": [
+        {
+          "source": "nemo-fabric-adapter-catalog"
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "adapter_id": "nvidia.fabric.langchain.deepagents-code",
+        "adapter_kind": "process",
+        "capabilities": {
+          "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live"
+            ]
+          },
+          "service": false,
+          "streaming": false,
+          "updates": false
+        },
+        "config": {
+          "accepts": [
+            "models",
+            "models.base_url"
+          ]
+        },
+        "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "run_result": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "session_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "stop_reason": {
+                "enum": [
+                  "end_turn",
+                  "max_tokens",
+                  "max_turn_requests",
+                  "refusal",
+                  "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id",
+              "stop_reason"
+            ],
+            "type": "object"
+          }
+        },
+        "model_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "api_key_env": {
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "base_url": {
+              "format": "uri",
+              "pattern": "^https?://",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "provider": {
+              "const": "openai"
+            }
+          },
+          "required": [
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        "requirements": {
+          "binaries": [
+            "node",
+            "dcode"
+          ]
+        },
+        "runner": {
+          "command": "node",
+          "script": "dist/cli.js"
+        },
+        "settings_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_mode": {
+              "description": "How Deep Agents Code approves gated actions during invocations, which no person can answer: auto uses its classifier, with the default model, and denies what it escalates; yolo allows every gated action.",
+              "enum": [
+                "auto",
+                "yolo"
+              ],
+              "type": "string"
+            },
+            "insecure_http_model_hosts": {
+              "description": "Explicitly trusted HTTP model endpoint hostnames, without schemes, ports, paths, or wildcards.",
+              "items": {
+                "maxLength": 253,
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$",
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "interfaces": {
+              "additionalProperties": false,
+              "description": "Native interfaces offered by the runtime.",
+              "properties": {
+                "terminal": {
+                  "additionalProperties": false,
+                  "description": "Deep Agents Code's terminal UI, opened by <artifact root>/.fabric/deepagents-code/runtimes/<runtime-id>/interfaces/terminal in a separate session that shares the runtime's configuration and session store.",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "description": "Write a launcher for Deep Agents Code's terminal UI. A present terminal is on unless this is false.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "approval_mode"
+          ],
+          "type": "object"
         }
       },
       "provenance": [
@@ -800,7 +1138,17 @@
             },
             "settings": {
               "additionalProperties": false,
-              "properties": {},
+              "properties": {
+                "cost_tracking": {
+                  "default": "default",
+                  "description": "Use strict SDK pricing, or explicitly disable monetary budgeting for unpriced models. Disabled requires a positive runtime.max_turns; cost remains unavailable.",
+                  "enum": [
+                    "default",
+                    "disabled"
+                  ],
+                  "type": "string"
+                }
+              },
               "type": "object"
             },
             "temperature": {
@@ -1044,6 +1392,18 @@
         "adapter_kind": "python",
         "capabilities": {
           "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ],
+            "service_health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          },
           "service": true,
           "streaming": false,
           "updates": false
@@ -1066,6 +1426,56 @@
           ]
         },
         "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "usage": {
+            "additionalProperties": false,
+            "properties": {
+              "nvidia.fabric.openclaw.usage_evidence.v1": {
+                "additionalProperties": false,
+                "properties": {
+                  "gaps": {
+                    "items": {
+                      "enum": [
+                        "scope_unverified",
+                        "missing_usage",
+                        "zero_unverified"
+                      ]
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "observed": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "input_tokens": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "output_tokens": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "total_tokens": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "observed",
+                  "gaps"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "nvidia.fabric.openclaw.usage_evidence.v1"
+            ],
+            "type": "object"
+          }
+        },
         "model_schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
@@ -1092,7 +1502,12 @@
             },
             "settings": {
               "additionalProperties": false,
-              "properties": {},
+              "properties": {
+                "supports_usage_in_streaming": {
+                  "description": "Whether the configured custom OpenAI-compatible endpoint supports stream_options.include_usage. Requires base_url; omitted values retain OpenClaw capability detection.",
+                  "type": "boolean"
+                }
+              },
               "type": "object"
             },
             "temperature": {
@@ -1117,6 +1532,17 @@
         "settings_schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "additionalProperties": false,
+          "dependentSchemas": {
+            "port_range": {
+              "properties": {
+                "interfaces": {
+                  "properties": {
+                    "dashboard": false
+                  }
+                }
+              }
+            }
+          },
           "properties": {
             "agent_id": {
               "default": "default",
@@ -1169,6 +1595,34 @@
               "exclusiveMinimum": 0,
               "type": "number"
             },
+            "interfaces": {
+              "additionalProperties": false,
+              "description": "Native interfaces served by a managed runtime. Services reject interfaces.",
+              "properties": {
+                "dashboard": {
+                  "additionalProperties": false,
+                  "description": "OpenClaw's Control UI. After the Gateway starts, the adapter writes its sign-in token to <artifact root>/.fabric/openclaw/runtimes/<runtime-id>/interfaces/dashboard.token.",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "description": "Serve the Control UI. A present dashboard is on unless this is false.",
+                      "type": "boolean"
+                    },
+                    "port": {
+                      "description": "Exact loopback Gateway base port, which serves the Control UI. Start fails if it or port + 2 is in use. OpenClaw allocates browser ports through port + 110 on demand, so keep that range free. Can't be combined with port_range.",
+                      "maximum": 65425,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "port"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "openclaw_command": {
               "description": "OpenClaw executable name or path. Relative paths containing a directory are resolved from the NeMo Fabric base directory.",
               "minLength": 1,
@@ -1196,21 +1650,21 @@
               "type": "object"
             },
             "read_timeout_seconds": {
-              "default": 600,
-              "description": "Timeout between response bytes from the local OpenClaw Gateway.",
+              "description": "Timeout between response bytes from the local OpenClaw Gateway. When unset, the invocation timeout bounds the response.",
               "exclusiveMinimum": 0,
               "type": "number"
             },
             "shutdown_timeout_seconds": {
-              "default": 10,
+              "default": 5,
               "description": "Maximum graceful Gateway shutdown time before forced termination.",
               "exclusiveMinimum": 0,
               "type": "number"
             },
             "startup_timeout_seconds": {
-              "default": 30,
-              "description": "Maximum time to wait for the OpenClaw Gateway to become ready.",
+              "default": 60,
+              "description": "One deadline for all of start, from checking the OpenClaw command to the Gateway becoming ready, within NeMo Fabric's 90-second start limit.",
               "exclusiveMinimum": 0,
+              "maximum": 75,
               "type": "number"
             }
           },
@@ -1229,6 +1683,13 @@
         "adapter_kind": "process",
         "capabilities": {
           "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          },
           "service": false,
           "streaming": false,
           "updates": false
@@ -1248,6 +1709,97 @@
           ]
         },
         "contract_version": "fabric.adapter/v1alpha2",
+        "extension_schemas": {
+          "usage": {
+            "additionalProperties": false,
+            "properties": {
+              "nvidia.fabric.opencode.usage_evidence.v1": {
+                "additionalProperties": false,
+                "properties": {
+                  "gaps": {
+                    "items": {
+                      "enum": [
+                        "scope_unverified",
+                        "missing_usage",
+                        "unfinished_work"
+                      ]
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "observed": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "cached_input_tokens": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "input_tokens": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "output_tokens": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "reasoning_tokens": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "total_tokens": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "scope_reasons": {
+                    "description": "Bounded reasons invocation ownership or completion could not be proved; contains no native messages, commands, or credentials.",
+                    "items": {
+                      "enum": [
+                        "observer_unavailable",
+                        "observer_lost",
+                        "configuration_changed",
+                        "prepare_scope_read_failed",
+                        "unsupported_configuration",
+                        "root_execution_unconfirmed",
+                        "title_completion_unconfirmed",
+                        "final_scope_read_failed",
+                        "child_ancestry_unverified",
+                        "child_ownership_changed",
+                        "manual_session_change",
+                        "tool_result_unavailable",
+                        "background_shell",
+                        "background_subagent",
+                        "unsupported_protocol",
+                        "auxiliary_generation",
+                        "unsupported_request_kind",
+                        "prompt_failed",
+                        "unfinished_work"
+                      ]
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "observed",
+                  "gaps"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "nvidia.fabric.opencode.usage_evidence.v1"
+            ],
+            "type": "object"
+          }
+        },
         "model_schema": {
           "additionalProperties": false,
           "allOf": [
@@ -1356,6 +1908,13 @@
         "adapter_kind": "process",
         "capabilities": {
           "cancellation": false,
+          "metadata": {
+            "health_checks": [
+              "live",
+              "active",
+              "ready"
+            ]
+          },
           "service": false,
           "streaming": false,
           "updates": false
@@ -1470,6 +2029,57 @@
               "pi_turn_started"
             ],
             "type": "object"
+          },
+          "usage": {
+            "additionalProperties": false,
+            "properties": {
+              "nemo_fabric.detailed_token_usage.v1": {
+                "additionalProperties": false,
+                "properties": {
+                  "cache_write_input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "cached_input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "input_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "input_tokens_include_cache": {
+                    "type": "boolean"
+                  },
+                  "output_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "output_tokens_include_reasoning": {
+                    "type": "boolean"
+                  },
+                  "reasoning_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "total_tokens": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "input_tokens",
+                  "output_tokens",
+                  "cached_input_tokens",
+                  "cache_write_input_tokens",
+                  "input_tokens_include_cache",
+                  "output_tokens_include_reasoning",
+                  "total_tokens"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "object"
           }
         },
         "model_schema": {
@@ -1522,8 +2132,27 @@
               "type": "array",
               "uniqueItems": true
             },
+            "insecure_http_model_hosts": {
+              "description": "Hosts trusted for credential-free HTTP model forwarding through NeMo Relay >=0.11.0; no schemes, ports, paths, wildcards, brackets, or zone identifiers.",
+              "items": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$"
+                  },
+                  {
+                    "format": "ipv6",
+                    "pattern": "^[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*$"
+                  }
+                ],
+                "maxLength": 253,
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
             "relay_extension_path": {
-              "description": "Absolute path or environment.workspace-relative path to the NeMo Relay 0.9 or 0.10 Pi extension",
+              "description": "Absolute path or environment.workspace-relative path to the NeMo Relay Pi extension matching the CLI release",
               "minLength": 1,
               "type": "string"
             }
@@ -1706,8 +2335,8 @@
       ]
     }
   ],
-  "fabric_revision": "5574117feb4be948c1b03f4c36a2fe9a11af910d",
+  "fabric_revision": "e5b5ebf2b81cc3c6325301ea419ebf2453dab12e",
   "schema_version": 2,
-  "source_sha256": "b1a7f2759ea26fd3dcf8136be30045897fa5d7c38a7b96e81afaecdde798e523",
+  "source_sha256": "3c20aed57985f4d19fa0a30204448a7989761991757317ec67ba8c187ba577d5",
   "targets": []
 }

@@ -28,11 +28,15 @@ pub const GPU_MEMORY: DefaultedInteger = DefaultedInteger {
     min: 0,
     max: 96,
 };
+// The minimum covers the largest host-memory use measured while a managed vLLM or Ollama
+// service loaded on a dedicated-memory GPU, rounded up (#13833). Unified-memory profiles keep
+// the single-Spark recipe's minimum.
 pub const HOST_RESERVE: DefaultedInteger = DefaultedInteger {
     default: 32,
-    min: 28,
+    min: 6,
     max: 64,
 };
+pub const UNIFIED_HOST_RESERVE_MIN: i64 = 28;
 pub const MIN_AVAILABLE: DefaultedInteger = DefaultedInteger {
     default: 8,
     min: 6,

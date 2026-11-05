@@ -31,6 +31,7 @@ impl QuestionResolver<'_> {
                     target: QuestionTarget::sdk(field.path.clone()),
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
+                    note: None,
                     id: field.path,
                     // A `false` schema marks a supplied key the SDK does not define.
                     reason: if field.schema == Value::Bool(false) {

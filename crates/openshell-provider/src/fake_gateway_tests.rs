@@ -450,6 +450,57 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     );
 }
 
+/// A sandbox in a terminal phase is observed, with the reason it exited, so
+/// the plan can replace it; a running sandbox reports no exit.
+#[tokio::test]
+async fn an_exited_sandbox_is_observed_with_its_exit() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture, Arc::new(EnvironmentSecrets));
+    let sandbox = create_sandbox(&client, "local").await;
+    let observed = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed[crate::EXITED], "");
+    {
+        let mut state = fixture.state.lock().unwrap();
+        let status = state
+            .sandboxes
+            .get_mut(&key(&sandbox))
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap();
+        status.phase = proto::SandboxPhase::Error as i32;
+        status.exit_code = Some(1);
+        status.conditions = vec![proto::SandboxCondition {
+            r#type: "Ready".into(),
+            status: "False".into(),
+            reason: "ContainerExited".into(),
+            message: "secret-bearing backend text".into(),
+            ..Default::default()
+        }];
+    }
+    let observed = client
+        .read("sandbox", &sandbox, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        observed[crate::EXITED],
+        "SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1"
+    );
+    // Teardown still observes the sandbox so it can delete it.
+    assert!(
+        client
+            .read("sandbox", &sandbox, true)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
 #[tokio::test]
 async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     let fixture = Fixture::start().await;
@@ -763,13 +814,15 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     assert!(client.read("sandbox", &row, false).await.is_err());
 }
 
-/// The bearer token the forward below supplies.
+/// The bearer token the gateway from `forwarded` requires.
 const FORWARD_TOKEN: &str = "forward-token-sentinel";
 
 /// A forward that supplies a bearer token and TLS files, as `SdkKubernetes`
 /// does, to a fixture gateway that requires them.
+#[derive(Clone)]
 struct Forward {
     endpoint: String,
+    token: String,
     tls: [String; 3],
 }
 
@@ -778,17 +831,28 @@ impl KubernetesConnector for Forward {
     async fn open(&self, _: &str) -> Result<KubernetesConnection, ObservationError> {
         Ok(KubernetesConnection {
             endpoint: self.endpoint.clone(),
-            token: Some(FORWARD_TOKEN.into()),
+            token: Some(self.token.clone()),
             tls: Some(self.tls.clone()),
             forward: Box::new(()),
         })
     }
 }
 
-/// A fixture gateway that requires mutual TLS and the forward's token, and a
-/// client that reaches it as a managed Kubernetes gateway. The TLS files are
-/// written to `directory`.
-async fn forwarded(directory: &std::path::Path) -> (Fixture, OpenShell) {
+impl Forward {
+    /// The client a new provider process opens to the gateway through this
+    /// forward.
+    async fn client(self) -> OpenShell {
+        GatewayClient::default()
+            .with_kubernetes(Arc::new(self))
+            .connect(&GatewayConnection::Kubernetes("{}".into()))
+            .await
+            .unwrap()
+    }
+}
+
+/// A fixture gateway that requires mutual TLS and `FORWARD_TOKEN`, and a
+/// forward that supplies them. The TLS files are written to `directory`.
+async fn forwarded(directory: &std::path::Path) -> (Fixture, Forward) {
     use rcgen::{
         BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
         KeyUsagePurpose,
@@ -830,14 +894,90 @@ async fn forwarded(directory: &std::path::Path) -> (Fixture, OpenShell) {
     });
     let forward = Forward {
         endpoint: fixture.endpoint.clone(),
+        token: FORWARD_TOKEN.into(),
         tls,
     };
-    let client = GatewayClient::default()
-        .with_kubernetes(Arc::new(forward))
-        .connect(&GatewayConnection::Kubernetes("{}".into()))
-        .await
-        .unwrap();
-    (fixture, client)
+    (fixture, forward)
+}
+
+/// A certificate authority unrelated to the fixture gateway's, and a client
+/// certificate it signed, written to `directory` as `[ca, tls.crt, tls.key]`.
+fn unrelated_tls(directory: &std::path::Path) -> [String; 3] {
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+        KeyUsagePurpose,
+    };
+    let key = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    let ca = params.self_signed(&key).unwrap().pem();
+    let issuer = Issuer::new(params, key);
+    let key = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(vec!["127.0.0.1".into()]).unwrap();
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let certificate = params.signed_by(&key, &issuer).unwrap().pem();
+    [
+        ("ca", ca),
+        ("tls.crt", certificate),
+        ("tls.key", key.serialize_pem()),
+    ]
+    .map(|(name, content)| {
+        let path = directory.join(name);
+        std::fs::write(&path, content).unwrap();
+        path.to_str().unwrap().to_owned()
+    })
+}
+
+/// A TLS failure names which side refused which certificate: a CA that did
+/// not sign the gateway's certificate, or a client certificate the gateway
+/// does not accept. Neither reaches the gateway's API.
+#[tokio::test]
+async fn a_tls_failure_names_the_refused_certificate() {
+    let directory = tempfile::tempdir().unwrap();
+    let (fixture, forward) = forwarded(directory.path()).await;
+    let unrelated = tempfile::tempdir().unwrap();
+    let [other_ca, other_certificate, other_key] = unrelated_tls(unrelated.path());
+    let [ca, certificate, key] = forward.tls.clone();
+    let rows = fixture_rows("hermes-auth");
+    let (_, workspace) = rows.iter().find(|(kind, _)| *kind == "workspace").unwrap();
+    // The fixture's certificate names 127.0.0.1, not localhost.
+    let elsewhere = forward.endpoint.replace("127.0.0.1", "localhost");
+    for (case, endpoint, tls, expected) in [
+        (
+            "an untrusted server certificate",
+            forward.endpoint.clone(),
+            [other_ca, certificate.clone(), key.clone()],
+            "the gateway's TLS server certificate is not signed by the configured certificate authority",
+        ),
+        (
+            "a server certificate for another host",
+            elsewhere,
+            [ca.clone(), certificate, key],
+            "the gateway's TLS server certificate does not name the endpoint's host",
+        ),
+        (
+            "a refused client certificate",
+            forward.endpoint.clone(),
+            [ca, other_certificate, other_key],
+            "the gateway refused the TLS client certificate",
+        ),
+    ] {
+        let client = Forward {
+            endpoint,
+            tls,
+            ..forward.clone()
+        }
+        .client()
+        .await;
+        let error = client.ensure("workspace", workspace).await.error();
+        assert_eq!(
+            error.as_ref().map(ToString::to_string).as_deref(),
+            Some(expected),
+            "{case}: {error:?}"
+        );
+    }
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
 }
 
 /// A provider's credential variable through a managed Kubernetes gateway
@@ -850,7 +990,8 @@ async fn a_managed_kubernetes_gateway_resolves_provider_credentials_from_the_env
     let value = std::env::var("PATH").unwrap();
     assert!(!value.is_empty());
     let directory = tempfile::tempdir().unwrap();
-    let (fixture, client) = forwarded(directory.path()).await;
+    let (fixture, forward) = forwarded(directory.path()).await;
+    let client = forward.client().await;
     let mut rows = fixture_rows("hermes-auth");
     let (_, registration) = rows
         .iter_mut()
@@ -876,7 +1017,8 @@ async fn a_managed_kubernetes_gateway_resolves_provider_credentials_from_the_env
 #[tokio::test]
 async fn a_providers_credential_variable_never_resolves_to_the_forwards_credentials() {
     let directory = tempfile::tempdir().unwrap();
-    let (fixture, client) = forwarded(directory.path()).await;
+    let (fixture, forward) = forwarded(directory.path()).await;
+    let client = forward.client().await;
     let rows = fixture_rows("hermes-auth");
     let [(_, workspace), (_, profile), (_, registration), ..] = rows.as_slice() else {
         panic!("hermes-auth declares a workspace, a profile, and a registration");
@@ -901,4 +1043,40 @@ async fn a_providers_credential_variable_never_resolves_to_the_forwards_credenti
         );
     }
     assert!(fixture.state.lock().unwrap().providers.is_empty());
+}
+
+/// A managed gateway that refuses the forward's token refuses every call, so
+/// nothing changes, and the provider reports an authentication failure without
+/// state. A `GatewayClient` keeps the client it opened for its process's
+/// lifetime, so a refreshed token takes effect in the next command's provider
+/// process, modeled here by a new one.
+#[tokio::test]
+async fn a_refused_forward_token_is_an_authentication_failure_without_effects() {
+    let directory = tempfile::tempdir().unwrap();
+    let (fixture, forward) = forwarded(directory.path()).await;
+    fixture.state.lock().unwrap().expected_bearer = Some("Bearer fresh-token-sentinel".into());
+    let rows = fixture_rows("hermes-auth");
+    let (_, workspace) = rows.iter().find(|(kind, _)| *kind == "workspace").unwrap();
+    let stale = Forward {
+        token: "stale-token-sentinel".into(),
+        ..forward.clone()
+    }
+    .client()
+    .await;
+    // An authentication failure carries no gateway text, so it cannot echo
+    // the token.
+    assert_eq!(
+        stale.ensure("workspace", workspace).await.into_parts(),
+        (None, Some(ObservationError::Authentication))
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, 0);
+    let fresh = Forward {
+        token: "fresh-token-sentinel".into(),
+        ..forward
+    }
+    .client()
+    .await;
+    let result = fresh.ensure("workspace", workspace).await;
+    assert!(result.error().is_none(), "{:?}", result.error());
+    assert_eq!(fixture.state.lock().unwrap().effects, 1);
 }

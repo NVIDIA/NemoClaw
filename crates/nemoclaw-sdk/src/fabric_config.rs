@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Deployment-owned projection into the public Fabric configuration contract.
-use crate::config::{ConfigError, Document, Sandbox};
+use crate::config::{ConfigError, Document, NamedSandbox};
 use serde_json::{Value, json};
 
 /// Resolve deployment references without interpreting native adapter settings.
 /// This exact configuration is planned against the image descriptors and sent to Fabric.
-pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, ConfigError> {
+pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Value, ConfigError> {
     let harness = document.sandbox_harness(sandbox)?;
     let selection = document.scoped_inference(sandbox)?;
     let mut result = json!({
@@ -42,7 +42,7 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
     // Fabric rejects a model field an adapter doesn't accept, so values the
     // deployment generates follow the adapter's descriptor. A base URL also goes
     // to adapters outside the bundled catalog; an API goes only where declared.
-    let catalog = crate::fabric_catalog::FabricCatalog::bundled();
+    let catalog = crate::fabric_catalog::FabricCatalog::bundled_ref();
     let descriptor = catalog
         .adapters
         .iter()
@@ -61,7 +61,60 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
         .iter()
         .any(|schema| schema["properties"].get("api").is_some())
     });
+    // Fabric gives every runtime of an agent one state folder only when asked,
+    // and rejects the request for an adapter that doesn't accept it.
+    if descriptor.is_some_and(|descriptor| {
+        descriptor["config"]["accepts"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "runtime.keep_state"))
+    }) {
+        result["runtime"]["keep_state"] = true.into();
+    }
     for route in &selection.inference.routes {
+        // Match Fabric's adapter_config_compatibility_issues until it is public.
+        // Model extensions can declare legacy sampling fields outside config.accepts.
+        for (field, authored, input_name) in [
+            (
+                "max_tokens",
+                route.overrides.tuning.max_tokens.is_some(),
+                "maxTokens",
+            ),
+            (
+                "temperature",
+                route.overrides.tuning.temperature.is_some(),
+                "temperature",
+            ),
+            ("top_p", route.overrides.tuning.top_p.is_some(), "topP"),
+        ] {
+            let extension = route
+                .overrides
+                .extensions
+                .as_ref()
+                .and_then(|values| values.get(field))
+                .is_some_and(|value| !value.is_null());
+            if (authored || extension)
+                && descriptor.is_some_and(|descriptor| {
+                    let path = format!("models.{field}");
+                    !descriptor["config"]["accepts"]
+                        .as_array()
+                        .is_some_and(|fields| fields.iter().any(|accepted| accepted == &path))
+                        && !(field != "temperature"
+                            && descriptor["extension_schemas"]["model"]["properties"]
+                                .get(field)
+                                .is_some())
+                })
+            {
+                let source = if authored {
+                    input_name.to_owned()
+                } else {
+                    format!("extensions.{field}")
+                };
+                return Err(ConfigError(format!(
+                    "{}.overrides.{source}: the adapter does not accept this model field",
+                    selection.route_path(route)
+                )));
+            }
+        }
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;
@@ -116,6 +169,38 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
             result["models"]["default"] = projected;
         }
     }
+    // Fabric's adapters that declare the setting (OpenCode, and Claude, Codex
+    // and Pi under Relay) refuse a plain-HTTP model endpoint outside loopback
+    // unless their settings list the host. The deployment names each
+    // endpoint, so an adapter that declares the setting trusts their hosts.
+    let lists_trusted_hosts = descriptor.is_some_and(|descriptor| {
+        descriptor["settings_schema"]["properties"]
+            .get(TRUSTED_HTTP_HOSTS)
+            .is_some()
+    });
+    if lists_trusted_hosts {
+        let hosts: Vec<String> = result["models"]
+            .as_object()
+            .into_iter()
+            .flat_map(|models| models.values())
+            .filter_map(|model| model["base_url"].as_str())
+            .filter_map(plain_http_host)
+            .collect();
+        if let Some(settings) = result["harness"]["settings"].as_object_mut()
+            && !hosts.is_empty()
+        {
+            let listed = settings
+                .entry(TRUSTED_HTTP_HOSTS)
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(listed) = listed.as_array_mut() {
+                for host in hosts {
+                    if !listed.iter().any(|value| value == host.as_str()) {
+                        listed.push(host.into());
+                    }
+                }
+            }
+        }
+    }
     if let Some(authored) = &harness.config {
         for reserved in ["models", "harness", "metadata", "schema_version"] {
             if authored.contains_key(reserved) {
@@ -131,6 +216,24 @@ pub fn for_sandbox(document: &Document, sandbox: &Sandbox) -> Result<Value, Conf
     serde_json::from_value::<nemo_fabric_core::FabricConfig>(result.clone())
         .map_err(|_| ConfigError::new("invalid public Fabric configuration"))?;
     Ok(result)
+}
+
+const TRUSTED_HTTP_HOSTS: &str = "insecure_http_model_hosts";
+
+/// The host of a plain-HTTP endpoint that Fabric would refuse without trust:
+/// not loopback, and spelled as the setting's hostname pattern allows.
+fn plain_http_host(endpoint: &str) -> Option<String> {
+    let url = url::Url::parse(endpoint).ok()?;
+    if url.scheme() != "http" {
+        return None;
+    }
+    match url.host()? {
+        url::Host::Domain(name) if name.eq_ignore_ascii_case("localhost") => None,
+        url::Host::Domain(name) => Some(name.to_ascii_lowercase()),
+        url::Host::Ipv4(address) if address.is_loopback() => None,
+        url::Host::Ipv4(address) => Some(address.to_string()),
+        url::Host::Ipv6(_) => None,
+    }
 }
 
 fn merge_owned(authored: &mut Value, owned: Value) -> Result<(), ConfigError> {

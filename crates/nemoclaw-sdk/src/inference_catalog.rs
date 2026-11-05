@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Advertised model catalogs, not inference probes or sandbox reachability.
-//! Protocols: https://platform.openai.com/docs/api-reference/models/list and
-//! https://platform.claude.com/docs/en/api/models/list.
+//! Protocols: <https://platform.openai.com/docs/api-reference/models/list> and
+//! <https://platform.claude.com/docs/en/api/models/list>.
 use crate::{
     Secrets,
     config::InferenceApi,

@@ -24,6 +24,12 @@ impl QuestionResolver<'_> {
                 capabilities,
                 self.position.selected_route,
             )? {
+                work.setting_dependencies.extend(
+                    field
+                        .prerequisites
+                        .iter()
+                        .map(|path| (path.clone(), field.path.clone())),
+                );
                 if field.path == "model:" {
                     unverified.push(
                         "selected native model configuration does not satisfy its Fabric schema"
@@ -39,22 +45,6 @@ impl QuestionResolver<'_> {
                 );
                 let valid =
                     value.is_some_and(|value| schema_accepts(&field.schema, value) == Some(true));
-                if self.definition.omit.contains(&field.path) {
-                    if field.required {
-                        return Err(diagnostic(
-                            "journey",
-                            &format!("required native setting '{}' cannot be omitted", field.path),
-                        ));
-                    }
-                    if value.is_some() {
-                        return Err(diagnostic(
-                            "journey",
-                            &format!("supplied native setting '{}' cannot be omitted", field.path),
-                        ));
-                    }
-                    omitted.push(field.path);
-                    continue;
-                }
                 let route_key = self
                     .position
                     .selected_route
@@ -66,10 +56,34 @@ impl QuestionResolver<'_> {
                 } else {
                     self.decisions.accepted.contains(&field.path)
                 };
+                match self
+                    .definition
+                    .omit
+                    .contains(&field.path)
+                    .then(|| guided_omission(value, valid, field.required))
+                    .flatten()
+                {
+                    Some(Omission::Unset) => {
+                        omitted.push(field.path);
+                        continue;
+                    }
+                    Some(Omission::Keep(value)) => {
+                        let base_value = native_value(
+                            self.definition.base.supplied(),
+                            self.position.selected_route,
+                            &field.path,
+                        );
+                        keep_supplied(&mut work.kept, field.path, value, base_value, accepted);
+                        continue;
+                    }
+                    None => {}
+                }
                 let omitted_route = route_key
                     .as_ref()
                     .is_some_and(|key| self.decisions.omitted_model_settings.contains(key));
-                if self.decisions.omitted.contains(&field.path) || omitted_route {
+                if (self.decisions.omitted.contains(&field.path) || omitted_route)
+                    && !field.required
+                {
                     omitted.push(field.path);
                 } else if (value.is_some() && !valid)
                     || (value.is_none() && field.required)
@@ -97,6 +111,7 @@ impl QuestionResolver<'_> {
                         },
                         kind: JourneyQuestionKind::Field,
                         reopened_because: None,
+                        note: None,
                         id: field.path,
                         reason: if value.is_some() && !valid {
                             JourneyQuestionReason::InvalidSupplied
@@ -173,6 +188,7 @@ pub(super) fn native_questions_for_values(
         }
         fields.push(SettingQuestion {
             path: "workflow:/target_id".into(),
+            prerequisites: Vec::new(),
             title: Some("Workflow target".into()),
             description: Some("Select a workflow target advertised by this Fabric adapter.".into()),
             required: workflow_required,
@@ -193,12 +209,18 @@ pub(super) fn native_questions_for_values(
             crate::settings::collect(schema, schema, &settings, "", false, &mut native, 0)?;
             for mut field in native {
                 field.path = format!("workflow:/settings{}", field.path);
+                field.prerequisites = field
+                    .prerequisites
+                    .into_iter()
+                    .map(|path| format!("workflow:/settings{path}"))
+                    .collect();
                 fields.push(field);
             }
         }
     }
-    if let (Some(schema), Some(document)) = (capabilities.model_schemas.get(harness_id), document) {
-        let sandbox = &document.spec.sandboxes[0];
+    if let (Some(schema), Some(document)) = (capabilities.model_schemas.get(harness_id), document)
+        && let Some(sandbox) = crate::journey_definition::only_sandbox(document)
+    {
         let inference = document
             .sandbox_inference(sandbox)
             .map_err(|error| diagnostic("journey", &error.to_string()))?;
@@ -228,6 +250,14 @@ pub(super) fn native_questions_for_values(
                 }
                 if field.path == "/settings" || field.path.starts_with("/settings/") {
                     field.path = format!("model:{}", &field.path["/settings".len()..]);
+                    field.prerequisites = field
+                        .prerequisites
+                        .into_iter()
+                        .filter_map(|path| {
+                            path.strip_prefix("/settings/")
+                                .map(|pointer| format!("model:/{pointer}"))
+                        })
+                        .collect();
                     fields.push(field);
                 }
             }

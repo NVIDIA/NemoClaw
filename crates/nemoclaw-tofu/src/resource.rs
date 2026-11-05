@@ -849,6 +849,32 @@ mod tests {
         assert_eq!(sandbox_name(&sandbox), Some("coder"));
     }
 
+    /// A computed observation that asks for replacement, such as an exited
+    /// sandbox, plans one; an empty observation plans no change.
+    #[test]
+    fn an_observation_that_asks_for_replacement_plans_one() {
+        let definition = Definition::new("sandbox", &["name"], &[])
+            .computed("exited", crate::replace_when_observed)
+            .replace_on_change(&["exited"]);
+        let known = |value: &str| Value::Value(value.to_owned());
+        let state = |exited: &str| -> State {
+            [
+                ("id".to_owned(), known("sandbox/1")),
+                ("name".to_owned(), known("assistant")),
+                ("exited".to_owned(), known(exited)),
+            ]
+            .into()
+        };
+        let exited = state("SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1");
+        let (planned, replacements) = plan_update(&definition, &exited, exited.clone());
+        assert_eq!(planned["exited"], Value::Unknown);
+        assert_eq!(replacements, ["exited"]);
+        let running = state("");
+        let (planned, replacements) = plan_update(&definition, &running, running.clone());
+        assert_eq!(planned["exited"], known(""));
+        assert!(replacements.is_empty());
+    }
+
     #[test]
     fn refresh_preserves_declared_bound_fields() {
         let definition = Definition::new("profile", &["name", "workspace", "source"], &[])

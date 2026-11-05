@@ -8,6 +8,12 @@
 # Rules apply in order, before determinator's defaults. Keep them aligned with the
 # .dockerignore allowlist and with files the image commands read at runtime.
 
+# Runtime images build outside CI / Images; the live suites and the bundle
+# cover them.
+[[path-rule]]
+globs = ["image/ollama/**", "image/supervisor/**", "image/vllm/**"]
+mark-changed = []
+
 # Image build inputs outside crates. determinator ignores .dockerignore and LICENSE by
 # default and recognizes only a toolchain file named rust-toolchain.
 [[path-rule]]
@@ -30,7 +36,6 @@ globs = [
     "docs/**",
     "fern/**",
     "examples/**",
-    "runtimes/**",
     "schemas/**",
     "tools/**",
     ".github/**",

@@ -115,7 +115,10 @@ pub(crate) fn configure_readiness(
         *started = json!(dependencies);
         for instances in graph["resource"].as_object_mut().unwrap().values_mut() {
             for resource in instances.as_object_mut().unwrap().values_mut() {
-                if let Some(dependencies) = resource["depends_on"].as_array_mut()
+                // `get_mut`, not indexing: indexing would add a null
+                // `depends_on` to resources that have none.
+                if let Some(dependencies) =
+                    resource.get_mut("depends_on").and_then(Value::as_array_mut)
                     && dependencies.contains(&json!(container))
                 {
                     dependencies.push(json!(address));

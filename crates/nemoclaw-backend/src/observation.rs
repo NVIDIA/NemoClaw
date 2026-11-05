@@ -62,6 +62,12 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// A binding mismatch whose detail names the object and what changed.
+    /// The detail holds only names and UIDs, never secret values.
+    BindingChanged(Box<str>),
+    /// The kubeconfig has no context with the configured name. Holds only
+    /// that name, never the kubeconfig's contents.
+    MissingContext(Box<str>),
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
@@ -74,13 +80,15 @@ pub enum ObservationError {
         stage: &'static str,
         code: &'static str,
         runtime_state: &'static str,
+        /// The private file that keeps Fabric's own message, when one was saved.
+        message_file: Option<Box<str>>,
     },
     SandboxConfigurationRejected {
         reason: &'static str,
     },
     SandboxStartup {
         phase: &'static str,
-        reason: &'static str,
+        reason: String,
         exit_code: Option<i32>,
     },
 }
@@ -111,10 +119,17 @@ impl fmt::Display for ObservationError {
                 stage,
                 code,
                 runtime_state,
-            } => write!(
-                f,
-                "Fabric runtime operation failed at {stage} ({code}); agent runtime is {runtime_state}; resources retained"
-            ),
+                message_file,
+            } => {
+                write!(
+                    f,
+                    "Fabric runtime operation failed at {stage} ({code}); agent runtime is {runtime_state}"
+                )?;
+                if let Some(path) = message_file {
+                    write!(f, "; Fabric's message is in {path}")?;
+                }
+                f.write_str("; resources retained")
+            }
             Self::Hardware(diagnostic) => diagnostic.fmt(f),
             Self::Backend(message) => f.write_str(message),
             Self::Authentication => f.write_str("observation authentication failed"),
@@ -125,6 +140,13 @@ impl fmt::Display for ObservationError {
             Self::Incomplete => f.write_str("observation is incomplete"),
             Self::BindingMismatch => {
                 f.write_str("observed ownership, generation, or durable identity changed")
+            }
+            Self::BindingChanged(detail) => write!(
+                f,
+                "observed ownership, generation, or durable identity changed: {detail}"
+            ),
+            Self::MissingContext(context) => {
+                write!(f, "the kubeconfig has no context named {context}")
             }
         }
     }

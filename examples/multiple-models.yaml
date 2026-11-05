@@ -13,7 +13,7 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11434/v1
   harnesses:
@@ -32,12 +32,12 @@ spec:
           overrides:
             model: qwen3:4b
   sandboxes:
-    - name: researcher
+    researcher:
       harnessRef: assistant
       agent:
         name: researcher
         inferenceRef: smart-and-fast
-    - name: writer
+    writer:
       harnessRef: assistant
       agent:
         name: writer

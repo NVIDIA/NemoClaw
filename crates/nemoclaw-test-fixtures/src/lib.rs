@@ -5,6 +5,8 @@
 //! fixture executables, and schema snapshots, shared by the provider tests and
 //! the end-to-end tests.
 pub mod bundle;
+#[path = "../../test-support/http.rs"]
+pub mod http;
 pub mod openshell;
 pub mod schema;
 pub mod ssh;

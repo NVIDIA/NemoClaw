@@ -75,7 +75,10 @@ fn directly_constructed_documents_and_services_enforce_normalized_bounds() {
 #[test]
 fn normalization_markers_are_accepted_only_before_defaults() {
     let baseline = document("spark/vllm.yaml");
-    for path in ["/spec/gateway/networkCIDR", "/spec/sandboxes/0/image/ref"] {
+    for path in [
+        "/spec/gateway/networkCIDR",
+        "/spec/sandboxes/assistant/image/ref",
+    ] {
         let mut value = serde_json::to_value(&baseline).unwrap();
         *value.pointer_mut(path).unwrap() = json!("");
         assert!(
@@ -88,7 +91,7 @@ fn normalization_markers_are_accepted_only_before_defaults() {
     for example in [
         "spark/vllm.yaml",
         "managed-ollama.yaml",
-        "spark/spark-inline.yaml",
+        "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
     ] {
         let baseline = document(example);
         let reparsed = Document::parse(baseline.yaml().unwrap().as_bytes()).unwrap();
@@ -99,7 +102,10 @@ fn normalization_markers_are_accepted_only_before_defaults() {
 #[test]
 fn standalone_harness_validation_uses_the_same_contract_as_documents() {
     let baseline = document("fabric-openclaw.yaml");
-    let harness = baseline.spec.sandboxes[0].harness.as_ref().unwrap();
+    let harness = baseline.spec.sandboxes["assistant"]
+        .harness
+        .as_ref()
+        .unwrap();
     for invalid in [
         json!({"execution":{"timeoutSeconds":0}}),
         json!({"execution":{"timeoutSeconds":1000000001_u64}}),
@@ -112,7 +118,7 @@ fn standalone_harness_validation_uses_the_same_contract_as_documents() {
         let candidate: nemoclaw_sdk::config::Harness = serde_json::from_value(value).unwrap();
         assert!(candidate.validate().is_err());
         let mut direct = baseline.clone();
-        direct.spec.sandboxes[0].harness = Some(candidate);
+        direct.spec.sandboxes.get_mut("assistant").unwrap().harness = Some(candidate);
         assert!(direct.validate().is_err());
     }
 }
@@ -131,7 +137,7 @@ fn schema_diagnostics_never_echo_values_unknown_properties_or_definition_names()
             json!({"SECRET-MAP-KEY": {"kind":"SECRET-VALUE"}}),
         ),
         (
-            "/spec/sandboxes/0/harness",
+            "/spec/sandboxes/assistant/harness",
             json!({"kind":"openclaw", "SECRET-PROPERTY":"SECRET-VALUE"}),
         ),
     ] {
@@ -159,7 +165,10 @@ fn semantic_checks_still_reject_schema_valid_relationships() {
 
 #[test]
 fn recipe_byte_limits_remain_semantic_checks_for_multibyte_strings() {
-    let mut value = serde_json::to_value(document("spark/spark-inline.yaml")).unwrap();
+    let mut value = serde_json::to_value(document(
+        "../crates/nemoclaw-sdk/tests/fixtures/config/inline-recipe.yaml",
+    ))
+    .unwrap();
     value["spec"]["services"]["qwen"]["recipe"]["serving"]["environment"] =
         json!({"VLLM_LABEL": "é".repeat(2049)});
     let validator =
@@ -185,8 +194,7 @@ fn policy_schema_owns_nonempty_destinations_and_rules() {
     let baseline = serde_json::to_value(document("explicit-policy.yaml")).unwrap();
     let validator =
         jsonschema::validator_for(&nemoclaw_sdk::config::schema::input_schema()).unwrap();
-    let path =
-        "/spec/sandboxes/0/network/policy/explicit/network_policies/documentation/endpoints/0";
+    let path = "/spec/sandboxes/assistant/network/policy/explicit/network_policies/documentation/endpoints/0";
     for replacement in [
         json!({"port":443,"host":""}),
         json!({"port":443,"allowed_ips":[]}),
@@ -200,6 +208,11 @@ fn policy_schema_owns_nonempty_destinations_and_rules() {
         assert!(Document::parse(value.to_string().as_bytes()).is_err());
         let direct: Document = serde_json::from_value(value).unwrap();
         assert!(direct.validate().is_err());
-        assert!(direct.spec.sandboxes[0].network.policy_proto().is_err());
+        assert!(
+            direct.spec.sandboxes["assistant"]
+                .network
+                .policy_proto()
+                .is_err()
+        );
     }
 }

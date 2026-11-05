@@ -6,6 +6,8 @@ use super::*;
 use nemoclaw_build::ci::{self, Step};
 use std::{ffi::OsString, time::Instant};
 
+#[path = "run_ci/kind_registry.rs"]
+mod kind_registry;
 #[path = "run_ci/live_docker.rs"]
 mod live_docker;
 #[path = "run_ci/live_images.rs"]
@@ -163,7 +165,7 @@ fn run_step(
     step: Step,
     partition: Option<&str>,
     archive_file: Option<&Path>,
-    images: Option<&Path>,
+    images: live_images::Source<'_>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -228,7 +230,7 @@ fn run_step(
         if let Some(filter) = &archive_filter {
             command.args(["--filterset", filter]);
         }
-        if step == Step::Lifecycle {
+        if Step::BUNDLED.contains(&step) {
             if std::env::var_os("CI").is_none()
                 && std::env::var_os("GITHUB_ACTIONS").is_none()
                 && std::env::var_os("NEXTEST_TEST_THREADS").is_none()
@@ -237,7 +239,7 @@ fn run_step(
                     .map_or(4, usize::from)
                     .clamp(4, 8);
                 command.args(["--test-threads", &workers.to_string()]);
-                eprintln!("lifecycle: using {workers} local test workers");
+                eprintln!("{}: using {workers} local test workers", step.name());
             }
             if let Some(partition) = partition {
                 command.args(["--partition", partition]);
@@ -326,18 +328,28 @@ fn append_verdict(report: &mut String, applied: &str, over: &[String]) {
     }
 }
 
-/// Report a platform's whole lifecycle suite from its partitions' JUnit
-/// artifacts under `directory`, and add the report to the GitHub job summary.
-/// On the Linux CI runners, fails when a budgeted test binary, or one of its
-/// tests, exceeds its budget.
-pub(super) fn report_lifecycle_suite(
+/// Report a platform's whole contract or integration suite, `step`, from its
+/// partitions' JUnit artifacts under `directory`, and add the report to the
+/// GitHub job summary. On the Linux CI runners, fails when a budgeted test
+/// binary, or one of its tests, exceeds its budget.
+pub(super) fn report_partitioned_suite(
+    step: Step,
     directory: &Path,
     platform: &str,
     shards: &[u32],
 ) -> Result<()> {
-    let budgets = read_budgets();
+    // The budgeted binaries are the providers' contract binaries; another
+    // step's report would list each of them with no tests.
+    let budgets = read_budgets().map(|budgets| {
+        if step == Step::Contract {
+            budgets
+        } else {
+            budgets.steps_only()
+        }
+    });
     let unbudgeted = ci::timing::Budgets::default();
     let timing = ci::timing::partitioned_report(
+        step,
         directory,
         platform,
         shards,
@@ -355,14 +367,15 @@ pub(super) fn report_lifecycle_suite(
     publish(&report);
     if enforces_budgets() && !timing.over.is_empty() {
         return Err(format!(
-            "lifecycle on {platform} exceeded a binary budget in .config/test-budgets.yaml"
+            "{} on {platform} exceeded a binary budget in .config/test-budgets.yaml",
+            step.name()
         )
         .into());
     }
     Ok(())
 }
 
-/// Report where a test step, or its lifecycle `partition`, spent its time,
+/// Report where a test step, or its `partition`, spent its time,
 /// from the JUnit report it wrote after `begun`, and add the report to the
 /// GitHub job summary. Returns what exceeds the step's budget, if any.
 fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<String> {
@@ -409,10 +422,11 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<Str
                     &over,
                 );
             }
-            // A whole lifecycle suite in one run, as plain `cargo ci` runs it,
-            // holds each binary's tests. A partition holds only some, so in CI
-            // the platform's Lifecycle timing job checks the binary budgets.
-            if step == Step::Lifecycle && partition.is_none() && budgets.has_binaries() {
+            // A whole suite in one run, as plain `cargo ci` runs it, holds each
+            // binary's tests. A partition holds only some, so in CI the
+            // platform's timing job checks the binary budgets.
+            // The budgeted binaries are the providers' contract binaries.
+            if step == Step::Contract && partition.is_none() && budgets.has_binaries() {
                 let binaries = run.binary_budgets(budgets);
                 report.push_str("\nBudgeted binaries:\n\n");
                 report.push_str(&binaries.report);
@@ -447,8 +461,14 @@ pub(super) async fn run_steps(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: Option<&Path>,
+    images_commit: Option<&str>,
     plan: Option<&nemoclaw_build::changes::Plan>,
 ) -> Result<()> {
+    let images = match (images, images_commit) {
+        (Some(archive), _) => live_images::Source::Archive(archive),
+        (None, Some(commit)) => live_images::Source::Commit(commit),
+        (None, None) => live_images::Source::Build,
+    };
     let tools = Tools {
         pins,
         protobuf: &pins.protobuf,
@@ -488,6 +508,12 @@ pub(super) async fn run_steps(
                 command.env("PROTOC", &protoc).env("PATH", &path);
             };
             live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
+        } else if step == Step::LiveDocker {
+            // The interface case forwards and reads tokens with the CLI.
+            match live_docker::install_openshell(tools.pins, &platform).await {
+                Ok(()) => run_step(&tools, &platform, step, partition, archive_file, images),
+                Err(error) => Err(error),
+            }
         } else {
             run_step(&tools, &platform, step, partition, archive_file, images)
         };

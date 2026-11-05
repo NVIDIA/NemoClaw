@@ -25,7 +25,7 @@ mod durable_source_tests {
         };
         let mut value: Value = serde_saphyr::from_str(text).unwrap();
         if proxy {
-            value["spec"]["inferenceProviders"][0]["serviceRef"] = json!("ollama-auth");
+            value["spec"]["inferenceProviders"]["local"]["serviceRef"] = json!("ollama-auth");
             value["spec"]["services"] = json!({"ollama-auth":{"kind":"ollamaProxy","image":format!("proxy@sha256:{}","a".repeat(64)),"endpoint":"http://172.20.0.1:11435/v1","upstream":{"endpoint":"http://127.0.0.1:11434/v1","model":{"name":"qwen3:0.6b","digest":"a".repeat(64)}}}});
         } else {
             value["spec"]["services"]["qwen"]["authentication"] = json!("bearer");

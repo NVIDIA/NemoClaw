@@ -37,7 +37,12 @@ fn discovery_graph(document: &Document) -> Value {
     let mut data = serde_json::Map::new();
     for source in DATA_SOURCES {
         if let Some(queries) = graph["data"].get(source) {
-            data.insert(source.into(), queries.clone());
+            // Reads after a sandbox image pull aren't discovery reads.
+            let mut queries = queries.clone();
+            if let Some(reads) = queries.as_object_mut() {
+                reads.retain(|name, _| !name.ends_with("_acquired"));
+            }
+            data.insert(source.into(), queries);
         }
     }
     json!({"data": data, "output": graph["output"]["discovery"]})
@@ -152,7 +157,7 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
         compute_driver: ComputeDriver::Docker,
     };
     assert_eq!(queries[3], DiscoveryQuery::Engine(platform.clone()));
-    let sandbox = &document.spec.sandboxes[0];
+    let sandbox = document.sandbox("assistant").unwrap();
     assert_eq!(
         queries[4],
         DiscoveryQuery::Fabric(FabricRequest {

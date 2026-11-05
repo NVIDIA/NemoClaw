@@ -26,6 +26,18 @@ fn layout_with_config_platform(
     os: &str,
     architecture: &str,
 ) -> (Vec<u8>, String) {
+    layout_with_platforms(catalog, indexed, os, architecture, false)
+}
+
+/// With `missing`, the index also lists a linux/amd64 manifest the archive
+/// doesn't hold, as `docker image save` writes for a pulled multi-platform image.
+fn layout_with_platforms(
+    catalog: &str,
+    indexed: bool,
+    os: &str,
+    architecture: &str,
+    missing: bool,
+) -> (Vec<u8>, String) {
     let config = json!({"os": os, "architecture": architecture,
         "config": {"Labels": {"io.nemoclaw.fabric.catalog": catalog}}})
     .to_string();
@@ -34,13 +46,18 @@ fn layout_with_config_platform(
         "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": digest(b"layer"), "size": 5}]}).to_string();
     let attestation = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
         "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": digest(b"{}"), "size": 2}, "layers": []}).to_string();
-    let index = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
-        {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest(manifest.as_bytes()), "size": manifest.len(),
-         "platform": {"architecture": "arm64", "os": "linux"}},
-        {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest(attestation.as_bytes()), "size": attestation.len(),
+    let mut entries = vec![
+        json!({"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest(manifest.as_bytes()), "size": manifest.len(),
+         "platform": {"architecture": "arm64", "os": "linux"}}),
+        json!({"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest(attestation.as_bytes()), "size": attestation.len(),
          "platform": {"architecture": "unknown", "os": "unknown"},
-         "annotations": {"vnd.docker.reference.type": "attestation-manifest"}},
-    ]}).to_string();
+         "annotations": {"vnd.docker.reference.type": "attestation-manifest"}}),
+    ];
+    if missing {
+        entries.push(json!({"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest(b"missing"), "size": 7,
+         "platform": {"architecture": "amd64", "os": "linux"}}));
+    }
+    let index = json!({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": entries}).to_string();
     let root = if indexed { &index } else { &manifest };
     let media_type = if indexed {
         "application/vnd.oci.image.index.v1+json"
@@ -112,7 +129,7 @@ fn named_layout(images: &[(&str, Vec<u8>)]) -> Vec<u8> {
 fn a_named_image_in_a_shared_archive_keeps_its_digest_and_verified_metadata() {
     for indexed in [false, true] {
         let (agent, root) = layout_with_root("agent", indexed);
-        let expected = metadata_bundle(&agent, "linux/arm64").unwrap();
+        let expected = metadata_bundle(&agent).unwrap();
         let (other, _) = layout("other");
         let directory = tempfile::tempdir().unwrap();
         let archive = directory.path().join("images.tar");
@@ -124,12 +141,8 @@ fn a_named_image_in_a_shared_archive_keeps_its_digest_and_verified_metadata() {
             ]),
         )
         .unwrap();
-        let (actual_root, bundle) = archived_image_metadata(
-            &archive,
-            "docker.io/library/nc-live-images:pi",
-            "linux/arm64",
-        )
-        .unwrap();
+        let (actual_root, bundle) =
+            archived_image_metadata(&archive, "docker.io/library/nc-live-images:pi").unwrap();
         assert_eq!(actual_root, root);
         assert_eq!(bundle, expected);
     }
@@ -146,33 +159,30 @@ fn archive_selection_requires_one_exact_image_name() {
         vec![(name, agent.clone()), (name, agent.clone())],
     ] {
         std::fs::write(&archive, named_layout(&images)).unwrap();
-        let error = archived_image_metadata(&archive, name, "linux/arm64").unwrap_err();
+        let error = archived_image_metadata(&archive, name).unwrap_err();
         assert!(error.contains("exactly one entry"), "{error}");
     }
 }
 
 #[test]
-fn selected_archive_metadata_still_checks_platform_and_blob_digests() {
+fn selected_archive_metadata_still_checks_blob_digests() {
     let (agent, _) = layout("agent");
     let name = "docker.io/library/nc-live-images:pi";
     let directory = tempfile::tempdir().unwrap();
     let archive = directory.path().join("images.tar");
     let mut bytes = named_layout(&[(name, agent)]);
-    std::fs::write(&archive, &bytes).unwrap();
-    assert!(archived_image_metadata(&archive, name, "linux/amd64").is_err());
     let position = bytes.windows(5).position(|part| part == b"agent").unwrap();
     bytes[position] = b'A';
     std::fs::write(&archive, bytes).unwrap();
-    let error = archived_image_metadata(&archive, name, "linux/arm64").unwrap_err();
+    let error = archived_image_metadata(&archive, name).unwrap_err();
     assert!(error.contains("does not match its digest"), "{error}");
 }
 
 #[test]
 fn the_bundle_holds_the_index_manifest_and_config_only() {
     let (archive, root) = layout("{}");
-    let bundle: Value =
-        serde_json::from_slice(&metadata_bundle(&archive, "linux/arm64").unwrap()).unwrap();
-    assert_eq!(bundle["schema_version"], 1);
+    let bundle: Value = serde_json::from_slice(&metadata_bundle(&archive).unwrap()).unwrap();
+    assert_eq!(bundle["schema_version"], 2);
     let blobs = bundle["blobs"].as_object().unwrap();
     assert_eq!(
         blobs.len(),
@@ -180,7 +190,8 @@ fn the_bundle_holds_the_index_manifest_and_config_only() {
         "index, one manifest and its config; no attestation or layers"
     );
     assert!(blobs.contains_key(&root));
-    let manifest = bundle["manifest_digest"].as_str().unwrap();
+    let index: Value = serde_json::from_str(blobs[&root].as_str().unwrap()).unwrap();
+    let manifest = index["manifests"][0]["digest"].as_str().unwrap();
     let manifest: Value = serde_json::from_str(blobs[manifest].as_str().unwrap()).unwrap();
     assert_eq!(manifest["layers"][0]["size"], 5);
     for (digest_text, raw) in blobs {
@@ -193,21 +204,18 @@ fn the_bundle_holds_the_index_manifest_and_config_only() {
 }
 
 #[test]
-fn an_image_without_the_requested_platform_is_refused() {
-    let (archive, _) = layout("{}");
-    assert!(metadata_bundle(&archive, "linux/amd64").is_err());
+fn an_index_with_a_linux_platform_the_archive_lacks_is_refused() {
+    let (archive, _) = layout_with_platforms("{}", true, "linux", "arm64", true);
+    let error = metadata_bundle(&archive).unwrap_err();
+    assert!(error.contains("linux/amd64"), "{error}");
 }
 
 #[test]
-fn a_direct_manifest_without_the_requested_platform_is_refused() {
+fn a_direct_manifest_must_be_a_linux_image() {
     let (archive, _) = layout_with_root("{}", false);
-    assert!(metadata_bundle(&archive, "linux/arm64").is_ok());
-    for platform in ["linux/amd64", "windows/arm64"] {
-        assert!(
-            metadata_bundle(&archive, platform).is_err(),
-            "a direct linux/arm64 manifest cannot satisfy {platform}"
-        );
-    }
+    assert!(metadata_bundle(&archive).is_ok());
+    let (archive, _) = layout_with_config_platform("{}", false, "windows", "arm64");
+    assert!(metadata_bundle(&archive).is_err());
 }
 
 #[test]
@@ -215,7 +223,7 @@ fn an_index_cannot_override_the_platform_in_its_manifest_config() {
     for (os, architecture) in [("linux", "amd64"), ("windows", "arm64")] {
         let (archive, _) = layout_with_config_platform("{}", true, os, architecture);
         assert!(
-            metadata_bundle(&archive, "linux/arm64").is_err(),
+            metadata_bundle(&archive).is_err(),
             "a linux/arm64 index entry cannot select a {os}/{architecture} manifest config"
         );
     }
@@ -244,7 +252,7 @@ fn the_sdk_verifies_an_exported_bundle_for_the_image_reference() {
     })
     .unwrap();
     let (archive, root) = layout(&catalog);
-    let bundle = metadata_bundle(&archive, "linux/arm64").unwrap();
+    let bundle = metadata_bundle(&archive).unwrap();
     let observation = nemoclaw_sdk::image_metadata::verify(
         &bundle,
         &format!("registry.example.com/agent@{root}"),

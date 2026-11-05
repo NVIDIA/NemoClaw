@@ -100,7 +100,7 @@ fn gateway_configuration_preserves_driver_namespace_images_and_signing_paths() {
     .unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     let data_path = "/owned data/quoted\"directory";
-    let config: toml::Value = toml::from_str(&spec.gateway_config(data_path)).unwrap();
+    let config: toml::Value = toml::from_str(&spec.gateway_config(data_path).unwrap()).unwrap();
     let openshell = &config["openshell"];
     assert_eq!(openshell["version"].as_integer(), Some(2));
     assert_eq!(
@@ -351,7 +351,8 @@ fn managed_gateway_uses_driver_default_host_callback() {
     .unwrap();
     for fixture in fixtures {
         let spec: Spec = serde_json::from_str(fixture["spec"].as_str().unwrap()).unwrap();
-        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned-data")).unwrap();
+        let config: toml::Value =
+            toml::from_str(&spec.gateway_config("/owned-data").unwrap()).unwrap();
         let driver = &config["openshell"]["drivers"][spec.compute_driver.as_str()];
         if spec.compute_driver == ComputeDriver::Docker {
             assert!(driver.get("host_gateway_ip").is_none());
@@ -376,7 +377,7 @@ fn managed_docker_gateway_namespaces_are_stable_and_distinct() {
     .unwrap();
     let first: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     let namespace = |spec: &Spec| {
-        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned")).unwrap();
+        let config: toml::Value = toml::from_str(&spec.gateway_config("/owned").unwrap()).unwrap();
         config["openshell"]["drivers"]["docker"]["sandbox_label"]
             .as_str()
             .unwrap()

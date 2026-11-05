@@ -1,0 +1,160 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Two releases render this chart. The `namespaces` part holds what is ready
+# once created; the `workloads` part, what its release waits for.
+{{- if eq .Values.part "namespaces" }}
+# The deployment's namespace, prepared by the operator; with the OpenShift
+# profile, annotated as OpenShift annotates a project.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.deploymentNamespace }}
+{{- if .Values.uidRange }}
+  annotations:
+    openshift.io/sa.scc.uid-range: {{ .Values.uidRange | quote }}
+    openshift.io/sa.scc.supplemental-groups: {{ .Values.uidRange | quote }}
+{{- end }}
+---
+# The operator's pull Secret for the private registry the sandbox images name.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.pullSecret.name }}
+  namespace: {{ .Values.deploymentNamespace }}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: {{ .Values.pullSecret.dockerconfigjson | b64enc }}
+{{- if .Values.issuer }}
+---
+# The CA the gateway trusts for the existing issuer's HTTPS endpoint.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.issuer.caConfigMap }}
+  namespace: {{ .Values.deploymentNamespace }}
+data:
+  ca.crt: {{ .Values.issuer.ca | quote }}
+---
+# The existing issuer's namespace, as an identity provider's would be.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.issuer.namespace }}
+{{- end }}
+---
+# The stub model's namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.modelNamespace }}
+{{- else if eq .Values.part "workloads" }}
+{{- if .Values.issuer }}
+# The existing issuer: the SDK's development issuer objects.
+{{- range .Values.issuer.objects }}
+---
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model
+  namespace: {{ .Release.Namespace }}
+data:
+  default.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 1024; }
+    http {
+        access_log /dev/stdout;
+        client_body_temp_path /tmp/client_temp;
+        proxy_temp_path /tmp/proxy_temp;
+        fastcgi_temp_path /tmp/fastcgi_temp;
+        uwsgi_temp_path /tmp/uwsgi_temp;
+        scgi_temp_path /tmp/scgi_temp;
+        server {
+            listen 8000;
+            location = /v1/chat/completions {
+                default_type text/event-stream;
+                return 200 '{{ .Values.stream }}';
+            }
+            location / { return 404; }
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: nemoclaw-test-model
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nemoclaw-test-model
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nemoclaw-test-model
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: model
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          # Skip the image's entrypoint scripts, which edit its configuration.
+          command: ["nginx", "-c", "/etc/nginx/conf.d/default.conf", "-g", "daemon off;"]
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            periodSeconds: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: configuration
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: scratch
+              mountPath: /tmp
+      volumes:
+        - name: configuration
+          configMap:
+            name: model
+        - name: scratch
+          emptyDir:
+            sizeLimit: 16Mi
+{{- else }}
+{{- fail "part must be namespaces or workloads" }}
+{{- end }}

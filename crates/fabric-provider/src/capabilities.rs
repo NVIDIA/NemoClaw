@@ -36,6 +36,9 @@ pub struct FabricCapabilitiesState {
     filesystem_read: Value<Vec<Value<String>>>,
     architecture: Value<String>,
     operating_system: Value<String>,
+    /// The pulled image's engine ID: unknown until the pull, which defers the
+    /// read to apply.
+    image_id: Value<String>,
     compatibility_status: Value<String>,
     runtime_json: Value<String>,
     /// The generic sandbox launch for the configured agent.
@@ -150,6 +153,7 @@ impl DataSource for FabricCapabilitiesDataSource {
                     ),
                     ("architecture", String, Optional),
                     ("operating_system", String, Optional),
+                    ("image_id", String, Optional),
                     ("observation_json", String, Computed),
                     ("available", Bool, Computed),
                     ("status", String, Computed),
@@ -206,6 +210,7 @@ impl DataSource for FabricCapabilitiesDataSource {
             &config.config_json,
             &config.architecture,
             &config.operating_system,
+            &config.image_id,
         ]
         .iter()
         .any(|value| matches!(value, Value::Unknown))
@@ -304,6 +309,8 @@ pub struct FabricHarnessState {
     engine: Value<String>,
     image: Value<String>,
     metadata_env: Value<String>,
+    /// The pulled image's engine ID, as for `fabric_harnesses`.
+    image_id: Value<String>,
     adapter_id: Value<String>,
     agent_name: Value<String>,
     launch_json: Value<String>,
@@ -329,6 +336,25 @@ fn adapter_catalog(observation: &Value<String>, adapter_id: &str) -> Option<Stri
     serde_json::to_string(&catalog.for_adapter(adapter_id)).ok()
 }
 
+/// Why a harness has no launch. A metadata bundle that didn't verify says
+/// nothing about the image's catalog label, so its observation's reason
+/// stands; otherwise the image doesn't install this adapter's runtime.
+fn unavailable_harness(state: &FabricHarnessState) -> String {
+    let bundle_reason = match (&state.metadata_env, &state.status, &state.observation_json) {
+        (Value::Value(name), Value::Value(status), Value::Value(observation))
+            if !name.is_empty() && status != "available" =>
+        {
+            serde_json::from_str::<serde_json::Value>(observation)
+                .ok()
+                .and_then(|observation| observation["reason"].as_str().map(str::to_owned))
+        }
+        _ => None,
+    };
+    bundle_reason.unwrap_or_else(|| {
+        "The image's io.nemoclaw.fabric.catalog label declares no runtime for this adapter. Select an image that installs it; an image derived from a NemoClaw agent image must keep its base image's labels.".into()
+    })
+}
+
 impl FabricHarnessState {
     /// The image read `fabric_harnesses` performs for this adapter and agent.
     fn catalog_read(&self) -> FabricCapabilitiesState {
@@ -347,6 +373,7 @@ impl FabricHarnessState {
             engine: self.engine.clone(),
             image: self.image.clone(),
             metadata_env: self.metadata_env.clone(),
+            image_id: self.image_id.clone(),
             config_json: config,
             ..Default::default()
         }
@@ -379,6 +406,7 @@ impl DataSource for FabricHarnessDataSource {
                     ("engine", String, Optional),
                     ("image", String, Required),
                     ("metadata_env", String, Optional),
+                    ("image_id", String, Optional),
                     ("adapter_id", String, Required),
                     ("agent_name", String, Required),
                     ("launch_json", String, Computed),
@@ -444,10 +472,7 @@ impl DataSource for FabricHarnessDataSource {
         };
         // A known image without this adapter's runtime cannot launch it.
         if matches!(&config.launch_json, Value::Value(launch) if launch.is_empty()) {
-            diags.root_error(
-                "Harness unavailable",
-                "The image declares no runtime for this adapter; select an image that installs it",
-            );
+            diags.root_error("Harness unavailable", unavailable_harness(&config));
             return None;
         }
         Some(config)
@@ -519,6 +544,37 @@ mod tests {
         assert_eq!(observation["status"], "unknown");
         assert!(!observation.to_string().contains("/does-not-exist"));
     }
+
+    /// A harness whose metadata bundle can't be read names the bundle, not a
+    /// catalog label that the image may well carry.
+    #[tokio::test]
+    async fn a_harness_without_its_metadata_bundle_names_the_bundle() {
+        let mut diagnostics = Diagnostics::default();
+        let output = FabricHarnessDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(String::new()),
+                    image: Value::Value(format!("registry/agent@sha256:{}", "a".repeat(64))),
+                    metadata_env: Value::Value("NEMOCLAW_TEST_UNSET_METADATA_77A856B9".into()),
+                    adapter_id: Value::Value("nvidia.fabric.openclaw".into()),
+                    agent_name: Value::Value("assistant".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await;
+        assert!(output.is_none());
+        let errors = format!("{diagnostics:?}");
+        assert!(
+            errors.contains(
+                "the image metadata bundle that NEMOCLAW_TEST_UNSET_METADATA_77A856B9 names is missing or invalid"
+            ),
+            "{errors}"
+        );
+        assert!(!errors.contains("io.nemoclaw.fabric.catalog"), "{errors}");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn selected_image_checks_the_adapter_platform_and_missing_metadata_without_starting_containers()
@@ -559,6 +615,14 @@ mod tests {
                 digest.as_str(),
                 "supported",
             ),
+            // Except interfaces, which the descriptor must declare; this
+            // adapter declares none.
+            (
+                serde_json::json!({"interfaces":{"dashboard":{"port":9119}}}),
+                "aarch64",
+                digest.as_str(),
+                "unsupported",
+            ),
             (
                 serde_json::json!({}),
                 "amd64",
@@ -584,6 +648,20 @@ mod tests {
             let observation: serde_json::Value =
                 serde_json::from_str(known(&output.observation_json).unwrap()).unwrap();
             assert_eq!(observation["compatibility"]["status"], expected);
+            if settings.get("interfaces").is_some() {
+                assert!(
+                    observation["compatibility"]["checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|check| check["status"] == "unsupported"
+                            && check["reason"]
+                                .as_str()
+                                .unwrap()
+                                .starts_with("harness.settings.interfaces.dashboard:")),
+                    "{observation}"
+                );
+            }
             if image == "missing:image" {
                 assert_eq!(known(&output.runtime_json), Some(""));
                 assert_eq!(known(&output.binaries_json), Some("[]"));
@@ -642,6 +720,117 @@ mod tests {
         assert!(requirements(&config).unwrap().is_none());
         config.config_json = Value::Value(r#"{"harness":{}}"#.into());
         assert!(requirements(&config).is_err(), "an adapter_id is required");
+    }
+
+    // An image without NemoClaw's catalog label, such as a derived image that
+    // dropped its base's labels, fails with an error naming the label.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_image_without_the_catalog_label_names_it() {
+        let digest = format!("registry/agent@sha256:{}", "b".repeat(64));
+        let served = digest.clone();
+        let fixture = crate::fixture::Fixture::start(move |_| {
+            let image = serde_json::json!({"Id":"sha256:config", "Architecture":"arm64", "Os":"linux", "RepoDigests":[served], "Config":{"Labels":{}}});
+            Some((200, serde_json::to_vec(&image).unwrap()))
+        })
+        .await;
+        let source = FabricHarnessDataSource::default();
+        let mut diagnostics = Diagnostics::default();
+        let output = source
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: Value::Value(digest.clone()),
+                    adapter_id: Value::Value("nvidia.fabric.pi".into()),
+                    agent_name: Value::Value("travel".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await;
+        assert!(output.is_none());
+        let errors = format!("{diagnostics:?}");
+        assert!(errors.contains("io.nemoclaw.fabric.catalog"), "{errors}");
+        assert!(errors.contains("keep its base image's labels"), "{errors}");
+    }
+
+    /// An image the engine doesn't hold is reported, with known values, as
+    /// unavailable: the plan that pulls it accepts that at plan time.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_absent_image_is_reported_unavailable() {
+        let fixture = crate::fixture::Fixture::start(|request| {
+            assert!(request.path.starts_with("/images/"));
+            Some((404, br#"{"message":"No such image"}"#.to_vec()))
+        })
+        .await;
+        let mut diagnostics = Diagnostics::default();
+        let read = FabricCapabilitiesDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricCapabilitiesState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: Value::Value(format!("registry/agent@sha256:{}", "c".repeat(64))),
+                    config_json: Value::Value(
+                        r#"{"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"main"},"harness":{"adapter_id":"nvidia.fabric.hermes"}}"#.into(),
+                    ),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(&read.runtime_json, Value::Value(runtime) if runtime.is_empty()));
+        assert!(matches!(&read.status, Value::Value(status) if status == "unavailable"));
+        assert!(matches!(read.observation_json, Value::Value(_)));
+    }
+
+    /// The read after a pull waits for the pulled image's ID, without
+    /// reaching the engine, and so does the harness the agent takes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_read_waits_for_the_image_the_plan_pulls() {
+        let fixture = crate::fixture::Fixture::start(|request| {
+            panic!(
+                "the engine was read before the image was pulled: {}",
+                request.path
+            )
+        })
+        .await;
+        let image = Value::Value(format!("registry/agent@sha256:{}", "d".repeat(64)));
+        let mut diagnostics = Diagnostics::default();
+        let read = FabricCapabilitiesDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricCapabilitiesState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image: image.clone(),
+                    image_id: Value::Unknown,
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(read.runtime_json, Value::Unknown));
+        let harness = FabricHarnessDataSource::default()
+            .read(
+                &mut diagnostics,
+                FabricHarnessState {
+                    engine: Value::Value(fixture.endpoint.clone()),
+                    image,
+                    image_id: Value::Unknown,
+                    adapter_id: Value::Value("nvidia.fabric.hermes".into()),
+                    agent_name: Value::Value("main".into()),
+                    ..Default::default()
+                },
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(harness.reference, Value::Unknown));
+        assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
     }
 
     // The fake engine listens on a Unix socket, as the test above.

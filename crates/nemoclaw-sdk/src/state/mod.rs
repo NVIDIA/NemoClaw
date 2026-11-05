@@ -153,40 +153,6 @@ impl Record {
         }
         Ok(())
     }
-    pub fn validate_bound_sandboxes(
-        &self,
-        document: &Document,
-        bindings: &BTreeMap<String, StateBinding>,
-    ) -> Result<(), Error> {
-        if !bindings
-            .keys()
-            .any(|address| address.starts_with("openshell_sandbox."))
-        {
-            return Ok(());
-        }
-        let before = crate::compile::targets(&self.document, &self.generations)?;
-        let after = crate::compile::targets(document, &self.generations)?;
-        for prior in before
-            .iter()
-            .filter(|target| target.kind == "sandbox" && bindings.contains_key(&target.address))
-        {
-            let next = after.iter().find(|target| target.address == prior.address);
-            // Every compiled sandbox attribute is immutable. Model and adapter
-            // settings live in the separate agent-configuration target.
-            let action = match next {
-                None => "remove",
-                Some(next) if next.values != prior.values => "replace",
-                _ => continue,
-            };
-            return Err(Error::SandboxChangeRefused {
-                sandbox: prior.values["name"].clone(),
-                action,
-            });
-        }
-        // This only rejects authored changes before runtime reconciliation.
-        // Provider refresh and plan still own live identity and drift checks.
-        Ok(())
-    }
     pub fn begin_apply(
         &mut self,
         document: &Document,
@@ -309,6 +275,11 @@ fn nullable_list<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Vec<String>, D::Error> {
     Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
 }
+fn nullable_map<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
+    Ok(Option::<BTreeMap<String, String>>::deserialize(deserializer)?.unwrap_or_default())
+}
 /// String attributes typed resources record in state.
 const TYPED_ATTRIBUTES: [&str; 12] = [
     "name",
@@ -359,6 +330,12 @@ pub(crate) struct StateBinding {
     pub authentication_profile: String,
     #[serde(default, deserialize_with = "nullable_list")]
     pub environment: Vec<String>,
+    /// A sandbox's URLs the gateway reported, by service name.
+    #[serde(default, deserialize_with = "nullable_map")]
+    pub service_urls: BTreeMap<String, String>,
+    /// The ID Fabric gave an agent's running runtime.
+    #[serde(default, deserialize_with = "nullable")]
+    pub runtime_id: String,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
 }
@@ -404,10 +381,12 @@ impl StateBinding {
                 let bound = self.typed_values();
                 // An omitted environment list is still part of a Kubernetes target.
                 let environment = crate::kubernetes::ENVIRONMENT_FIELD;
+                // A compiled empty value, such as the kubeconfig_env of a
+                // target without a kubeconfig, matches an unset bound one.
                 TYPED_ATTRIBUTES.into_iter().any(|attribute| {
                     values
                         .get(attribute)
-                        .is_some_and(|want| bound.get(attribute) != Some(want))
+                        .is_some_and(|want| bound.get(attribute).map_or("", String::as_str) != want)
                 }) || (values.contains_key("kubeconfig_env")
                     && values.get(environment) != bound.get(environment))
             }
@@ -611,6 +590,8 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.context = attributes.context;
                 binding.authentication_profile = attributes.authentication_profile;
                 binding.environment = attributes.environment;
+                binding.service_urls = attributes.service_urls;
+                binding.runtime_id = attributes.runtime_id;
             }
         }
     }

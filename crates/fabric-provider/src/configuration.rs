@@ -8,8 +8,14 @@ use openshell_provider::{OpenShell, verify_identity};
 use serde_json::Value;
 
 /// A failed bridge operation as a public diagnostic: only Fabric's fixed
-/// stages and codes cross the boundary, never its message.
-pub(crate) fn configuration_failure(stage: &str, code: &str, effects: &str) -> ObservationError {
+/// stages and codes cross the boundary, never its message. `message_file`
+/// names the private file that keeps the message, if one was saved.
+pub(crate) fn configuration_failure(
+    stage: &str,
+    code: &str,
+    effects: &str,
+    message_file: Option<Box<str>>,
+) -> ObservationError {
     let stage = match stage {
         "request" => "request",
         "transport" => "transport",
@@ -17,6 +23,7 @@ pub(crate) fn configuration_failure(stage: &str, code: &str, effects: &str) -> O
         "start" => "start",
         "invoke" => "invoke",
         "stop" => "stop",
+        "check" => "check",
         _ => "unknown",
     };
     let code = match code {
@@ -50,6 +57,7 @@ pub(crate) fn configuration_failure(stage: &str, code: &str, effects: &str) -> O
         stage,
         code,
         runtime_state,
+        message_file,
     }
 }
 
@@ -153,16 +161,23 @@ pub(crate) async fn read(
     prior: &Row,
     removing: bool,
 ) -> Result<Option<Row>, ObservationError> {
-    // The agent lives as long as its sandbox. Fabric reports no runtime
-    // status (NVIDIA/NeMo-Fabric#420), so a stopped or changed runtime inside
-    // the sandbox is found when it is next invoked, not here.
     let Some(parent) = configuration_parent(client, prior, removing).await? else {
         return Ok(None);
     };
     if value(prior, "id") != value(&parent, "id") {
         return Err(ObservationError::BindingMismatch);
     }
-    Ok(Some(prior.clone()))
+    // Removing stops the runtime whether or not it still runs.
+    if removing {
+        return Ok(Some(prior.clone()));
+    }
+    let running = client
+        .agent_running(&parent, value(prior, "runtime_id"))
+        .await
+        .map_err(Error::into_observation)?;
+    let mut row = prior.clone();
+    row.insert("running".into(), running.to_string());
+    Ok(Some(row))
 }
 
 pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
@@ -174,13 +189,28 @@ pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
         if !value(desired, "id").is_empty() && value(desired, "id") != parent["id"] {
             return Err(ObservationError::BindingMismatch);
         }
+        let mut row = desired.clone();
+        row.insert("id".into(), parent["id"].clone());
+        // An update that keeps a running runtime, such as a newer image
+        // catalog, leaves it alone.
+        let prior = value(desired, "runtime_id");
+        if value(desired, "running") == "true" && !prior.is_empty() {
+            return Ok(row);
+        }
+        // A runtime that stopped is stopped in Fabric too before another
+        // starts in the same sandbox, which keeps its files.
+        if !prior.is_empty() {
+            client
+                .stop_agent(&parent, prior)
+                .await
+                .map_err(Error::into_observation)?;
+        }
         let runtime_id = client
             .start_agent(&parent, &config)
             .await
             .map_err(Error::into_observation)?;
-        let mut row = desired.clone();
-        row.insert("id".into(), parent["id"].clone());
         row.insert("runtime_id".into(), runtime_id);
+        row.insert("running".into(), "true".into());
         Ok(row)
     }
     .await;
@@ -203,7 +233,7 @@ pub(crate) async fn remove(
         return Err(ObservationError::BindingMismatch);
     }
     // Removing the agent stops its runtime, as removing an attachment does.
-    // The sandbox stays, and can never start another runtime.
+    // The sandbox stays; creating the agent again starts a new runtime.
     let runtime_id = value(prior, "runtime_id");
     if runtime_id.is_empty() {
         return Ok(());
@@ -243,17 +273,18 @@ mod tests {
 
     #[test]
     fn configuration_diagnostics_preserve_only_known_fields() {
-        let failure = super::configuration_failure("start", "start_failed", "none");
+        let failure = super::configuration_failure("start", "start_failed", "none", None);
         let text = failure.to_string();
         assert!(text.contains("start_failed"));
         assert!(text.contains("agent runtime is unavailable"));
         assert!(!text.contains("private-value"));
         assert_eq!(
-            super::configuration_failure("private-value", "private-value", "private-value"),
+            super::configuration_failure("private-value", "private-value", "private-value", None),
             nemoclaw_backend::ObservationError::FabricConfiguration {
                 stage: "unknown",
                 code: "fabric_configuration_failed",
                 runtime_state: "unknown",
+                message_file: None,
             }
         );
     }
@@ -264,7 +295,7 @@ mod tests {
             ("start", "start_failed", "coder"),
             ("validation", "validation_failed", "assistant"),
         ] {
-            let error = super::configuration_failure(stage, code, "none");
+            let error = super::configuration_failure(stage, code, "none", None);
             let message = nemoclaw_tofu::observation_message(error, Some(sandbox));
             assert!(message.contains(&format!("sandbox/{sandbox}")), "{message}");
             for expected in [

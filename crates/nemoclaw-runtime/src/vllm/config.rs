@@ -117,7 +117,7 @@ pub struct Memory {
     pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     #[schemars(default)]
-    /// Host memory reserve in GiB excluded from the serving budget.
+    /// Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe.
     pub host_reserve_gib: i64,
     #[serde(rename = "kvCacheGiB")]
     #[schemars(default)]

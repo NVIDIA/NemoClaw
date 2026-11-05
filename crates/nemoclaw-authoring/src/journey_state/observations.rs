@@ -6,8 +6,8 @@ use super::*;
 impl JourneyState {
     /// Resolve questions and readiness against the observations gathered so far.
     /// Endpoint models remain suggestions, while target observations can block
-    /// readiness. Credential availability is informational; an empty sheet
-    /// leaves compatibility unverified and lists references needed by plan.
+    /// readiness. Credential availability is informational and reported only
+    /// for checked references; an empty sheet leaves compatibility unverified.
     pub fn resolve_with_observations(
         &self,
         capabilities: &Capabilities,
@@ -41,16 +41,19 @@ impl JourneyState {
         // cause. That default is Docker's socket, so it is not offered as the
         // engine either: accepting it would author a socket no engine answered on.
         if let Some(runtime) = self.runtime_without_local_engine() {
+            let reason = format!(
+                "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+            );
+            // The question states the cause where the user answers; the
+            // assessment keeps it for review.
             if let Some(question) = resolution
                 .questions
                 .iter_mut()
                 .find(|question| question.id == GATEWAY_ENGINE_PATH)
             {
                 question.suggestion = None;
+                question.note = Some(reason.clone());
             }
-            let reason = format!(
-                "No {runtime} engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
-            );
             // Podman has no default engine, so its document stays incomplete
             // and no target was assessed; the cause is still the first thing
             // to report.
@@ -66,21 +69,22 @@ impl JourneyState {
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
-        let unresolved = document
-            .credential_names()
-            .into_iter()
-            .filter(|reference| {
-                observations
-                    .get(&CredentialRequest {
-                        reference: (*reference).into(),
-                    })
-                    .is_none_or(|credential| credential.status != ObservationStatus::Available)
-            })
-            .collect::<Vec<_>>();
-        if !unresolved.is_empty() {
-            resolution.information.push(format!(
-                "Credential availability is missing or unverified here: {}. Interactive plan prompts for missing values; set them first for a non-interactive run.",
-                unresolved.join(", ")
+        // A reference that was never checked has no state to report. The
+        // observation's reason is not shown; only its status is.
+        for reference in document.credential_names() {
+            let Some(credential) = observations.get(&CredentialRequest {
+                reference: reference.into(),
+            }) else {
+                continue;
+            };
+            let guidance = " Interactive plan asks for it; set it first for a non-interactive run.";
+            let (state, guidance) = match credential.status {
+                ObservationStatus::Available => ("is set", ""),
+                ObservationStatus::Unavailable => ("is not set", guidance),
+                ObservationStatus::Unknown => ("could not be read", guidance),
+            };
+            resolution.credentials.push(format!(
+                "{reference} {state} in this environment.{guidance}"
             ));
         }
         let Some(request) = crate::inference_request_for_document(document, self.current_route())
@@ -203,7 +207,9 @@ impl JourneyState {
         capabilities: &Capabilities,
         observations: &DiscoveryObservations,
     ) -> Result<(), Diagnostics> {
-        if !self.decisions.accepted.contains(HARNESS) {
+        if !harness_question(&self.authored.values)
+            .is_some_and(|id| self.decisions.accepted.contains(&id))
+        {
             return Err(diagnostic(
                 "delegation",
                 "Choose a harness before delegating settings.",

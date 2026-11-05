@@ -183,6 +183,9 @@ pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
     "image",
     "network_cidr",
 ];
+/// Authored OpenShell gateway settings, as JSON, when the deployment sets
+/// them; absent otherwise.
+pub const CONFIG_ATTRIBUTE: &str = "gateway_config";
 /// Docker gateway data does not depend on the listen port, so its storage
 /// records this endpoint instead of the gateway's.
 const DOCKER_STORAGE_ENDPOINT: &str = "http://127.0.0.1:8080";
@@ -204,9 +207,19 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
             return crate::config::validate_engine_endpoint(value)
                 .map_err(|_| "must be a local Unix engine socket");
         }
+        CONFIG_ATTRIBUTE => {
+            return match serde_json::from_str::<super::gateway_config::GatewayConfig>(value) {
+                Ok(config)
+                    if super::gateway_config::render(toml::Table::new(), &config).is_ok() =>
+                {
+                    Ok(())
+                }
+                _ => Err("must be a JSON object in the OpenShell chart's gatewayConfig format"),
+            };
+        }
         _ => return Ok(()),
     };
-    if regex::Regex::new(pattern).unwrap().is_match(value) {
+    if crate::config::constraints::matches(pattern, value) {
         Ok(())
     } else {
         Err(requirement)
@@ -260,7 +273,7 @@ impl Spec {
     pub fn gateway_row(&self, kind: &str) -> Result<crate::backend::Row, Error> {
         self.validate()?;
         let docker_storage = kind == GATEWAY_STORAGE_KIND && self.layout == 1;
-        Ok(GATEWAY_ATTRIBUTES
+        let mut row: crate::backend::Row = GATEWAY_ATTRIBUTES
             .into_iter()
             .zip([
                 self.name.as_str(),
@@ -274,7 +287,21 @@ impl Spec {
             ])
             .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
             .map(|(attribute, value)| (attribute.to_owned(), value.to_owned()))
-            .collect())
+            .collect();
+        // Storage holds no configuration: the gateway container receives it.
+        if let Some(config) = self
+            .gateway
+            .config
+            .as_ref()
+            .filter(|_| kind == GATEWAY_KIND)
+        {
+            row.insert(
+                CONFIG_ATTRIBUTE.into(),
+                serde_json::to_string(config)
+                    .map_err(|_| Error::State("cannot encode gateway config"))?,
+            );
+        }
+        Ok(row)
     }
     /// Gateway or storage specification named by resource attributes.
     ///
@@ -288,8 +315,11 @@ impl Spec {
                 .cloned()
                 .ok_or(crate::ObservationError::Incomplete)
         };
-        for attribute in GATEWAY_ATTRIBUTES {
-            if let Some(value) = row.get(attribute) {
+        for attribute in GATEWAY_ATTRIBUTES.into_iter().chain([CONFIG_ATTRIBUTE]) {
+            if let Some(value) = row
+                .get(attribute)
+                .filter(|value| !value.is_empty() || attribute != CONFIG_ATTRIBUTE)
+            {
                 check_gateway_attribute(attribute, value)
                     .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?;
             }
@@ -327,6 +357,13 @@ impl Spec {
                 image_pull_policy: None,
                 network_cidr: get("network_cidr")?,
                 kubernetes: None,
+                config: match row.get(CONFIG_ATTRIBUTE).filter(|value| !value.is_empty()) {
+                    Some(value) => Some(
+                        serde_json::from_str(value)
+                            .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?,
+                    ),
+                    None => None,
+                },
             },
             image: get("image")?,
             process: None,
@@ -372,15 +409,10 @@ impl Spec {
     /// # Errors
     /// Returns an error if any of these contracts is invalid.
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}$")
-            .unwrap()
-            .is_match(&self.name)
-            || !regex::Regex::new(r"^[a-f0-9-]{36}$")
-                .unwrap()
-                .is_match(&self.owner)
-            || !regex::Regex::new(r"^[a-f0-9]{32}$")
-                .unwrap()
-                .is_match(&self.generation)
+        let matches = crate::config::constraints::matches;
+        if !matches(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}$", &self.name)
+            || !matches(r"^[a-f0-9-]{36}$", &self.owner)
+            || !matches(r"^[a-f0-9]{32}$", &self.generation)
         {
             return Err(Error::Conflict(
                 "managed resource lacks ownership or generation",
@@ -669,37 +701,127 @@ impl Spec {
         serde_json::from_value(config)
             .map_err(|_| Error::State("invalid compiled runtime launch specification"))
     }
-    pub fn gateway_config(&self, data_path: &str) -> String {
-        let grpc_endpoint = if self.compute_driver == ComputeDriver::Docker {
-            String::new()
-        } else {
-            format!("grpc_endpoint = {:?}\n", self.gateway.endpoint)
+    /// The gateway's OpenShell configuration file: the keys NemoClaw owns,
+    /// with the deployment's authored tables merged in.
+    ///
+    /// # Errors
+    /// Returns a conflict if the authored tables are malformed or replace an
+    /// owned key; validation rejects both before a specification exists.
+    pub fn gateway_config(&self, data_path: &str) -> Result<String, Error> {
+        let network = match self.compute_driver {
+            ComputeDriver::Docker => String::new(),
+            _ => self.network(),
         };
-        // Docker supervisors use host networking and derive the loopback callback
-        // from the runtime listen port. Storage normalizes that port separately.
-        // Scope startup cleanup by gateway instead of using the shared default.
-        let namespace = if self.compute_driver == ComputeDriver::Docker {
-            format!("sandbox_label = {:?}\n", self.name)
-        } else {
-            format!("network_name = {:?}\n", self.network())
-        };
-        format!(
-            "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = {:?}\ndisable_tls = true\n\n[openshell.drivers.{}]{}\n{}sandbox_runtime_image = {:?}\nsupervisor_image = {:?}\n{}\n[openshell.gateway.gateway_jwt]\nsigning_key_path = {:?}\npublic_key_path = {:?}\nkid_path = {:?}\ngateway_id = {:?}\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = true\n",
-            self.compute_driver.as_str(),
+        gateway_file(
             self.compute_driver,
-            if self.compute_driver == ComputeDriver::Podman {
-                "\nsocket_path = \"/var/run/docker.sock\""
-            } else {
-                ""
-            },
-            namespace,
-            SANDBOX_RUNTIME_IMAGE,
-            SUPERVISOR_IMAGE,
-            grpc_endpoint,
-            format!("{data_path}/tls/jwt/signing.pem"),
-            format!("{data_path}/tls/jwt/public.pem"),
-            format!("{data_path}/tls/jwt/kid"),
-            self.name
+            &self.name,
+            &network,
+            &self.gateway.endpoint,
+            data_path,
+            self.gateway.config.as_ref(),
         )
     }
+}
+
+/// A Docker gateway's configuration file from its name, the data path its
+/// storage returns, and the authored tables as JSON, empty when none.
+///
+/// # Errors
+/// Returns a conflict naming the invalid setting.
+pub fn docker_gateway_config(name: &str, data_path: &str, config: &str) -> Result<String, Error> {
+    let config = if config.is_empty() {
+        None
+    } else {
+        let config: super::gateway_config::GatewayConfig = serde_json::from_str(config)
+            .map_err(|_| Error::Conflict("config must be a JSON object of gateway tables"))?;
+        super::gateway_config::check(&config, "docker").map_err(|_| {
+            Error::Conflict("config must be valid gateway tables without keys NemoClaw manages")
+        })?;
+        Some(config)
+    };
+    gateway_file(
+        ComputeDriver::Docker,
+        name,
+        "",
+        "",
+        data_path,
+        config.as_ref(),
+    )
+}
+
+/// The OpenShell configuration file of a managed Docker or Podman gateway:
+/// the keys NemoClaw owns, with the authored tables merged in.
+fn gateway_file(
+    compute_driver: ComputeDriver,
+    name: &str,
+    network: &str,
+    endpoint: &str,
+    data_path: &str,
+    config: Option<&super::gateway_config::GatewayConfig>,
+) -> Result<String, Error> {
+    use toml::{Table, Value};
+    fn table<const N: usize>(entries: [(&str, Value); N]) -> Value {
+        Value::Table(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        )
+    }
+    let text = |value: &str| Value::String(value.to_owned());
+    // Docker supervisors use host networking and derive the loopback callback
+    // from the runtime listen port. Storage normalizes that port separately.
+    // Scope startup cleanup by gateway instead of using the shared default.
+    let mut driver = match compute_driver {
+        ComputeDriver::Docker => table([("sandbox_label", text(name))]),
+        _ => table([
+            ("socket_path", text("/var/run/docker.sock")),
+            ("network_name", text(network)),
+            ("grpc_endpoint", text(endpoint)),
+        ]),
+    };
+    if let Value::Table(driver) = &mut driver {
+        driver.insert("sandbox_runtime_image".into(), text(SANDBOX_RUNTIME_IMAGE));
+        driver.insert("supervisor_image".into(), text(SUPERVISOR_IMAGE));
+    }
+    let gateway = table([
+        ("compute_driver", text(compute_driver.as_str())),
+        ("disable_tls", Value::Boolean(true)),
+        (
+            "gateway_jwt",
+            table([
+                (
+                    "signing_key_path",
+                    text(&format!("{data_path}/tls/jwt/signing.pem")),
+                ),
+                (
+                    "public_key_path",
+                    text(&format!("{data_path}/tls/jwt/public.pem")),
+                ),
+                ("kid_path", text(&format!("{data_path}/tls/jwt/kid"))),
+                ("gateway_id", text(name)),
+            ]),
+        ),
+        (
+            "auth",
+            table([("allow_unauthenticated_users", Value::Boolean(true))]),
+        ),
+    ]);
+    let mut drivers = Table::new();
+    drivers.insert(compute_driver.as_str().into(), driver);
+    let mut root = Table::new();
+    root.insert(
+        "openshell".into(),
+        table([
+            ("version", Value::Integer(2)),
+            ("gateway", gateway),
+            ("drivers", Value::Table(drivers)),
+        ]),
+    );
+    let root = match config {
+        Some(config) => super::gateway_config::render(root, config)
+            .map_err(|_| Error::Conflict("invalid managed gateway configuration"))?,
+        None => root,
+    };
+    toml::to_string(&root).map_err(|_| Error::State("cannot encode gateway configuration"))
 }

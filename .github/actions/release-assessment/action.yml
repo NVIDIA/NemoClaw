@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Assess the staged release
+description: >-
+  Download the draft's inventory and SBOMs, check them against the checksums
+  the stage job recorded, and run the release gate with the pinned Grype and a
+  fresh database. Run it from the controller checkout, whose exception policy
+  the checksum names. Inputs land in $RUNNER_TEMP/security-inputs and the
+  report in $RUNNER_TEMP/security-report.
+inputs:
+  tag:
+    description: Release tag whose draft holds the staged inputs.
+    required: true
+  inventory-sha256:
+    description: Checksum of the draft's inventory.json from the stage job.
+    required: true
+  sboms-sha256:
+    description: Checksum of the draft's sboms.json from the stage job.
+    required: true
+  policy-sha256:
+    description: Checksum of the controller's exception policy.
+    required: true
+  controller-revision:
+    description: The checked-out controller commit.
+    required: true
+  token:
+    description: A token that can read the draft release.
+    required: true
+outputs:
+  result:
+    description: The gate's exit status; 0 passed, 2 blocked, 3 incomplete.
+    value: ${{ steps.gate.outputs.result }}
+  report:
+    description: Whether the gate wrote assessment.json.
+    value: ${{ steps.gate.outputs.report }}
+runs:
+  using: composite
+  steps:
+    - name: Download and verify the private staged inputs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        TAG: ${{ inputs.tag }}
+        INVENTORY_SHA256: ${{ inputs.inventory-sha256 }}
+        SBOMS_SHA256: ${{ inputs.sboms-sha256 }}
+        POLICY_SHA256: ${{ inputs.policy-sha256 }}
+      run: |
+        test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+        inputs="$RUNNER_TEMP/security-inputs"
+        mkdir "$inputs"
+        gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern inventory.json --pattern sboms.json --dir "$inputs"
+        printf '%s  %s\n' "$INVENTORY_SHA256" "$inputs/inventory.json" "$SBOMS_SHA256" "$inputs/sboms.json" "$POLICY_SHA256" .github/security/v1-vulnerability-exceptions.json | sha256sum --check --strict > /dev/null
+        jq -e 'type == "array" and length > 0 and all(.asset | test("^[A-Za-z0-9_.-]+\\.spdx\\.json$")) and all(.sha256 | test("^[a-f0-9]{64}$"))' "$inputs/sboms.json" > /dev/null
+        while IFS=$'\t' read -r asset sha256; do
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$inputs"
+          printf '%s  %s\n' "$sha256" "$inputs/$asset" | sha256sum --check --strict > /dev/null
+        done < <(jq -r '.[] | [.asset,.sha256] | @tsv' "$inputs/sboms.json")
+    - name: Install the verified scanner and prepare a fresh database
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        tool="$RUNNER_TEMP/grype-tool"
+        mkdir "$tool" "$RUNNER_TEMP/grype-home"
+        gh release download v0.121.0 --repo anchore/grype --pattern grype_0.121.0_linux_amd64.tar.gz --dir "$tool"
+        printf '%s  %s\n' 64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519 "$tool/grype_0.121.0_linux_amd64.tar.gz" | sha256sum --check --strict > /dev/null
+        tar -xzf "$tool/grype_0.121.0_linux_amd64.tar.gz" -C "$tool" grype
+        env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/grype-home" GRYPE_DB_CACHE_DIR="$RUNNER_TEMP/grype-db" GRYPE_DB_AUTO_UPDATE=false GRYPE_CHECK_FOR_APP_UPDATE=false "$tool/grype" db update > "$RUNNER_TEMP/grype-db-update.log" 2>&1
+    # Anchore publishes about once a day, often more than 24 hours apart.
+    - name: Freshly assess the exact release inputs and reviewed policy
+      id: gate
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        CONTROLLER_REVISION: ${{ inputs.controller-revision }}
+        POLICY_SHA256: ${{ inputs.policy-sha256 }}
+      run: |
+        set +e
+        cargo run --locked -q -p nemoclaw-build --no-default-features -- release-gate \
+          --inventory "$RUNNER_TEMP/security-inputs/inventory.json" \
+          --sboms "$RUNNER_TEMP/security-inputs/sboms.json" --sbom-directory "$RUNNER_TEMP/security-inputs" \
+          --grype "$RUNNER_TEMP/grype-tool/grype" --database "$RUNNER_TEMP/grype-db" --max-db-age-hours 72 \
+          --release-tag "$TAG" --controller-revision "$CONTROLLER_REVISION" \
+          --exceptions .github/security/v1-vulnerability-exceptions.json --reviewed-policy-sha256 "$POLICY_SHA256" \
+          --output-directory "$RUNNER_TEMP/security-report"
+        result=$?
+        set -e
+        echo "result=$result" >> "$GITHUB_OUTPUT"
+        if test -f "$RUNNER_TEMP/security-report/assessment.json"; then
+          echo 'report=true' >> "$GITHUB_OUTPUT"
+        fi
+        test "$result" -eq 0 || test "$result" -eq 2 || test "$result" -eq 3

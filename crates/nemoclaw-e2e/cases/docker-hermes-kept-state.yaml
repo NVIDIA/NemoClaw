@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# A Hermes agent behind a managed Docker gateway whose sandbox mounts a volume
+# on /sandbox/artifacts, where Fabric keeps the agent's state across
+# runtimes.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-hermes-kept-state
+  uid: 8b4e2d1f-6c3a-4f9e-a7b5-1d2c3e4f5a60
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17691
+    engine: unix:///var/run/docker.sock
+  inferenceProviders:
+    nvidia:
+      provider: openai
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    hermes:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      harness:
+        kind: nvidia.fabric.hermes
+      network:
+        tier: isolated
+      driverConfig:
+        docker:
+          mounts:
+            - type: volume
+              source: hermes-artifacts
+              target: /sandbox/artifacts
+              read_only: false
+      agent:
+        name: hermes
+        inference:
+          routes:
+            - name: primary
+              providerRef: nvidia
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

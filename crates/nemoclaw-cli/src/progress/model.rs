@@ -83,6 +83,16 @@ impl Model {
                 ));
             }
             Progress::MutationStarted => return None,
+            Progress::Stopping => {
+                return Some(Milestone::new(
+                    "Stopping: the resource operations in progress finish first, so the state \
+                     records them. Interrupt again (Ctrl-C) to stop now; a resource being \
+                     created can then be missing from the state."
+                        .into(),
+                    Tone::Warning,
+                    true,
+                ));
+            }
             Progress::Waiting { operation, elapsed } => {
                 let label = operation_label(operation).or(verbose.then_some(operation));
                 let visible = verbose || !infrastructure_step(operation);
@@ -256,7 +266,10 @@ impl Model {
 }
 
 fn infrastructure_step(operation: &str) -> bool {
-    matches!(operation, "tofu.init" | "tofu.plan" | "tofu.apply")
+    matches!(
+        operation,
+        "tofu.init" | "tofu.state" | "tofu.plan" | "tofu.apply"
+    )
 }
 
 fn supporting_resource(address: &str) -> bool {
@@ -279,6 +292,7 @@ fn supporting_resource(address: &str) -> bool {
 fn operation_label(operation: &str) -> Option<&str> {
     match operation {
         "tofu.init" => Some("Initializing infrastructure"),
+        "tofu.state" => Some("Creating infrastructure state"),
         "tofu.plan" => Some("Planning infrastructure changes"),
         "tofu.apply" => Some("Applying infrastructure changes"),
         "runtime.ready" => Some("Waiting for gateway and inference readiness"),

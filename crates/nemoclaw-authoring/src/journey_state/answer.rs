@@ -147,16 +147,14 @@ impl JourneyState {
             }
             QuestionTarget::SdkField { path, role } => {
                 let previous = candidate.authored.values.pointer(path).cloned();
+                // The provider's key names it; its routes refer to that name.
                 let provider_for_dependency = if matches!(
                     role,
                     SdkFieldRole::ProviderApi | SdkFieldRole::ProviderEndpoint
                 ) {
-                    path.rsplit_once('/')
-                        .and_then(|(base, _)| {
-                            candidate.authored.values.pointer(&format!("{base}/name"))
-                        })
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
+                    path.rsplit('/')
+                        .nth(1)
+                        .map(|key| key.replace("~1", "/").replace("~0", "~"))
                 } else {
                     None
                 };
@@ -184,7 +182,7 @@ impl JourneyState {
                     .ask_scopes
                     .contains(&JourneyScope::DeploymentFields)
                     && !self.definition.ask.contains(path)
-                    && self.resolve(capabilities)?.question(id).is_some()
+                    && resolution.question(id).is_some()
                     && PartialDocument::from_value(self.authored.values.clone())
                         .assess()
                         .document()
@@ -205,7 +203,13 @@ impl JourneyState {
             .decisions
             .record_answer(id, &question.target, omitted);
         // Later answers start by resolving, so never commit a state that cannot resolve.
-        candidate.resolve(capabilities)?;
+        for question in candidate.resolve(capabilities)?.questions() {
+            if question.required {
+                candidate
+                    .decisions
+                    .reopen_omission(question.id(), &question.target, id);
+            }
+        }
         *self = candidate;
         Ok(())
     }

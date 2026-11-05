@@ -7,15 +7,9 @@ use crate::schema::DefaultedInteger;
 
 pub const REPOSITORY: &str = r"^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$";
 pub const REVISION: &str = r"^[a-f0-9]{40}$";
-pub const TOOL_PARSERS: &[&str] = &[
-    "",
-    "hermes",
-    "qwen3_coder",
-    "qwen3_xml",
-    "llama3_json",
-    "mistral",
-];
-pub const REASONING_PARSERS: &[&str] = &["", "qwen3", "deepseek_r1", "nemotron_v3"];
+/// The shape of a vLLM parser name, so a value can't pass as another vLLM flag.
+/// vLLM decides which parser names exist.
+pub const PARSER: &str = r"^[a-z0-9_]*$";
 pub const PORT: DefaultedInteger = DefaultedInteger {
     default: 18888,
     min: 1024,
@@ -41,11 +35,15 @@ pub const STARTUP_TIMEOUT: DefaultedInteger = DefaultedInteger {
     min: 60,
     max: 3600,
 };
+// The minimum covers the largest host-memory use measured while a managed vLLM or Ollama
+// service loaded on a dedicated-memory GPU, rounded up (#13833). Unified-memory profiles and
+// recipes keep the single-Spark recipe's minimum.
 pub const HOST_RESERVE: DefaultedInteger = DefaultedInteger {
     default: 32,
-    min: 28,
+    min: 6,
     max: 64,
 };
+pub const UNIFIED_HOST_RESERVE_MIN: i64 = 28;
 pub const KV_CACHE: DefaultedInteger = DefaultedInteger {
     default: 8,
     min: 4,

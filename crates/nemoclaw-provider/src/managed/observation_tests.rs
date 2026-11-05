@@ -222,7 +222,9 @@ async fn gateway_observation_preserves_identity_and_fails_closed_on_drift_or_par
     let container = json!({"Id":"container","Name":format!("/{}",spec.name),"Image":"sha256:runtime","Config":config,"HostConfig":host,"NetworkSettings":{"Networks":{spec.network():{"IPAddress":spec.gateway_address().unwrap()}}},"State":{"Running":true},"Mounts":[{"Type":"volume","Name":spec.volume(),"Destination":"/var/lib/docker/volumes/fixture/_data","RW":true},{"Type":"bind","Source":"/var/run/docker.sock","Destination":"/var/run/docker.sock","RW":true}]});
     let volume = json!({"Name":spec.volume(),"Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/fixture/_data","CreatedAt":"2026-09-14T00:00:00Z","Labels":spec.labels().unwrap(),"Options":{}});
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge().unwrap()}]}});
-    let gateway_config = spec.gateway_config("/var/lib/docker/volumes/fixture/_data");
+    let gateway_config = spec
+        .gateway_config("/var/lib/docker/volumes/fixture/_data")
+        .unwrap();
     let state = Arc::new(Mutex::new((
         Some(container),
         Some(volume),
@@ -393,87 +395,6 @@ fn gateway_identity_includes_signing_key_and_persisted_encryption_key() {
         gateway_identity(base, signing, &key).unwrap(),
         gateway_identity(base, signing, &[8; 32]).unwrap()
     );
-}
-
-#[tokio::test]
-async fn invalid_managed_capacity_requests_fail_before_host_observation() {
-    let (mut spec, _, _, _) = reference();
-    spec.owner.clear();
-    let fixture = Fixture::engine(|_| panic!("invalid spec reached engine")).await;
-    let engine = fixture.engine_for(&spec.gateway.engine);
-    let error = engine.check_capacity(&spec, None).await.unwrap_err();
-    assert!(matches!(error, Error::Conflict(_)));
-}
-
-#[tokio::test]
-async fn capacity_requires_measurements_from_the_selected_execution_target() {
-    use crate::hardware::{Capacity, GIB, HostObservation, HostObserver};
-    struct Source(&'static str);
-    #[async_trait::async_trait]
-    impl HostObserver for Source {
-        async fn observe(&self, _: &Engine) -> Result<HostObservation, Error> {
-            if self.0 == "missing" {
-                return Err(Error::State("remote host measurements unavailable"));
-            }
-            Ok(HostObservation {
-                engine_id: if self.0 == "wrong" {
-                    "wrong-daemon"
-                } else {
-                    "selected-daemon"
-                }
-                .into(),
-                capacity: if self.0 == "incomplete" {
-                    Capacity::default()
-                } else {
-                    Capacity {
-                        architecture: "arm64".into(),
-                        gpu: "NVIDIA GB10".into(),
-                        driver_major: 580,
-                        compute_capability: 121,
-                        gpu_memory: None,
-                        total: 128 * GIB,
-                        available: 120 * GIB,
-                        free: 110 * GIB,
-                        disk_free: 1000 * GIB,
-                        foreign_gpu_processes: 0,
-                    }
-                },
-            })
-        }
-    }
-    let (spec, _, _, _) = reference();
-    let fixture = Fixture::engine(|request| {
-        assert_eq!(
-            request.path, "/info",
-            "invalid host observation reached artifact or resource operations"
-        );
-        Some((200, br#"{"ID":"selected-daemon"}"#.to_vec()))
-    })
-    .await;
-    for available in ["missing", "wrong", "selected", "incomplete"] {
-        let engine = fixture
-            .engine_for(&spec.gateway.engine)
-            .with_host_observer(std::sync::Arc::new(Source(available)));
-        let result = engine.check_capacity(&spec, None).await;
-        if available == "selected" {
-            result.unwrap();
-            continue;
-        }
-        let error = result.unwrap_err();
-        if available == "wrong" {
-            assert!(matches!(
-                error,
-                Error::Observation(ObservationError::BindingMismatch)
-            ));
-        } else if available == "missing" {
-            assert_eq!(error.to_string(), "remote host measurements unavailable");
-        } else {
-            assert!(matches!(
-                error,
-                Error::State("GPU compute capability is unobservable")
-            ));
-        }
-    }
 }
 
 #[test]

@@ -140,7 +140,7 @@ fn ownership_generations() -> BTreeMap<String, String> {
 
 #[test]
 fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
-    use nemoclaw_sdk::config::{Credential, TLS};
+    use nemoclaw_sdk::config::{FileRef, SecretRef, TLS};
     use serde_json::json;
     let mut document =
         Document::parse(include_str!("fixtures/config/local.yaml").as_bytes()).unwrap();
@@ -148,29 +148,32 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway else {
         panic!("expected external gateway");
     };
-    gateway.credential = Some(Credential {
+    gateway.credential = Some(SecretRef {
         env: "GATEWAY_TOKEN".into(),
     });
     gateway.tls = Some(TLS {
-        ca: Credential {
+        ca: FileRef {
             env: "GATEWAY_CA".into(),
         },
-        certificate: Credential {
+        certificate: Some(FileRef {
             env: "GATEWAY_CERT".into(),
-        },
-        key: Credential {
+        }),
+        key: Some(FileRef {
             env: "GATEWAY_KEY".into(),
-        },
+        }),
     });
-    let provider = &mut document.spec.inference_providers[0];
-    provider.name = "remote".into();
+    let mut provider = document.spec.inference_providers.remove("local").unwrap();
     provider.endpoint = "https://models.example.test/v1".into();
-    provider.credential = Some(Credential {
+    provider.credential = Some(SecretRef {
         env: "MODEL_TOKEN".into(),
     });
-    let sandbox = &mut document.spec.sandboxes[0];
-    sandbox.name = "worker".into();
+    document
+        .spec
+        .inference_providers
+        .insert("remote".into(), provider);
+    let mut sandbox = document.spec.sandboxes.remove("assistant").unwrap();
     sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("remote".into());
+    document.spec.sandboxes.insert("worker".into(), sandbox);
     let generations = ownership_generations();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     // Providers take no connection; the gateway data source does, and
@@ -346,11 +349,23 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         let prerequisites = &graph["data"]["openshell_gateway_prerequisites"]["current"];
         assert_eq!(prerequisites["engine"], *selected);
         assert_eq!(prerequisites["compute_driver"], "docker");
+        // The read checks that only this deployment's gateway holds the port.
+        assert_eq!(
+            prerequisites["endpoint"],
+            document.spec.gateway.as_managed().unwrap().endpoint
+        );
+        assert_eq!(
+            prerequisites["name"],
+            format!("{}-gateway", document.workspace())
+        );
+        assert_eq!(prerequisites["owner"], document.metadata.uid);
+        let message = prerequisites["lifecycle"]["postcondition"][0]["error_message"]
+            .as_str()
+            .unwrap();
         assert!(
-            prerequisites["lifecycle"]["postcondition"][0]["error_message"]
-                .as_str()
-                .unwrap()
-                .contains("does not meet gateway prerequisites")
+            message.contains("does not meet gateway prerequisites")
+                && message.contains("jsondecode(self.observation_json).reason"),
+            "{message}"
         );
         for read in [engine, prerequisites] {
             assert!(
@@ -362,8 +377,11 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             graph["output"]["discovery"]["value"]["gateway_prerequisites"],
             "${data.openshell_gateway_prerequisites.current.observation_json}"
         );
-        let image = &graph["data"]["fabric_harnesses"]["sandbox_0"];
-        assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
+        let image = &graph["data"]["fabric_harnesses"]["sandbox_assistant"];
+        assert_eq!(
+            image["image"],
+            document.spec.sandboxes["assistant"].image.ref_
+        );
         assert!(
             image.get("depends_on").is_none(),
             "metadata inspection must not depend on image acquisition"
@@ -379,12 +397,12 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
         assert_eq!(
             configuration["harness"]["adapter_id"],
             document
-                .sandbox_harness(&document.spec.sandboxes[0])
+                .sandbox_harness(document.sandbox("assistant").unwrap())
                 .unwrap()
                 .kind
                 .as_str()
         );
-        // Fabric v0.5.0 has no per-model API field (#13320); the adapter
+        // The pinned Fabric has no per-model API field (#13320); the adapter
         // selects the protocol from the model's provider.
         assert!(configuration["models"]["default"].get("api").is_none());
         assert_eq!(configuration["models"]["default"]["provider"], "openai");
@@ -396,10 +414,11 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
 fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     let mut value: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
-    value["spec"]["sandboxes"][0]["harness"]["kind"] = "org.fixture.custom-adapter".into();
-    value["spec"]["sandboxes"][0]["harness"]["settings"] =
+    value["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+        "org.fixture.custom-adapter".into();
+    value["spec"]["sandboxes"]["assistant"]["harness"]["settings"] =
         serde_json::json!({"custom_option":"fixture-value"});
-    value["spec"]["inferenceProviders"][0]["api"] = "openai-responses".into();
+    value["spec"]["inferenceProviders"]["local"]["api"] = "openai-responses".into();
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
     let targets = nemoclaw_sdk::compile::targets(&document, &ownership_generations()).unwrap();
     let sandbox = targets
@@ -415,7 +434,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
             .values,
     )
     .unwrap();
-    // Fabric v0.5.0 has no per-model API field (#13320).
+    // The pinned Fabric has no per-model API field (#13320).
     assert!(settings["models"]["default"].get("api").is_none());
     assert_eq!(
         settings["harness"]["settings"]["custom_option"],
@@ -425,7 +444,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     // The sandbox launches what Fabric computed; it holds no agent runtime of its own.
     assert_eq!(
         graph["resource"]["openshell_sandbox"]["assistant"]["launch_json"],
-        "${data.fabric_harnesses.sandbox_0.launch_json}"
+        "${data.fabric_harnesses.sandbox_assistant.launch_json}"
     );
     assert!(
         graph["resource"]["openshell_sandbox"]["assistant"]
@@ -448,10 +467,9 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         .find(|target| target.kind == "inference")
         .unwrap();
     let mut changed = document.clone();
-    let mut second = changed.spec.sandboxes[0].clone();
-    second.name = "second".into();
+    let mut second = changed.spec.sandboxes["assistant"].clone();
     second.image.ref_ = format!("fixture/other@sha256:{}", "b".repeat(64));
-    changed.spec.sandboxes.push(second);
+    changed.spec.sandboxes.insert("second".into(), second);
     let after = targets(&changed, &generations).unwrap();
     assert!(after.contains(original));
     assert_eq!(
@@ -466,7 +484,12 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         1,
         "authored provider selection is independent of registration count"
     );
-    assert_eq!(changed.inference_provider_mut().unwrap().name, "local");
+    let mut edited = changed.clone();
+    edited.inference_provider_mut().unwrap().endpoint = "https://edited.example/v1".into();
+    assert_eq!(
+        edited.spec.inference_providers["local"].endpoint,
+        "https://edited.example/v1"
+    );
     let graph = compile(&changed, &generations, "0.1.0").unwrap();
     for name in ["assistant", "second"] {
         assert!(
@@ -488,6 +511,33 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
 }
 
 #[test]
+fn adding_a_sandbox_that_sorts_first_leaves_existing_sandboxes_unchanged() {
+    let document =
+        Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+    let before = compile(&document, &generations, "0.1.0").unwrap();
+    // `aaa` sorts before `assistant`. Its own image gives it its own
+    // registrations, so nothing the existing sandbox uses is shared.
+    let mut changed = document.clone();
+    let mut first = changed.spec.sandboxes["assistant"].clone();
+    first.image.ref_ = format!("fixture/other@sha256:{}", "b".repeat(64));
+    changed.spec.sandboxes.insert("aaa".into(), first);
+    let after = compile(&changed, &generations, "0.1.0").unwrap();
+    for kind in ["resource", "data"] {
+        for (block_type, blocks) in before[kind].as_object().unwrap() {
+            for (name, block) in blocks.as_object().unwrap() {
+                assert_eq!(
+                    &after[kind][block_type][name], block,
+                    "{kind}.{block_type}.{name} changed"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn sandboxes_pass_driver_configuration_through() {
     let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
@@ -495,10 +545,9 @@ fn sandboxes_pass_driver_configuration_through() {
     let mut value: serde_json::Value =
         serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
-    let name = doc.spec.sandboxes[0].name.clone();
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     assert!(
-        graph["resource"]["openshell_sandbox"][&name]
+        graph["resource"]["openshell_sandbox"]["assistant"]
             .get("driver_config")
             .is_none()
     );
@@ -506,12 +555,12 @@ fn sandboxes_pass_driver_configuration_through() {
     let mounts = serde_json::json!({"docker": {"mounts": [
         {"type": "volume", "source": "skills", "target": "/sandbox/skills"}
     ]}});
-    value["spec"]["sandboxes"][0]["driverConfig"] = mounts.clone();
+    value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
         .expect("driverConfig must parse");
     let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
     // However OpenTofu takes it, OpenShell receives it unchanged.
-    let attribute = &graph["resource"]["openshell_sandbox"][&name]["driver_config"];
+    let attribute = &graph["resource"]["openshell_sandbox"]["assistant"]["driver_config"];
     let decoded: serde_json::Value = match attribute.as_str() {
         Some(text) => serde_json::from_str(text).unwrap(),
         None => attribute.clone(),
@@ -535,7 +584,7 @@ fn isolated_sandboxes_take_extra_network_grants() {
         "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
         "rules": [{"allow": {"method": "GET", "path": "/**"}}]
     }]});
-    value["spec"]["sandboxes"][0]["network"] =
+    value["spec"]["sandboxes"]["assistant"]["network"] =
         serde_json::json!({"tier": "isolated", "grants": {"docs": grant}});
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
         .expect("grants must parse");
@@ -560,7 +609,7 @@ fn isolated_sandboxes_take_extra_network_grants() {
     assert_eq!(rules[0]["binaries"], serde_json::json!([]));
 
     // An explicit policy already holds every grant.
-    value["spec"]["sandboxes"][0]["network"] = serde_json::json!({
+    value["spec"]["sandboxes"]["assistant"]["network"] = serde_json::json!({
         "policy": {"explicit": {"version": 1}},
         "grants": {"docs": grant}
     });
@@ -653,4 +702,49 @@ fn the_apply_time_gateway_read_waits_for_a_managed_gateway() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn sandbox_service_exposures_compile_in_openshells_terms() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    assert!(
+        graph["resource"]["openshell_sandbox"]["assistant"]
+            .get("service")
+            .is_none()
+    );
+
+    value["spec"]["sandboxes"]["assistant"]["serviceExposures"] = serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642, "authorizationMode": "BEARER_PASSTHROUGH"}
+    });
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("serviceExposures must parse");
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // However OpenTofu takes it, OpenShell receives each exposure in its own terms.
+    let attribute = &graph["resource"]["openshell_sandbox"]["assistant"]["service"];
+    let decoded: serde_json::Value = match attribute.as_str() {
+        Some(text) => serde_json::from_str(text).unwrap(),
+        None => attribute.clone(),
+    };
+    let mut decoded = decoded.as_array().cloned().expect("a list of exposures");
+    decoded.sort_by_key(|exposure| exposure["name"].as_str().unwrap().to_owned());
+    assert_eq!(
+        decoded,
+        [
+            serde_json::json!({"name": "api", "target_port": 8642, "authorization_mode": "BEARER_PASSTHROUGH"}),
+            serde_json::json!({"name": "dashboard", "target_port": 18800}),
+        ],
+        "{attribute}"
+    );
+    // The document round-trips with it.
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
 }

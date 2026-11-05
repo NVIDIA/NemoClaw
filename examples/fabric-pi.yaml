@@ -3,7 +3,7 @@
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
 # Set the endpoint and model for your service. Pi needs context_window and max_tokens for
-# models it does not ship; NemoClaw supplies the API from the provider. See docs/agents.md.
+# models it does not ship; NemoClaw supplies the API from the provider. See docs/agents-inference/agents.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -16,11 +16,11 @@ spec:
       provider: docker
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   sandboxes:
-    - name: assistant
+    assistant:
       image:
         ref: nc-multi-models@sha256:2ee5e33522a37d3d77bb6381a92e963cb1d5884f2dd28b353b4b7fa0d95f212e
       network:
@@ -38,3 +38,5 @@ spec:
                 maxTokens: 4096
                 extensions:
                   context_window: 32768
+                  input: ["text"]
+                  cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}

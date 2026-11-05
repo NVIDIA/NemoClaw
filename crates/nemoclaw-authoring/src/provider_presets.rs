@@ -3,7 +3,7 @@
 
 use nemoclaw_sdk::config::{InferenceApi, InferenceProviderKind};
 
-pub(crate) const NVIDIA_MODEL: &str = "nvidia/nemotron-3-super-120b-a12b";
+pub(crate) const NVIDIA_MODEL: &str = "nvidia/nemotron-3.5-super-vl-120b-a12b";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Branded endpoint preset offered by guided authoring.
@@ -181,7 +181,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         ProviderPreset::Nous => ProviderProfile {
             kind: InferenceProviderKind::Openai,
             endpoint: "https://inference-api.nousresearch.com/v1",
-            credential: "OPENAI_API_KEY",
+            credential: "NOUS_API_KEY",
             custom_endpoint: false,
             default_model: Some("moonshotai/kimi-k2.6"),
         },

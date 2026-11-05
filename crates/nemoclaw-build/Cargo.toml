@@ -14,7 +14,6 @@ path = "tests/main.rs"
 
 [dependencies]
 thiserror.workspace = true
-nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 nemoclaw-sdk = { path = "../nemoclaw-sdk", optional = true }
 clap.workspace = true
 serde.workspace = true
@@ -26,6 +25,7 @@ zip.workspace = true
 flate2.workspace = true
 tar.workspace = true
 tempfile.workspace = true
+time.workspace = true
 getrandom.workspace = true
 serde-saphyr.workspace = true
 pulldown-cmark = { workspace = true, optional = true }

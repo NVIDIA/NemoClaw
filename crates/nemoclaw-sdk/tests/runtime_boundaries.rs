@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_runtime::{hardware::Capacity, hardware::GIB, vllm::hardware_capacity};
+use nemoclaw_runtime::{
+    hardware::Capacity, hardware::GIB, hardware::GpuMemory, vllm::hardware_capacity,
+};
 use nemoclaw_sdk::{
     config::Document, config::ServiceDefinition, services::installers::vllm::Service,
 };
@@ -57,19 +59,94 @@ fn recipe_selection_preserves_artifacts_and_rejects_unqualified_combinations() {
 }
 
 #[test]
+fn a_recipe_for_a_dedicated_memory_gpu_is_budgeted_against_gpu_memory() {
+    let mut service = service();
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.compatibility.architecture = "amd64".into();
+    recipe.compatibility.gpu = "NVIDIA H100 80GB HBM3".into();
+    recipe.compatibility.min_host_memory_gi_b = 48;
+    recipe.resources.gpu_memory_bytes = 60 * GIB;
+    recipe.resources.preparation_memory_gi_b = 8;
+    recipe.resources.startup_headroom_gi_b = 10;
+    // Host total and available memory are below the 60 GiB budget but cover the 32 GiB reserve
+    // and 10 GiB headroom.
+    let capacity = Capacity {
+        architecture: "amd64".into(),
+        gpu: "NVIDIA H100 80GB HBM3".into(),
+        driver_major: 580,
+        compute_capability: 90,
+        total: 48 * GIB,
+        available: 45 * GIB,
+        disk_free: 200 * GIB,
+        gpu_memory: Some(GpuMemory {
+            total: 80 * GIB,
+            free: 79 * GIB,
+        }),
+        ..Default::default()
+    };
+    hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).unwrap();
+    let total = hardware_capacity::serving_memory(&service, &capacity).unwrap();
+    assert_eq!(total, 80 * GIB);
+    let args = service.arguments("/data/model", total).unwrap();
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--gpu-memory-utilization", "0.750"]),
+        "{args:?}"
+    );
+
+    let gpu = |total, free| {
+        let mut capacity = capacity.clone();
+        capacity.gpu_memory = Some(GpuMemory { total, free });
+        capacity
+    };
+    for (observed, starting) in [
+        (gpu(59 * GIB, 59 * GIB), false),
+        (gpu(80 * GIB, 59 * GIB), true),
+    ] {
+        let error = hardware_capacity::check_memory(&service, &observed, starting).unwrap_err();
+        assert!(error.to_string().contains("GPU"), "{error}");
+    }
+    hardware_capacity::check_memory(&service, &gpu(80 * GIB, 59 * GIB), false).unwrap();
+    let mut no_gpu_counters = capacity.clone();
+    no_gpu_counters.gpu_memory = None;
+    assert!(hardware_capacity::check_memory(&service, &no_gpu_counters, false).is_err());
+    let mut short_headroom = capacity;
+    short_headroom.available = 41 * GIB;
+    let error = hardware_capacity::check_memory(&service, &short_headroom, true).unwrap_err();
+    assert!(
+        error.to_string().contains("host available memory"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_recipe_gpu_outside_the_hardware_profiles_is_rejected() {
+    let mut service = service();
+    let recipe = service.recipe.as_mut().unwrap();
+    recipe.compatibility.architecture = "amd64".into();
+    recipe.compatibility.gpu = "NVIDIA fixture GPU".into();
+    let error = service.validate().unwrap_err();
+    assert!(error.to_string().contains("compatibility.gpu"), "{error}");
+}
+
+#[test]
 fn declared_compatibility_does_not_bypass_capacity_or_memory_policy() {
     let mut service = service();
     let recipe = service.recipe.as_mut().unwrap();
     recipe.compatibility.architecture = "amd64".into();
-    recipe.compatibility.gpu = "fixture GPU".into();
+    recipe.compatibility.gpu = "NVIDIA H200".into();
     let mut capacity = Capacity {
         architecture: "amd64".into(),
-        gpu: "fixture GPU".into(),
+        gpu: "NVIDIA H200".into(),
         driver_major: 580,
-        compute_capability: 121,
+        compute_capability: 90,
         total: 121 * GIB,
         available: 116 * GIB,
         disk_free: 200 * GIB,
+        gpu_memory: Some(GpuMemory {
+            total: 141 * GIB,
+            free: 140 * GIB,
+        }),
         ..Default::default()
     };
     hardware_capacity::check_capacity(&service, &capacity, true, 0, 0).unwrap();

@@ -49,9 +49,6 @@
     "/spec/sandboxes/*/image/ref": {
       "title": "Sandbox image"
     },
-    "/spec/sandboxes/*/name": {
-      "title": "Name this sandbox"
-    },
     "/spec/sandboxes/*/network/policy": {
       "title": "Network policy"
     },
@@ -70,6 +67,10 @@
     },
     "/spec/services/*/container/sharedMemoryGiB": {
       "title": "Shared memory (GiB)"
+    },
+    "/spec/services/*/environment/*": {
+      "title": "Application setting",
+      "description": "A literal value the application reads. NemoClaw passes it unchanged and keeps it in plans, state, and exports, so don't enter a credential."
     },
     "/spec/services/*/hardware/architecture": {
       "title": "CPU architecture"
@@ -128,7 +129,7 @@
     "/spec/services/*/placement/engine": {
       "title": "Service engine"
     },
-    "/spec/services/*/placement/networkCidr": {
+    "/spec/services/*/placement/networkCIDR": {
       "title": "Service network (CIDR)"
     },
     "/spec/services/*/publication/bindAddress": {
@@ -248,6 +249,7 @@
       "nvidia.fabric.codex": "Codex",
       "nvidia.fabric.hermes": "Hermes",
       "nvidia.fabric.langchain.deepagents": "LangChain Deep Agents",
+      "nvidia.fabric.langchain.deepagents-code": "LangChain Deep Agents Code",
       "nvidia.fabric.mini-swe-agent": "mini-SWE-agent",
       "nvidia.fabric.nooa": "NOOA",
       "nvidia.fabric.nooa.bench-agent": "NOOA bench agent",

@@ -8,7 +8,7 @@ pub use nemoclaw_fabric::capabilities::*;
 /// The Fabric configuration and filesystem reads a sandbox requires.
 pub fn requirements_for_sandbox(
     document: &crate::config::Document,
-    sandbox: &crate::config::Sandbox,
+    sandbox: crate::config::NamedSandbox<'_>,
 ) -> Result<FabricRequirements, crate::config::ConfigError> {
     let filesystem_read = match &sandbox.network.policy {
         crate::config::NetworkPolicy::Explicit(policy) => {

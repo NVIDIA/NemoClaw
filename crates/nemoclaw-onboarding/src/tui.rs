@@ -6,6 +6,7 @@
 mod app;
 mod labels;
 mod logo;
+mod saved;
 mod terminal;
 #[cfg(test)]
 mod tests;

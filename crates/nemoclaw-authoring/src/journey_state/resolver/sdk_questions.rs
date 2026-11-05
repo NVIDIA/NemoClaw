@@ -36,6 +36,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::DeploymentName,
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: NAME.into(),
                 reason: if invalid_name {
                     JourneyQuestionReason::InvalidSupplied
@@ -55,7 +56,7 @@ impl QuestionResolver<'_> {
 
         for field in &self.definition.ask {
             if field == NAME
-                || field == HARNESS
+                || is_harness_question(field)
                 || field == INFERENCE_PRESET
                 || adapter_field(field).is_some()
             {
@@ -77,6 +78,7 @@ impl QuestionResolver<'_> {
                     target: QuestionTarget::sdk(field.clone()),
                     kind: JourneyQuestionKind::Field,
                     reopened_because: None,
+                    note: None,
                     id: field.clone(),
                     reason: if value.is_some() && !valid {
                         JourneyQuestionReason::InvalidSupplied
@@ -101,7 +103,7 @@ impl QuestionResolver<'_> {
         // arrays and conditional alternatives remain an explicit frontier.
         for issue in assessment.issues() {
             if issue.path() == NAME
-                || issue.path() == HARNESS
+                || is_harness_question(issue.path())
                 || questions.iter().any(|question| question.id == issue.path())
             {
                 continue;
@@ -146,6 +148,7 @@ impl QuestionResolver<'_> {
                 target: QuestionTarget::sdk(issue.path()),
                 kind: JourneyQuestionKind::Field,
                 reopened_because: None,
+                note: None,
                 id: issue.path().into(),
                 reason: if issue.kind() == PartialIssueKind::Missing {
                     JourneyQuestionReason::Missing

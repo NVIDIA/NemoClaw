@@ -14,8 +14,8 @@ description = "NemoClaw's test-only Fabric adapter; never a replacement for a re
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-  "nemo-fabric-adapter-contract == 0.5.0",
-  "nemo-fabric-adapters-common == 0.5.0",
+  "nemo-fabric-adapter-contract == 0.7.0",
+  "nemo-fabric-adapters-common == 0.7.0",
 ]
 
 [tool.setuptools.packages.find]

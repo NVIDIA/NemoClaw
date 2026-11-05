@@ -11,7 +11,8 @@ license = "Apache-2.0"
 repository = "https://github.com/NVIDIA/OpenShell"
 
 [dependencies]
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "5a7728c304b5528e954e9ae900cf21f84e1a12b1", default-features = false }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false }
+openshell-crypto = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false, features = ["aws-lc"] }
 async-trait = "0.1"
 futures = { version = "0.3" }
 hyper = { version = "1.6", features = ["full"] }

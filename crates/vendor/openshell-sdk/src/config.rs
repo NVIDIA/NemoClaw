@@ -4,9 +4,9 @@
 //! Public input types for the SDK: how callers describe a gateway and the
 //! credentials used to talk to it.
 //!
-//! The CLI keeps its own filesystem-aware `TlsOptions` for transport plumbing
-//! and reuses the SDK's OIDC refresh primitive. Other consumers describe the
-//! complete transport with [`ClientConfig`].
+//! Filesystem-aware callers such as the CLI resolve certificate paths before
+//! constructing [`ClientConfig`]. The SDK accepts certificate contents so it
+//! remains independent of filesystem layout and gateway-name resolution.
 
 use crate::refresh::Refresh;
 use std::sync::Arc;
@@ -54,10 +54,30 @@ impl AuthConfig {
     }
 }
 
+/// PEM-encoded client identity used for mutual TLS.
+///
+/// The certificate may contain a chain. The private key must be PKCS#1,
+/// PKCS#8, or SEC1 PEM as accepted by tonic/rustls.
+#[derive(Clone)]
+pub struct ClientIdentity {
+    pub certificate: Vec<u8>,
+    pub private_key: Vec<u8>,
+}
+
+impl ClientIdentity {
+    pub fn new(certificate: impl Into<Vec<u8>>, private_key: impl Into<Vec<u8>>) -> Self {
+        Self {
+            certificate: certificate.into(),
+            private_key: private_key.into(),
+        }
+    }
+}
+
 /// Configuration for opening a gRPC channel to an `OpenShell` gateway.
 ///
-/// Consumed by `openshell_sdk::transport::grpc_client`. One `ClientConfig` per logical connection;
-/// callers that want connection pooling cache the resulting `tonic::Channel`.
+/// Consumed by [`crate::OpenShellClient::connect`] and
+/// [`crate::transport::build_channel`]. Use one `ClientConfig` per logical
+/// connection; callers that want connection pooling cache the resulting client.
 //
 // NOTE:
 // - `gateway` is a full URL (`http://...` or `https://...`) so the scheme
@@ -65,9 +85,8 @@ impl AuthConfig {
 //   today's CLI convention; matches the RFC's `pub gateway: String`.
 // - `ca_cert` pins a private-CA certificate (PEM-encoded). `None` falls
 //   back to the platform's system roots.
-// - This SDK does not speak mTLS. Gateways requiring client certificates
-//   are handled by `openshell-cli`'s legacy mTLS path until product
-//   retires that auth method.
+// - `client_identity` carries already-resolved PEM bytes. The SDK deliberately
+//   does not know where a caller stores certificates.
 // - `insecure_skip_verify` is a separate flag rather than a third
 //   `AuthConfig` variant because it's a transport concern (cert
 //   verification) that's orthogonal to auth.
@@ -89,6 +108,9 @@ pub struct ClientConfig {
     /// roots. Ignored for plaintext gateways and when
     /// `insecure_skip_verify` is enabled.
     pub ca_cert: Option<Vec<u8>>,
+    /// Client certificate and private key for mutual TLS. Ignored for
+    /// plaintext gateways, Cloudflare Access tunnels, and insecure TLS.
+    pub client_identity: Option<ClientIdentity>,
     /// Bearer-token auth mode. `None` = anonymous TLS over HTTPS, or
     /// plaintext when `gateway` is `http://`.
     pub auth: Option<AuthConfig>,

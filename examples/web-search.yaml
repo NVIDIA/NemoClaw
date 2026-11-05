@@ -5,7 +5,7 @@
 # Two agents share one inference provider and one Brave search definition.
 # OpenShell holds the search key and allows each agent's harness to reach the
 # search API; the agent's own tools make the requests. Set your own deployment
-# UID, endpoints, and model; see docs/agents.md#web-search.
+# UID, endpoints, and model; see docs/agents-inference/agents.md#web-search.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -17,7 +17,7 @@ spec:
     management: external
     endpoint: http://127.0.0.1:17681
   inferenceProviders:
-    - name: local
+    local:
       provider: openai
       endpoint: http://172.20.0.1:11446/v1
   integrations:
@@ -27,7 +27,7 @@ spec:
       credential:
         env: BRAVE_API_KEY
   sandboxes:
-    - name: researcher
+    researcher:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
@@ -42,7 +42,7 @@ spec:
               providerRef: local
               overrides:
                 model: qwen3:4b
-    - name: writer
+    writer:
       image:
         # Replace with the digest from a current Hermes image build.
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000

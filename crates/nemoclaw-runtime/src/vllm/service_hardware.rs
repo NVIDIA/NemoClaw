@@ -139,8 +139,7 @@ impl Service {
             VllmLaunchMode::Native {
                 hardware: ServiceHardware::Profile { profile, .. },
             } => profile.memory_architecture(),
-            // The inline-recipe resource contract budgets host memory.
-            VllmLaunchMode::Recipe { .. } => MemoryArchitecture::Unified,
+            VllmLaunchMode::Recipe { recipe } => recipe.compatibility.memory_architecture()?,
         })
     }
 

@@ -40,7 +40,7 @@ nemoclaw-fabric = { path = "../nemoclaw-fabric", default-features = false }
 # Only the endpoint policy and retained identity types, without the engine client.
 nemoclaw-docker = { path = "../nemoclaw-docker", default-features = false }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
-nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "5574117feb4be948c1b03f4c36a2fe9a11af910d" }
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "e5b5ebf2b81cc3c6325301ea419ebf2453dab12e" }
 futures-util.workspace = true
 jsonschema.workspace = true
 reqwest.workspace = true
@@ -70,6 +70,8 @@ base64 = "0.22.1"
 # Development issuer certificates and token signing.
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 ring = "0.17.14"
+# Managed Docker and Podman gateway configuration files.
+toml = { version = "1.1", default-features = false, features = ["display", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

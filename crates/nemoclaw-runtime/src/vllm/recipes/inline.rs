@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Data-only recipe contract. Executables run only in the managed runtime.
 pub mod limits;
-use super::super::Service;
+use super::super::{HardwareProfile, MemoryArchitecture, Service};
 use crate::{config::ConfigError, snapshot::Manifest};
 use limits as l;
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ pub struct InlineRecipe {
 pub struct Compatibility {
     /// Execution host CPU architecture.
     pub architecture: String,
-    /// GPU name that must equal the observed device name.
+    /// GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.
     pub gpu: String,
     /// Minimum NVIDIA driver major version.
     pub min_driver_major: u64,
@@ -71,9 +71,9 @@ pub struct Resources {
     pub prepared_bytes: u64,
     /// Preparation memory requirement in GiB, in addition to the service host reserve.
     pub preparation_memory_gi_b: u64,
-    /// Total serving GPU budget in bytes, including model, caches, and other allocations.
+    /// Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.
     pub gpu_memory_bytes: u64,
-    /// Additional available-memory headroom in GiB required at startup.
+    /// Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.
     pub startup_headroom_gi_b: u64,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -142,6 +142,18 @@ pub fn relative(path: &str) -> bool {
 fn absolute(path: &str) -> bool {
     path.strip_prefix('/').is_some_and(relative)
 }
+impl Compatibility {
+    /// The memory architecture of the hardware profile whose GPU family includes `gpu`.
+    pub fn memory_architecture(&self) -> Result<MemoryArchitecture, ConfigError> {
+        HardwareProfile::for_gpu(&self.gpu)
+            .map(HardwareProfile::memory_architecture)
+            .ok_or_else(|| {
+                ConfigError::new(
+                    "recipe compatibility.gpu must name a GPU in a hardware profile's family",
+                )
+            })
+    }
+}
 impl InlineRecipe {
     pub fn key(&self, service: &Service) -> String {
         let bytes = serde_json::to_vec(&(&service.model, self)).expect("recipe serialization");
@@ -153,6 +165,7 @@ impl InlineRecipe {
     pub fn validate(&self, service: &Service) -> Result<(), ConfigError> {
         let bad = || ConfigError::new("invalid inline recipe contract or incompatible service");
         crate::schema::validate_recipe(self)?;
+        self.compatibility.memory_architecture()?;
         if self
             .compatibility
             .image_labels

@@ -10,7 +10,7 @@ pub use nemoclaw_openshell::runtime::{ImageRuntime, PolicyInput, RuntimeBinding,
 /// Authored policy and deployment-owned endpoint grants for a sandbox.
 pub fn policy_input(
     document: &crate::config::Document,
-    sandbox: &crate::config::Sandbox,
+    sandbox: crate::config::NamedSandbox<'_>,
 ) -> Result<PolicyInput, crate::config::ConfigError> {
     use crate::config::{ConfigError, NetworkPolicy};
     let explicit = match &sandbox.network.policy {

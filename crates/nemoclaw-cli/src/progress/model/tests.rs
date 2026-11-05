@@ -20,6 +20,18 @@ fn warnings_are_durable_without_marking_work_as_active() {
     assert!(milestone.text.contains("NetworkPolicy"));
     assert!(model.lines(now).is_empty());
 }
+
+#[test]
+fn stopping_is_a_durable_warning_that_says_how_to_stop_now() {
+    for verbose in [false, true] {
+        let mut model = Model::default();
+        let now = Instant::now();
+        let milestone = model.observe(Progress::Stopping, verbose, now).unwrap();
+        assert!(milestone.durable && matches!(milestone.tone, Tone::Warning));
+        assert!(milestone.text.contains("Ctrl-C"), "{}", milestone.text);
+        assert!(model.lines(now).is_empty());
+    }
+}
 use crate::progress::tests::resource;
 use nemoclaw_sdk::ByteProgress;
 

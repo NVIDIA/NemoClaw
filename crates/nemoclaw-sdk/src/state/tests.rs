@@ -125,7 +125,8 @@ fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recov
     .unwrap();
     let record = Record::new(document).unwrap();
     let mut old = serde_json::to_value(&record).unwrap();
-    old["document"]["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+    old["document"]["spec"]["inferenceProviders"]["local"]["management"] =
+        serde_json::json!("external");
     let bytes = serde_json::to_vec(&old).unwrap();
     let intent = dir.path().join("intent.json");
     let state = dir.path().join("terraform.tfstate");
@@ -163,6 +164,24 @@ fn documented_state_json_preserves_full_instance_addresses() {
         "nested"
     );
     assert!(!observed.contains_key("docker_container.agent"));
+}
+
+#[test]
+fn sandbox_service_urls_bind_and_a_null_or_absent_map_is_empty() {
+    let urls =
+        serde_json::json!({"": "http://ws--a.example/", "api": "http://ws--a--api.example/"});
+    let observed = read(&state(serde_json::json!([
+        {"address": "openshell_sandbox.a", "mode": "managed", "values": {"id": "a", "service_urls": urls}},
+        {"address": "openshell_sandbox.b", "mode": "managed", "values": {"id": "b", "service_urls": null}},
+        object("openshell_sandbox.c", "c")
+    ])))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&observed["openshell_sandbox.a"].service_urls).unwrap(),
+        urls
+    );
+    assert!(observed["openshell_sandbox.b"].service_urls.is_empty());
+    assert!(observed["openshell_sandbox.c"].service_urls.is_empty());
 }
 
 #[test]
@@ -266,18 +285,26 @@ fn pending_creation_guards_only_unresolved_targets() {
     record.pending = true;
     record.pending_creations = [(pending.address.clone(), pending.values.clone())].into();
     let mut revised = document.clone();
-    let mut unrelated = revised.spec.inference_providers[0].clone();
-    unrelated.name = "unrelated".into();
-    revised.spec.inference_providers.push(unrelated);
+    let unrelated = revised.spec.inference_providers["local"].clone();
+    revised
+        .spec
+        .inference_providers
+        .insert("unrelated".into(), unrelated);
     assert!(record.validate_pending_intent(&revised).is_ok());
-    revised.spec.sandboxes[0].image.ref_ =
-        format!("example.invalid/changed@sha256:{}", "b".repeat(64));
+    revised
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .image
+        .ref_ = format!("example.invalid/changed@sha256:{}", "b".repeat(64));
     revised.validate().unwrap();
     assert!(matches!(
         record.validate_pending_intent(&revised),
         Err(Error::Conflict(_))
     ));
-    revised.spec.sandboxes[0].name = "replacement".into();
+    let sandbox = revised.spec.sandboxes.remove("assistant").unwrap();
+    revised.spec.sandboxes.insert("replacement".into(), sandbox);
     revised.validate().unwrap();
     assert!(matches!(
         record.validate_pending_intent(&revised),
@@ -413,7 +440,7 @@ fn a_kubernetes_records_generations_reload_and_stay_stable() {
             "namespace": "test-agents", "authentication": {"profile": "development"}
         }
     });
-    value["spec"]["sandboxes"][0]["image"]["metadata"] =
+    value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
         serde_json::json!({"env": "TEST_IMAGE_METADATA"});
     let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
     let mut record = Record::new(document.clone()).unwrap();
@@ -612,70 +639,6 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
 }
 
 #[test]
-fn bound_sandbox_guard_allows_configuration_updates_additions_and_explicit_recreation() {
-    let document =
-        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
-            .unwrap();
-    let record = Record::new(document.clone()).unwrap();
-    let bound = BTreeMap::from([(
-        "openshell_sandbox.assistant".into(),
-        StateBinding {
-            id: "saved-sandbox".into(),
-            ..Default::default()
-        },
-    )]);
-    let mut revised = document.clone();
-    revised.metadata.name = "new-display-name".into();
-    revised.spec.sandboxes[0]
-        .agent
-        .inference
-        .as_mut()
-        .unwrap()
-        .routes[0]
-        .overrides
-        .model = "corrected-model".into();
-    let mut added = revised.spec.sandboxes[0].clone();
-    added.name = "reviewer".into();
-    revised.spec.sandboxes.push(added);
-    revised.spec.sandboxes.reverse();
-    record.validate_bound_sandboxes(&revised, &bound).unwrap();
-    for change in ["remove", "image", "agent", "policy", "endpoint"] {
-        let mut value = serde_json::to_value(&document).unwrap();
-        match change {
-            "remove" => value["spec"]["sandboxes"][0]["name"] = serde_json::json!("different"),
-            "image" => {
-                value["spec"]["sandboxes"][0]["image"]["ref"] =
-                    serde_json::json!(format!("sandbox@sha256:{}", "f".repeat(64)))
-            }
-            "agent" => {
-                value["spec"]["sandboxes"][0]["agent"]["name"] = serde_json::json!("different")
-            }
-            "policy" => {
-                value["spec"]["sandboxes"][0]["network"] =
-                    serde_json::json!({"policy":{"explicit":{"version":1,"network_policies":{}}}})
-            }
-            "endpoint" => {
-                value["spec"]["inferenceProviders"][0]["endpoint"] =
-                    serde_json::json!("http://127.0.0.1:19999/v1")
-            }
-            _ => unreachable!(),
-        }
-        let changed = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-        let error = record
-            .validate_bound_sandboxes(&changed, &bound)
-            .unwrap_err();
-        assert!(
-            matches!(error, Error::SandboxChangeRefused { ref sandbox, .. } if sandbox == "assistant")
-        );
-        // No bound sandbox remains after explicit teardown, so a new workload
-        // may use the retained workspace with a revised launch specification.
-        record
-            .validate_bound_sandboxes(&changed, &BTreeMap::new())
-            .unwrap();
-    }
-}
-
-#[test]
 fn typed_storage_bindings_compare_their_complete_identity() {
     let values = serde_json::json!({
         "id":"engine/nc-0123456789abcdef-inference-qwen-auth/created",
@@ -696,6 +659,66 @@ fn typed_storage_bindings_compare_their_complete_identity() {
         changed.insert(attribute.into(), "changed".into());
         assert!(bindings[address].differs(&changed), "{attribute}");
     }
+}
+
+/// An applied deployment keeps the cluster access it was applied with. A
+/// binding made with the pod's service account matches its compiled row, and
+/// differs from one that names a kubeconfig, in both directions.
+#[test]
+fn kubernetes_bindings_compare_how_they_reach_the_cluster() {
+    const ADDRESS: &str = "openshell_kubernetes_storage.runtime";
+    let generations = [
+        crate::kubernetes::GATEWAY_KIND,
+        crate::kubernetes::STORAGE_KIND,
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let compiled = |kubeconfig: bool| -> crate::backend::Row {
+        let mut value = serde_json::to_value(
+            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap(),
+        )
+        .unwrap();
+        value["spec"]["gateway"] = serde_json::json!({
+            "management": "managed", "runtime": {"provider": "kubernetes"},
+            "endpoint": "https://127.0.0.1:17671",
+            "kubernetes": {"namespace": "test-agents", "authentication": {"profile": "development"}}
+        });
+        if kubeconfig {
+            value["spec"]["gateway"]["kubernetes"]["kubeconfig"] =
+                serde_json::json!({"env": "TEST_KUBECONFIG"});
+            value["spec"]["gateway"]["kubernetes"]["context"] = serde_json::json!("test-cluster");
+        }
+        value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+            serde_json::json!({"env": "TEST_IMAGE_METADATA"});
+        let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        crate::compile::runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.address == ADDRESS)
+            .unwrap()
+            .values
+    };
+    let bound = |values: &crate::backend::Row| {
+        let mut values = serde_json::to_value(values).unwrap();
+        values["id"] = serde_json::json!("namespace-uid");
+        read(&state(serde_json::json!([
+            {"address": ADDRESS, "mode": "managed", "values": values}
+        ])))
+        .unwrap()
+        .remove(ADDRESS)
+        .unwrap()
+    };
+    let (kubeconfig, pod) = (compiled(true), compiled(false));
+    let differing: Vec<&String> = kubeconfig
+        .keys()
+        .filter(|key| kubeconfig.get(*key) != pod.get(*key))
+        .collect();
+    assert_eq!(differing, ["context", "kubeconfig_env"]);
+    assert!(!bound(&kubeconfig).differs(&kubeconfig));
+    assert!(!bound(&pod).differs(&pod));
+    assert!(bound(&kubeconfig).differs(&pod));
+    assert!(bound(&pod).differs(&kubeconfig));
 }
 
 #[test]

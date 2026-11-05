@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use super::{ConfigError, Credential, Document, InferenceProvider};
+use super::{ConfigError, Document, InferenceProvider, SecretRef};
 
 /// Upstream connection as used by OpenShell routing, independent of the sandbox
 /// engine. Credentials remain references. Resolution performs no reachability probe.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferenceConnection {
     pub endpoint: String,
-    pub credential: Option<Credential>,
+    pub credential: Option<SecretRef>,
 }
 impl Document {
     pub fn has_runtime(&self) -> bool {
@@ -57,7 +57,7 @@ impl Document {
 pub enum InferenceTarget<'a> {
     External {
         endpoint: &'a str,
-        credential: Option<&'a Credential>,
+        credential: Option<&'a SecretRef>,
     },
     Service {
         name: &'a str,

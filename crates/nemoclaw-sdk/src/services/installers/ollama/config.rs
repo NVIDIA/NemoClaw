@@ -32,13 +32,15 @@ pub struct ManagedOllama {
     )]
     #[schemars(default, with = "ImagePullPolicy")]
     pub image_pull_policy: Option<ImagePullPolicy>,
-    /// Optional remote Docker placement. Requires publication.
+    /// SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServicePlacement")]
+    #[schemars(extend("x-nemoclaw-required" = "With external gateway or Podman; paired with publication"))]
     pub placement: Option<ServicePlacement>,
-    /// Private inference address for an explicitly placed service.
+    /// Private inference address reachable by OpenShell. Required with placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServicePublication")]
+    #[schemars(extend("x-nemoclaw-required" = "With placement"))]
     pub publication: Option<ServicePublication>,
     #[serde(flatten)]
     pub runtime: nemoclaw_runtime::ollama::ManagedOllama,

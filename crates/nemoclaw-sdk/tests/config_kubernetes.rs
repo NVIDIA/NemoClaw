@@ -8,7 +8,8 @@ fn external_document() -> Value {
         Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
     let mut input = serde_json::to_value(document).unwrap();
     input["spec"]["gateway"]["runtime"] = json!({"provider": "kubernetes"});
-    input["spec"]["sandboxes"][0]["image"]["metadata"] = json!({"env":"TEST_IMAGE_METADATA"});
+    input["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+        json!({"env":"TEST_IMAGE_METADATA"});
     input
 }
 
@@ -75,7 +76,7 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
         assert!(document.spec.gateway.as_local_managed().is_none());
         assert_eq!(
             document.spec.gateway.as_kubernetes().unwrap().context,
-            "explicit-context"
+            Some("explicit-context".into())
         );
         assert!(
             document
@@ -145,6 +146,32 @@ fn a_managed_target_names_the_variables_its_kubeconfig_needs() {
     assert_eq!(serde_json::to_value(&document).unwrap(), input);
 }
 
+/// Without a kubeconfig and context, every cluster client uses the pod's
+/// service account; nothing is resolved from the caller for the cluster.
+#[test]
+fn a_target_without_kubeconfig_and_context_uses_the_pods_service_account() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let mut input = managed_document();
+    let kubernetes = input["spec"]["gateway"]["kubernetes"]
+        .as_object_mut()
+        .unwrap();
+    kubernetes.remove("kubeconfig");
+    kubernetes.remove("context");
+    assert!(validator.is_valid(&input));
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    assert_eq!(document.credential_names(), ["TEST_IMAGE_METADATA"]);
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+
+    // The listed variables serve a kubeconfig's exec plugin, so they need one.
+    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    assert!(!validator.is_valid(&input));
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
+}
+
 #[test]
 fn listed_variables_cannot_shadow_process_or_runtime_controls() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
@@ -173,7 +200,7 @@ fn kubernetes_sandboxes_must_name_their_image_metadata() {
     // No local engine can be inspected, so each image's metadata bundle is
     // required up front.
     let mut input = external_document();
-    input["spec"]["sandboxes"][0]["image"]
+    input["spec"]["sandboxes"]["assistant"]["image"]
         .as_object_mut()
         .unwrap()
         .remove("metadata");
@@ -323,15 +350,21 @@ fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
         "NEMOCLAW_KUBERNETES_STATE",
         "NEMOCLAW_MANAGED_K8S_TOKEN",
         "NEMOCLAW_MANAGED_K8S_CA",
+        // A pod's API server address reaches OpenTofu when no kubeconfig is
+        // named, so no reference may carry these names.
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
+        "KUBERNETES_SERVICE_PORT_HTTPS",
     ] {
         for path in [
             "/spec/gateway/kubernetes/kubeconfig",
-            "/spec/inferenceProviders/0/credential",
+            "/spec/inferenceProviders/local/credential",
         ] {
             let mut input = managed_document();
-            input["spec"]["inferenceProviders"][0]["endpoint"] =
+            input["spec"]["inferenceProviders"]["local"]["endpoint"] =
                 json!("https://inference.example/v1");
-            input["spec"]["inferenceProviders"][0]["credential"] = json!({"env":"HOSTED_API_KEY"});
+            input["spec"]["inferenceProviders"]["local"]["credential"] =
+                json!({"env":"HOSTED_API_KEY"});
             *input.pointer_mut(path).unwrap() = json!({"env":name});
             assert!(!validator.is_valid(&input));
             assert!(Document::parse(input.to_string().as_bytes()).is_err());
@@ -429,12 +462,13 @@ fn managed_kubeconfig_controls_do_not_restrict_other_credential_references() {
     ] {
         let mut input = external_document();
         input["spec"]["gateway"]["runtime"]["provider"] = json!("docker");
-        input["spec"]["sandboxes"][0]["image"]
+        input["spec"]["sandboxes"]["assistant"]["image"]
             .as_object_mut()
             .unwrap()
             .remove("metadata");
-        input["spec"]["inferenceProviders"][0]["endpoint"] = json!("https://inference.example/v1");
-        input["spec"]["inferenceProviders"][0]["credential"] = json!({"env": name});
+        input["spec"]["inferenceProviders"]["local"]["endpoint"] =
+            json!("https://inference.example/v1");
+        input["spec"]["inferenceProviders"]["local"]["credential"] = json!({"env": name});
         Document::parse(input.to_string().as_bytes()).unwrap();
     }
 }
@@ -482,7 +516,9 @@ fn kubernetes_requires_an_explicit_nonempty_image_before_defaults() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
     for image in [None, Some(json!({})), Some(json!({"ref": ""}))] {
         let mut input = external_document();
-        let sandbox = input["spec"]["sandboxes"][0].as_object_mut().unwrap();
+        let sandbox = input["spec"]["sandboxes"]["assistant"]
+            .as_object_mut()
+            .unwrap();
         match image {
             Some(image) => {
                 sandbox.insert("image".into(), image);
@@ -499,10 +535,10 @@ fn kubernetes_requires_an_explicit_nonempty_image_before_defaults() {
 #[test]
 fn directly_constructed_kubernetes_sandboxes_never_default_their_image() {
     let mut document = Document::parse(external_document().to_string().as_bytes()).unwrap();
-    document.spec.sandboxes[0].image = Default::default();
+    document.spec.sandboxes.get_mut("assistant").unwrap().image = Default::default();
     assert!(document.validate().is_err());
     document.defaults();
-    assert!(document.spec.sandboxes[0].image.ref_.is_empty());
+    assert!(document.spec.sandboxes["assistant"].image.ref_.is_empty());
     assert!(document.validate().is_err());
 }
 
@@ -554,6 +590,121 @@ fn schema_error(input: &Value) -> String {
 }
 
 #[test]
+fn a_reserved_reference_name_states_whether_the_reference_holds_a_secret_or_a_file_path() {
+    let secret = "secret reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls";
+    let file = "file reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls";
+    let mut external = external_document();
+    external["spec"]["gateway"]["endpoint"] = json!("https://openshell.example.com");
+    external["spec"]["gateway"]["credential"] = json!({"env": "GATEWAY_TOKEN"});
+    external["spec"]["gateway"]["tls"] = json!({
+        "ca": {"env": "GATEWAY_CA"},
+        "certificate": {"env": "GATEWAY_CERT"},
+        "key": {"env": "GATEWAY_KEY"}
+    });
+    external["spec"]["inferenceProviders"]["local"]["endpoint"] =
+        json!("https://inference.example/v1");
+    external["spec"]["inferenceProviders"]["local"]["credential"] =
+        json!({"env": "HOSTED_API_KEY"});
+    external["spec"]["sandboxes"]["assistant"]["integrations"] = json!({
+        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "SEARCH_KEY"}},
+        "bookings": {
+            "kind": "api",
+            "endpoint": "https://bookings.example.com/mcp",
+            "credential": {"env": "BOOKINGS_API_KEY"}
+        }
+    });
+    external["spec"]["sandboxes"]["assistant"]["agent"]["integrationRefs"] =
+        json!(["search", "bookings"]);
+    Document::parse(external.to_string().as_bytes()).unwrap();
+    let mut oidc = managed_document();
+    oidc["spec"]["gateway"]["kubernetes"]["authentication"] = json!({
+        "profile": "oidc",
+        "token": {"env": "OPENSHELL_TOKEN"}
+    });
+    oidc["spec"]["gateway"]["config"] = json!({"openshell.gateway.oidc": {
+        "issuer": "https://login.example.com/realms/openshell",
+        "audience": "openshell"
+    }});
+    Document::parse(oidc.to_string().as_bytes()).unwrap();
+    for (mut input, pointer, path, rule) in [
+        (
+            external.clone(),
+            "/spec/gateway/credential",
+            "spec.gateway.credential.env",
+            secret,
+        ),
+        (
+            external.clone(),
+            "/spec/inferenceProviders/local/credential",
+            "spec.inferenceProviders.local.credential.env",
+            secret,
+        ),
+        (
+            external.clone(),
+            "/spec/sandboxes/assistant/integrations/search/credential",
+            "spec.sandboxes.assistant.integrations.search.credential.env",
+            secret,
+        ),
+        (
+            external.clone(),
+            "/spec/sandboxes/assistant/integrations/bookings/credential",
+            "spec.sandboxes.assistant.integrations.bookings.credential.env",
+            secret,
+        ),
+        (
+            external.clone(),
+            "/spec/gateway/tls/ca",
+            "spec.gateway.tls.ca.env",
+            file,
+        ),
+        (
+            external.clone(),
+            "/spec/gateway/tls/certificate",
+            "spec.gateway.tls.certificate.env",
+            file,
+        ),
+        (
+            external.clone(),
+            "/spec/gateway/tls/key",
+            "spec.gateway.tls.key.env",
+            file,
+        ),
+        (
+            external,
+            "/spec/sandboxes/assistant/image/metadata",
+            "spec.sandboxes.assistant.image.metadata.env",
+            file,
+        ),
+        (
+            oidc,
+            "/spec/gateway/kubernetes/authentication/token",
+            "spec.gateway.kubernetes.authentication.token.env",
+            secret,
+        ),
+        (
+            managed_document(),
+            "/spec/gateway/kubernetes/kubeconfig",
+            "spec.gateway.kubernetes.kubeconfig.env",
+            file,
+        ),
+    ] {
+        *input.pointer_mut(pointer).unwrap() = json!({"env": "KUBE_TOKEN"});
+        let error = schema_error(&input);
+        assert!(
+            error.contains(&format!("schema at {path} (line")) && error.contains(rule),
+            "{error}"
+        );
+        assert!(!error.contains("KUBE_TOKEN"), "{error}");
+        let error = serde_json::from_value::<Document>(input)
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(rule), "{error}");
+    }
+}
+
+#[test]
 fn managed_kubernetes_endpoint_and_local_field_errors_state_the_target_rule() {
     let rule = "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings";
     let mut endpoint = managed_document();
@@ -601,49 +752,87 @@ fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
 }
 
 #[test]
-fn an_oidc_profile_requires_its_issuer_and_development_takes_no_oidc_settings() {
+fn an_oidc_profile_takes_openshells_oidc_table_and_development_takes_none() {
     let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
-    let oidc = json!({
-        "profile": "oidc",
+    let oidc = json!({"profile": "oidc", "token": {"env": "OPENSHELL_TOKEN"}});
+    let table = json!({
         "issuer": "https://login.example.com/realms/openshell",
-        "audience": "openshell",
-        "tokenEnv": "OPENSHELL_TOKEN"
+        "audience": "openshell"
     });
-    let mut input = managed_document();
-    input["spec"]["gateway"]["kubernetes"]["authentication"] = oidc.clone();
+    let input = |authentication: &Value, config: Option<Value>| {
+        let mut input = managed_document();
+        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication.clone();
+        if let Some(config) = config {
+            input["spec"]["gateway"]["config"] = config;
+        }
+        input
+    };
+    let valid = input(&oidc, Some(json!({"openshell.gateway.oidc": table})));
     let document =
-        Document::parse(input.to_string().as_bytes()).expect("a minimal oidc profile is valid");
-    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+        Document::parse(valid.to_string().as_bytes()).expect("a minimal oidc profile is valid");
+    assert_eq!(serde_json::to_value(&document).unwrap(), valid);
+    // The chart's nested form names the same table.
+    let nested = input(&oidc, Some(json!({"openshell.gateway": {"oidc": table}})));
+    Document::parse(nested.to_string().as_bytes()).expect("the nested form is valid");
 
+    // Authentication keeps only the profile, token, and CA ConfigMap.
     let mut invalid: Vec<(&str, Value)> = Vec::new();
-    for field in ["issuer", "audience", "tokenEnv"] {
-        let mut missing = oidc.clone();
-        missing.as_object_mut().unwrap().remove(field);
-        invalid.push((field, missing));
-    }
+    let mut missing = oidc.clone();
+    missing.as_object_mut().unwrap().remove("token");
+    invalid.push(("token", missing));
     for (field, value) in [
-        ("issuer", json!("http://login.example.com")),
-        ("issuer", json!("https://user:password@login.example.com")),
-        ("issuer", json!("https://login.example.com/?tenant=x")),
-        ("tokenEnv", json!("KUBECONFIG")),
-        ("tokenEnv", json!("lowercase")),
+        ("token", json!({"env": "KUBECONFIG"})),
+        ("token", json!({"env": "lowercase"})),
+        ("token", json!("OPENSHELL_TOKEN")),
+        ("tokenEnv", json!("OPENSHELL_TOKEN")),
         ("caConfigMap", json!("Issuer_CA")),
+        (
+            "issuer",
+            json!("https://login.example.com/realms/openshell"),
+        ),
+        ("audience", json!("openshell")),
         ("adminRole", json!("openshell-admins")),
     ] {
         let mut changed = oidc.clone();
         changed[field] = value;
         invalid.push((field, changed));
     }
-    let mut development = json!({"profile": "development"});
-    development["issuer"] = oidc["issuer"].clone();
-    invalid.push(("development", development));
+    for field in ["token", "caConfigMap"] {
+        let mut development = json!({"profile": "development"});
+        development[field] = oidc["token"].clone();
+        invalid.push(("development", development));
+    }
     for (field, authentication) in invalid {
-        let mut input = managed_document();
-        input["spec"]["gateway"]["kubernetes"]["authentication"] = authentication;
+        let config =
+            (authentication["profile"] == "oidc").then(|| json!({"openshell.gateway.oidc": table}));
+        let input = input(&authentication, config);
         assert!(!validator.is_valid(&input), "accepted invalid {field}");
         assert!(
             Document::parse(input.to_string().as_bytes()).is_err(),
             "parsed invalid {field}"
+        );
+    }
+
+    // The oidc profile requires OpenShell's table; development owns it.
+    let development = json!({"profile": "development"});
+    for (authentication, config) in [
+        (&oidc, None),
+        (
+            &oidc,
+            Some(json!({"openshell.gateway": {"log_level": "debug"}})),
+        ),
+        (&development, Some(json!({"openshell.gateway.oidc": table}))),
+        (
+            &development,
+            Some(json!({"openshell.gateway": {"oidc": table}})),
+        ),
+    ] {
+        let error = Document::parse(input(authentication, config.clone()).to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("openshell.gateway.oidc"),
+            "{config:?}: {error}"
         );
     }
 }
