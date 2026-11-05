@@ -219,7 +219,7 @@
       "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199",
+      "lockSha256": "9ab6ce3358a1f3858d7c64aa6156a9e22df498107a7727d945a1efcb99a69869",
       "replacement": {
         "label": "OpenClaw 2026.10.5 locked runtime graph",
         "packageSpec": "openclaw@2026.10.5",
@@ -235,7 +235,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "04e9a7801758c8ac40709572f2d8e73725839ea62caef7e07c6f0fe419ed13af"
+      "lockSha256": "3ceba9f127c51160a930a0581b0978774d23d727ec32c019c9915f37b3180d54"
     },
     {
       "id": "wechat-runtime",
@@ -264,7 +264,7 @@
       "integrity": "sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==",
       "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "a055cc6630c19809d3b359dc464ca5684fe86e0155fde2be3cd89e3f436ae679"
+      "lockSha256": "5d7cb5cc5afcfc18e26b17be615b0fbe46bfbfe4fce1a1b072b6bf4b2a4b633c"
     },
     {
       "id": "openclaw-migration-2026.9.5-runtime",
@@ -273,7 +273,7 @@
       "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
       "directory": "agents/openclaw/openclaw-migration-2026.9.5-runtime",
-      "lockSha256": "25a0e1b2128555dcac25c859e09069c34c99b9a0ab8a8ea950620bca24bf376b"
+      "lockSha256": "b2864b729531e606de939b50d6b64001b1e97e0b17acf1e2f69c0a5792aa9c93"
     },
     {
       "id": "openclaw-migration-2026.9.7-runtime",
@@ -282,7 +282,7 @@
       "integrity": "sha512-/8N2LnfTFQPvnZizi8qKSFfnLQaPvSG3Cb4xo1YV7b4JhYiUc43ZNRpXJ01bWghLK0Ezk3HVeo/DGHcIRQwRWA==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.7.tgz",
       "directory": "agents/openclaw/openclaw-migration-2026.9.7-runtime",
-      "lockSha256": "b284dfe7296b48bf3dbae4593d8e9932182557df31123168e1922230e86cd073"
+      "lockSha256": "35020ee3d2638c8b5f784387085836c0d7fb62dfe1309097d53da235247197a5"
     }
   ],
   "sourceRegistryPackageReplacement": {

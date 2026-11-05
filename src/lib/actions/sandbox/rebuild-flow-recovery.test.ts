@@ -449,6 +449,8 @@ describe("rebuildSandbox flow: recovery", () => {
     // interrupted run's calls have to be dropped before the restart.
     restarted.runOpenshellSpy.mockClear();
     restarted.onboardSpy.mockClear();
+    restarted.prepareMcpBridgesForRebuildSpy.mockClear();
+    restarted.restoreSandboxStateSpy.mockClear();
     return restarted;
   }
 
@@ -472,9 +474,9 @@ describe("rebuildSandbox flow: recovery", () => {
     async (phase) => {
       const restarted = restartRebuild(FOREIGN_PROBE, await interruptAfterCreate(phase));
 
-      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
-        /not the journaled replacement/,
-      );
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/not the journaled source or replacement/);
 
       expectNoSandboxDelete(restarted.runOpenshellSpy);
       expect(restarted.onboardSpy).not.toHaveBeenCalled();
@@ -613,26 +615,56 @@ describe("rebuildSandbox flow: recovery", () => {
     restarted.session.checkpoint = checkpoint;
     restarted.runOpenshellSpy.mockClear();
     restarted.onboardSpy.mockClear();
+    restarted.prepareMcpBridgesForRebuildSpy.mockClear();
+    restarted.restoreSandboxStateSpy.mockClear();
     return restarted;
   }
 
   it.each(LIVE_SOURCE_PHASES)(
-    "deletes the journaled source when a rebuild restarts from '%s' (#7734)",
+    "refuses a retained backup while the source remains at phase %s (#14073)",
     async (phase) => {
       const restarted = restartFromJournaledSource(
         [SOURCE_PROBE, SOURCE_PROBE, null],
         await interruptBeforeCreate(phase),
       );
 
-      await restarted.rebuildSandbox("alpha", ["--yes"]);
+      const checkpoint = structuredClone(restarted.session.checkpoint);
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("The original sandbox still exists");
 
-      expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-        expect.objectContaining({ ignoreError: true }),
-      );
-      expect(restarted.onboardSpy).toHaveBeenCalled();
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expect(restarted.restoreSandboxStateSpy).not.toHaveBeenCalled();
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+      expect(restarted.session.checkpoint).toEqual(checkpoint);
     },
   );
+
+  it("exits with recovery guidance even with --force while the source survives (#14073)", async () => {
+    const restarted = restartFromJournaledSource(
+      [SOURCE_PROBE],
+      await interruptBeforeCreate("planned"),
+    );
+
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("recovery refusal exit");
+    });
+    await expect(restarted.rebuildSandbox("alpha", ["--yes", "--force"])).rejects.toThrow(
+      "recovery refusal exit",
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+
+    expect(restarted.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("The retained backup may exclude newer conversations or MCP changes"),
+    );
+    expect(restarted.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Ask a NemoClaw maintainer to reconcile"),
+    );
+    expectNoSandboxDelete(restarted.runOpenshellSpy);
+    expect(restarted.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+    expect(restarted.restoreSandboxStateSpy).not.toHaveBeenCalled();
+  });
 
   it.each(PRE_CREATE_PHASES)(
     "creates the replacement without a second delete when a rebuild restarts from '%s' with the source already absent (#7734)",
@@ -656,7 +688,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
       await expect(
         restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow(/the live same-name sandbox is not the journaled source/);
+      ).rejects.toThrow(/not the journaled source/);
 
       expectNoSandboxDelete(restarted.runOpenshellSpy);
       expect(restarted.onboardSpy).not.toHaveBeenCalled();
@@ -671,9 +703,9 @@ describe("rebuildSandbox flow: recovery", () => {
         await interruptBeforeCreate(phase),
       );
 
-      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
-        /no longer has the journaled source identity/,
-      );
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/not the journaled source or replacement/);
 
       expectNoSandboxDelete(restarted.runOpenshellSpy);
       expect(restarted.onboardSpy).not.toHaveBeenCalled();
@@ -686,9 +718,9 @@ describe("rebuildSandbox flow: recovery", () => {
       await interruptBeforeCreate("deleted"),
     );
 
-    await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
-      /appeared before replacement registration committed/,
-    );
+    await expect(
+      restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("The original sandbox still exists");
 
     expectNoSandboxDelete(restarted.runOpenshellSpy);
     expect(restarted.onboardSpy).not.toHaveBeenCalled();
@@ -782,7 +814,7 @@ describe("rebuildSandbox flow: recovery", () => {
   });
 
   it.each(LIVE_SOURCE_PHASES)(
-    "recaptures MCP state before deleting from a '%s' recovery journal without its handoff (#10394)",
+    "refuses the surviving source from a '%s' recovery journal without its handoff (#14073)",
     async (phase) => {
       const mcpEntry = {
         server: "github",
@@ -827,33 +859,32 @@ describe("rebuildSandbox flow: recovery", () => {
         },
       });
       restarted.session.checkpoint = checkpoint;
+      restarted.prepareMcpBridgesForRebuildSpy.mockClear();
+      restarted.runOpenshellSpy.mockClear();
+      restarted.onboardSpy.mockClear();
+      const inspectMcp = vi.mocked(mcpBridgeSource.inspectAgentMcpSources);
+      inspectMcp.mockClear();
+      const checkpointBefore = structuredClone(checkpoint);
+      const manifestBefore = fs.readFileSync(
+        path.join(interrupted.backupPath, "rebuild-manifest.json"),
+        "utf8",
+      );
 
       await expect(
         restarted.rebuildSandbox("alpha", ["--yes"], {
           throwOnError: true,
           recoveryManifest,
         }),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow("The original sandbox still exists");
 
-      expect(restarted.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
-        "alpha",
-        { gatewayName: "nemoclaw", workspace: "default" },
-        [expect.objectContaining(mcpEntry)],
-      );
-      expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
-        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-        expect.objectContaining({ ignoreError: true }),
-      );
-      const deleteCall = restarted.runOpenshellSpy.mock.calls.findIndex(
-        ([argv]) => argv[0] === "sandbox" && argv[1] === "delete",
-      );
-      expect(deleteCall).toBeGreaterThanOrEqual(0);
-      expect(restarted.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder.at(-1)).toBeLessThan(
-        restarted.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
-      );
-      expect(restarted.onboardSpy.mock.invocationCallOrder[0]).toBeGreaterThan(
-        restarted.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
-      );
+      expect(inspectMcp).not.toHaveBeenCalled();
+      expect(restarted.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+      expect(restarted.session.checkpoint).toEqual(checkpointBefore);
+      expect(
+        fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+      ).toBe(manifestBefore);
     },
   );
 

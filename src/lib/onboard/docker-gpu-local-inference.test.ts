@@ -70,8 +70,13 @@ const NATIVE_ROUTE: GpuSandboxInferenceRoute = {
 };
 const SCOPED_HANDLE = "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
 
-describe("native GPU inference probe script (#14069)", { timeout: 15_000 }, () => {
-  async function runScript(token: string, httpCode = "200", curlStatus = 0) {
+describe("GPU inference probe script (#14069)", { timeout: 15_000 }, () => {
+  async function runScript(
+    token: string,
+    httpCode = "200",
+    curlStatus = 0,
+    route: GpuSandboxInferenceRoute = NATIVE_ROUTE,
+  ) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gpu-native-probe-"));
     const argsPath = path.join(dir, "curl-args");
     try {
@@ -102,11 +107,12 @@ describe("native GPU inference probe script (#14069)", { timeout: 15_000 }, () =
       const sleep = vi.fn();
       const result = await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
         ...gpuPatchOptions(),
-        resolveInferenceRoute: () => NATIVE_ROUTE,
+        resolveInferenceRoute: () => route,
         deps: { execInSandbox, sleep },
       });
-      expect(execInSandbox).toHaveBeenCalledTimes(1);
-      expect(sleep).not.toHaveBeenCalled();
+      const attempts = route.kind === "shared" && result.status === "failed" ? 3 : 1;
+      expect(execInSandbox).toHaveBeenCalledTimes(attempts);
+      expect(sleep).toHaveBeenCalledTimes(attempts - 1);
       return { result, args: fs.existsSync(argsPath) ? fs.readFileSync(argsPath, "utf8") : null };
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -166,6 +172,27 @@ describe("native GPU inference probe script (#14069)", { timeout: 15_000 }, () =
 
   it("rejects a failed curl even when it prints a successful HTTP code", async () => {
     expect((await runScript(SCOPED_HANDLE, "200", 28)).result.status).toBe("failed");
+  });
+
+  it.each([
+    { httpCode: "000", curlStatus: 6 },
+    { httpCode: "", curlStatus: 7 },
+    { httpCode: "000", curlStatus: 28 },
+    { httpCode: "200", curlStatus: 28 },
+  ])("reports shared-route curl failures as unreachable after bounded retries", async (failure) => {
+    const { result, args } = await runScript("", failure.httpCode, failure.curlStatus, {
+      kind: "shared",
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      kind: "unreachable",
+      endpoint: "https://inference.local/v1/models",
+      recovery: expect.arrayContaining([
+        "Check the sandbox can reach inference.local (proxy/router up):",
+      ]),
+    });
+    expect(JSON.stringify(result)).not.toContain("sandbox runtime exec path did not respond");
+    expect(args).not.toContain("Authorization:");
   });
 
   it.each([

@@ -275,7 +275,8 @@ async function probeSandboxRuntimeInference(
     `code=$(curl -q -so /dev/null -w '%{http_code}' ` +
     (nativeLocal ? ' -H "$AUTH_HEADER" ' : "") +
     `--connect-timeout ${DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS} ` +
-    `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null) || exit $?; ` +
+    `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null)` +
+    (nativeLocal ? ` || exit $?; ` : ` || code=000; `) +
     `echo "HTTP_$code"`;
   const probe = async (): Promise<RuntimeProbeOutcome> => {
     const result = await deps.execInSandbox(sandboxName, script);
