@@ -2,11 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 # The HCL E2E cases that need a model, from a candidate this workflow builds:
 # hosted NVIDIA inference, or vLLM and Ollama on an NVIDIA GPU runner. CI /
-# Bundle runs the same cases in Linux AMD64's E2E layer; dispatch this workflow
-# to run either set alone against a candidate.
+# Bundle's Linux AMD64 platform runs the hosted cases from its own artifacts
+# instead, and calls this workflow for the GPU cases on v1 pushes and manual
+# runs, which NVIDIA's GPU runners accept. Dispatch it to run either set alone.
 name: Live / HCL
 
 on:
+  workflow_call:
+    inputs:
+      hosted:
+        description: Run the cases that use NVIDIA hosted inference on GitHub-hosted runners.
+        type: boolean
+        default: true
+      gpu:
+        description: Run the cases that need the NVIDIA GPU runner, which refuses pull request jobs.
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       hosted:
@@ -31,23 +42,46 @@ env:
 
 jobs:
   build:
-    name: Build
-    # The GPU runner and the inference secret exist only in this repository.
+    name: E2E HCL build
+    # The GPU runner and the inference secret exist only in this repository;
+    # CI / Bundle does not call this workflow for a fork's pull request.
     if: github.repository == 'NVIDIA/NemoClaw' && (inputs.hosted || inputs.gpu)
     # Like Live / Brev, build against the older glibc so every lane runner can run the executables.
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    env:
+      TEST_PLATFORM: linux_amd64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/hcl-candidate
+      - uses: ./.github/actions/setup-rust
         with:
-          artifact: ${{ env.CANDIDATE }}
+          platform: linux_amd64
+          cache-prefix: hcl-deps-v1
+      - uses: ./.github/actions/containerd-store
+      - name: Build the bundle, test executable, and agent images
+        run: |
+          cargo ci bundle
+          executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
+            jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
+          mkdir candidate
+          cp "$executable" candidate/e2e
+          cp -a "dist/$TEST_PLATFORM" candidate/bundle
+          cargo images build --platform linux/amd64 openclaw hermes
+          docker save nc-fabric:openclaw nc-fabric:hermes -o candidate/agents.tar
+          # Tar keeps the executable bits that artifact transfer drops.
+          tar -cf "$RUNNER_TEMP/candidate.tar" candidate
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.CANDIDATE }}
+          path: ${{ runner.temp }}/candidate.tar
+          retention-days: 1
+          if-no-files-found: error
 
   # The cases the inputs select.
   cases:
-    name: Select cases
+    name: E2E HCL case selection
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -75,7 +109,7 @@ jobs:
           echo "include=$include" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: ${{ matrix.case }}
+    name: E2E HCL ${{ matrix.case }}
     needs: [build, cases]
     # Runs only when the build ran and selected a case.
     if: needs.build.result == 'success' && needs.cases.outputs.include != '[]'

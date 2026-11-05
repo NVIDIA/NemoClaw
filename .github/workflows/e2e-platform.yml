@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# A Linux platform's E2E layer: the Docker and Kubernetes live suites and the
-# HCL E2E cases, from the test archive and bundle that the platform's unit layer
-# uploaded. Bundle platform calls it whenever the plan selects the live suites,
-# including on pull requests; a failure fails the platform's Test check.
+# The Docker and Kubernetes live suites for one Linux platform, from the test
+# inputs and bundle that its Bundle platform run uploaded, which calls it as
+# that platform's E2E jobs whenever the plan selects the live suites, including
+# on pull requests. CI / Bundle reports it in the required E2E check.
 name: E2E platform
 on:
   workflow_call:
@@ -30,10 +30,6 @@ on:
         description: Also run the HCL E2E cases that use NVIDIA hosted inference; the caller passes the inference secret.
         type: boolean
         default: false
-      gpu:
-        description: Also run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
-        type: boolean
-        default: false
 permissions:
   contents: read
   packages: read
@@ -49,7 +45,7 @@ jobs:
   # no image input changed since a v1 commit that pushed them, the live jobs
   # pull that commit's images instead.
   live-images:
-    name: Build images
+    name: E2E build images
     if: inputs.live-images-commit == ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
@@ -84,7 +80,7 @@ jobs:
   # platform's archived test executables and bundle, load its live images, and
   # compile nothing. No required check depends on them.
   live-docker:
-    name: Docker tests
+    name: E2E Docker tests
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
@@ -111,7 +107,7 @@ jobs:
           images-commit: ${{ inputs.live-images-commit }}
 
   live-kind:
-    name: Kubernetes (kind) tests
+    name: E2E Kubernetes (kind) tests
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
@@ -140,7 +136,7 @@ jobs:
   # The HCL E2E cases that use NVIDIA hosted inference, from this platform's
   # test archive, bundle, and live images, like the live suites.
   hcl:
-    name: HCL ${{ matrix.case }}
+    name: E2E HCL ${{ matrix.case }}
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
@@ -170,54 +166,3 @@ jobs:
           bundle: ${{ inputs.bundle }}
           images: ${{ needs.live-images.outputs.artifact }}
           images-commit: ${{ inputs.live-images-commit }}
-
-  # The HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs.
-  # Like Live / HCL, they run a candidate built against Ubuntu 22.04's older
-  # glibc rather than this platform's artifacts, until the runner is known to
-  # run executables built on Ubuntu 24.04.
-  gpu-build:
-    name: GPU build
-    # The GPU runner and the inference secret exist only in this repository.
-    if: inputs.gpu && github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/hcl-candidate
-        with:
-          artifact: hcl-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-
-  gpu:
-    name: GPU ${{ matrix.case }}
-    needs: [gpu-build]
-    # Runs only after the candidate build.
-    if: needs.gpu-build.result == 'success'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - case: docker-openclaw-vllm
-            secret: ""
-          - case: docker-openclaw-vllm-shared
-            secret: ""
-          - case: docker-openclaw-hermes-ollama
-            secret: NVIDIA_API_KEY
-    # This NVIDIA GPU runner is already used by the main E2E workflow.
-    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 60
-    # These cases use fixed gateway ports; finish cleanup before another run starts.
-    concurrency:
-      group: live-hcl-${{ matrix.case }}
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/hcl-case
-        with:
-          case: ${{ matrix.case }}
-          # Only the case that uses hosted inference receives the credential.
-          api-key: ${{ secrets[matrix.secret] }}
-          candidate: hcl-candidate-${{ github.run_id }}-${{ github.run_attempt }}
