@@ -43,7 +43,6 @@ import type {
 } from "../../../state/onboard-session";
 import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
-import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
   clearCheckpointResourceProfile,
   recordCheckpointEffectGroup,
@@ -133,6 +132,7 @@ import {
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
+  toolDisclosureIntent,
   reserveSandboxResumeRoute,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -2168,7 +2168,14 @@ class SandboxStateFlow<
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
           env: this.options.env,
-        }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
+        }) ??
+        toolDisclosureIntent({
+          resume: this.options.resume,
+          recreate,
+          entry: registeredEntry,
+          session: state.session?.toolDisclosure,
+          env: this.options.env,
+        }),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(endpointUrl ? { endpointUrl } : {}),

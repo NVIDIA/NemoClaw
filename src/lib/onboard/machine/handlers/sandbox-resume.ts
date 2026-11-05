@@ -86,6 +86,22 @@ export function initialOpenClawToolDisclosure(input: {
   return resolveToolDisclosureRequest(null, input.env) ?? (n1xDefault ? "progressive" : "direct");
 }
 
+/** Without a selection, re-onboarding keeps the recorded mode, not the session seed (#13975). */
+export function toolDisclosureIntent(input: {
+  resume: boolean;
+  recreate: boolean;
+  entry: SandboxEntry | null;
+  session: unknown;
+  env: NodeJS.ProcessEnv;
+}): ToolDisclosure {
+  const keepRecorded =
+    !input.resume && !input.recreate && resolveToolDisclosureRequest(null, input.env) === null;
+  return (
+    (keepRecorded ? normalizeToolDisclosure(input.entry?.toolDisclosure) : null) ??
+    toolDisclosureOrDefault(input.session)
+  );
+}
+
 export interface SandboxResumeSignals {
   readonly resume: boolean;
   readonly resumeAgentChanged: boolean;

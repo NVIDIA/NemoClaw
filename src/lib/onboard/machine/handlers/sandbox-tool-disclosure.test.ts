@@ -192,6 +192,27 @@ describe("handleSandboxState tool disclosure", () => {
     },
   );
 
+  it.each([
+    ["no selection", {}, "direct"],
+    ["a selection", { NEMOCLAW_TOOL_DISCLOSURE: "progressive" }, "progressive"],
+  ] as const)(
+    "re-onboards a recorded direct sandbox with %s (#13975)",
+    async (_case, env, expected) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: (name) => registeredEntry(name, { toolDisclosure: "direct" }),
+        },
+        session,
+      );
+
+      await handleSandboxState({ ...baseOptions(deps, session), env });
+
+      const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+      expect(createSandboxCall[15]).toMatchObject({ toolDisclosure: expected });
+    },
+  );
+
   it.each(["ollama-local", "vllm-local"])(
     "preserves progressive when %s creation targets registered state (#12106)",
     async (provider) => {
