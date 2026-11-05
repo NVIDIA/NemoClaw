@@ -13,6 +13,10 @@ on:
         description: Also run the cases that use NVIDIA hosted inference.
         type: boolean
         default: true
+      cases:
+        description: The validation plan's live HCL case selection, or empty to run every case.
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       hosted:
@@ -40,7 +44,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     outputs:
-      runtimes: ${{ steps.runtimes.outputs.runtimes }}
+      cases: ${{ steps.cases.outputs.cases }}
+      matrix: ${{ steps.cases.outputs.matrix }}
+      runtimes: ${{ steps.cases.outputs.runtimes }}
     env:
       TEST_PLATFORM: linux_amd64
     steps:
@@ -64,10 +70,23 @@ jobs:
           docker save nc-fabric:openclaw nc-fabric:hermes -o candidate/agents.tar
           # Tar keeps the executable bits that artifact transfer drops.
           tar -cf "$RUNNER_TEMP/candidate.tar" candidate
-      # The model runtime images each case's services run, which its job builds.
-      - name: List each case's runtime images
-        id: runtimes
-        run: echo "runtimes=$(cargo images runtimes)" >> "$GITHUB_OUTPUT"
+      # Each case's documents say where it runs, whether it reads the NVIDIA
+      # API key, and which model runtime images its job builds.
+      - name: List the cases and their runtime images
+        id: cases
+        env:
+          CASES: ${{ inputs.cases }}
+          HOSTED: ${{ inputs.hosted }}
+        run: |
+          if [[ -z $CASES ]]; then
+            CASES=$(cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+              changes cases --all | jq -c '{runners, nvidia_key}')
+          fi
+          {
+            echo "cases=$CASES"
+            echo "matrix=$(jq -c --argjson hosted "$HOSTED" '.runners.gpu + (if $hosted then .runners.hosted else [] end)' <<< "$CASES")"
+            echo "runtimes=$(cargo images runtimes)"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.CANDIDATE }}
@@ -78,14 +97,14 @@ jobs:
   e2e:
     name: ${{ matrix.case }}
     needs: build
-    # Runs only when the build ran.
-    if: needs.build.result == 'success'
+    # Runs only when the build ran and selected a case.
+    if: needs.build.result == 'success' && needs.build.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        case: ${{ fromJSON(inputs.hosted && '["docker-openclaw-nvidia", "docker-openclaw-v0-parity", "docker-hermes-v0-parity", "docker-openclaw-vllm", "docker-openclaw-vllm-shared", "docker-openclaw-hermes-ollama"]' || '["docker-openclaw-vllm", "docker-openclaw-vllm-shared", "docker-openclaw-hermes-ollama"]') }}
-    # The vLLM and Ollama cases need this NVIDIA GPU runner, which the main E2E workflow also uses.
-    runs-on: ${{ (contains(matrix.case, 'vllm') || contains(matrix.case, 'ollama')) && 'linux-amd64-gpu-rtxpro6000-latest-1' || 'ubuntu-24.04' }}
+        case: ${{ fromJSON(needs.build.outputs.matrix) }}
+    # The cases with model runtime images need this NVIDIA GPU runner, which the main E2E workflow also uses.
+    runs-on: ${{ contains(fromJSON(needs.build.outputs.cases).runners.gpu, matrix.case) && 'linux-amd64-gpu-rtxpro6000-latest-1' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     # These cases use fixed gateway ports; finish cleanup before another run starts.
     concurrency:
@@ -124,8 +143,8 @@ jobs:
         working-directory: crates/nemoclaw-e2e
         env:
           NEMOCLAW_HCL_RUN: ${{ runner.temp }}/hcl
-          # Only the cases that use hosted inference receive the credential.
-          NVIDIA_INFERENCE_API_KEY: ${{ !contains(matrix.case, 'vllm') && secrets.NVIDIA_API_KEY || '' }}
+          # Only the cases that read the key receive it.
+          NVIDIA_INFERENCE_API_KEY: ${{ contains(fromJSON(needs.build.outputs.cases).nvidia_key, matrix.case) && secrets.NVIDIA_API_KEY || '' }}
         run: '"$GITHUB_WORKSPACE/candidate/e2e" hcl_live::case --exact --ignored --nocapture'
       # A cancelled or timed-out job still runs this step; the test's process does not survive.
       - name: Destroy
