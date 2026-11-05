@@ -26,6 +26,12 @@ variable "operation" {
   }
 }
 
+variable "empty_path" {
+  description = "Run the CLI with an empty PATH, which shows it needs no program from the host, such as helm."
+  type        = bool
+  default     = false
+}
+
 locals {
   arguments = {
     plan    = ["plan", "--output", "json", "--non-interactive", var.context.config]
@@ -47,7 +53,7 @@ resource "terraform_data" "operation" {
       for credential in "$CREDENTIALS"/*; do
         [ -f "$credential" ] && export "$(basename "$credential")=$(cat "$credential")"
       done
-      "$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
+      ${var.empty_path ? "PATH= " : ""}"$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
       echo $? >exit
     EOT
     environment = {

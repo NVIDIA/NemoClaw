@@ -30,6 +30,7 @@ mod kube_api;
 use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
+mod chart;
 mod failures;
 mod kubernetes_lifecycle;
 mod sandbox;
