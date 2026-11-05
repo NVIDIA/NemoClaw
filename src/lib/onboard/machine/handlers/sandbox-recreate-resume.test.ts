@@ -169,7 +169,7 @@ describe("handleSandboxState resume recreation", () => {
             ),
           },
         }),
-      ).rejects.toThrow("--recreate-sandbox");
+      ).rejects.toThrow("Preserve this sandbox and onboard with a new sandbox name.");
       expect(calls.createSandbox).not.toHaveBeenCalled();
       expect(calls.recordSkip).not.toHaveBeenCalled();
     },

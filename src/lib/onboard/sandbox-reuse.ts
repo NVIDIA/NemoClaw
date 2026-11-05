@@ -99,7 +99,7 @@ export function assertHermesSwitchyardRoutingReusable(input: {
   }
   if (desired || input.entry?.hermesSwitchyard)
     throw new Error(
-      "Switchyard onboarding requires a fresh sandbox; provider reuse is not supported. Existing bindings were not changed.",
+      "Switchyard onboarding requires a fresh sandbox; provider reuse is not supported. Existing bindings were not changed. Preserve this sandbox and onboard with a new sandbox name.",
     );
 }
 

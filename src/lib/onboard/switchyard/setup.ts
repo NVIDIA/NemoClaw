@@ -68,7 +68,7 @@ export async function setupSwitchyardInference(input: {
   const previous = deps.getSandbox?.(sandboxName);
   if (previous?.hermesSwitchyard)
     throw new SwitchyardProviderBindingError(
-      "a fresh sandbox is required; provider reuse is not supported. Existing bindings were not changed.",
+      "a fresh sandbox is required; provider reuse is not supported. Existing bindings were not changed. Preserve this sandbox and onboard with a new sandbox name.",
     );
   if (
     previous &&

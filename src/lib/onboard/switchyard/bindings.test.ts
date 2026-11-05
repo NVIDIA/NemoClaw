@@ -168,7 +168,9 @@ describe("Switchyard provider bindings", () => {
 
     const retryReservation = vi.fn(() => true);
     input.deps.updateSandbox = retryReservation;
-    await expect(setupSwitchyardInference(input)).rejects.toThrow("fresh sandbox");
+    await expect(setupSwitchyardInference(input)).rejects.toThrow(
+      /fresh sandbox.*onboard with a new sandbox name/u,
+    );
     expect(f.methods.createProvider).toHaveBeenCalledTimes(2);
     expect(f.methods.deleteProvider).not.toHaveBeenCalled();
     expect(retryReservation).not.toHaveBeenCalled();

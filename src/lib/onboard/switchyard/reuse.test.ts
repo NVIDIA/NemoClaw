@@ -239,7 +239,7 @@ describe("Hermes Switchyard sandbox reuse", () => {
         recreate: false,
         sandboxState: "ready",
       }),
-    ).toThrow("fresh sandbox");
+    ).toThrow(/fresh sandbox.*onboard with a new sandbox name/u);
   });
 
   it("rejects recorded bindings even when a legacy sandbox has no routing profile (#13863)", () => {
