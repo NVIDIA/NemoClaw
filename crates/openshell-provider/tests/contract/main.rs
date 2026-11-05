@@ -30,6 +30,7 @@ mod kube_api;
 use http_fixture as transport;
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
+mod chart;
 mod failures;
 mod kubernetes_lifecycle;
 mod sandbox;
@@ -124,6 +125,16 @@ pub(crate) async fn read_only_engine() -> http_fixture::Fixture {
             serde_json::json!({"Version":"28.0", "ApiVersion":"1.47", "Components":[{"Name":"Engine", "Version":"28.0"}]})
         } else if path.ends_with("/info") {
             serde_json::json!({"ID":"engine"})
+        } else if path.ends_with("/networks") || path.ends_with("/containers/json") {
+            // No other network or container holds the gateway's subnet or name.
+            serde_json::json!([])
+        } else if ["/volumes/", "/containers/", "/networks/"]
+            .iter()
+            .any(|kind| path.contains(kind))
+        {
+            // A new gateway's storage reads its volume, helper, and network,
+            // and finds none of them.
+            return Some((404, br#"{"message":"no such object"}"#.to_vec()));
         } else {
             panic!("unexpected engine query {path}")
         };

@@ -3,7 +3,7 @@
 
 # Deep Agents Code Terminal
 
-The author enables `harness.settings.interfaces.terminal`, as [docs/interfaces.md](../../../../docs/interfaces.md#open-deep-agents-codes-terminal) documents.
+The author enables `harness.settings.interfaces.terminal`, as [docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#open-deep-agents-codes-terminal) documents.
 Apply prints the command that opens `dcode`'s terminal UI with the current runtime's launcher, and no forward or token.
 In a terminal, the UI uses the configured model and answers a prompt; Ctrl-D quits it.
 
@@ -21,58 +21,53 @@ In a terminal, the UI uses the configured model and answers a prompt; Ctrl-D qui
 
 ## Driving it with the OpenShell CLI and util-linux `script`
 
-Preconditions: [deploy-and-answer](deploy-and-answer.md)'s DA1 passed with the agent file's YAML edits; util-linux's `script` and `python3` are on the host.
+Preconditions: [deploy-and-answer](deploy-and-answer.md)'s DA1 passed with the agent file's YAML edits; GNU coreutils and sed, and util-linux's `script`, are on the host.
 
-The terminal UI needs a terminal; `script` gives it a 40-by-120 pseudo-terminal, and this driver types into it and reads the screen, as the `interfaces_live` test does:
+The terminal UI needs a terminal; `script` gives it a 40-by-120 pseudo-terminal, and these shell functions type into it through a FIFO and read the screen from its output file, as the `interfaces_live` test does:
 
 ```sh
-cat > "$RUN_DIR/terminal.py" <<'PY'
-import os, re, subprocess, sys, threading, time
-command, word, transcript, home = sys.argv[1:5]
-env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=os.path.join(home, ".config"))
-env.pop("OPENSHELL_GATEWAY", None)
-child = subprocess.Popen(["script", "--quiet", "--flush", "--return", "--command",
-                          f"stty rows 40 cols 120 && exec {command}", "/dev/null"],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-screen, lock = bytearray(), threading.Lock()
-def read():
-    while chunk := child.stdout.read1(65536):
-        with lock:
-            screen.extend(chunk)
-threading.Thread(target=read, daemon=True).start()
-ansi = re.compile(rb"\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>78DEHM]")
-def text(since=0):
-    with lock:
-        return ansi.sub(b"", bytes(screen[since:])).decode("utf-8", "replace")
-def mark():
-    with lock:
-        return len(screen)
-def send(keys):
-    child.stdin.write(keys.encode()); child.stdin.flush()
-def wait(test, timeout):
-    end = time.time() + timeout
-    while time.time() < end and child.poll() is None:
-        if test():
-            return True
-        time.sleep(0.5)
-    return test()
-# A new home asks for a name and a model; Escape skips both and keeps the configured model.
-first_run = wait(lambda: "Enter to continue" in text() or "Context:" in text(), 120)
-send("\x1b"); time.sleep(2)
-start = mark(); send(f"Reply with exactly {word}")
-wait(lambda: word in text(start), 15)
-start = mark(); send("\r")
-# The answer is a line holding the word alone; the prompt line also says "Reply with exactly".
-answered = wait(lambda: any(line.strip(" \t\u258e\u258c\u2502\u25cf\u2022>") == word for line in text(start).splitlines()), 200)
-time.sleep(3); send("\x04")
-exited = wait(lambda: child.poll() is not None, 30)
-if not exited:
-    child.kill()
-open(transcript, "w").write(text())
-print("ui", "ok" if first_run else "FAIL")
-print("reply", "ok" if answered and "Interrupted by user" not in text(start) else "FAIL")
-print("exit", child.returncode if exited else "FAIL")
-PY
+TTY=$RUN_DIR/tty
+# Start COMMAND in a new pseudo-terminal with HOME as its client home.
+term_open() {
+  rm -rf "$TTY" && mkdir -p "$TTY" && mkfifo "$TTY/in"
+  env -u OPENSHELL_GATEWAY HOME="$2" XDG_CONFIG_HOME="$2/.config" \
+    script --quiet --flush --return --command "stty rows 40 cols 120 && exec $1" /dev/null \
+    < "$TTY/in" > "$TTY/raw" 2>&1 &
+  TERM_PID=$!
+  exec 3> "$TTY/in"
+}
+term_mark() { stat -c %s "$TTY/raw"; }
+# What the terminal showed after MARK, without control sequences; a carriage return starts a new line.
+# The C locale makes [@-~] a byte range; in en_US.UTF-8 it misses letters such as K.
+term_shown() {
+  tail -c "+$(( ${1:-0} + 1 ))" "$TTY/raw" \
+    | LC_ALL=C sed -E 's#\x1b\[[0-?]*[ -/]*[@-~]##g; s#\x1b[]P_^][^\x07\x1b]*(\x07|\x1b\\)##g; s#\x1b[()*+].##g; s#\x1b.##g' \
+    | tr '\r' '\n'
+}
+# Type KEYS into the terminal. The subshell takes the SIGPIPE if the session has ended.
+term_send() { kill -0 "$TERM_PID" 2> /dev/null && ( printf '%b' "$1" >&3 ) 2> /dev/null; }
+# Wait up to SECONDS for a line after MARK to match the grep -E PATTERN; GREP_FLAGS such as -x apply.
+# After the time runs out or the session ends, check once more.
+term_wait() {
+  local end=$(( $(date +%s) + $3 )) last=
+  until term_shown "$1" | LC_ALL=C grep -qE ${4:-} -- "$2"; do
+    [ -z "$last" ] || return 1
+    [ "$(date +%s)" -lt "$end" ] && kill -0 "$TERM_PID" 2> /dev/null || last=1
+    sleep 0.5
+  done
+}
+# Wait up to SECONDS for the session to end, close the input, and set TERM_EXIT to its
+# exit status, or to FAIL after killing it. Call it directly, not in $(...): a subshell can't wait for it.
+term_close() {
+  local i
+  for i in $(seq $(( $1 * 2 ))); do kill -0 "$TERM_PID" 2> /dev/null || break; sleep 0.5; done
+  exec 3>&-
+  if kill -0 "$TERM_PID" 2> /dev/null; then
+    kill "$TERM_PID"; wait "$TERM_PID"; TERM_EXIT=FAIL
+  else
+    wait "$TERM_PID"; TERM_EXIT=$?
+  fi
+}
 ```
 
 1. **DT1:**
@@ -86,8 +81,23 @@ PY
    ```sh
    WORD=TERM$(date +%s | tail -c 7)
    TERMINAL_HOME=$(mktemp -d)
-   python3 "$RUN_DIR/terminal.py" "$OPEN" "$WORD" "$EVIDENCE/terminal-$WORD.txt" "$TERMINAL_HOME" | tee "$EVIDENCE/terminal.txt"
-   rm -rf "$TERMINAL_HOME"
+   term_open "$OPEN" "$TERMINAL_HOME"
+   # A new home asks for a name and a model; Escape skips both and keeps the configured model.
+   term_wait 0 'Enter to continue|Context:' 120 && UI=ok || UI=FAIL
+   # A terminal reads Escape followed at once by a key as Alt and that key.
+   term_send '\033'; sleep 2
+   START=$(term_mark); term_send "Reply with exactly $WORD"
+   term_wait "$START" "$WORD" 15
+   START=$(term_mark); term_send '\r'
+   # The answer is a line holding the word alone; the prompt line also says "Reply with exactly".
+   term_wait "$START" "[[:space:]▎▌│●•>]*$WORD[[:space:]▎▌│●•>]*" 200 -x && REPLY_=ok || REPLY_=FAIL
+   # Ctrl-D before the answer finishes interrupts the turn, which the UI reports as it quits.
+   sleep 3; term_send '\004'
+   term_close 30
+   term_shown "$START" | grep -q 'Interrupted by user' && REPLY_=FAIL
+   term_shown 0 > "$EVIDENCE/terminal-$WORD.txt"
+   printf 'ui %s\nreply %s\nexit %s\n' "$UI" "$REPLY_" "$TERM_EXIT" | tee "$EVIDENCE/terminal.txt"
+   rm -rf "$TERMINAL_HOME" "$TTY"
    grep -c 'openai:' "$EVIDENCE/terminal-$WORD.txt"
    ```
    Result: `ui ok`, `reply ok`, `exit 0`; then a nonzero count: the status line names the configured model, such as `openai:nemotron-3.5-super-vl`.

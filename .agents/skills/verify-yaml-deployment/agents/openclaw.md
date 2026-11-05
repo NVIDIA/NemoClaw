@@ -10,7 +10,7 @@ The adapter runs OpenClaw's gateway inside the sandbox; Fabric invocations reach
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [openclaw-dashboard](../features/openclaw-dashboard.md) | `24b35280fb` | 2026-11-02 |
+| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [openclaw-dashboard](../features/openclaw-dashboard.md) | `b5489e5768` | 2026-11-04 |
 
 ## YAML Edits
 
@@ -49,5 +49,5 @@ The first request after apply can take about 30 seconds.
 
 ## Known Gaps
 
-- **The agent can sign in to itself.** The agent's own tools can read the token file and reach the port ([docs/interfaces.md](../../../../docs/interfaces.md#who-can-use-an-interface)).
+- **The agent can sign in to itself.** The agent's own tools can read the token file and reach the port ([docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
 - **Origins.** The adapter accepts only loopback browser origins ([NVIDIA/NeMo-Fabric#573](https://github.com/NVIDIA/NeMo-Fabric/pull/573)), so a browser can sign in through the forward but not at the exposure's URL.

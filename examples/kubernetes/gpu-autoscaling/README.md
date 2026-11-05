@@ -5,16 +5,16 @@
 
 Run one agent sandbox per user on Kubernetes, all sharing a GPU inference Service that Kubernetes scales from one GPU pod to several as load grows.
 The [kubernetes-gpu-autoscaling chart](https://github.com/NVIDIA/nemoclaw-community/tree/17a5af9b7eac0a33cb3a2b2f82bc83585cee8595/examples/recipes/nvidia/kubernetes-gpu-autoscaling) in NVIDIA/nemoclaw-community runs the inference pods, their HorizontalPodAutoscaler, and the metrics it scales on.
-NemoClaw runs only the gateway and the sandboxes, which reach the chart's Service as [a model server in the cluster](../../../docs/kubernetes.md#use-a-model-server-in-the-cluster).
+NemoClaw runs only the gateway and the sandboxes, which reach the chart's Service as [a model server in the cluster](../../../docs/build-deploy/kubernetes.md#use-a-model-server-in-the-cluster).
 
 [openclaw-ollama.yaml](openclaw-ollama.yaml) declares two OpenClaw sandboxes, `user-0000` and `user-0001`, that use the chart's Ollama runtime.
 The chart also serves vLLM and NVIDIA NIM; [Choose a Pairing](#choose-a-pairing) lists what to change for those.
 [two-runtimes.yaml](two-runtimes.yaml) declares a Hermes sandbox on the chart's vLLM runtime and an OpenClaw sandbox on its Ollama runtime, set up for [load.sh](load.sh), which sends prompts to the agents to load the GPUs.
-No automated test covers this procedure; [current limits](../../../docs/limits.md#platforms-models-and-placement) lists what else is untested.
+No automated test covers this procedure; [current limits](../../../docs/resources/limits.md#platforms-models-and-placement) lists what else is untested.
 
 ## Prerequisites
 
-- **The cluster, NemoClaw bundle and agent images** that [Deploy to Kubernetes or OpenShift](../../../docs/kubernetes.md#prerequisites) lists.
+- **The cluster, NemoClaw bundle and agent images** that [Deploy to Kubernetes or OpenShift](../../../docs/build-deploy/kubernetes.md#prerequisites) lists.
 - **For the chart:** NVIDIA GPU nodes with the NVIDIA GPU Operator and its DCGM exporter, Metrics Server, `helm` and `kubectl` with a context that can install cluster-wide charts, and `git`.
   The chart pins multi-platform image digests, so its pods run on `linux/amd64` and `linux/arm64` nodes; its [prerequisites](https://github.com/NVIDIA/nemoclaw-community/blob/17a5af9b7eac0a33cb3a2b2f82bc83585cee8595/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#prerequisites) list the images and what to check when you override one.
   The chart's [README](https://github.com/NVIDIA/nemoclaw-community/blob/17a5af9b7eac0a33cb3a2b2f82bc83585cee8595/examples/recipes/nvidia/kubernetes-gpu-autoscaling/README.md#install-details) describes its scheduling, storage and runtime options.
@@ -71,7 +71,7 @@ export GPU_INFERENCE_API_KEY="$(kubectl --namespace nemoclaw-gpu get secret nemo
 ```
 
 Apply stores the key in OpenShell, which adds it to the sandboxes' requests; the sandboxes never see it.
-To rotate it, follow [A Key You Supply to a Model Server on Another Platform](../../../docs/credential-rotation.md#a-key-you-supply-to-a-model-server-on-another-platform).
+To rotate it, follow [A Key You Supply to a Model Server on Another Platform](../../../docs/security/credential-rotation.md#a-key-you-supply-to-a-model-server-on-another-platform).
 
 ## Choose a Pairing
 
@@ -111,7 +111,7 @@ The agent image must match the architecture of the nodes that run the sandboxes;
 kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.nodeInfo.architecture}{"\n"}{end}'
 ```
 
-On a host of that architecture, from the NemoClaw repository root, build the agent image for its platform, `linux/arm64` or `linux/amd64`, and its metadata bundle, as [Prepare Agent Images](../../../docs/kubernetes.md#prepare-agent-images) and [Build Agent Images](../../../docs/build.md#build-agent-images) describe, then push the image and note the digest of the pushed index:
+On a host of that architecture, from the NemoClaw repository root, build the agent image for its platform, `linux/arm64` or `linux/amd64`, and its metadata bundle, as [Prepare Agent Images](../../../docs/build-deploy/kubernetes.md#prepare-agent-images) and [Build Agent Images](../../../docs/build-deploy/build.md#build-agent-images) describe, then push the image and note the digest of the pushed index:
 
 ```sh
 mkdir -p .local/gpu-autoscaling
@@ -133,7 +133,7 @@ In the copy, set:
 - `metadata.uid` to a new UUID;
 - `gateway.kubernetes.context` to the exact context;
 - each sandbox's `image.ref` to the pushed image's digest;
-- if you will [invoke agents](#invoke-an-agent) yourself, the `oidc` profile and your issuer, as [Authenticate Through an Existing OIDC Issuer](../../../docs/kubernetes.md#authenticate-through-an-existing-oidc-issuer) describes.
+- if you will [invoke agents](#invoke-an-agent) yourself, the `oidc` profile and your issuer, as [Authenticate Through an Existing OIDC Issuer](../../../docs/build-deploy/kubernetes.md#authenticate-through-an-existing-oidc-issuer) describes.
 
 Each sandbox serves one user.
 To add a user, copy a sandbox entry under a new name, such as `user-0002`.
@@ -157,9 +157,9 @@ A running agent does not show that inference works; invoke one to check.
 With the `development` profile, only NemoClaw can authenticate to the gateway, so you can't invoke agents.
 With the `oidc` profile:
 
-1. [Reach the gateway from the OpenShell CLI](../../../docs/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
-2. [Select the gateway and workspace](../../../docs/interfaces.md#select-the-gateway-and-workspace).
-3. Copy a sandbox's command from apply's **Agents** list, or read its runtime ID from `agents.SANDBOX.runtimeId` in apply's or a plan's JSON result, then send one prompt, as [Run One Headless OpenClaw Request](../../../docs/agents.md#run-one-headless-openclaw-request) describes.
+1. [Reach the gateway from the OpenShell CLI](../../../docs/build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli).
+2. [Select the gateway and workspace](../../../docs/agents-inference/interfaces.md#select-the-gateway-and-workspace).
+3. Copy a sandbox's command from apply's **Agents** list, or read its runtime ID from `agents.SANDBOX.runtimeId` in apply's or a plan's JSON result, then send one prompt, as [Run One Headless OpenClaw Request](../../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) describes.
    From the deployment directory, a plan reports the runtimes the last apply left without changing them:
 
 ```sh
@@ -211,14 +211,14 @@ It exits nonzero if any request failed.
 A request that reaches `TIMEOUT` counts as failed; the script stops waiting for it but doesn't cancel the agent's run.
 
 - Each apply that starts a new runtime changes its runtime ID and Hermes's token: apply again with `-o json`, then rerun the script.
-- Each `fabric-agent-ctl invoke` is one `openshell sandbox exec` through the gateway, which NemoClaw limits to one CPU ([limits](../../../docs/limits.md)), and Fabric runs one invocation at a time per runtime, so concurrent prompts to one such sandbox wait in the sandbox, not on the GPUs.
+- Each `fabric-agent-ctl invoke` is one `openshell sandbox exec` through the gateway, which NemoClaw limits to one CPU ([limits](../../../docs/resources/limits.md)), and Fabric runs one invocation at a time per runtime, so concurrent prompts to one such sandbox wait in the sandbox, not on the GPUs.
 - Hermes's API server runs at most 10 requests at once per sandbox by default and answers `429` beyond that.
-- A service URL skips the gateway's sign-in: anyone who can reach the gateway's listener with its client certificate can reach Hermes's API, which only its token protects; see [who can use an interface](../../../docs/interfaces.md#who-can-use-an-interface).
+- A service URL skips the gateway's sign-in: anyone who can reach the gateway's listener with its client certificate can reach Hermes's API, which only its token protects; see [who can use an interface](../../../docs/agents-inference/interfaces.md#who-can-use-an-interface).
 - The OpenShell CLI doesn't renew a token it got through client credentials ([NVIDIA/OpenShell#4287](https://github.com/NVIDIA/OpenShell/issues/4287)); for a run longer than the token's lifetime, sign in again first.
 
 ## Remove the Deployment
 
-From the deployment directory, destroy the sandboxes and gateway, as [Destroy a Deployment](../../../docs/kubernetes.md#destroy-a-deployment) describes:
+From the deployment directory, destroy the sandboxes and gateway, as [Destroy a Deployment](../../../docs/build-deploy/kubernetes.md#destroy-a-deployment) describes:
 
 ```sh
 nemoclaw plan --destroy --state-dir state

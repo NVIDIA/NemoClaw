@@ -21,6 +21,19 @@ data "openshell_docker_gateway_runtime" "gateway" {
   config    = jsonencode({ "openshell.gateway" = { log_level = "debug" } })
 }
 
+# The managed Docker gateway's storage: its volume, key, and certificates.
+# Planning it must leave the engine unchanged; the fixture engine refuses any
+# request but a read.
+resource "openshell_gateway_storage" "docker" {
+  name           = "nc-0123456789abcdef-gateway"
+  owner          = "302ff5e1-088d-42ce-959f-4ff4c3570c13"
+  generation     = "0123456789abcdef0123456789abcdef"
+  compute_driver = "docker"
+  engine         = var.engine
+  image          = "ghcr.io/nvidia/openshell/gateway@sha256:f0b36dba21d282c52e498c25289658cfd6cd4f343b0069fde5609e25b002cdea"
+  network_cidr   = "172.30.110.0/24"
+}
+
 data "openshell_gateway_prerequisites" "docker" {
   engine         = var.engine
   compute_driver = "docker"

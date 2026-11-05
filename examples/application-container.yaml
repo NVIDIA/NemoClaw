@@ -5,7 +5,7 @@
 # An application container beside one OpenClaw agent on a managed local Docker
 # gateway. NemoClaw starts the image with these literal settings and waits for
 # GET /health; the application reads its own variable names and connects to the
-# agent itself. See docs/design/container-contract.md.
+# agent itself. See internal-docs/design/container-contract.md.
 #
 # Apply the gateway and agent without the application service first, verify the
 # agent, copy its sandbox ID into APP_SANDBOX_ID, and apply again.

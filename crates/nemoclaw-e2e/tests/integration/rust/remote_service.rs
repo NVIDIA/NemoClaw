@@ -542,7 +542,7 @@ async fn recover_lost_process_and_cache(s: &Scenario, volume: &Value) -> Value {
     rebuilt
 }
 
-// Export does not resolve a bearer service's key (docs/inference.md), so it
+// Export does not resolve a bearer service's key (docs/agents-inference/inference.md), so it
 // succeeds while the key is readable by others, which apply refuses. The
 // provider's readiness tests cover that refusal.
 async fn export_and_reapply_are_unchanged(s: &Scenario, stable: &Value) {
