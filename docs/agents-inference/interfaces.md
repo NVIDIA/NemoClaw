@@ -60,7 +60,7 @@ On an authentication or missing-sandbox error, check the endpoint, workspace, sa
 ## Invoke an Agent
 
 After [selecting the gateway and workspace](#select-the-gateway-and-workspace), send requests through `openshell sandbox exec`.
-Plan and apply print a command for each agent with a recorded runtime ID. The following illustrative output preserves the CLI's literal `docs/agents.md` hint, which names the pre-migration source path; use [Configure and Access Native Agents](agents.md#run-one-deep-agents-or-pi-request) instead:
+Plan and apply print a command for each agent with a recorded runtime ID, as in this illustrative output:
 
 ```text
 Agents:
@@ -70,7 +70,7 @@ Agents:
     export OPENSHELL_WORKSPACE=nc-1234567890abcdef
   claw: agent main, runtime RUNTIME_ID
     Invoke:   openshell sandbox exec -n claw --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id RUNTIME_ID --input FILE
-  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents.md.
+  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.
 ```
 
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`. If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
