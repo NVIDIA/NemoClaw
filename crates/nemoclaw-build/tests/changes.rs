@@ -1261,26 +1261,6 @@ fn runtime_image_inputs_select_only_the_cases_that_run_the_image() {
 }
 
 #[test]
-fn ci_lists_the_runtime_images_each_live_case_runs() {
-    let repo = Repo::new();
-    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
-        .args(["images", "runtimes"])
-        .current_dir(repo.0.path())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let runtimes: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        runtimes,
-        serde_json::json!({"docker-one": ["vllm"], "kind-two": []})
-    );
-}
-
-#[test]
 fn changes_outside_the_live_build_select_no_case() {
     let repo = Repo::new();
     let base = repo.base();

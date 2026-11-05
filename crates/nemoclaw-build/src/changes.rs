@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Plan expensive validation from changed paths and simulated Cargo builds.
 
+use crate::hcl_cases;
 use determinator::{
     Determinator, Utf8Paths0,
     rules::{DeterminatorMarkChanged, DeterminatorPostRule, DeterminatorRules, PathRule},
@@ -148,11 +149,6 @@ pub fn decide(root: &Path, base: &str, workflow: Workflow) -> Decision {
         })
 }
 
-/// The directory of case documents, which live HCL scenarios and other tests deploy.
-pub const HCL_CASE_DOCUMENTS: &str = "crates/nemoclaw-e2e/cases";
-/// The live HCL scenarios: each one deploys the case document of the same name.
-pub const HCL_SCENARIOS: &str = "crates/nemoclaw-e2e/tests/e2e/hcl/tests";
-
 /// The live HCL cases that a change affects.
 #[derive(Serialize)]
 pub struct CaseSelection {
@@ -172,7 +168,17 @@ pub struct CaseSelection {
 /// and never remove a selection. An analysis failure selects every case.
 pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelection> {
     let commit = revision(root, "HEAD")?;
-    let ids = live_cases(root)?;
+    let ids = hcl_cases::live(root)?;
+    // Case files become path rule globs, which these characters can't disturb.
+    let unusual = |id: &&String| {
+        !id.bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    };
+    if let Some(id) = ids.iter().find(unusual) {
+        return Err(format!(
+            "live HCL case {id:?} must be named with lowercase letters, digits, and hyphens"
+        ));
+    }
     if let Some(id) = requested.iter().find(|id| !ids.contains(*id)) {
         let known: Vec<&str> = ids.iter().map(String::as_str).collect();
         return Err(format!(
@@ -210,79 +216,6 @@ pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelect
     })
 }
 
-/// The live HCL cases at `HEAD`: each scenario with a case document of the same name.
-fn live_cases(root: &Path) -> Result<BTreeSet<String>> {
-    let listed = git(
-        root,
-        &[
-            "ls-tree",
-            "-z",
-            "--name-only",
-            "HEAD",
-            &format!("{HCL_SCENARIOS}/"),
-            &format!("{HCL_CASE_DOCUMENTS}/"),
-        ],
-    )?;
-    let listed = String::from_utf8(listed).map_err(|_| "a case file name is not UTF-8")?;
-    let files: BTreeSet<&str> = listed.split_terminator('\0').collect();
-    let mut ids = BTreeSet::new();
-    for file in &files {
-        let Some(id) = file
-            .strip_prefix(HCL_SCENARIOS)
-            .and_then(|name| name.strip_prefix('/'))
-            .and_then(|name| name.strip_suffix(".tftest.hcl"))
-        else {
-            continue;
-        };
-        if !files.contains(case_files(id)[0].as_str()) {
-            continue;
-        }
-        // Case files become path rule globs, which these characters can't disturb.
-        if id.is_empty()
-            || !id
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        {
-            return Err(format!(
-                "live HCL case {id:?} must be named with lowercase letters, digits, and hyphens"
-            ));
-        }
-        ids.insert(id.to_owned());
-    }
-    Ok(ids)
-}
-
-/// A live case's own files: its document and its scenario.
-fn case_files(id: &str) -> [String; 2] {
-    [
-        format!("{HCL_CASE_DOCUMENTS}/{id}.yaml"),
-        format!("{HCL_SCENARIOS}/{id}.tftest.hcl"),
-    ]
-}
-
-/// Each live HCL case's runtime images, as Bake targets, read from its
-/// document at `HEAD`.
-pub fn case_runtimes(root: &Path) -> Result<BTreeMap<String, BTreeSet<&'static str>>> {
-    runtimes_of(root, &live_cases(root)?)
-}
-
-fn runtimes_of(
-    root: &Path,
-    ids: &BTreeSet<String>,
-) -> Result<BTreeMap<String, BTreeSet<&'static str>>> {
-    ids.iter()
-        .map(|id| {
-            let [document, _] = case_files(id);
-            let document = git(root, &["show", &format!("HEAD:{document}")])?;
-            let document = String::from_utf8(document)
-                .map_err(|_| format!("the {id} case document is not UTF-8"))?;
-            let targets = crate::images::runtime_targets(&document)
-                .map_err(|error| format!("the {id} case: {error}"))?;
-            Ok((id.clone(), targets))
-        })
-        .collect()
-}
-
 /// The directories that only the `targets` runtime images read: each image's
 /// own and, for any image, the supervisor's.
 fn runtime_directories<'a>(targets: impl IntoIterator<Item = &'a &'static str>) -> Vec<String> {
@@ -312,9 +245,9 @@ fn select_cases(
         .to_owned();
     let owners: BTreeMap<String, &str> = ids
         .iter()
-        .flat_map(|id| case_files(id).map(|file| (file, id.as_str())))
+        .flat_map(|id| hcl_cases::files(id).map(|file| (file, id.as_str())))
         .collect();
-    let runtimes = runtimes_of(root, ids)?;
+    let runtimes = hcl_cases::runtimes(root)?;
     let mut ignored: Vec<String> = owners.keys().cloned().collect();
     ignored.extend(
         runtime_directories(&crate::images::RUNTIMES)
