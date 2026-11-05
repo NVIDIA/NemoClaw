@@ -2282,6 +2282,9 @@ The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` con
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
+After onboarding, both physical-host cases request vLLM health on loopback and the private OpenShell bridge.
+Each case also checks connection refusal on every discovered unintended IPv4 and IPv6 address.
+Spark and Station retain their own probe targets and request results.
 
 Run the target from a clean candidate checkout on the Spark host:
 
@@ -2289,7 +2292,10 @@ Run the target from a clean candidate checkout on the Spark host:
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
-A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
+A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
+The managed container carries catalog provenance and the catalog-derived serve command.
+Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
+The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
