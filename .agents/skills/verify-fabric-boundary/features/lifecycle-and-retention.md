@@ -5,7 +5,7 @@
 
 A user restarts the agent's runtime, stops and starts its sandbox, destroys and recreates the deployment, changes its configuration, restores it, and finally tears it down, all through the NemoClaw and OpenShell CLIs.
 After each transition, the same YAML brings back an agent that answers, and the files the user keeps on the two caller volumes are still there, unchanged.
-A restart or stop/start keeps the same sandbox; a recreation replaces it; a configuration change alters only what the YAML changed.
+A restart or stop/start keeps the same sandbox; a recreation replaces it; removing and restoring the shell tool changes which native calls the agent can make.
 Teardown removes the deployment's compute and leaves the caller volumes, model data, and evidence for the user.
 
 ## Sub-features
@@ -14,8 +14,8 @@ Teardown removes the deployment's compute and leaves the caller volumes, model d
 - `extension-runtime-restart`: stopping only the managed Fabric runtime through `fabric-agent-ctl stop`, then an unchanged plan/apply, gives the same sandbox and container a new runtime that answers. Phases: Runtime restart.
 - `stop-start`: stopping the sandbox through OpenShell's supported control stops it and access to it, starting it brings back the same sandbox and container, and after an unchanged plan/apply its runtime answers. Phases: Stop/start.
 - `recreate`: destroying the deployment through NemoClaw keeps the state and caller volumes, and plan/apply of the baseline YAML creates a new sandbox with only the planned changes. Phases: Recreate.
-- `change`: a YAML edit to only the agent's shell restriction shows in plan, applies, and leaves the model resources alone. Phases: Config change.
-- `restore`: reapplying the exact baseline YAML reverses the change, and the runtime answers. Phases: Restore.
+- `change`: removing only the shell-launch tool blocks shell calls while other native tools still work and the model service and gateway keep running. Phases: Config change.
+- `restore`: reapplying the baseline YAML restores shell calls, other native tools still work, and the runtime answers. Phases: Restore.
 - `teardown`: NemoClaw's destroy removes the deployment's compute, and the caller volumes, model data, and evidence remain and are listed. Phases: Teardown.
 
 ## How to get to it (user POV)
@@ -144,9 +144,10 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    ```
 
    Result: the diff touches only the shell-restriction lines.
-   Run step 4; `plan.txt` must show the agent's change, and every other resource as the plan lists it.
-   Compare `owned-before.txt` with `owned-after.txt`: the model service and gateway keep their container IDs unless the plan lists a change to them.
-   Pass when the plan shows the change, apply completes, the request in step 4 succeeds, and `shell-success` in After config change shows the shell tool absent or rejected; settle this row after that check.
+   Run step 4.
+   Compare `owned-before.txt` with `owned-after.txt`: the model service and gateway must keep their container IDs.
+   The Rust integration test `shell_restriction_and_restore_replace_only_the_target_sandbox` covers plan/apply agreement and unchanged gateway objects across both transitions; the SDK test `shell_restriction_changes_only_the_allow_list_and_restores_the_baseline_graph` covers configuration preservation. Neither fixture test observes physical model or gateway containers, so keep that live comparison.
+   Pass when apply completes, the request in step 4 succeeds, `shell-success` in After config change shows the shell tool absent or rejected, and the other native-tool checks still pass; settle this row after those checks.
    When the adapter offers no supported way to remove only the shell-launch tool, mark `change` Failed with one missing-implementation finding, don't plan or apply a guessed key, and link the four shell checks in After config change to that finding, as [invoke-and-tools](invoke-and-tools.md#gotchas) says.
    An approval policy or classifier that declines a command isn't the shell restriction: judge by tool exposure and actual calls.
    Never test the unchanged baseline as the changed phase.
@@ -160,8 +161,8 @@ Each transition uses steps 3, 4, and 5 around its own commands.
     ```
 
     Result: `restored`, and `restore.diff` is the reverse of `config.diff`.
-    Run step 4; `plan.txt` must show the reverse of the change.
-    Pass when the plan shows the reversal, apply completes, the request in step 4 succeeds, and `shell-success` in After restore runs the shell again; settle this row after that check.
+    Run step 4 and compare `owned-before.txt` with `owned-after.txt`: the model service and gateway must keep their container IDs.
+    Pass when apply completes, the request in step 4 succeeds, `shell-success` in After restore runs the shell again, and the other native-tool checks still pass; settle this row after those checks.
     If `change` was blocked, keep exercising the baseline in After restore, but mark `restore` Not tested, linked to the `change` finding: there was no change to reverse.
     Then run step 5 with `PHASE=after-restore`.
 11. **`teardown`:** with `PHASE=teardown` and `CASE=teardown`, set `CHECK_DIR` as step 3 does, after every other row has an outcome.
