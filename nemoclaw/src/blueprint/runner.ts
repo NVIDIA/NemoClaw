@@ -2093,7 +2093,19 @@ export function actionStatus(rid?: string): void {
   log(JSON.stringify(safePlan, null, 2));
 }
 
-export async function actionReconcile(rid: string): Promise<void> {
+export type BlueprintNativeInferenceResumer = (
+  input: Readonly<{
+    runId: string;
+    gateway: Readonly<GatewayBinding>;
+    sandboxName: string;
+    revalidate: () => Promise<void>;
+  }>,
+) => Promise<void>;
+
+export async function actionReconcile(
+  rid: string,
+  resume?: BlueprintNativeInferenceResumer,
+): Promise<void> {
   emitRunId();
 
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
@@ -2102,12 +2114,14 @@ export async function actionReconcile(rid: string): Promise<void> {
 
   let sandboxName: string;
   let gateway: GatewayBinding;
+  let nativeInferencePresent = false;
   try {
     const parsedPlan: unknown = JSON.parse(readFileSync(join(stateDir, "plan.json"), "utf-8"));
     if (!isPlainObject(parsedPlan)) {
       throw new Error("plan.json must contain a JSON object");
     }
     const plan = parsedPlan as ReconciliationPlanSource;
+    nativeInferencePresent = plan.native_inference !== undefined;
     sandboxName = readRollbackSandboxName(plan);
     if (!isGatewayBinding(plan.gateway)) throw new Error("gateway binding is invalid");
     gateway = plan.gateway;
@@ -2115,9 +2129,20 @@ export async function actionReconcile(rid: string): Promise<void> {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot read reconciliation plan for run ${rid}: ${detail}`);
   }
-  const endpoint = await inspectGatewayEndpoint(gateway.name);
-  if (endpoint.host !== gateway.host || endpoint.port !== gateway.port) {
-    throw new Error("Cannot reconcile the blueprint: the OpenShell gateway binding changed.");
+  const revalidate = async (): Promise<void> => {
+    const endpoint = await inspectGatewayEndpoint(gateway.name);
+    if (endpoint.host !== gateway.host || endpoint.port !== gateway.port) {
+      throw new Error("Cannot reconcile the blueprint: the OpenShell gateway binding changed.");
+    }
+  };
+  await revalidate();
+  if (nativeInferencePresent) {
+    if (!resume) throw new Error("Blueprint recovery requires the host native inference resumer.");
+    await resume({ runId: rid, gateway, sandboxName, revalidate });
+    log(
+      `Run ${rid}: native inference configuration is complete. Reapply the blueprint for later setup phases.`,
+    );
+    return;
   }
   log(
     `Run ${rid} targets sandbox '${sandboxName}', whose policy is managed directly by OpenShell; NemoClaw has no stored policy intent to reconcile.`,
@@ -2192,6 +2217,7 @@ export async function main(
     runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
     nativeInferenceObserver?: BlueprintNativeInferenceObserver;
     nativeInferenceCreator?: BlueprintNativeInferenceCreator;
+    nativeInferenceResumer?: BlueprintNativeInferenceResumer;
     nativeInferencePreparer?: (
       requested: Parameters<BlueprintNativeInferenceObserver>[0] &
         Readonly<{ timeoutSeconds: number }>,
@@ -2301,7 +2327,7 @@ export async function main(
       if (!runId) {
         throw new Error("--run-id is required for reconcile");
       }
-      await actionReconcile(runId);
+      await actionReconcile(runId, options.nativeInferenceResumer);
       break;
     case "rollback":
       if (!runId) {

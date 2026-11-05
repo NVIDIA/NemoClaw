@@ -210,7 +210,7 @@ export function requireCreatedSandbox(
 
 const MAX_BLUEPRINT_RECEIPT_BYTES = 1024 * 1024;
 
-function readBlueprintRunPlan(file: string, directory: fs.Stats): unknown | null {
+export function readBlueprintRunPlan(file: string, directory: fs.Stats): unknown | null {
   const noFollow = fs.constants.O_NOFOLLOW;
   if (typeof noFollow !== "number")
     throw new Error("Blueprint run receipts require no-follow file reads.");
@@ -427,48 +427,62 @@ export async function createBlueprintNativeInference(
       sandboxName: receipt.sandboxName,
       expected: providerAttachment,
     });
-    const verify = () => verifyBlueprintCreatedInference(input, receipt, deps);
-    await verify();
-    let apiKey = "unused";
-    if (receipt.credentialEnv) {
-      apiKey = await deps.readHandle(receipt.sandboxName, receipt.gatewayName, {
-        script:
-          'if [ -z "${OPENAI_API_KEY:-}" ]; then printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING >&2; exit 75; fi; printf "%s" "$OPENAI_API_KEY"',
-        pattern: /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_OPENAI_API_KEY$/u,
-        providerLabel: "blueprint",
-        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      });
-    }
-    await verify();
-    // Awaiting verification yields before this synchronous configuration write.
-    requireCreatedSandbox(receipt, deps);
-    deps.writeConfig(
-      receipt.sandboxName,
-      [
-        {
-          dotpath: "models.providers.inference",
-          value: {
-            baseUrl: receipt.endpointUrl,
-            api: receipt.api,
-            apiKey,
-            ...(receipt.credentialEnv === null ? { authHeader: false } : {}),
-            ...(receipt.timeoutSeconds === undefined
-              ? {}
-              : { timeoutSeconds: receipt.timeoutSeconds }),
-            models: [{ id: receipt.model, name: receipt.model }],
-          },
-        },
-        { dotpath: "agents.defaults.model.primary", value: `inference/${receipt.model}` },
-      ],
-      receipt.gatewayName,
-    );
-    const identity = await verify();
+    const identity = await publishBlueprintNativeConfiguration(receipt, async () => {}, deps);
     receipt = { ...receipt, configPublished: true };
     input.persist(receipt);
     return { identity, observe: () => observeBlueprintCreatedInference(input, receipt, deps) };
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+/** Complete only configuration; never create or reattach resources during recovery. */
+export async function publishBlueprintNativeConfiguration(
+  receipt: BlueprintNativeReceipt,
+  revalidate: () => Promise<void>,
+  deps: Dependencies = defaultDependencies,
+): Promise<string> {
+  const verify = async () => {
+    await revalidate();
+    const identity = await verifyBlueprintCreatedInference(receipt, receipt, deps);
+    await revalidate();
+    return identity;
+  };
+  await verify();
+  let apiKey = "unused";
+  if (receipt.credentialEnv) {
+    apiKey = await deps.readHandle(receipt.sandboxName, receipt.gatewayName, {
+      script:
+        'if [ -z "${OPENAI_API_KEY:-}" ]; then printf "%s\\n" NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING >&2; exit 75; fi; printf "%s" "$OPENAI_API_KEY"',
+      pattern: /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_OPENAI_API_KEY$/u,
+      providerLabel: "blueprint",
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
+  }
+  await verify();
+  // Awaiting verification yields before this synchronous configuration write.
+  requireCreatedSandbox(receipt, deps);
+  deps.writeConfig(
+    receipt.sandboxName,
+    [
+      {
+        dotpath: "models.providers.inference",
+        value: {
+          baseUrl: receipt.endpointUrl,
+          api: receipt.api,
+          apiKey,
+          ...(receipt.credentialEnv === null ? { authHeader: false } : {}),
+          ...(receipt.timeoutSeconds === undefined
+            ? {}
+            : { timeoutSeconds: receipt.timeoutSeconds }),
+          models: [{ id: receipt.model, name: receipt.model }],
+        },
+      },
+      { dotpath: "agents.defaults.model.primary", value: `inference/${receipt.model}` },
+    ],
+    receipt.gatewayName,
+  );
+  return verify();
 }
 
 /** Update only the selected OpenClaw provider timeout after independent authority checks. */

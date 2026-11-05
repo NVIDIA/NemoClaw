@@ -275,6 +275,28 @@ The OpenShell L7 proxy substitutes the corresponding access token only for admit
 After token refresh, launch a new child process and confirm that it receives the same stable handle while resolution uses the refreshed token.
 An earlier child keeps that handle as well; a different handle is expected only after an authorization-binding epoch change.
 
+## Resume Native Inference Configuration
+
+If apply stopped while publishing native inference configuration, retain its run receipt.
+The direct runner can resume that write only when the receipt records the sandbox identity, creation label, and attached native provider.
+An uncertain sandbox creation or incomplete provider attachment requires gateway-operator recovery.
+
+Use the direct runner's `reconcile --run-id <run-id>` action with the failed run ID.
+Before writing configuration, the runner verifies the recorded OpenShell gateway, sandbox identity, creation label, provider profile, provider identity, attachment, and credential binding.
+Missing, changed, or ambiguous evidence stops recovery and preserves the receipt and resources.
+The runner uses the existing provider and credential binding without creating, attaching, or deleting resources or rotating credentials.
+
+After the write, the runner rechecks the resource identities before marking native configuration publication complete in the receipt.
+Confirm that reconcile reports `native inference configuration is complete` for the failed run ID.
+This result does not complete runtime identity setup or establish port forwards.
+Rerun apply with the same blueprint to continue runtime identity setup after native configuration recovery succeeds.
+Reusing the recovered sandbox does not recreate port forwards.
+Apply still refuses a same-name runtime identity provider and requires gateway-operator recovery when an earlier attempt already created it.
+
+If reconcile fails, retain the run receipt and ask the gateway operator to compare its immutable identities with the live resources.
+Do not delete resources based only on their names.
+The rollback refusal below still applies.
+
 ## Inspect Runtime Identity State
 
 Check gateway-side state without printing credential values.

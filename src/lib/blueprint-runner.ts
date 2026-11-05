@@ -6,6 +6,8 @@ import { redactForLog } from "./security/redact.js";
 import { sdkOpenShellGatewayHealthObserver } from "../../nemoclaw/dist/shared/openshell-gateway-health-sdk.js";
 import type { OpenShellGatewayHealthObserver } from "../../nemoclaw/dist/shared/openshell-observation-boundary.cjs";
 
+import type { resumeBlueprintNativeInferenceRun } from "./inference/native-provider/blueprint-resume";
+
 import type { createBlueprintNativeInference } from "./inference/native-provider/blueprint";
 
 /** Observe existing native authority without creating, repairing, or attaching providers. */
@@ -111,6 +113,7 @@ async function run(): Promise<void> {
         gatewayHealthObserver: OpenShellGatewayHealthObserver;
         nativeInferenceObserver: typeof observeBlueprintNativeInference;
         nativeInferenceCreator: typeof createBlueprintNativeInference;
+        nativeInferenceResumer: typeof resumeBlueprintNativeInferenceRun;
         nativeInferencePreparer: typeof prepareBlueprintNativeInference;
       }>,
     ): Promise<void>;
@@ -124,6 +127,11 @@ async function run(): Promise<void> {
       return createBlueprintNativeInference(input);
     },
     nativeInferencePreparer: prepareBlueprintNativeInference,
+    nativeInferenceResumer: async (input) => {
+      const { resumeBlueprintNativeInferenceRun } =
+        await import("./inference/native-provider/blueprint-resume");
+      return resumeBlueprintNativeInferenceRun(input);
+    },
   });
 }
 

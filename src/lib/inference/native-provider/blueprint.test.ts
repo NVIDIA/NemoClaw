@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { resumeBlueprintNativeInferenceRun } from "./blueprint-resume";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderMetadata,
@@ -170,6 +171,9 @@ function fixture(
     receipts,
     events,
     source: () => source,
+    replaceProvider: () => {
+      provider = { ...provider!, revision: { id: "replacement", resourceVersion: 1 } };
+    },
     replaceSandbox: () => {
       sandboxId = "replacement-id";
     },
@@ -806,6 +810,277 @@ describe("blueprint run receipt recovery", () => {
       }
     },
   );
+});
+
+async function interruptedRunFixture() {
+  const f = fixture({ configFailure: true });
+  await expect(createBlueprintNativeInference(f.input, f.deps)).rejects.toThrow(
+    "configuration failed",
+  );
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "blueprint-resume-"));
+  vi.spyOn(os, "homedir").mockReturnValue(home);
+  const input = {
+    runId: "nc-interrupted",
+    gateway: { name: f.input.gatewayName, host: "127.0.0.1", port: 8080 },
+    sandboxName: f.input.sandboxName,
+    revalidate: vi.fn(async () => {}),
+  };
+  const directory = path.join(home, ".nemoclaw/state/runs", input.runId);
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "plan.json");
+  const plan = {
+    run_id: input.runId,
+    gateway: input.gateway,
+    sandbox_name: input.sandboxName,
+    sandbox_created_by_apply: true,
+    inference_provider_created_by_apply: true,
+    native_inference: f.receipts.at(-1)!,
+    profile: "default",
+  };
+  fs.writeFileSync(file, JSON.stringify(plan), { mode: 0o600 });
+  f.deps.writeConfig.mockReset().mockImplementation(() => {});
+  vi.mocked(f.adapter.createProvider).mockClear();
+  vi.mocked(f.adapter.attachProvider).mockClear();
+  f.input.createSandbox.mockClear();
+  const resume = () => resumeBlueprintNativeInferenceRun(input, f.deps);
+  return { ...f, home, directory, file, plan, resume, resumeInput: input };
+}
+
+type ResumeFaultCase = [
+  string,
+  (fixture: Awaited<ReturnType<typeof interruptedRunFixture>>) => void,
+];
+
+describe("blueprint configuration resume", () => {
+  it("completes a failed configuration and permits later reuse without recreating resources", async () => {
+    const f = await interruptedRunFixture();
+    try {
+      expect(() => findBlueprintNativeReceipt(f.input)).toThrow("incomplete");
+      await f.resume();
+      const completed = JSON.parse(fs.readFileSync(f.file, "utf8"));
+      expect(completed).toEqual({
+        ...f.plan,
+        native_inference: { ...f.plan.native_inference, configPublished: true },
+      });
+      expect(fs.statSync(f.file).mode & 0o777).toBe(0o600);
+      expect(f.deps.writeConfig).toHaveBeenCalledWith(
+        f.input.sandboxName,
+        expect.arrayContaining([
+          { dotpath: "agents.defaults.model.primary", value: "inference/custom-model" },
+        ]),
+        f.input.gatewayName,
+      );
+      await expect(
+        observeBlueprintCreatedInference(f.input, findBlueprintNativeReceipt(f.input)!, f.deps),
+      ).resolves.toContain("provider-id-1");
+      await f.resume();
+      expect(f.deps.writeConfig).toHaveBeenCalledTimes(1);
+      expect(f.adapter.createProvider).not.toHaveBeenCalled();
+      expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+      expect(f.input.createSandbox).not.toHaveBeenCalled();
+      expect(fs.readFileSync(f.file, "utf8")).not.toContain("test-host-secret");
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it.each<ResumeFaultCase>([
+    ["sandbox", (f) => f.replaceSandbox()],
+    ["provider", (f) => f.replaceProvider()],
+    [
+      "attachment",
+      (f) => {
+        vi.mocked(f.adapter.listProviderAttachments).mockResolvedValue({
+          ok: true,
+          value: { names: [] },
+        });
+      },
+    ],
+    [
+      "profile",
+      (f) => {
+        vi.mocked(f.adapter.inspectProviderProfile).mockResolvedValue({
+          ok: false,
+          error: { kind: "command", reason: "profile_incompatible", message: "changed" },
+        });
+      },
+    ],
+    [
+      "credential",
+      (f) => {
+        f.deps.readHandle.mockRejectedValue(new Error("credential handle unavailable"));
+      },
+    ],
+    [
+      "gateway",
+      (f) => {
+        f.resumeInput.revalidate.mockRejectedValue(new Error("gateway changed"));
+      },
+    ],
+    [
+      "receipt",
+      (f) => {
+        f.resumeInput.revalidate.mockImplementationOnce(async () => {
+          fs.writeFileSync(f.file, JSON.stringify({ ...f.plan, profile: "changed" }));
+        });
+      },
+    ],
+  ])("refuses changed %s authority before configuration", async (_kind, arrange) => {
+    const f = await interruptedRunFixture();
+    try {
+      arrange(f);
+      await expect(f.resume()).rejects.toThrow();
+      expect(f.deps.writeConfig).not.toHaveBeenCalled();
+      expect(
+        JSON.parse(fs.readFileSync(f.file, "utf8")).native_inference.configPublished,
+      ).toBeUndefined();
+      expect(f.adapter.createProvider).not.toHaveBeenCalled();
+      expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it.each<ResumeFaultCase>([
+    [
+      "missing sandbox",
+      (f) => {
+        fs.writeFileSync(
+          f.file,
+          JSON.stringify({
+            ...f.plan,
+            native_inference: { ...f.plan.native_inference, sandboxId: undefined },
+          }),
+        );
+      },
+    ],
+    [
+      "missing provider",
+      (f) => {
+        fs.writeFileSync(
+          f.file,
+          JSON.stringify({
+            ...f.plan,
+            native_inference: { ...f.plan.native_inference, providerAttachment: undefined },
+          }),
+        );
+      },
+    ],
+    [
+      "wrong run",
+      (f) => {
+        fs.writeFileSync(f.file, JSON.stringify({ ...f.plan, run_id: "another-run" }));
+      },
+    ],
+    [
+      "wrong gateway",
+      (f) => {
+        fs.writeFileSync(
+          f.file,
+          JSON.stringify({ ...f.plan, gateway: { ...f.plan.gateway, port: 9090 } }),
+        );
+      },
+    ],
+    [
+      "unowned",
+      (f) => {
+        fs.writeFileSync(f.file, JSON.stringify({ ...f.plan, sandbox_created_by_apply: false }));
+      },
+    ],
+    [
+      "corrupt",
+      (f) => {
+        fs.writeFileSync(f.file, "{");
+      },
+    ],
+    [
+      "symlink",
+      (f) => {
+        fs.renameSync(f.file, `${f.file}.original`);
+        fs.symlinkSync(`${f.file}.original`, f.file);
+      },
+    ],
+    [
+      "hardlink",
+      (f) => {
+        fs.linkSync(f.file, `${f.file}.link`);
+      },
+    ],
+    [
+      "rolled back",
+      (f) => {
+        fs.writeFileSync(path.join(f.directory, "rolled_back"), "done");
+      },
+    ],
+  ])("refuses %s receipt before any remote action", async (_kind, arrange) => {
+    const f = await interruptedRunFixture();
+    try {
+      arrange(f);
+      f.deps.capture.mockClear();
+      await expect(f.resume()).rejects.toThrow();
+      expect(f.deps.capture).not.toHaveBeenCalled();
+      expect(f.deps.writeConfig).not.toHaveBeenCalled();
+      expect(f.resumeInput.revalidate).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it.each<ResumeFaultCase>([
+    [
+      "write",
+      (f) => {
+        f.deps.writeConfig.mockImplementationOnce(() => {
+          throw new Error("write failed");
+        });
+      },
+    ],
+    [
+      "post-write identity",
+      (f) => {
+        f.deps.writeConfig.mockImplementationOnce(() => f.replaceSandbox());
+      },
+    ],
+    [
+      "receipt persistence",
+      () => {
+        vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+          throw new Error("rename failed");
+        });
+      },
+    ],
+  ])("preserves incomplete authority after %s fails", async (_kind, arrange) => {
+    const f = await interruptedRunFixture();
+    try {
+      arrange(f);
+      await expect(f.resume()).rejects.toThrow();
+      expect(JSON.parse(fs.readFileSync(f.file, "utf8"))).toEqual(f.plan);
+      expect(fs.readdirSync(f.directory)).toEqual(["plan.json"]);
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a replacement sandbox while the handle is being read", async () => {
+    const f = await interruptedRunFixture();
+    try {
+      f.deps.readHandle.mockImplementationOnce(async () => {
+        f.replaceSandbox();
+        return "openshell:resolve:env:v1_OPENAI_API_KEY";
+      });
+      await expect(f.resume()).rejects.toThrow("identity changed");
+      expect(f.deps.writeConfig).not.toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(f.file, "utf8"))).toEqual(f.plan);
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
 });
 
 function timeoutFixture() {
