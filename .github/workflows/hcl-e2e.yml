@@ -1,12 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# The HCL E2E cases that need a model, from a candidate this workflow builds on
+# Ubuntu 22.04, whose older glibc the GPU runner may need. CI / Bundle calls it
+# for the GPU cases on v1 pushes and manual runs; NVIDIA's GPU runners refuse
+# pull request jobs. Linux AMD64's E2E jobs run the hosted cases on every run.
 name: Live / HCL
 
 on:
+  workflow_call:
+    inputs:
+      hosted:
+        description: Also run the cases that use NVIDIA hosted inference.
+        type: boolean
+        default: true
   workflow_dispatch:
-  # Like Live / Brev, opt-in pushes also work before v1 becomes the default branch.
-  push:
-    branches: [run-hcl-e2e/**]
+    inputs:
+      hosted:
+        description: Also run the cases that use NVIDIA hosted inference.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -22,10 +34,8 @@ env:
 jobs:
   build:
     name: Build
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-hcl-e2e/')))
+    # The GPU runner and the inference secret exist only in this repository.
+    if: github.repository == 'NVIDIA/NemoClaw'
     # Like Live / Brev, build against the older glibc so every lane runner can run the executables.
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -62,32 +72,14 @@ jobs:
   e2e:
     name: ${{ matrix.case }}
     needs: build
-    # Runs only when the build ran, as on v1 dispatch or a run-hcl-e2e branch.
+    # Runs only when the build ran.
     if: needs.build.result == 'success'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - case: docker-openclaw-nvidia
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
-          - case: docker-openclaw-v0-parity
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
-          - case: docker-hermes-v0-parity
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
-          - case: docker-openclaw-vllm
-            # This NVIDIA GPU runner is already used by the main E2E workflow.
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
-            secret: ""
-          - case: docker-openclaw-vllm-shared
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
-            secret: ""
-          - case: docker-openclaw-hermes-ollama
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
-            secret: NVIDIA_API_KEY
-    runs-on: ${{ matrix.runner }}
+        case: ${{ fromJSON(inputs.hosted && '["docker-openclaw-nvidia", "docker-openclaw-v0-parity", "docker-hermes-v0-parity", "docker-openclaw-vllm", "docker-openclaw-vllm-shared", "docker-openclaw-hermes-ollama"]' || '["docker-openclaw-vllm", "docker-openclaw-vllm-shared", "docker-openclaw-hermes-ollama"]') }}
+    # The vLLM and Ollama cases need this NVIDIA GPU runner, which the main E2E workflow also uses.
+    runs-on: ${{ (contains(matrix.case, 'vllm') || contains(matrix.case, 'ollama')) && 'linux-amd64-gpu-rtxpro6000-latest-1' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     # These cases use fixed gateway ports; finish cleanup before another run starts.
     concurrency:
@@ -124,8 +116,8 @@ jobs:
         working-directory: crates/nemoclaw-e2e
         env:
           NEMOCLAW_HCL_RUN: ${{ runner.temp }}/hcl
-          # Only the hosted case receives the inference credential.
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets[matrix.secret] }}
+          # Only the cases that use hosted inference receive the credential.
+          NVIDIA_INFERENCE_API_KEY: ${{ !contains(matrix.case, 'vllm') && secrets.NVIDIA_API_KEY || '' }}
         run: '"$GITHUB_WORKSPACE/candidate/e2e" hcl_live::case --exact --ignored --nocapture'
       # A cancelled or timed-out job still runs this step; the test's process does not survive.
       - name: Destroy

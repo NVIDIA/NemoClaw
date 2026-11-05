@@ -7,7 +7,9 @@ use std::io::{Cursor, Write};
 
 #[test]
 fn unknown_steps_and_platforms_are_rejected_before_any_work() {
-    assert_eq!(Step::parse("lifecycle"), Some(Step::Lifecycle));
+    assert_eq!(Step::parse("contract"), Some(Step::Contract));
+    assert_eq!(Step::parse("integration"), Some(Step::Integration));
+    assert_eq!(Step::parse("lifecycle"), None);
     assert_eq!(Step::parse("python"), None);
     assert!(ci::nextest_target("plan9_amd64").is_err());
 }
@@ -400,10 +402,10 @@ fn timing_reports_show_wall_time_and_where_test_time_goes() {
     assert_eq!(run.tests[1].name, r#"deployment::quick & "quoted""#);
     assert!(run.tests[1].failed);
 
-    let report = run.report("lifecycle", 2);
+    let report = run.report("contract", 2);
     // The headline names the profile, its test count, wall time, and summed time.
     assert!(
-        report.contains("lifecycle: 4 tests, 12.5 s wall, 12.5 s summed"),
+        report.contains("contract: 4 tests, 12.5 s wall, 12.5 s summed"),
         "{report}"
     );
     // Groups are a binary and a test module, slowest first.
@@ -439,13 +441,13 @@ fn timing_reports_show_wall_time_and_where_test_time_goes() {
 #[test]
 fn budgets_name_each_step_over_its_wall_time_and_each_test_over_its_limit() {
     let budgets = ci::timing::Budgets::parse(
-        "lifecycle:\n  wall_seconds: 10\n  test_seconds: 5\ntest:\n  wall_seconds: 60\n  test_seconds: 2\n",
+        "contract:\n  wall_seconds: 10\n  test_seconds: 5\ntest:\n  wall_seconds: 60\n  test_seconds: 2\n",
     )
     .unwrap();
     let run = ci::timing::Run::parse(JUNIT).unwrap();
-    let lifecycle = budgets.get("lifecycle").unwrap();
+    let contract = budgets.get("contract").unwrap();
     assert_eq!(
-        run.over(lifecycle),
+        run.over(contract),
         [
             "12.5 s wall exceeds the 10 s budget".to_owned(),
             "nemoclaw-e2e::integration deployment::slow_scenario took 9.2 s; the limit is 5 s"
@@ -477,7 +479,7 @@ fn budgets_name_each_step_over_its_wall_time_and_each_test_over_its_limit() {
             step.name()
         );
     }
-    // Each provider's contract binary has a budget across the lifecycle suite.
+    // Each provider's contract binary has a budget across the contract suite.
     for binary in [
         "nemoclaw-provider::contract",
         "openshell-provider::contract",
@@ -592,9 +594,9 @@ fn each_nextest_profile_stops_a_test_near_its_per_test_limit() {
     }
 
     // The budgeted binaries are the providers' contract tests, which only the
-    // lifecycle profile runs.
-    let (lifecycle, _) = Step::Lifecycle.junit().unwrap();
-    let overrides: Vec<(&str, &toml::Value)> = profiles[lifecycle]
+    // contract profile runs.
+    let (profile, _) = Step::Contract.junit().unwrap();
+    let overrides: Vec<(&str, &toml::Value)> = profiles[profile]
         .get("overrides")
         .and_then(toml::Value::as_array)
         .into_iter()
@@ -609,10 +611,10 @@ fn each_nextest_profile_stops_a_test_near_its_per_test_limit() {
             .find(|(candidate, _)| *candidate == filter)
             .map(|(_, timeout)| *timeout)
             .unwrap_or_else(|| {
-                panic!("the {lifecycle} nextest profile has no slow-timeout override with filter {filter:?}")
+                panic!("the {profile} nextest profile has no slow-timeout override with filter {filter:?}")
             });
         assert_stops_near_limit(
-            &format!("the {lifecycle} nextest override for {binary}"),
+            &format!("the {profile} nextest override for {binary}"),
             timeout,
             binary,
             budget.test_seconds,
@@ -622,7 +624,7 @@ fn each_nextest_profile_stops_a_test_near_its_per_test_limit() {
     for (filter, _) in &overrides {
         assert!(
             budgeted.iter().any(|budgeted| budgeted == filter),
-            "the {lifecycle} nextest override with filter {filter:?} has no binary budget in .config/test-budgets.yaml"
+            "the {profile} nextest override with filter {filter:?} has no binary budget in .config/test-budgets.yaml"
         );
     }
 }
@@ -656,29 +658,34 @@ fn a_partitioned_suite_is_reported_whole_from_the_latest_attempt_of_each_partiti
     let directory = tempfile::tempdir().unwrap();
     for (artifact, xml) in [
         // Shard 1 was rerun: its second attempt replaces the first.
-        ("lifecycle-linux_amd64-1-1", JUNIT),
-        ("lifecycle-linux_amd64-1-2", RERUN_JUNIT),
-        ("lifecycle-linux_amd64-2-1", JUNIT),
+        ("contract-linux_amd64-1-1", JUNIT),
+        ("contract-linux_amd64-1-2", RERUN_JUNIT),
+        ("contract-linux_amd64-2-1", JUNIT),
         // Other platforms and artifacts are not this suite's partitions.
-        ("lifecycle-linux_arm64-3-1", JUNIT),
+        ("contract-linux_arm64-3-1", JUNIT),
         ("lifecycle-inputs-linux_amd64-abc-1", JUNIT),
     ] {
         let artifact = directory.path().join(artifact);
         std::fs::create_dir(&artifact).unwrap();
-        std::fs::write(artifact.join("lifecycle.xml"), xml).unwrap();
+        std::fs::write(artifact.join("contract.xml"), xml).unwrap();
     }
 
     let budgets =
-        ci::timing::Budgets::parse("lifecycle:\n  wall_seconds: 300\n  test_seconds: 90\n")
-            .unwrap();
-    let report =
-        ci::timing::partitioned_report(directory.path(), "linux_amd64", &[1, 2, 3], 3, &budgets)
-            .unwrap()
-            .report;
+        ci::timing::Budgets::parse("contract:\n  wall_seconds: 300\n  test_seconds: 90\n").unwrap();
+    let report = ci::timing::partitioned_report(
+        Step::Contract,
+        directory.path(),
+        "linux_amd64",
+        &[1, 2, 3],
+        3,
+        &budgets,
+    )
+    .unwrap()
+    .report;
     // Partitions run in parallel, so the suite's wall time is its slowest partition's.
     assert!(
         report.contains(
-            "### lifecycle on linux_amd64, 3 partitions: 5 tests, 12.5 s wall, 15.0 s summed"
+            "### contract on linux_amd64, 3 partitions: 5 tests, 12.5 s wall, 15.0 s summed"
         ),
         "{report}"
     );
@@ -701,14 +708,21 @@ fn a_partitioned_suite_is_reported_whole_from_the_latest_attempt_of_each_partiti
     std::fs::write(
         directory
             .path()
-            .join("lifecycle-linux_amd64-2-1/lifecycle.xml"),
+            .join("contract-linux_amd64-2-1/contract.xml"),
         "<testsuites>",
     )
     .unwrap();
     assert!(
-        ci::timing::partitioned_report(directory.path(), "linux_amd64", &[1, 2], 3, &budgets)
-            .unwrap_err()
-            .contains("lifecycle-linux_amd64-2-1")
+        ci::timing::partitioned_report(
+            Step::Contract,
+            directory.path(),
+            "linux_amd64",
+            &[1, 2],
+            3,
+            &budgets
+        )
+        .unwrap_err()
+        .contains("contract-linux_amd64-2-1")
     );
 }
 
@@ -737,11 +751,11 @@ const CONTRACT_JUNIT_2: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 #[test]
 fn binary_budgets_bound_each_binary_summed_across_partitions_and_each_of_its_tests() {
     let budgets = ci::timing::Budgets::parse(
-        "lifecycle:\n  wall_seconds: 300\n  test_seconds: 90\nbinaries:\n  nemoclaw-provider::contract:\n    summed_seconds: 10\n    test_seconds: 6\n  openshell-provider::contract:\n    summed_seconds: 10\n    test_seconds: 1\n  fabric-provider::contract:\n    summed_seconds: 30\n    test_seconds: 20\n",
+        "contract:\n  wall_seconds: 300\n  test_seconds: 90\nbinaries:\n  nemoclaw-provider::contract:\n    summed_seconds: 10\n    test_seconds: 6\n  openshell-provider::contract:\n    summed_seconds: 10\n    test_seconds: 1\n  fabric-provider::contract:\n    summed_seconds: 30\n    test_seconds: 20\n",
     )
     .unwrap();
     // Binary budgets sit beside the step budgets without becoming a step.
-    assert_eq!(budgets.get("lifecycle").unwrap().wall_seconds, 300);
+    assert_eq!(budgets.get("contract").unwrap().wall_seconds, 300);
     assert!(budgets.get("binaries").is_none());
     assert!(
         ci::timing::Budgets::parse(
@@ -752,16 +766,22 @@ fn binary_budgets_bound_each_binary_summed_across_partitions_and_each_of_its_tes
 
     let directory = tempfile::tempdir().unwrap();
     for (artifact, xml) in [
-        ("lifecycle-linux_amd64-1-1", CONTRACT_JUNIT_1),
-        ("lifecycle-linux_amd64-2-1", CONTRACT_JUNIT_2),
+        ("contract-linux_amd64-1-1", CONTRACT_JUNIT_1),
+        ("contract-linux_amd64-2-1", CONTRACT_JUNIT_2),
     ] {
         let artifact = directory.path().join(artifact);
         std::fs::create_dir(&artifact).unwrap();
-        std::fs::write(artifact.join("lifecycle.xml"), xml).unwrap();
+        std::fs::write(artifact.join("contract.xml"), xml).unwrap();
     }
-    let timing =
-        ci::timing::partitioned_report(directory.path(), "linux_amd64", &[1, 2], 3, &budgets)
-            .unwrap();
+    let timing = ci::timing::partitioned_report(
+        Step::Contract,
+        directory.path(),
+        "linux_amd64",
+        &[1, 2],
+        3,
+        &budgets,
+    )
+    .unwrap();
     // A binary's tests count wherever its partitions ran them; a test exactly
     // at its limit is within it.
     assert_eq!(
@@ -787,11 +807,16 @@ fn binary_budgets_bound_each_binary_summed_across_partitions_and_each_of_its_tes
     );
     // Without binary budgets, the report has no budget table and nothing is over.
     let unbudgeted =
-        ci::timing::Budgets::parse("lifecycle:\n  wall_seconds: 300\n  test_seconds: 90\n")
-            .unwrap();
-    let timing =
-        ci::timing::partitioned_report(directory.path(), "linux_amd64", &[1, 2], 3, &unbudgeted)
-            .unwrap();
+        ci::timing::Budgets::parse("contract:\n  wall_seconds: 300\n  test_seconds: 90\n").unwrap();
+    let timing = ci::timing::partitioned_report(
+        Step::Contract,
+        directory.path(),
+        "linux_amd64",
+        &[1, 2],
+        3,
+        &unbudgeted,
+    )
+    .unwrap();
     assert!(timing.over.is_empty());
     assert!(
         !timing

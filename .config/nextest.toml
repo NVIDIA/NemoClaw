@@ -25,51 +25,64 @@ path = "test.xml"
 filter = 'binary_id(=nemoclaw-build::integration)'
 test-group = "build-integration"
 
-[profile.lifecycle]
+# Contract tests: each provider type through the bundle's OpenTofu, against
+# fakes. Live tests stay opt-in.
+[profile.contract]
 inherits = "ci"
 test-threads = 4
-slow-timeout = { period = "90s", terminate-after = 2 }
-# These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
-# nemoclaw-e2e's integration binary holds only local-fixture tests, so the
-# profile selects it whole; its live tests are in the e2e binary.
-# Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
-# executables beside the extracted tests: the relay, which fake engines need on
-# platforms without Unix sockets, and the SSH simulator. The fixture provider's
-# ignored test does the same for the provider protocol tests.
+slow-timeout = { period = "16s", terminate-after = 2 }
 default-filter = '''
-((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
-| (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
-| (package(nemoclaw-fixture-provider) & binary(=archive))
-| (package(nemoclaw-e2e) & binary(=integration))
+(package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract)
 '''
 
-[profile.lifecycle.junit]
-path = "lifecycle.xml"
+[profile.contract.junit]
+path = "contract.xml"
 
 # Each provider's contract tests have their own per-test limit in
 # .config/test-budgets.yaml; stop them at twice it, like the profile's other
 # tests.
-[[profile.lifecycle.overrides]]
+[[profile.contract.overrides]]
 filter = 'binary_id(=fabric-provider::contract)'
 slow-timeout = { period = "16s", terminate-after = 2 }
 
-[[profile.lifecycle.overrides]]
+[[profile.contract.overrides]]
 filter = 'binary_id(=nemoclaw-provider::contract)'
 slow-timeout = { period = "12s", terminate-after = 2 }
 
-[[profile.lifecycle.overrides]]
+[[profile.contract.overrides]]
 filter = 'binary_id(=openshell-provider::contract)'
 slow-timeout = { period = "12s", terminate-after = 2 }
 
 # This test applies each generated fixture shape side by side, so it runs
 # alone instead of slowing the partition's other tests.
-[[profile.lifecycle.overrides]]
+[[profile.contract.overrides]]
 filter = 'binary_id(=openshell-provider::contract) & test(=each_generated_fixture_shape_reads_back_unchanged)'
 threads-required = "num-test-threads"
 
+# Integration tests: the SDK-compiled graph, and the SDK and CLI over a
+# bundle, against local fixtures that own temporary state and loopback
+# endpoints. nemoclaw-e2e's integration binary holds only these, so the profile
+# selects it whole; its live tests are in the e2e binary.
+# Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
+# executables beside the extracted tests: the relay, which fake engines need on
+# platforms without Unix sockets, and the SSH simulator. The fixture provider's
+# ignored test does the same for the provider protocol tests. Contract tests
+# run from the same archive.
+[profile.integration]
+inherits = "ci"
+test-threads = 4
+slow-timeout = { period = "90s", terminate-after = 2 }
+default-filter = '''
+(package(nemoclaw-test-fixtures) & binary(=ssh_relay))
+| (package(nemoclaw-fixture-provider) & binary(=archive))
+| (package(nemoclaw-e2e) & binary(=integration))
+'''
+
+[profile.integration.junit]
+path = "integration.xml"
 
 # The tofu test integration shards share one fixed engine socket.
-[[profile.lifecycle.overrides]]
+[[profile.integration.overrides]]
 filter = 'test(/^hcl_integration::/)'
 test-group = "hcl-integration"
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the

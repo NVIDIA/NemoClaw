@@ -280,7 +280,7 @@ fn suite(id: &str) -> String {
 #[test]
 fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
     let fixture = Fixture::new();
-    let output = fixture.run(&["lifecycle", "--partition", "hash:1/2"]);
+    let output = fixture.run(&["integration", "--partition", "hash:1/2"]);
     assert!(
         output.status.success(),
         "{}",
@@ -289,7 +289,7 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
     let args = fixture.arguments();
     assert!(args.contains("--partition\nhash:1/2\n"), "{args}");
     assert!(
-        args.contains("--profile\nlifecycle\n--run-ignored\nonly\n"),
+        args.contains("--profile\nintegration\n--run-ignored\nonly\n"),
         "{args}"
     );
     // The bundle supplies OpenTofu and the providers; each provider's own
@@ -306,7 +306,7 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
 fn archived_lifecycle_uses_the_checkout_without_building_again() {
     let fixture = Fixture::new();
     let output = fixture.run(&[
-        "lifecycle",
+        "integration",
         "--partition",
         "hash:2/2",
         "--archive-file",
@@ -332,7 +332,7 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
         "{args}"
     );
     assert!(
-        args.contains("--profile\nlifecycle\n--run-ignored\nonly\n"),
+        args.contains("--profile\nintegration\n--run-ignored\nonly\n"),
         "{args}"
     );
     assert!(args.contains("--partition\nhash:2/2\n"), "{args}");
@@ -346,11 +346,11 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
 
 #[test]
 fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
-    let partition = "--partition requires ci lifecycle";
-    let archive = "--archive-file requires ci lifecycle, live-docker, or live-kind";
+    let partition = "--partition requires ci contract or integration";
+    let archive = "--archive-file requires ci contract, integration, live-docker, or live-kind";
     let images = "--images requires ci live-docker or live-kind";
     for (args, expected) in [
-        (vec!["lifecycle", "--images", "images.tar.zst"], images),
+        (vec!["integration", "--images", "images.tar.zst"], images),
         (vec!["--images", "images.tar.zst"], images),
         (vec!["--partition", "hash:1/2"], partition),
         (vec!["test", "--partition", "hash:1/2"], partition),
@@ -665,7 +665,7 @@ fn archive_rejects_an_empty_lifecycle_selection_instead_of_publishing_no_tests()
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains("no lifecycle test binaries were selected"),
+        error.contains("no contract or integration test binaries were selected"),
         "{error}"
     );
     assert!(
@@ -681,20 +681,20 @@ fn archive_rejects_an_empty_lifecycle_selection_instead_of_publishing_no_tests()
 fn a_failed_lifecycle_partition_fails_ci() {
     let fixture = Fixture::new();
     let output = fixture
-        .command(&["lifecycle", "--partition", "hash:1/2"])
+        .command(&["integration", "--partition", "hash:1/2"])
         .env("CARGO_RESULT", "42")
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("CI step lifecycle failed"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("CI step integration failed"));
 }
 
 #[test]
 fn local_lifecycle_uses_available_cpus_up_to_eight_workers() {
     let available = std::thread::available_parallelism().map_or(4, usize::from);
     for args in [
-        vec!["lifecycle"],
-        vec!["lifecycle", "--archive-file", "tests.tar.zst"],
+        vec!["integration"],
+        vec!["integration", "--archive-file", "tests.tar.zst"],
     ] {
         let fixture = Fixture::new();
         let output = fixture
@@ -735,7 +735,7 @@ fn lifecycle_preserves_ci_profiles_and_explicit_worker_overrides() {
         (Some("true"), None, Some("2")),
     ] {
         let fixture = Fixture::new();
-        let mut command = fixture.command(&["lifecycle"]);
+        let mut command = fixture.command(&["integration"]);
         for (name, value) in [
             ("CI", ci),
             ("GITHUB_ACTIONS", github),
@@ -814,7 +814,7 @@ fn live_images_commit_is_a_full_commit_for_the_live_steps_only() {
     let commit = "0123456789abcdef0123456789abcdef01234567";
     for (args, message) in [
         (
-            vec!["lifecycle", "--images-commit", commit],
+            vec!["integration", "--images-commit", commit],
             "--images-commit requires ci live-docker or live-kind",
         ),
         (

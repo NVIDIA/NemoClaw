@@ -97,7 +97,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-Before accepting an OpenShell, Fabric, or agent image upgrade, run the hosted cases against the candidate.
+CI / Bundle runs the hosted cases from Linux AMD64's test archive, bundle, and live images whenever it runs the live suites, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
