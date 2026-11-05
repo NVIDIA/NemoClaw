@@ -5,7 +5,7 @@
 # agents on the Live / HCL NVIDIA GPU runner. It is
 # docker-vllm-shared-two-agents with this runner's hardware profile, the
 # candidate image, and OpenClaw for both agents: Qwen3-4B's 40,960-token
-# window cannot serve Hermes, which needs at least 64,000 (docs/inference.md).
+# window cannot serve Hermes, which needs at least 64,000 (docs/agents-inference/inference.md).
 # docker-openclaw-hermes-ollama covers Hermes on a managed model.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig

@@ -13,7 +13,7 @@ After apply, one headless request through Fabric's public invocation returns a r
 
 ## How to get to it (user POV)
 
-- `openshell sandbox exec` with `fabric-agent-ctl invoke`, as [Invoke an Agent](../../../../docs/interfaces.md#invoke-an-agent) and [Run One Request](../../../../docs/agents.md#run-one-deep-agents-or-pi-request) document; the [OpenClaw example](../../../../docs/agents.md#run-one-headless-openclaw-request) reads the runtime ID the same way.
+- `openshell sandbox exec` with `fabric-agent-ctl invoke`, as [Invoke an Agent](../../../../docs/agents-inference/interfaces.md#invoke-an-agent) and [Run One Request](../../../../docs/agents-inference/agents.md#run-one-deep-agents-or-pi-request) document; the [OpenClaw example](../../../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) reads the runtime ID the same way.
 - The agent's native interfaces, where the agent file lists a feature for them; apply lists them under **Agent interfaces**.
 
 ## Driving it with the nemoclaw and OpenShell CLIs
@@ -43,6 +43,6 @@ Preconditions: the launch applied, and the doctor passes.
 
 - `openshell sandbox exec` needs the doctor's `OPENSHELL_GATEWAY_ENDPOINT` and `OPENSHELL_WORKSPACE`; without them it targets another gateway or fails.
 - With an existing endpoint, the route's `overrides.model` must match a name the server lists in `/models`; a wrong name plans and applies cleanly and fails only at the first request. With a managed service, plan rejects it.
-- `invoke` with a runtime ID from before a replacement or restart fails with `runtime_unavailable`; read the ID from state again. If the current ID fails the same way, plan should list the agent as not running, and apply restarts it in the same sandbox. Don't replace the sandbox without the user: [replacement](../../../../docs/usage.md#replace-workloads-after-an-unusable-runtime) deletes its files.
+- `invoke` with a runtime ID from before a replacement or restart fails with `runtime_unavailable`; read the ID from state again. If the current ID fails the same way, plan should list the agent as not running, and apply restarts it in the same sandbox. Don't replace the sandbox without the user: [replacement](../../../../docs/build-deploy/usage.md#replace-workloads-after-an-unusable-runtime) deletes its files.
 - Don't assume a universal result shape: the agent file names where its reply appears.
 - A bundle built before a schema change rejects newer fields during plan; rebuild with `cargo ci bundle`.
