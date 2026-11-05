@@ -79,8 +79,10 @@ The wizard checks `ollama --version` and `/api/version` on port `11434` independ
 If NemoClaw detects an installed CLI or local running daemon but cannot read its version, onboarding uses the upgrade path instead of reusing it.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.
-On Linux, the wizard downloads a pinned snapshot of the official Ollama installer and verifies its SHA-256 digest before execution.
-If the download cannot be verified, onboarding stops without running it.
+On Linux, the system install path downloads a pinned snapshot of the official Ollama installer from `raw.githubusercontent.com` and verifies its SHA-256 digest before execution.
+That installer then downloads the release tarball from `ollama.com`; the sudo-free user-local path downloads the tarball from `ollama.com` directly.
+If the pinned installer download fails, onboarding stops without running it and reports the URL, host, curl error, and recovery steps.
+If its digest does not match, onboarding also stops without running it.
 When the installed binary is stale, the verified installer asks for `0.32.9` by name because the version it calls latest is below the minimum on some hosts.
 If the installed binary is already at or above the minimum and only the daemon is stale, the wizard restarts the daemon without running the installer or replacing the newer binary.
 Linux upgrades use the sudo-driven system path because a user-local fallback would leave an existing system daemon serving the stale binary.
