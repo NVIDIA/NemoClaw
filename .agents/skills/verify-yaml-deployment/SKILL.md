@@ -113,13 +113,17 @@ cp "$EXAMPLE" "$RUN_DIR/deployment.yaml"
 4. The inference source's edits from the target file, such as replacing `services` and `inferenceProviders`.
 5. The agent file's edits, such as `serviceExposures` and `harness.settings`.
 
-Edit the file by hand or with the target file's snippet; keep the sandbox name `assistant`.
-Then check that it parses and save it:
+Edit the file by hand, as a configuration author does; keep the sandbox name `assistant`.
+Then save it and the edits, and check the UID:
 
 ```sh
 cp "$RUN_DIR/deployment.yaml" "$EVIDENCE/deployment.yaml"
+diff -u "$EXAMPLE" "$RUN_DIR/deployment.yaml" > "$EVIDENCE/yaml-edits.diff"
 grep -c "$UID_" "$RUN_DIR/deployment.yaml"
 ```
+
+Result: `yaml-edits.diff` shows only the listed edits, and the count is `1`.
+Plan reports any field the edits broke.
 
 Starting from the example keeps the run honest: a changed example changes what the skill tests.
 Never copy a secret value into the YAML; credentials are environment references.
