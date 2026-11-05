@@ -6,7 +6,7 @@
 ## Baseline Preconditions
 
 - The [launch](../SKILL.md#launch) completed for this run, including the Fabric-boundary YAML edits, the seeded caller volumes, and `bindings.md`, and the [doctor](../SKILL.md#doctor) passes.
-- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 136 rows, or 131 for `deepagents-code`.
+- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 138 rows for `hermes`, 136 for `openclaw`, or 131 for `deepagents-code`.
 - The inference source the target file chose answers its `/models` request.
 - The OpenShell CLI matching `versions.json` on `PATH`, with `OPENSHELL_GATEWAY_ENDPOINT` and `OPENSHELL_WORKSPACE` set by the doctor.
 - `jq`, `curl`, and `openssl` on the host.
@@ -121,13 +121,13 @@ Each check gets one of three outcomes:
 
 ## Lifecycle Phases
 
-Phases run in this order, once each. A transition phase holds one lifecycle check; the phase after it re-runs the checks that list it.
+Phases run in this order, once each. A transition phase holds one lifecycle check, plus the Hermes TUI stop check at Runtime restart; the phase after it runs the checks that list it.
 
 | Phase | Directory | What happens | Checks (`hermes`, `openclaw` / `deepagents-code`) |
 |---|---|---|---|
 | Initial | `initial` | First apply; first-start discovery, then inference, then every feature's first checks, including authoring, install, activation, and use; unchanged plan/apply for `agent-plugin-reconcile` | 33 / 32 |
-| Runtime restart | `runtime-restart` | Stop only the managed Fabric runtime through supported control, then unchanged plan/apply; the same sandbox gets a new usable runtime | 1 |
-| After runtime restart | `after-runtime-restart` | Re-run the mounted script, skill, extension, and agent-plugin reuse checks | 9 |
+| Runtime restart | `runtime-restart` | Stop only the managed Fabric runtime through supported control, with the Hermes TUI open and owned work in flight; then unchanged plan/apply gives the same sandbox a new usable runtime | 2 for Hermes; 1 for others |
+| After runtime restart | `after-runtime-restart` | Re-run the mounted script, skill, extension, and agent-plugin reuse checks; for Hermes, verify native TUI recovery and explicit conversation resume | 10 for Hermes; 9 for others |
 | Stop/start | `stop-start` | Stop and start the same sandbox through OpenShell's supported commands, confirming the stopped state and lost access, then unchanged plan/apply | 1 |
 | After stop/start | `after-stop-start` | Re-run every check that lists this phase | 22 / 21 |
 | Recreate | `recreate` | Preview and destroy the deployment, keeping state and caller volumes, then plan/apply the baseline YAML; a new sandbox replaces the old one | 1 |
@@ -143,7 +143,7 @@ After config change, the feature files expect these results; the change disables
 | Feature | Expected after config change |
 |---|---|
 | [invoke-and-tools](invoke-and-tools.md) | `shell-success`, `shell-failure`, `mounted-supplied-script`, and `mounted-generated-script` expect rejection with no other execution path, by its step 9's criteria; `inference`, `file-read`, and `file-write` expect the same results as the other phases: the change keeps file access |
-| [native-interfaces](native-interfaces.md) | Both checks expect the same results: the turns use no shell, and the file-write tool stays available |
+| [native-interfaces](native-interfaces.md) | `tui` and `web-ui` expect the same results: the turns use no shell, and the file-write tool stays available |
 | [skills](skills.md) | Every check expects the same results, since skills use file tools; a skill check that fails only because the shell is gone is Failed: the change removed more than the shell |
 | [plugins](plugins.md) | Every check expects the same results, since plugin effects don't use the shell; record any actual dependency on the shell in a finding instead of bypassing the restriction |
 | [mounted-extensions](mounted-extensions.md) | Every check expects the same results, since they use file tools and native tools; record any actual dependency on the shell in a finding instead of bypassing the restriction |
@@ -156,7 +156,7 @@ After config change, the feature files expect these results; the change disables
 | File | Sub-feature IDs | Feature |
 |---|---|---|
 | [invoke-and-tools.md](invoke-and-tools.md) | `inference`, `file-read`, `file-write`, `shell-success`, `shell-failure`, `mounted-supplied-script`, `mounted-generated-script` | The agent answers through Fabric and uses its native file and shell tools on mounted scripts |
-| [native-interfaces.md](native-interfaces.md) | `tui`, `web-ui` | The agent's native terminal UI and web UI, with a file effect and a reconnect |
+| [native-interfaces.md](native-interfaces.md) | `tui`, `web-ui`, `hermes-tui-stop`, `hermes-tui-recovery` | Native interfaces with a file effect and reconnect; Hermes managed TUI shutdown, owned-work cancellation, and explicit resume after recovery |
 | [skills.md](skills.md) | `skill-discovery`, `skill-execution`, `mounted-skill-yaml`, `mounted-skill-first-start`, `mounted-supplied-skill`, `generated-skill`, `mounted-generated-skill`, `mounted-generated-skill-save` | Supplied skills load from the mounted directory, and a skill the agent creates is saved there and found again |
 | [plugins.md](plugins.md) | `plugin-load`, `plugin-hooks`, `agent-plugin-author`, `agent-plugin-install`, `agent-plugin-activate`, `agent-plugin-reuse`, `agent-plugin-reconcile` | Bundled plugins load and fire hooks, and a plugin the agent writes and installs stays active |
 | [mounted-extensions.md](mounted-extensions.md) | `mounted-native-tool-yaml`, `mounted-native-tool-first-start`, `mounted-plugin-yaml`, `mounted-plugin-first-start`, `mounted-supplied-native-tool`, `mounted-generated-native-tool`, `mounted-supplied-plugin`, `mounted-generated-plugin` | Native tools and plugins on the mounted workspace, supplied or agent-written, register and run |
@@ -170,5 +170,6 @@ In the Initial phase, run the checks in this order:
 4. `retention`.
 
 For `deepagents-code`, `web-ui` is out of this skill's scope; the check log omits it.
+For agents other than `hermes`, the check log also omits `hermes-tui-stop` and `hermes-tui-recovery`.
 
 Each Sub-feature line ends with `Phases:` and its comma-separated phase names, as the [check log](../SKILL.md#evidence) reads them.
