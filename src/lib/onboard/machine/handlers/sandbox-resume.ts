@@ -25,6 +25,7 @@ import { validateResourceValue } from "../../../resources-cmd";
 export {
   assertHermesSwitchyardRoutingReusable,
   hermesSwitchyardRoutingCreateIntentFields,
+  verifyHermesSwitchyardReuseBindings,
 } from "../../sandbox-reuse";
 
 /** Reuse the native attachment lifecycle while fencing each CLI command against sandbox replacement. */

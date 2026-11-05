@@ -59,3 +59,46 @@ it("retains binding observations across reservation reload and rejects malformed
     vi.unstubAllEnvs();
   }
 });
+
+it.each(["gpt-5", "another-model"])(
+  "rejects a binding-free reservation for a routed sandbox selecting %s (#13863)",
+  async (model) => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-switchyard-reservation-"));
+    vi.stubEnv("HOME", testHome);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const routing = createHermesSwitchyardRoutingIntent({
+        efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+        capable: { provider: "openai-api", model: "gpt-5" },
+      });
+      const route = {
+        provider: routing.capable.provider,
+        model: routing.capable.model,
+        endpointUrl: "https://api.openai.com/v1",
+        endpointSource: "onboard" as const,
+        credentialEnv: "OPENAI_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "test-gateway",
+      };
+      registry.registerSandbox({
+        name: "routed",
+        agent: "hermes",
+        ...route,
+        hermesSwitchyard: { routing, bindings: switchyardBindingFixture(routing) },
+      });
+      const before = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+      expect(() =>
+        registry.reserveSandboxInferenceRoute("routed", {
+          ...route,
+          model,
+          reservationSessionId: "resume-session",
+        }),
+      ).toThrow("recorded Switchyard provider bindings");
+      expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(before);
+    } finally {
+      await fs.rm(testHome, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

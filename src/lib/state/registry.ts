@@ -790,6 +790,11 @@ export function reserveSandboxInferenceRoute(
       }
       return true;
     }
+    if (existing?.hermesSwitchyard && !hermesSwitchyard) {
+      throw new Error(
+        `Cannot reserve sandbox '${name}' without its recorded Switchyard provider bindings. Resume with --switchyard-config.`,
+      );
+    }
     const existingForReservation: SandboxEntry = existing
       ? { ...existing }
       : { name, pendingRouteReservation: true };

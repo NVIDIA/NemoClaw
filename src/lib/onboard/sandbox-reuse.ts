@@ -4,6 +4,10 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
+import { verifySwitchyardProviderBindings } from "./switchyard/bindings";
 import {
   readHermesSwitchyardRoutingEnvironment,
   type SwitchyardBindingState,
@@ -64,6 +68,43 @@ export function hermesSwitchyardRoutingCreateIntentFields(
 ) {
   const routing = agentName === "hermes" ? readHermesSwitchyardRoutingEnvironment(env) : null;
   return routing ? { switchyardRouting: routing } : {};
+}
+
+/** Verify recorded providers and attachments before a Ready Hermes sandbox is reused. */
+export async function verifyHermesSwitchyardReuseBindings(input: {
+  agentName: string | null | undefined;
+  sandboxName: string | null;
+  gatewayName: string;
+  entry: SandboxEntry | null | undefined;
+  env: NodeJS.ProcessEnv;
+  adapter?: OpenShellProviderAdapter;
+  revalidateSandboxIdentity?: (operation: string) => void;
+}): Promise<void> {
+  if (input.agentName !== "hermes") return;
+  const routing = readHermesSwitchyardRoutingEnvironment(input.env);
+  const state = input.entry?.hermesSwitchyard;
+  if (!routing && !state) return;
+  if (!input.sandboxName || !state || !isDeepStrictEqual(state.routing, routing))
+    throw new Error("Switchyard sandbox reuse requires its selected provider binding receipts.");
+  const revalidate = () => input.revalidateSandboxIdentity?.("verify Switchyard sandbox reuse");
+  revalidate();
+  const adapter =
+    input.adapter ??
+    createManagedProviderAdapter((args, options) => {
+      revalidate();
+      return runOpenshellProviderCommand(args, options);
+    });
+  await verifySwitchyardProviderBindings({
+    routing: state.routing,
+    expected: state.bindings,
+    sandboxName: input.sandboxName,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    adapter,
+    providerNames: Object.fromEntries(
+      state.bindings.providers.map((provider) => [provider.logicalProvider, provider.providerName]),
+    ),
+  });
+  revalidate();
 }
 
 /** Require explicit recreation before changing an existing sandbox's routing files. */
@@ -171,6 +212,7 @@ export interface ReusedSandboxDashboardStateInput {
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayName: string;
   gatewayPort: number;
+  switchyardProviderAdapter?: OpenShellProviderAdapter;
   manageDashboard?: boolean;
   getSandbox?(sandboxName: string): SandboxEntry | null;
   ensureDashboardForward(
@@ -317,12 +359,19 @@ export async function applyReusedSandboxDashboardState(
 export async function restoreReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput & { releaseDashboardPort(): Promise<void> },
 ): Promise<ReusedSandboxDashboardStateResult> {
+  const entry = (input.getSandbox ?? registry.getSandbox)(input.sandboxName);
   assertHermesSwitchyardRoutingReusable({
     agentName: input.agent?.name,
-    entry: (input.getSandbox ?? registry.getSandbox)(input.sandboxName),
+    entry,
     env: input.env,
     recreate: false,
     sandboxState: "ready",
+  });
+  await verifyHermesSwitchyardReuseBindings({
+    ...input,
+    agentName: input.agent?.name,
+    entry,
+    adapter: input.switchyardProviderAdapter,
   });
   await input.releaseDashboardPort();
   const reusesRegisteredPort = canReuseDashboardForwardForAgent(input.agent);
