@@ -4,6 +4,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
@@ -446,6 +447,18 @@ function reportInspectionFailure(args: string[], interrupted: boolean, status?: 
 function child(args: string[], timeout: number, inspect: boolean, input?: string): string {
   const env = { ...process.env };
   delete env.VITEST;
+  // The pinned bridge launchers otherwise select the same root-owned /tmp cache
+  // as the target runtime. Supply a writable base without altering bridge code,
+  // its version namespace, explicit overrides, or the native disable switch.
+  if (
+    env.OPENSHELL_SANDBOX === "1" &&
+    typeof process.getuid === "function" &&
+    process.getuid() !== 0 &&
+    env.NODE_COMPILE_CACHE === undefined &&
+    env.NODE_DISABLE_COMPILE_CACHE === undefined
+  ) {
+    env.NODE_COMPILE_CACHE = path.join(os.homedir(), ".cache", "nemoclaw-node-compile-cache");
+  }
   const result = spawnSync(process.execPath, args, {
     encoding: "utf8",
     timeout,

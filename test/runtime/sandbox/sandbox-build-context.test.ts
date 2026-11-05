@@ -291,6 +291,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "patch-openclaw-container-restart.mts"));
     writeFixture(path.join("scripts", "lib", "patch-openclaw-worker-proxy.mts"));
     for (const name of [
+      "patch-openclaw-node-compile-cache.mts",
       "verify-openclaw-official-plugin.mts",
       "patch-bundled-npm-undici.mts",
       "remediate-openclaw-runtime-dependencies.mts",
@@ -586,6 +587,7 @@ describe("sandbox build context staging", () => {
     const stagedScripts = path.join(buildCtx, "scripts");
     const stagedLib = path.join(stagedScripts, "lib");
     for (const name of [
+      "patch-openclaw-node-compile-cache.mts",
       "verify-openclaw-official-plugin.mts",
       "patch-bundled-npm-undici.mts",
       "remediate-openclaw-runtime-dependencies.mts",

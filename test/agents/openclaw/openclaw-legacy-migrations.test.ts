@@ -426,7 +426,7 @@ function fixture(
       const version=${JSON.stringify(version)};
       if(version==='2026.9.7'&&process.env.FIXTURE_SCENARIO==='empty-thread'&&fs.existsSync(process.env.OPENCLAW_STATE_DIR+'/telegram/thread-bindings-default.json'))process.exit(1);
       const prior=fs.existsSync(process.env.FIXTURE_CALLS)?fs.readFileSync(process.env.FIXTURE_CALLS,'utf8').trim().split('\\n').filter(Boolean):[];
-      fs.appendFileSync(process.env.FIXTURE_CALLS,JSON.stringify({version,args:process.argv.slice(2)})+'\\n');
+      fs.appendFileSync(process.env.FIXTURE_CALLS,JSON.stringify({version,args:process.argv.slice(2),cache:process.env.NODE_COMPILE_CACHE,disabled:process.env.NODE_DISABLE_COMPILE_CACHE})+'\\n');
       const config=JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH,'utf8'));
       config.meta.lastTouchedVersion=process.env.FIXTURE_SCENARIO==='changed-during-pass'?'2026.10.5':version;
       fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH,JSON.stringify(config));
@@ -440,6 +440,7 @@ function fixture(
     migrationRoot,
     configPath,
     before,
+    home,
     calls: () =>
       fs.existsSync(calls)
         ? fs
@@ -456,7 +457,7 @@ function fixture(
             .split("\n")
             .map((line) => JSON.parse(line))
         : [],
-    run: () =>
+    run: (env: NodeJS.ProcessEnv = {}) =>
       spawnSync(process.execPath, [script, "--run", target, migrationRoot], {
         encoding: "utf8",
         timeout: 15_000,
@@ -471,12 +472,48 @@ function fixture(
           FIXTURE_STATE_SCHEMA: String(options.stateSchema ?? 15),
           FIXTURE_AGENT_SCHEMA: String(options.agentSchema ?? 20),
           FIXTURE_SCENARIO: options.scenario ?? "",
+          ...env,
         },
       }),
   };
 }
 
 describe("OpenClaw intermediate restore migrations", () => {
+  it.each([
+    { OPENSHELL_SANDBOX: "1" },
+    { OPENSHELL_SANDBOX: "0" },
+    { OPENSHELL_SANDBOX: "1", NODE_COMPILE_CACHE: "/explicit-cache" },
+    { OPENSHELL_SANDBOX: "1", NODE_DISABLE_COMPILE_CACHE: "1" },
+  ])("preserves native bridge cache policy with environment %j", (env) => {
+    const proof = fixture();
+    const childEnv = {
+      ...env,
+      ...(env.NODE_COMPILE_CACHE
+        ? { NODE_COMPILE_CACHE: path.join(proof.home, "explicit-cache") }
+        : {}),
+    };
+    const result = proof.run(childEnv);
+    expect(result.status, result.stderr).toBe(0);
+    const privateDefault =
+      env.OPENSHELL_SANDBOX === "1" &&
+      typeof process.getuid === "function" &&
+      process.getuid() !== 0 &&
+      env.NODE_DISABLE_COMPILE_CACHE === undefined;
+    const expected =
+      childEnv.NODE_COMPILE_CACHE ??
+      (privateDefault ? path.join(proof.home, ".cache", "nemoclaw-node-compile-cache") : undefined);
+    expect(proof.calls().map((call) => call.cache)).toEqual(Array(4).fill(expected));
+    expect(proof.calls().map((call) => call.disabled)).toEqual(
+      Array(4).fill(env.NODE_DISABLE_COMPILE_CACHE),
+    );
+    expect(proof.calls().map((call) => call.version)).toEqual([
+      "2026.9.5",
+      "2026.9.5",
+      "2026.9.7",
+      "2026.9.7",
+    ]);
+  });
+
   it.each([
     { entries: "{}", populated: true, admitted: true, status: 0 },
     { entries: '{"legacy":{"sessionId":"old"}}', populated: false, admitted: true, status: 0 },
