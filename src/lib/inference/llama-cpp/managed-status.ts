@@ -191,6 +191,7 @@ export function inspectManagedLlamaCppStatus(
   try {
     readiness = (options.probe ?? probeLlamaCppAttachment)(apiKey, {
       requestedModel: selection.recipe.spec.model.servedName,
+      managedRuntime: true,
     });
   } catch {
     return {

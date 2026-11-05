@@ -3,6 +3,10 @@
 
 import { Buffer } from "node:buffer";
 import { PROVIDERLESS_INFERENCE_ENV } from "../../providerless-inference";
+import {
+  encodeHermesSwitchyardRoutingIntent,
+  HERMES_SWITCHYARD_ROUTING_ENV,
+} from "../../hermes-switchyard-routing";
 
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import {
@@ -33,6 +37,7 @@ export interface ManagedStartupRootOwnedFileMaterial {
   readonly legacyInput:
     | "NEMOCLAW_DCODE_AUTO_APPROVAL"
     | "NEMOCLAW_INFERENCE_BASE_URL"
+    | "NEMOCLAW_INFERENCE_PROVIDER_ID"
     | "NEMOCLAW_PROXY_HOST"
     | "NEMOCLAW_PROXY_PORT"
     | "NEMOCLAW_REASONING_EFFORT"
@@ -44,6 +49,7 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "/usr/local/share/nemoclaw/dcode-proxy-port"
     | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
     | "/usr/local/share/nemoclaw/dcode-upstream-provider"
+    | "/usr/local/share/nemoclaw/dcode-provider-route"
     | "/usr/local/share/nemoclaw/pi-proxy-host"
     | "/usr/local/share/nemoclaw/pi-proxy-port";
   readonly contents: string;
@@ -447,6 +453,9 @@ function mapHermesProfile(
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeCanonicalJson(profile.tools.enabledGateways),
     NEMOCLAW_WEB_SEARCH_ENABLED: booleanFlag(profile.agentConfig.webSearch.enabled),
     NEMOCLAW_WEB_SEARCH_PROVIDER: profile.agentConfig.webSearch.provider,
+    [HERMES_SWITCHYARD_ROUTING_ENV]: profile.agentConfig.switchyardRouting
+      ? encodeHermesSwitchyardRoutingIntent(profile.agentConfig.switchyardRouting)
+      : "",
   };
 
   const runtimeEnvironment: MutableEnvironment = {
@@ -455,6 +464,7 @@ function mapHermesProfile(
     HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
   };
   delete runtimeEnvironment.NEMOCLAW_MESSAGING_PLAN_B64;
+  delete runtimeEnvironment[HERMES_SWITCHYARD_ROUTING_ENV];
   runtimeEnvironment.NEMOCLAW_DASHBOARD_PORT =
     profile.dashboard.publicPort === null ? "" : String(profile.dashboard.publicPort);
   runtimeEnvironment.NEMOCLAW_HERMES_DASHBOARD =
@@ -541,6 +551,11 @@ function mapDcodeProfile(
       "NEMOCLAW_UPSTREAM_PROVIDER",
       "/usr/local/share/nemoclaw/dcode-upstream-provider",
       profile.inference.upstreamProvider,
+    ),
+    rootOwnedFile(
+      "NEMOCLAW_INFERENCE_PROVIDER_ID",
+      "/usr/local/share/nemoclaw/dcode-provider-route",
+      profile.inference.routeProvider,
     ),
     rootOwnedFile(
       "NEMOCLAW_PROXY_HOST",

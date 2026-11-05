@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   retainStrictPreUpgradeRecoveryState: vi.fn(),
   discardIncompleteBackup: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
+  engineCapture: vi.fn(),
   withSandboxMutationLock: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
   assertNoHermesPortableHostAuthority: vi.fn(),
@@ -29,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   withPortableHostFence: vi.fn(),
 }));
 
+const UP = { status: 0, stdout: "", stderr: "" };
+const DOWN = { status: 1, stdout: "", stderr: "Cannot connect to the Docker daemon." };
 let readySandboxNames = new Set<string>();
 let liveSandboxNames = new Set<string>();
 
@@ -66,6 +69,7 @@ vi.mock("../state/gateway-registry", async () => ({
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
+  probeSandboxSshReachable: vi.fn(),
   BackupResult: {},
 }));
 vi.mock("../state/mcp-lifecycle-lock", () => ({
@@ -101,13 +105,25 @@ vi.mock("../adapters/docker", () => ({
   dockerListImagesFormat: mocks.dockerListImagesFormat,
   dockerRmi: mocks.dockerRmi,
 }));
-vi.mock("../cli/branding", () => ({
-  CLI_NAME: "nemoclaw",
-}));
+vi.mock("../cli/branding", () => ({ CLI_NAME: "nemoclaw" }));
 vi.mock("../credentials/store", () => ({
   prompt: mocks.prompt,
 }));
-vi.mock("./sandbox/stopped-sandbox-backup", () => ({
+vi.mock("../onboard/runtime-provider/selection", () => ({
+  resolveRegisteredRuntimeProvider: (id: string) => ({
+    identity: { id },
+    lifecycle: {},
+    containerEngine: {
+      supported: true,
+      identities: [
+        { operation: "sandbox-lifecycle", displayName: id === "podman" ? "Podman" : "Docker" },
+      ],
+      capture: (_operation: string, args: string[]) => mocks.engineCapture(id, args),
+    },
+  }),
+}));
+vi.mock("./sandbox/stopped-sandbox-backup", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox/stopped-sandbox-backup")>()),
   startStoppedSandboxContainerForBackup: mocks.startStoppedSandboxContainerForBackup,
   backupStartedSandboxState: mocks.backupStartedSandboxState,
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
@@ -148,6 +164,7 @@ describe("backupAll", () => {
     // gateway-observed (so orphan classification is decided by the absence
     // gate alone) and no container is ever definitively absent.
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
+    mocks.getSandbox.mockReset();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
     mocks.recordSandboxStopIntent.mockReturnValue(true);
@@ -472,62 +489,66 @@ describe("backupAll", () => {
     );
   });
 
-  it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
-      defaultSandbox: null,
-    });
-    readySandboxNames = new Set(["sb-good"]);
-    mocks.backupSandboxState.mockReturnValue({
-      success: true,
-      backedUpDirs: ["workspace"],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      manifest: { backupPath: "/backups/sb-good/timestamp" },
-    });
-    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-
-    await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    const errorOutput = errorSpy.mock.calls.flat().join("\n");
-    expect(errorOutput).toContain("requires every registered sandbox to be backed up");
-    expect(errorOutput).toContain("1 skipped sandbox(es) were not running");
-    expect(errorOutput).toContain("Start each sandbox/container");
-    expect(errorOutput).toContain("rerun the installer or");
-    expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
-    expect(errorOutput).not.toContain("prepare the upgrade manually");
-  });
-
-  it("uses uninstall retry guidance when a required sandbox is skipped", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-stopped" }],
-      defaultSandbox: null,
-    });
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
+  it.each([
+    {
+      purpose: "pre-upgrade" as const,
+      sandboxes: ["sb-docker", "sb-vm"],
+      down: ["docker"],
+      expected: [
+        "start Docker, then run 'nemoclaw backup-all' again)",
+        "1 skipped sandbox(es) could not be started for backup because Docker did not respond.",
+        "Skipping 'sb-vm' (not running",
+        "requires every registered sandbox to be backed up",
+        "1 skipped sandbox(es) were not running. Start each sandbox/container",
+        "rerun the installer or",
+        "Resolve each skipped sandbox using its reason above",
+      ],
+      absent: ["cannot be cleaned up", "prepare the upgrade manually"],
+    },
+    {
+      purpose: "pre-uninstall" as const,
+      sandboxes: ["sb-docker"],
+      down: ["docker"],
+      expected: [
+        "Skipping 'sb-docker' (Docker is not responding",
+        "start Docker, then rerun the original uninstall command)",
+        "because Docker did not respond and their containers cannot be cleaned up.",
+        "Start Docker, then rerun the original uninstall command.",
+      ],
+      absent: ["were not running"],
+    },
+    {
+      purpose: "pre-uninstall" as const,
+      sandboxes: ["sb-docker", "sb-podman", "sb-docker-2", "sb-vm"],
+      down: ["docker", "podman"],
+      expected: [
+        "3 skipped sandbox(es) could not be started for backup because Docker and Podman did not respond",
+        "Start Docker and Podman, then rerun the original uninstall command.",
+        "Skipping 'sb-vm' (not running",
+        "1 skipped sandbox(es) were not running. Start each sandbox/container, then rerun the original",
+      ],
+      absent: ["Skipping 'sb-vm' (Docker", "rerun the installer or"],
+    },
+  ])("reports why stopped sandboxes were skipped ($purpose, down: $down)", async (row) => {
+    mocks.listSandboxes.mockReturnValue({ sandboxes: row.sandboxes.map((name) => ({ name })) });
+    mocks.getSandbox.mockImplementation((n: string) => ({ openshellDriver: n.split("-")[1] }));
+    mocks.engineCapture.mockImplementation((id: string) => (row.down.includes(id) ? DOWN : UP));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
     await expect(
-      backupAllUnderPortableHostFence({
-        purpose: "pre-uninstall",
-        requireAll: true,
-        sandboxNames: ["sb-stopped"],
-      }),
+      backupAllUnderPortableHostFence({ purpose: row.purpose, requireAll: true }),
     ).rejects.toThrow("exit:1");
 
-    const errorOutput = errorSpy.mock.calls.flat().join("\n");
-    expect(errorOutput).toContain("Strict pre-uninstall backup");
-    expect(errorOutput).toContain("rerun the original uninstall command");
-    expect(errorOutput).not.toContain("rerun the installer or");
+    const output = [...logSpy.mock.calls, ...errorSpy.mock.calls].flat().join("\n");
+    expect(row.expected.filter((text) => !output.includes(text))).toEqual([]);
+    expect(row.absent.filter((text) => output.includes(text))).toEqual([]);
+    expect(mocks.engineCapture).toHaveBeenCalledWith("docker", ["info"]);
+    expect(mocks.engineCapture.mock.calls.filter(([id]) => id === "docker")).toHaveLength(1);
+    expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
   });
 
   it("starts a stopped container, backs it up, and returns it to stopped so strict mode passes (#6500)", async () => {
@@ -975,27 +996,6 @@ describe("backupAll", () => {
     expect(output).toContain("Skipped 'sb-stopped' (orphan manifest)");
   });
 
-  it("keeps the not-running skip when no stopped container can be started (#6114)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-stopped" }],
-      defaultSandbox: null,
-    });
-    readySandboxNames = new Set();
-    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
-    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-
-    await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
-    expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'sb-stopped' (not running");
-  });
-
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-bad" }, { name: "sb-good" }],
@@ -1175,10 +1175,7 @@ describe("backupAll", () => {
   });
 
   it("does not let the unreachable waiver bypass installer-strict backup (#6114)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-bad" }],
-      defaultSandbox: null,
-    });
+    mocks.listSandboxes.mockReturnValue({ sandboxes: [{ name: "sb-bad" }], defaultSandbox: null });
     readySandboxNames = new Set(["sb-bad"]);
     mocks.backupSandboxState.mockReturnValue({
       success: false,
@@ -1190,15 +1187,18 @@ describe("backupAll", () => {
     });
     process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
     await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    const output = [...logSpy.mock.calls, ...errorSpy.mock.calls].flat().join("\n");
+    expect(output).toContain("sb-bad: backup failed");
+    expect(output).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(output).not.toContain("Skipped 'sb-bad'");
+    expect(output).toMatch(/cannot skip these sandboxes[\s\S]*applies only to a standalone/);
   });
 
   it.each([

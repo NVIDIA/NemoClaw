@@ -48,23 +48,45 @@ with tempfile.TemporaryDirectory() as root:
    assert old not in str(exc) and fresh not in str(exc)
    results[case]=False
   assert cfg.read_bytes()==before
- for label,reference in [('fresh',fresh),('stale',old),('missing',None),('malformed','not-a-handle'),('wrong-provider','openshell:resolve:env:v8_OPENAI_API_KEY')]:
+ for label,reference in [('fresh',fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}'),('stale',old),('missing',None),('malformed','not-a-handle'),('wrong-provider','openshell:resolve:env:v8_OPENAI_API_KEY')]:
   config=copy.deepcopy(base)
   config['model']['api_key']=reference;config['providers']['nvidia-prod']['api_key']=reference;config['custom_providers'][0]['api_key']=reference
   cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes();os.environ['NVIDIA_INFERENCE_API_KEY']=fresh
   try:g.verify_nvidia_credential(str(h),'m');results['health-'+label]=True
   except g.NvidiaCredentialRejectedError:results['health-'+label]=False
   assert cfg.read_bytes()==before
+ # A template value outside the three credential slots stays unchanged.
+ config=copy.deepcopy(base);template='$'+'{NVIDIA_INFERENCE_API_KEY}'
+ config['model']['api_key']=config['providers']['nvidia-prod']['api_key']=config['custom_providers'][0]['api_key']=template
+ config['discord']['note']=template
+ cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes();os.environ['NVIDIA_INFERENCE_API_KEY']=fresh
+ try:g.verify_nvidia_credential(str(h),'m');results['health-template-elsewhere']=True
+ except g.NvidiaCredentialRejectedError:results['health-template-elsewhere']=False
+ assert cfg.read_bytes()==before
+ # Every slot must agree; a template mixed with issued references is rejected.
+ import itertools
+ template='$'+'{NVIDIA_INFERENCE_API_KEY}'
+ mixed=[slots for slots in itertools.product([fresh,template],repeat=3) if len(set(slots))>1]
+ for slots in mixed:
+  config=copy.deepcopy(base)
+  config['model']['api_key'],config['providers']['nvidia-prod']['api_key'],config['custom_providers'][0]['api_key']=slots
+  cfg.write_text(g.yaml.safe_dump(config));os.environ['NVIDIA_INFERENCE_API_KEY']=fresh
+  try:g.verify_nvidia_credential(str(h),'m');results.setdefault('health-mixed',[]).append(True)
+  except g.NvidiaCredentialRejectedError:results.setdefault('health-mixed',[]).append(False)
  # Exercise the real CLI result protocol; do not expose guard diagnostics to status.
  import subprocess
- for label,reference,supervisor in [('valid',fresh,fresh),('stale',old,fresh),('missing-supervisor',fresh,''),('malformed-supervisor',fresh,'bad')]:
+ for label,reference,supervisor in [('valid',fresh,fresh),('template','$'+'{NVIDIA_INFERENCE_API_KEY}',fresh),('mixed',[template,fresh,fresh],fresh),('stale',old,fresh),('missing-supervisor',fresh,''),('malformed-supervisor',fresh,'bad')]:
   config=copy.deepcopy(base)
-  config['model']['api_key']=reference;config['providers']['nvidia-prod']['api_key']=reference;config['custom_providers'][0]['api_key']=reference
+  slots=reference if isinstance(reference,list) else [reference]*3
+  config['model']['api_key'],config['providers']['nvidia-prod']['api_key'],config['custom_providers'][0]['api_key']=slots
   cfg.write_text(g.yaml.safe_dump(config));before=cfg.read_bytes()
   run=subprocess.run([sys.executable,'-I',sys.argv[1],'verify-nvidia-credential','--hermes-dir',str(h),'--expected-model','m'],env={**os.environ,'NVIDIA_INFERENCE_API_KEY':supervisor},capture_output=True,text=True,timeout=5)
   results['cli-'+label]={'exit':run.returncode,'stdout':run.stdout.strip()}
   assert fresh not in run.stdout+run.stderr and old not in run.stdout+run.stderr
   assert cfg.read_bytes()==before
+ # The verifier uses the managed-policy template and handle contract.
+ policy=sys.modules['managed_policy']
+ results['shared-contract']=g.NVIDIA_INFERENCE_PLACEHOLDER is policy.NVIDIA_INFERENCE_PLACEHOLDER and g.NVIDIA_SCOPED_CREDENTIAL_HANDLE is policy.NVIDIA_SCOPED_CREDENTIAL_HANDLE
  print(json.dumps(results))
 `,
         RUNTIME_CONFIG_GUARD,
@@ -74,10 +96,16 @@ with tempfile.TemporaryDirectory() as root:
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       "cli-valid": { exit: 0, stdout: "verified=1" },
+      "cli-template": { exit: 0, stdout: "verified=1" },
+      "cli-mixed": { exit: 1, stdout: "rejected=1" },
       "cli-stale": { exit: 1, stdout: "rejected=1" },
       "cli-missing-supervisor": { exit: 1, stdout: "" },
       "cli-malformed-supervisor": { exit: 1, stdout: "" },
       "health-fresh": true,
+      "health-template": true,
+      "health-template-elsewhere": true,
+      "shared-contract": true,
+      "health-mixed": [false, false, false, false, false, false],
       "health-stale": false,
       "health-missing": false,
       "health-malformed": false,

@@ -59,6 +59,7 @@ vi.mock("./snapshot/backup-authority", () => ({
 import * as registry from "../../state/registry";
 import {
   backupStartedSandboxState,
+  createUnreachableEngineNameLookup,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   startedSandboxBackupTransactionDeadline,
@@ -66,7 +67,12 @@ import {
 } from "./stopped-sandbox-backup";
 
 function lifecycleEngine(runtimeProviderId = "docker") {
-  return { runtimeProviderId, mutationTimeoutMs: 30_000, capture: vi.fn() };
+  return {
+    runtimeProviderId,
+    displayName: runtimeProviderId === "docker" ? "Docker" : runtimeProviderId,
+    mutationTimeoutMs: 30_000,
+    capture: vi.fn(),
+  };
 }
 
 describe("startStoppedSandboxContainerForBackup", () => {
@@ -631,6 +637,64 @@ describe("backupStartedSandboxState", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("retries a backup whose capture churned while the started sandbox was booting (#12867)", async () => {
+    const churned = {
+      ...denied,
+      nativeChurn: true,
+      error: "Native home/workspace capture failed: exit 21",
+    };
+    const probe = vi.fn().mockReturnValue(true);
+    const backup = vi.fn().mockReturnValueOnce(churned).mockReturnValueOnce(ok);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const result = await backupStartedSandboxState("my-sb", {
+      backup,
+      probe,
+      sleep,
+      delayMs: 1,
+    });
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds churn retries by the backup share of the transaction deadline (#12867)", async () => {
+    const churned = {
+      ...denied,
+      nativeChurn: true,
+      error: "Native home/workspace capture failed: exit 21",
+    };
+    let now = 0;
+    const probe = vi.fn().mockReturnValue(true);
+    const backup = vi.fn().mockReturnValue(churned);
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline(() => 0);
+    const result = await backupStartedSandboxState("my-sb", {
+      backup,
+      probe,
+      sleep,
+      delayMs: 1_000,
+      deadlineMs: transactionDeadlineMs,
+      now: () => now,
+    });
+    expect(result).toMatchObject({
+      success: false,
+      nativeChurn: true,
+      error:
+        "Native home/workspace capture failed: exit 21 Sandbox backup exceeded its transaction deadline.",
+    });
+    // backupDeadline is transaction - 30s stop reserve. The delay walks the
+    // clock in 1s steps, so ~300 churned attempts exhaust it, fail closed, and
+    // never retry once the backup share expires.
+    expect(now).toBe(300_000);
+    expect(backup.mock.calls.length).toBe(300);
+    // Every attempt shares the same backup deadline so late attempts cannot
+    // outlive the stopped-state cleanup reserve.
+    expect(backup.mock.calls[0]?.[1]).toBe(300_000);
+    expect(backup.mock.calls.at(-1)?.[1]).toBe(300_000);
+  });
+
   it("gives a readiness probe its own timeout independent of retry spacing", async () => {
     const probe = vi.fn().mockReturnValue(true);
 
@@ -826,5 +890,111 @@ describe("backupStartedSandboxState", () => {
         timeoutMs: 30_000,
       }),
     );
+  });
+});
+
+describe("createUnreachableEngineNameLookup (#12749)", () => {
+  beforeEach(() => {
+    adapterMocks.providerCapture.mockReset();
+    vi.mocked(registry.getSandbox).mockReset();
+  });
+
+  const deps = (over: Record<string, unknown> = {}) => ({
+    getSandboxDriver: vi.fn().mockReturnValue("docker"),
+    resolveLifecycleEngine: vi.fn().mockReturnValue(lifecycleEngine()),
+    probeEngine: vi.fn().mockReturnValue(true),
+    ...over,
+  });
+
+  it("names the engine when its probe does not respond", () => {
+    const d = deps({ probeEngine: vi.fn().mockReturnValue(false) });
+    expect(createUnreachableEngineNameLookup(d)("my-sb")).toBe("Docker");
+  });
+
+  it("probes each engine once and reuses the result for later sandboxes", () => {
+    const d = deps({ probeEngine: vi.fn().mockReturnValue(false) });
+    const lookup = createUnreachableEngineNameLookup(d);
+    expect(["sb-1", "sb-2", "sb-3"].map(lookup)).toEqual(["Docker", "Docker", "Docker"]);
+    expect(d.probeEngine).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null when the engine responds", () => {
+    expect(createUnreachableEngineNameLookup(deps())("my-sb")).toBeNull();
+  });
+
+  it("returns null for providers without a container lifecycle engine", () => {
+    const d = deps({ resolveLifecycleEngine: vi.fn().mockReturnValue(null) });
+    expect(createUnreachableEngineNameLookup(d)("my-sb")).toBeNull();
+    expect(d.probeEngine).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the probe itself throws, and does not probe that engine again", () => {
+    const d = deps({
+      probeEngine: vi.fn(() => {
+        throw new Error("provider does not register the operation");
+      }),
+    });
+    const lookup = createUnreachableEngineNameLookup(d);
+    expect(["sb-1", "sb-2"].map(lookup)).toEqual([null, null]);
+    expect(d.probeEngine).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      failure: "a stopped daemon",
+      capture: {
+        stderr:
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      },
+      expected: "docker",
+    },
+    {
+      failure: "a missing socket",
+      capture: {
+        stderr:
+          "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory",
+      },
+      expected: "docker",
+    },
+    {
+      failure: "a stopped Podman socket",
+      capture: {
+        stderr:
+          'unable to connect to Podman socket: Get "http://d/v5.7.0/libpod/_ping": dial unix /run/user/1000/podman/podman.sock: connect: no such file or directory',
+      },
+      expected: "docker",
+    },
+    {
+      failure: "a probe timeout",
+      capture: {
+        stderr: "",
+        error: Object.assign(new Error("spawnSync docker ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      },
+      expected: "docker",
+    },
+    {
+      failure: "a socket permission error",
+      capture: {
+        stderr:
+          "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock",
+      },
+      expected: null,
+    },
+    {
+      failure: "a Podman socket permission error",
+      capture: {
+        stderr:
+          "unable to connect to Podman socket: dial unix /run/user/1000/podman/podman.sock: connect: permission denied",
+      },
+      expected: null,
+    },
+    { failure: "an unrelated command error", capture: { stderr: "unknown flag" }, expected: null },
+  ])("classifies $failure through the default info probe", ({ capture, expected }) => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      openshellDriver: "docker",
+    } as unknown as ReturnType<typeof registry.getSandbox>);
+    adapterMocks.providerCapture.mockReturnValue({ status: 1, stdout: "", ...capture });
+    expect(createUnreachableEngineNameLookup()("my-sb")).toBe(expected);
+    expect(adapterMocks.providerCapture).toHaveBeenCalledWith("sandbox-lifecycle", ["info"], 5_000);
   });
 });

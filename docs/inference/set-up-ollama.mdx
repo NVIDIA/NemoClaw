@@ -156,7 +156,8 @@ The menu identifies a reachable daemon as running and labels an installed but st
 NemoClaw lists installed models or offers starter models when none are installed.
 
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
-The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
+The menu shows currently available GPU memory when the host reports it, including `0`, or total GPU memory when available memory is unknown.
+A `0` reading means no GPU memory is currently free, so each known starter model is shown as exceeding available memory.
 
 Among installed models that fit, NemoClaw selects the registry-known model with the highest approximate VRAM requirement.
 Unregistered tags follow registry-known tags and retain Ollama's list order.
@@ -290,6 +291,8 @@ The host-side proxy liveness check treats any HTTP response, including `401`, as
 The `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as reachable, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
 `status` then sends an inference request over the reachable route and reports `healthy` when the route served it, or `unauthorized` when the proxy token is no longer accepted.
 
+These checks apply to a normal status read when gateway and sandbox state are verified. If either state is not verified, status reports `Inference: not verified (gateway/sandbox state not verified)` and sends no inference request. If status reports `Inference: not probed (another lifecycle operation is in progress)`, it skips provider-health and inference-invocation probes but may still observe the shared route. JSON output sets `inferenceProbeSuppressed: true` for that unlocked read. Repeat status after the lifecycle operation completes before using it to verify the route or proxy token.
+
 If Ollama is already bound to a non-loopback address, onboarding restarts it on `127.0.0.1:11434` so the proxy becomes the only network path.
 
 ## Allow the Docker Bridge Through a Firewall
@@ -375,7 +378,9 @@ The chassis model qualifies only this Ollama model selection; it does not establ
 The proof runs one pinned CUDA workload and capacity query through the provider abstraction; Docker supplies its GPU flag and Podman supplies its NVIDIA CDI device without a separate model-selection path.
 On a WSL Station GB300, the Docker proof can also qualify the host for `qwen3.6:35b`.
 The bounded Windows chassis model must report Station GB300, the proof must match every reported GPU, and at least one proved device must report an `NVIDIA GB300` name.
-The Station GB300 Ollama qualification does not apply to Podman, managed vLLM, or generic multi-GPU hosts. Managed llama.cpp uses a separate Docker Desktop-only Station GB300 readiness qualification. It also requires the bounded product observation, a proof that reconciles every reported GPU, and exactly one proved GB300 GPU UUID for Docker device binding.
+The Station GB300 Ollama qualification does not apply to Podman, managed vLLM, or generic multi-GPU hosts.
+Managed llama.cpp uses a separate Docker Desktop-only Station GB300 readiness qualification.
+It also requires the bounded product observation, a proof that reconciles every reported GPU, and exactly one proved GB300 GPU UUID for Docker device binding.
 Missing, malformed, mismatched, or insufficient proof capacity retains the `qwen3.5:9b` fallback.
 This safeguard only changes automatic selection.
 

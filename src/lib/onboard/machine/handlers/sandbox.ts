@@ -45,6 +45,7 @@ import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/re
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
+  clearCheckpointResourceProfile,
   recordCheckpointEffectGroup,
   recordCheckpointMessaging,
   recordCheckpointProviderEffectGroup,
@@ -119,12 +120,16 @@ import {
   sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
+  assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
+  ensureResumedNativeLocalProviderAttached,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  hermesSwitchyardRoutingCreateIntentFields,
   initialOpenClawToolDisclosure,
+  isValidSavedResourceProfile,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -225,7 +230,7 @@ export interface SandboxStateOptions<
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   compatibleEndpointReasoningEffort: string | null;
@@ -342,6 +347,9 @@ export interface SandboxStateOptions<
       type: string,
       credentialEnv: string,
     ): boolean | Promise<boolean>;
+    nativeLocalProviderAdapter?: Parameters<
+      typeof ensureResumedNativeLocalProviderAttached
+    >[0]["adapter"];
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
@@ -356,6 +364,10 @@ export interface SandboxStateOptions<
     listRegistrySandboxes(): { sandboxes: unknown[] };
     planRegisteredExtraProviders(
       gatewayName: string,
+      options?: Pick<
+        import("../../extra-provider-reconciliation").ReconcileExtraProvidersDeps,
+        "webSearchProvider"
+      >,
     ):
       | import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan
       | Promise<import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan>;
@@ -823,6 +835,13 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    assertHermesSwitchyardRoutingReusable({
+      agentName: (this.options.agent as { name?: string } | null)?.name,
+      entry: registryEntry,
+      env: this.options.env,
+      recreate: this.options.recreateSandbox(false),
+      sandboxState: sandboxReuseState,
+    });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
@@ -959,7 +978,10 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private sandboxCreateFingerprintPrefix(sandboxName: string): string {
+  private sandboxCreateFingerprintPrefix(
+    sandboxName: string,
+    recordedReasoning?: string | null,
+  ): string {
     const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
       this.options.agent,
       !this.options.fromDockerfile,
@@ -971,7 +993,11 @@ class SandboxStateFlow<
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
       ...Object.values(
-        compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
+        compatibleEndpointReasoningForCreateIntent(
+          recordedReasoning === undefined
+            ? this.options.compatibleEndpointReasoning
+            : recordedReasoning,
+        ),
       ),
       this.options.fromDockerfile ?? "",
     ].join("|");
@@ -980,11 +1006,18 @@ class SandboxStateFlow<
   private currentSandboxCreateFingerprint(
     sandboxName: string,
     createIntent?: ResolvedSandboxCreateIntent,
+    recordedReasoning?: string | null,
   ): string {
     const lightFingerprint = [
-      this.sandboxCreateFingerprintPrefix(sandboxName),
+      this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
+      ...Object.values(
+        hermesSwitchyardRoutingCreateIntentFields(
+          (this.options.agent as { name?: string } | null)?.name,
+          this.options.env,
+        ),
+      ).map((routing) => JSON.stringify(routing)),
     ].join("|");
     if (!createIntent) return lightFingerprint;
     // Extra providers are live gateway attachments, not durable build intent.
@@ -1338,7 +1371,10 @@ class SandboxStateFlow<
     return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };
   }
 
-  private reserveCreateRouteForSession(sandboxName: string): void {
+  private reserveCreateRouteForSession(
+    sandboxName: string,
+    preparedRoute?: import("../../inference-providers/types").DeferredInferenceRouteReservation,
+  ): void {
     reserveSandboxResumeRoute(
       sandboxName,
       this.deps.getSandboxRegistryEntry(sandboxName),
@@ -1350,10 +1386,11 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
         preferredInferenceApi: this.options.preferredInferenceApi,
         gatewayName: this.options.gatewayName,
-        reservationSessionId: this.options.session?.sessionId,
         ...(this.options.stagedNativeLocalRecreation
           ? { nativeLocalProviderAttachment: this.options.stagedNativeLocalRecreation.attachment }
           : {}),
+        ...preparedRoute,
+        reservationSessionId: this.options.session?.sessionId,
       },
       this.deps.reserveSandboxInferenceRoute,
       this.deps.cliName(),
@@ -1386,8 +1423,8 @@ class SandboxStateFlow<
           this.deps.getSandboxRegistryEntry(sandboxName),
         );
         if (this.options.deferredInferenceRoute) {
-          await this.options.deferredInferenceRoute(() =>
-            this.reserveCreateRouteForSession(sandboxName),
+          await this.options.deferredInferenceRoute((preparedRoute) =>
+            this.reserveCreateRouteForSession(sandboxName, preparedRoute),
           );
         } else {
           this.reserveCreateRouteForSession(sandboxName);
@@ -1430,12 +1467,60 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned after messaging channel state changed");
   }
 
+  private async restoreNativeRouterAttachment(sandboxName: string | null): Promise<void> {
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    if (agentName !== "openclaw" || this.options.provider !== "nvidia-router") return;
+    const entry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
+    const expected = entry?.nativeLocalProviderAttachment
+      ? structuredClone(entry.nativeLocalProviderAttachment)
+      : undefined;
+    if (
+      !sandboxName ||
+      !entry ||
+      entry.name !== sandboxName ||
+      !expected ||
+      !this.acceptsNativeLocalReservation(entry, sandboxName) ||
+      expected.endpointUrl !== this.options.endpointUrl
+    ) {
+      throw new Error(
+        "Native Model Router resume requires its recorded sandbox attachment authority.",
+      );
+    }
+    const revalidateIdentity = createRegisteredSandboxIdentityRevalidation(entry, {
+      readRegistration: this.deps.getSandboxRegistryEntry,
+      observe: this.deps.getSandboxRecreateObservation,
+    });
+    if (!revalidateIdentity) {
+      throw new Error(
+        "Native Model Router resume requires a verified sandbox identity. Recreate this sandbox.",
+      );
+    }
+    const revalidateSandboxIdentity = (operation: string): void => {
+      revalidateIdentity(operation);
+      this.assertGatewayRouteCompatible(sandboxName);
+      const current = this.deps.getSandboxRegistryEntry(sandboxName);
+      if (!isDeepStrictEqual(current?.nativeLocalProviderAttachment, expected)) {
+        throw new Error("Native Model Router attachment authority changed during resume.");
+      }
+    };
+    revalidateSandboxIdentity("restore native Model Router attachment");
+    await ensureResumedNativeLocalProviderAttached({
+      adapter: this.deps.nativeLocalProviderAdapter,
+      sandboxName,
+      expected,
+      revalidateSandboxIdentity,
+    });
+    revalidateSandboxIdentity("complete native Model Router attachment recovery");
+  }
+
   private async reuseSandbox(
     state: SandboxStepState<WebSearchConfig>,
+    note?: string,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
+      await this.restoreNativeRouterAttachment(state.sandboxName);
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,
@@ -1462,6 +1547,7 @@ class SandboxStateFlow<
         });
       }
       this.backfillReusedSandboxFidelity(state);
+      if (note) this.deps.note(note);
       this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
@@ -1501,10 +1587,14 @@ class SandboxStateFlow<
         return current;
       }
       if (!checkpoint.effectGroups.sandbox_create) {
+        // A reused Ready sandbox was built with its registry value, not the
+        // reasoning value saved by the interrupted onboarding request.
+        const recordedReasoning =
+          this.deps.getSandboxRegistryEntry(sandboxName)?.compatibleEndpointReasoning ?? null;
         recordCheckpointEffectGroup(
           current,
           "sandbox_create",
-          this.currentSandboxCreateFingerprint(sandboxName),
+          this.currentSandboxCreateFingerprint(sandboxName, undefined, recordedReasoning),
         );
       }
       if (!checkpoint.effectGroups.sandbox_register) {
@@ -1968,40 +2058,61 @@ class SandboxStateFlow<
     return nextState;
   }
 
+  private readSavedResourceProfile(session: Session | null): {
+    completed: boolean;
+    valid: boolean;
+    resourceProfile: ResourceProfile | null;
+  } {
+    const checkpoint = session?.checkpoint;
+    const completed = checkpoint
+      ? !isDecisionUnset(checkpoint.resourceProfile)
+      : session?.sandboxPromptProgress?.resourceProfile === true;
+    const resourceProfile = (
+      checkpoint ? decisionValue(checkpoint.resourceProfile) : (session?.resourceProfile ?? null)
+    ) as ResourceProfile | null;
+    const valid = isValidSavedResourceProfile(
+      resourceProfile as SessionResourceProfile | CheckpointResourceProfile | null,
+    );
+    return { completed, valid, resourceProfile };
+  }
+
   private async resolveResourceProfile(state: SandboxStepState<WebSearchConfig>): Promise<{
     state: SandboxStepState<WebSearchConfig>;
     resourceProfile: ResourceProfile | null;
   }> {
-    const checkpoint = state.session?.checkpoint;
-    const completedSelection = checkpoint
-      ? !isDecisionUnset(checkpoint.resourceProfile)
-      : state.session?.sandboxPromptProgress?.resourceProfile === true;
+    let nextState = state;
+    const saved = this.readSavedResourceProfile(nextState.session);
+    if (this.resumesSandboxPrompts && !saved.valid) {
+      const session = this.deps.updateSession((current) => {
+        clearCheckpointResourceProfile(current);
+        return current;
+      });
+      nextState = { ...nextState, session };
+    }
     if (
       this.resumesSandboxPrompts &&
       this.options.resume &&
-      completedSelection &&
+      saved.completed &&
+      saved.valid &&
       !hasResourceProfileEnvOverride(this.options.env)
     ) {
-      const resourceProfile = (
-        checkpoint ? decisionValue(checkpoint.resourceProfile) : state.session?.resourceProfile
-      ) as ResourceProfile | null;
       this.deps.note(
-        resourceProfile
+        saved.resourceProfile
           ? "  [resume] Reusing resource profile selection."
           : "  [resume] Reusing OpenShell default resources.",
       );
-      return { state, resourceProfile };
+      return { state: nextState, resourceProfile: saved.resourceProfile };
     }
 
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
-    if (!this.resumesSandboxPrompts) return { state, resourceProfile };
+    if (!this.resumesSandboxPrompts) return { state: nextState, resourceProfile };
     const session = this.deps.updateSession((current) => {
       current.resourceProfile = resourceProfile as SessionResourceProfile | null;
       current.sandboxPromptProgress.resourceProfile = true;
       recordCheckpointResourceProfile(current, resourceProfile as CheckpointResourceProfile | null);
       return current;
     });
-    return { state: { ...state, session }, resourceProfile };
+    return { state: { ...nextState, session }, resourceProfile };
   }
 
   private async buildSandboxCreateIntent(
@@ -2437,6 +2548,11 @@ class SandboxStateFlow<
       );
       const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
         this.options.gatewayName,
+        {
+          webSearchProvider: state.webSearchConfig
+            ? webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig)
+            : null,
+        },
       );
       if (
         this.options.apfInterceptorRequested === true &&
@@ -2881,7 +2997,7 @@ class SandboxStateFlow<
     }
     const completedState =
       decision.kind === "reuse"
-        ? await this.reuseSandbox(initialState)
+        ? await this.reuseSandbox(initialState, decision.note)
         : await this.recreateSandbox(initialState, decision);
     return this.complete(completedState);
   }

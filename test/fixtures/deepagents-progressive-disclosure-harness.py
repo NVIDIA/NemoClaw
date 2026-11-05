@@ -232,6 +232,11 @@ def _run_behavior(module: types.ModuleType) -> dict[str, Any]:
     assert tools == original
     assert tools[0] is weather and tools[2] is database
 
+    without_search = [tool for tool in tools if tool is not middleware.tools[0]]
+    recovered = middleware._prepare_request(ModelRequest(without_search, {}))
+    assert "search_tools" in _visible_names(recovered)
+    assert weather not in recovered.tools and database not in recovered.tools
+
     search_tool = middleware.tools[0]
     assert search_tool.injected_args_keys == frozenset({"runtime"})
     by_name = search_tool.func(query="wEaThEr", runtime=ToolRuntime({}, tools=tools))

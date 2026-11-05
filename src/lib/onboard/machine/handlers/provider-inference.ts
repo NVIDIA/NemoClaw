@@ -15,6 +15,7 @@ import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
   type GatewayRouteDiscoveryConstraints,
+  gatewayRouteIdentityConflictReasons,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
@@ -92,6 +93,8 @@ function selectedNativeInference(
 }
 
 export interface ProviderInferenceSetupOptions {
+  /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
+  rebuildSandboxPolicyDocument?: string;
   agentName?: string;
   /** Resolve the policy tier before a custom provider can mutate gateway state. */
   resolvePolicyTier?: () => Promise<string>;
@@ -186,6 +189,7 @@ export interface ProviderSelectionResult {
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
+  rebuildSandboxPolicyDocument?: string;
   gatewayName: string;
   resume: boolean;
   fresh: boolean;
@@ -275,7 +279,13 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ) => Promise<boolean>;
     startRecordedStep(
       stepName: string,
-      updates?: { provider?: string | null; model?: string | null },
+      updates?: {
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        credentialEnv?: string | null;
+        preferredInferenceApi?: string | null;
+      },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     recordStepRejected(stepName: string): Promise<Session>;
@@ -398,7 +408,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
 
 export interface ProviderInferenceStateResult {
   stagedNativeLocalRecreation?: import("../../inference-providers/types").StagedNativeLocalRecreation;
-  deferredInferenceRoute?: (reserve: () => void) => Promise<void>;
+  deferredInferenceRoute?: import("../../inference-providers/types").DeferredInferenceRoute;
   sandboxName: string | null;
   model: string;
   provider: string;
@@ -603,6 +613,8 @@ function canResumeInferenceRoute(input: {
   // another sandbox on a reused gateway can own the same shared route.
   return (
     !input.needsBedrockRuntimeAdapter &&
+    // Reconcile the managed router and reverify its native profile on resume.
+    !(input.provider === "nvidia-router" && input.selectsNativeLocal) &&
     input.provider !== OPENROUTER_PROVIDER_NAME &&
     !input.hasHostLocalInference &&
     !input.forceProviderSelection &&
@@ -1089,6 +1101,18 @@ function reviewRecoveryState(session: Session | null, sandboxName: string | null
   );
 }
 
+function hasIncompleteCustomRoute(session: Session | null): boolean {
+  if (!session) return false;
+  const route = {
+    provider: session.provider,
+    model: session.model,
+    endpointUrl: session.endpointUrl,
+    credentialEnv: session.credentialEnv,
+    preferredInferenceApi: session.preferredInferenceApi,
+  };
+  return gatewayRouteIdentityConflictReasons(route, route).includes("incomplete-custom-route");
+}
+
 function canResumeProviderSelection(
   forceProviderSelection: boolean,
   effectiveResume: boolean,
@@ -1097,6 +1121,7 @@ function canResumeProviderSelection(
   interruptedReview: boolean,
   provider: string | null,
   model: string | null,
+  interactive: boolean,
 ): boolean {
   // An interrupted Station review has a provider/model but no validated model
   // identity yet. Retry selection so its checkpoint can bind that identity.
@@ -1105,6 +1130,12 @@ function canResumeProviderSelection(
     session.stationExpressIntent.kind !== "spark" &&
     session.steps.provider_selection.status !== "complete"
   ) {
+    return false;
+  }
+  // Review checkpoints from earlier releases kept only provider and model, so
+  // a custom route cannot pass the gateway check. Ask again interactively;
+  // non-interactive resume keeps failing closed at that check.
+  if (interactive && interruptedReview && hasIncompleteCustomRoute(session)) {
     return false;
   }
   return (
@@ -1242,7 +1273,9 @@ interface ConfigurationReviewInput<Agent> {
   agent: Agent;
   provider: string;
   model: string;
+  endpointUrl: string | null;
   credentialEnv: string | null;
+  preferredInferenceApi: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[];
@@ -1281,9 +1314,14 @@ async function reviewProviderConfiguration<Agent>(
     // claiming that provider registration or inference setup completed.
     await deps.checkpointSandboxIdentity(sandboxName, input.agent);
     if (needsSelectionRecovery && !selectionRecoveryStarted) {
+      // Resume checks this route against the shared gateway route before it
+      // shows the review again, so keep the same secret-free route identity.
       await deps.startRecordedStep("provider_selection", {
         provider: input.provider,
         model: input.model,
+        endpointUrl: input.endpointUrl,
+        credentialEnv: input.credentialEnv,
+        preferredInferenceApi: input.preferredInferenceApi,
       });
       selectionRecoveryStarted = true;
     }
@@ -1408,6 +1446,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   authoritativeResumeConfig = false,
   providerRecoveryReceipt = null,
   providerRecoveryReceiptLedger,
+  rebuildSandboxPolicyDocument,
   initial,
   selectedMessagingChannels,
   env,
@@ -1476,7 +1515,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let stagedNativeLocalRecreation:
     | import("../../inference-providers/types").StagedNativeLocalRecreation
     | undefined;
-  let deferredInferenceRoute: ((reserve: () => void) => Promise<void>) | undefined;
+  let deferredInferenceRoute:
+    | import("../../inference-providers/types").DeferredInferenceRoute
+    | undefined;
   const hostLocalInferenceResolutionCache = new Map<
     string,
     HostLocalInferenceStartupSelection | null
@@ -1548,6 +1589,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     reviewRecoveryState(session, sandboxName),
     provider,
     model,
+    !deps.isNonInteractive(),
   );
   const initialHostLocalPolicyRoute = resolveInitialHostLocalPolicyRoute({
     resumeProviderSelection: initialResumeProviderSelection,
@@ -1598,6 +1640,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       completeRecoveredReviewSelectionAfterInference,
       provider,
       model,
+      !deps.isNonInteractive(),
     );
     const earlyManagedHostLocalLifecycleSelection = resolveEarlyManagedHostLocalLifecycleSelection({
       resumeProviderSelection,
@@ -2037,6 +2080,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
             endpointSource,
+            rebuildSandboxPolicyDocument,
             ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
@@ -2284,7 +2328,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           agent,
           provider,
           model,
+          endpointUrl,
           credentialEnv,
+          preferredInferenceApi,
           hermesAuthMethod,
           webSearchConfig,
           hermesToolGateways,
@@ -2391,6 +2437,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         endpointSource,
+        rebuildSandboxPolicyDocument,
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),

@@ -98,7 +98,7 @@ describe("config set helpers", () => {
   });
 
   describe("Hermes config-write recovery gate", () => {
-    it("names recover for a compat-hash refusal before a config write (#8614)", () => {
+    it("names trusted recovery for a compat-hash refusal before a config write (#8614)", () => {
       expect(
         isHermesCompatHashRecoveryError(
           new Error(
@@ -114,7 +114,10 @@ describe("config set helpers", () => {
       );
       const refusal = hermesCompatHashRecoveryError("triage-8614");
       expect(refusal.name).toBe("SandboxConfigError");
-      expect(refusal.message).toContain("nemoclaw 'triage-8614' recover");
+      expect(refusal.message).toContain("Back up needed data from 'triage-8614'");
+      expect(refusal.message).toContain("Rebuild preserves the native home");
+      expect(refusal.message).toContain("trusted backup or create a fresh Hermes sandbox");
+      expect(refusal.message).not.toContain("nemoclaw 'triage-8614' recover");
       expect(refusal.message).toContain("not applied");
     });
   });

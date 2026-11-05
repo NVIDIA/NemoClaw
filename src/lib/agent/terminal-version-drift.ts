@@ -15,7 +15,10 @@
 
 import { parseVersionFromText } from "../adapters/openshell/client";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { evaluateStaleness } from "../sandbox/version-scheme";
 import type { AgentDefinition } from "./defs";
@@ -74,6 +77,7 @@ export async function checkTerminalAgentVersion(
   sandboxName: string,
   agent: AgentDefinition,
   executor: OpenShellSandboxBufferedCommandExecutor,
+  gatewayName?: string,
 ): Promise<TerminalAgentVersionCheck> {
   const expectedVersion = agent.expectedVersion;
   if (!expectedVersion) {
@@ -91,7 +95,7 @@ export async function checkTerminalAgentVersion(
     const shellPath = agent.name === "pi" ? "/bin/bash" : "sh";
     result = await executor.runBuffered({
       sandboxName,
-      target: selectedOpenShellGateway(),
+      target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
       command: [shellPath, "-lc", agent.versionCommand],
       timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
     });
@@ -99,7 +103,7 @@ export async function checkTerminalAgentVersion(
     return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
   }
 
-  if (result.outcome.kind === "failed") {
+  if (result.outcome.kind === "failed" || result.outcome.exitCode !== 0) {
     return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
   }
   const output = result.stdout || null;

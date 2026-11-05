@@ -62,7 +62,11 @@ import {
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
 import { removeExactOpenShellDockerSandboxContainers } from "../../onboard/openshell-docker-sandbox-containers";
-import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
+import {
+  type DestroyRunOpenshell,
+  SANDBOX_DESTROY_TIMEOUT_MS,
+  createGatewayScopedDestroyRunner,
+} from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
@@ -532,6 +536,10 @@ export async function executeSandboxDestroy({
       runtimeProviders,
     );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
+    const resolveEffectiveDeleteGatewayName = () =>
+      pendingCreateIdentity?.gatewayName ??
+      destroyRuntimeSelection?.gatewayName ??
+      deleteGatewayName;
     const expectedSandboxIdentityFingerprint =
       pendingCreateIdentity?.sandboxIdentityFingerprint ?? expectedContainerIdentityFingerprint;
     const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
@@ -586,7 +594,7 @@ export async function executeSandboxDestroy({
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingCreateIdentity?.gatewayName ?? deleteGatewayName,
+          gatewayName: resolveEffectiveDeleteGatewayName(),
           ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
         });
         if (
@@ -771,14 +779,14 @@ export async function executeSandboxDestroy({
       };
     }
     destroyRuntimeSelection = mcpPreparation.runtimeSelection;
-    const selectedRunOpenshell: DestroyRunOpenshell = destroyRuntimeSelection
-      ? (args, options = {}) =>
-          runOpenshell(args, {
-            ...options,
-            env: buildSelectedOpenShellSubprocessEnv(destroyRuntimeSelection!),
-            replaceEnv: true,
-          })
-      : runOpenshell;
+    const effectiveDeleteGatewayName = resolveEffectiveDeleteGatewayName();
+    const selectedRunOpenshell = createGatewayScopedDestroyRunner(
+      runOpenshell,
+      effectiveDeleteGatewayName,
+      destroyRuntimeSelection
+        ? () => buildSelectedOpenShellSubprocessEnv(destroyRuntimeSelection)
+        : undefined,
+    );
     // Prepared-only/incomplete adds have no external resources and are safely
     // discarded during preparation. Remaining entries are the durable exact
     // provider ownership manifest and must survive an unconfirmed delete.
@@ -975,10 +983,6 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const effectiveDeleteGatewayName =
-      pendingCreateIdentity?.gatewayName ??
-      destroyRuntimeSelection?.gatewayName ??
-      deleteGatewayName;
     const hasNativeLocalAuthority =
       Boolean(sandbox?.nativeLocalProviderAttachment) ||
       listNativeLocalProviderAuthorities(sandboxName, effectiveDeleteGatewayName).length > 0;

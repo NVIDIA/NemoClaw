@@ -43,6 +43,7 @@ export async function setupRoutedInference(
     error(`  ${routed.result.message}`);
     return exitProcess(routed.result.status || 1);
   }
+  if (deps.nativeLocalInference) return { done: false };
   const applyResult = await inferenceRouteMutator.setInferenceRoute({
     target: { kind: "named", gatewayName },
     route: { provider, model },

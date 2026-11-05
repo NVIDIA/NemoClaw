@@ -69,6 +69,27 @@ function buildFixture(tempDir: string, configContent: string): Fixture {
       `readonly DEEPAGENTS_CONFIG_FILE="${configFile}"`,
     )
     .replace(
+      'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
+      `readonly DEEPAGENTS_AUTH_FILE="${tempDir}/auth.json"`,
+    )
+    .replace(
+      'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
+      `readonly DEEPAGENTS_CODEX_AUTH_FILE="${tempDir}/chatgpt-auth.json"`,
+    )
+    .replace(
+      'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
+      `readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="${tempDir}/dcode-auto-approval"`,
+    )
+    .replaceAll("/usr/local/share/nemoclaw/dcode-provider-route", `${tempDir}/dcode-provider-route`)
+    .replaceAll(
+      "/usr/local/share/nemoclaw/dcode-upstream-provider",
+      `${tempDir}/dcode-upstream-provider`,
+    )
+    .replace(
+      "readonly MANAGED_DCODE_IDENTITY_OWNER_UID=0",
+      `readonly MANAGED_DCODE_IDENTITY_OWNER_UID=${process.getuid?.() ?? 0}`,
+    )
+    .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
       `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
@@ -81,6 +102,19 @@ function buildFixture(tempDir: string, configContent: string): Fixture {
 
 function addAgentDir(fixture: Fixture, name: string): void {
   fs.mkdirSync(path.join(fixture.configDir, name));
+}
+
+function writeManagedIdentity(
+  fixture: Fixture,
+  route = "nvidia-prod",
+  provider = "nvidia-prod",
+): void {
+  fs.writeFileSync(path.join(fixture.configDir, "dcode-provider-route"), `${route}\n`, {
+    mode: 0o444,
+  });
+  fs.writeFileSync(path.join(fixture.configDir, "dcode-upstream-provider"), `${provider}\n`, {
+    mode: 0o444,
+  });
 }
 
 type Run = { status: number | null; stdout: string; stderr: string; launched: boolean };
@@ -115,6 +149,212 @@ function withTempDir(run: (dir: string) => void): void {
 describe.skipIf(!canRun)(
   "agents/langchain-deepagents-code/dcode-wrapper.sh identity command",
   () => {
+    it.each(["status", "whoami", "identity"])(
+      "'%s' retains managed identity after restoring a comment-free legacy config (#14084)",
+      (sub) => {
+        withTempDir((dir) => {
+          // Rebuild restores saved preferences; managed image files remain outside that archive.
+          const rewritten = SAMPLE_CONFIG.split("\n")
+            .filter((line) => !line.trimStart().startsWith("#"))
+            .join("\n");
+          const fixture = buildFixture(dir, rewritten);
+          writeManagedIdentity(fixture);
+          const run = runBashWrapper(fixture, [sub], {});
+
+          expect(run.status, run.stderr).toBe(0);
+          expect(run.launched).toBe(false);
+          expect(run.stdout).toContain("Route:    nvidia-prod");
+          expect(run.stdout).toContain("Provider: nvidia-prod");
+          expect(run.stdout).toContain("Model:    openai:demo-model");
+          expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
+        });
+      },
+    );
+
+    it.each(
+      ["\u001b[31m", "\u202e", "\u2066", "x".repeat(257), `sk-${OPAQUE}`].flatMap((value) =>
+        [
+          { source: "legacy", install: (_fixture: Fixture, _value: string) => undefined },
+          {
+            source: "managed",
+            install: (fixture: Fixture, value: string) =>
+              writeManagedIdentity(fixture, value, value),
+          },
+        ].map((scenario) => ({ value, ...scenario })),
+      ),
+    )(
+      "filters unsafe identity value $value from $source metadata and mutable display fields (#14084)",
+      ({ value, source, install }) => {
+        withTempDir((dir) => {
+          const identityConfig =
+            source === "legacy"
+              ? SAMPLE_CONFIG.replace(
+                  "provider route: inference",
+                  `provider route: ${value}`,
+                ).replace("upstream provider: nvidia-prod", `upstream provider: ${value}`)
+              : SAMPLE_CONFIG;
+          const config =
+            identityConfig
+              .replace("openai:demo-model", `openai:${value}`)
+              .replace("https://inference.local/v1", `https://example.test/${value}`) +
+            `\n[nemoclaw]\nprovider_route = "${value}"\nupstream_provider = "${value}"\n`;
+          const fixture = buildFixture(dir, config);
+          install(fixture, value);
+          const run = runBashWrapper(fixture, ["status"], {
+            NEMOCLAW_SANDBOX_NAME: value.startsWith("sk-") ? undefined : value,
+          });
+
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(value);
+          expect(run.stdout).not.toContain("Route:");
+          expect(run.stdout).not.toContain("Provider:");
+          expect(run.stdout).not.toContain("Model:");
+          expect(run.stdout).not.toContain("Endpoint:");
+          expect(run.stdout).toContain("Sandbox:  unknown");
+        });
+      },
+    );
+
+    it.each(
+      [
+        {
+          state: "symlink",
+          mutate: (file: string) => {
+            fs.renameSync(file, `${file}.target`);
+            fs.symlinkSync(`${file}.target`, file);
+          },
+        },
+        { state: "writable", mutate: (file: string) => fs.chmodSync(file, 0o644) },
+        {
+          state: "noncanonical read-only mode",
+          mutate: (file: string) => fs.chmodSync(file, 0o400),
+        },
+        {
+          state: "empty",
+          mutate: (file: string) => {
+            fs.chmodSync(file, 0o644);
+            fs.writeFileSync(file, "");
+            fs.chmodSync(file, 0o444);
+          },
+        },
+        {
+          state: "oversized",
+          mutate: (file: string) => {
+            fs.chmodSync(file, 0o644);
+            fs.writeFileSync(file, `${"x".repeat(257)}\n`);
+            fs.chmodSync(file, 0o444);
+          },
+        },
+      ].flatMap((scenario) =>
+        [
+          { name: "dcode-provider-route", omitted: "Route:", retained: "Provider: nvidia-prod" },
+          {
+            name: "dcode-upstream-provider",
+            omitted: "Provider:",
+            retained: "Route:    nvidia-prod",
+          },
+        ].map((field) => ({ ...scenario, ...field })),
+      ),
+    )(
+      "rejects a $state $name despite legacy comments (#14084)",
+      ({ name, omitted, retained, mutate }) => {
+        withTempDir((dir) => {
+          const fixture = buildFixture(dir, SAMPLE_CONFIG);
+          writeManagedIdentity(fixture);
+          mutate(path.join(dir, name));
+          const run = runBashWrapper(fixture, ["status"], {});
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(omitted);
+          expect(run.stdout).toContain(retained);
+        });
+      },
+    );
+
+    it.each([
+      {
+        name: "dcode-provider-route",
+        fallback: "Route:    inference",
+        retained: "Provider: nvidia-prod",
+      },
+      {
+        name: "dcode-upstream-provider",
+        fallback: "Provider: legacy-provider",
+        retained: "Route:    nvidia-prod",
+      },
+    ])(
+      "uses legacy comments only for the missing $name file (#14084)",
+      ({ name, fallback, retained }) => {
+        withTempDir((dir) => {
+          const config = SAMPLE_CONFIG.replace(
+            "upstream provider: nvidia-prod",
+            "upstream provider: legacy-provider",
+          );
+          const fixture = buildFixture(dir, config);
+          writeManagedIdentity(fixture);
+          fs.rmSync(path.join(dir, name));
+          const run = runBashWrapper(fixture, ["status"], {});
+          expect(run.status).toBe(0);
+          expect(run.stdout).toContain(fallback);
+          expect(run.stdout).toContain(retained);
+        });
+      },
+    );
+
+    it.each([
+      { name: "dcode-provider-route", omitted: "Route:", retained: "Provider: nvidia-prod" },
+      { name: "dcode-upstream-provider", omitted: "Provider:", retained: "Route:    nvidia-prod" },
+    ])(
+      "omits $name when both the file and legacy comment are missing (#14084)",
+      ({ name, omitted, retained }) => {
+        withTempDir((dir) => {
+          const config = SAMPLE_CONFIG.split("\n")
+            .filter((line) => !line.startsWith("#"))
+            .join("\n");
+          const fixture = buildFixture(dir, config);
+          writeManagedIdentity(fixture);
+          fs.rmSync(path.join(dir, name));
+          const run = runBashWrapper(fixture, ["status"], {});
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(omitted);
+          expect(run.stdout).toContain(retained);
+        });
+      },
+    );
+
+    it("rejects managed identity with the wrong owner despite legacy comments (#14084)", () => {
+      withTempDir((dir) => {
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
+        writeManagedIdentity(fixture);
+        const wrapper = fs
+          .readFileSync(fixture.wrapperPath, "utf8")
+          .replace(
+            `readonly MANAGED_DCODE_IDENTITY_OWNER_UID=${process.getuid?.() ?? 0}`,
+            `readonly MANAGED_DCODE_IDENTITY_OWNER_UID=${(process.getuid?.() ?? 0) + 1}`,
+          );
+        fs.writeFileSync(fixture.wrapperPath, wrapper);
+        const run = runBashWrapper(fixture, ["status"], {});
+        expect(run.status).toBe(0);
+        expect(run.stdout).not.toContain("Route:");
+        expect(run.stdout).not.toContain("Provider:");
+      });
+    });
+
+    it("prefers replacement identity over stale archived comments and ambient values (#14084)", () => {
+      withTempDir((dir) => {
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
+        writeManagedIdentity(fixture, "replacement-route", "replacement-provider");
+        const run = runBashWrapper(fixture, ["status"], {
+          NEMOCLAW_INFERENCE_PROVIDER_ID: "ambient-route",
+          NEMOCLAW_UPSTREAM_PROVIDER: "ambient-provider",
+        });
+        expect(run.status).toBe(0);
+        expect(run.stdout).toContain("Route:    replacement-route");
+        expect(run.stdout).toContain("Provider: replacement-provider");
+        expect(run.stdout).not.toContain("ambient-");
+        expect(run.stdout).not.toContain("Provider: nvidia-prod");
+      });
+    });
+
     it.each(["status", "whoami", "identity"])(
       "'%s' reports the sandbox identity and does not launch dcode",
       (sub) => {
@@ -189,7 +429,7 @@ describe.skipIf(!canRun)(
       });
     });
 
-    it.each([".hidden", "   "])(
+    it.each([".hidden", "   ", "\u202e"])(
       "ignores the %j agent preference that dcode cannot activate",
       (invalidName) => {
         withTempDir((dir) => {
@@ -397,6 +637,8 @@ describe.skipIf(!canRun)(
     it("does not write unsafe endpoint values from mutable sources", () => {
       withTempDir((dir) => {
         const unsafeEndpoints = [
+          "https://example.test/\u202e",
+          "https://example.test/\u2066",
           "https://status-user:opaque-password@example.test/v1",
           "https://example.test/v1?api_key=opaque-secret",
           "https://example.test/v1#opaque-fragment",

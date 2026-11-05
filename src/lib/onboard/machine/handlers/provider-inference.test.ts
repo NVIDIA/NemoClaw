@@ -69,6 +69,9 @@ describe("handleProviderInferenceState", () => {
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
     });
     expect(calls.startStep).toHaveBeenNthCalledWith(3, "inference", {
       provider: "nvidia-prod",
@@ -1202,10 +1205,10 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
-  it("reconciles model router on resumed routed inference", async () => {
+  it("reconciles model router on resumed custom routed inference", async () => {
     const session = createSession({
       sandboxName: "router-sandbox",
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       sandboxPromptProgress: {
         sandboxName: true,
@@ -1225,7 +1228,7 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.reserveRoute).toHaveBeenCalledWith("router-sandbox", {
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       endpointUrl: "http://host.openshell.internal:4000/v1",
       endpointSource: null,
@@ -1243,7 +1246,7 @@ describe("handleProviderInferenceState", () => {
   // rather than the throw being swallowed or riding the oclif runner. The error
   // reasons themselves are locked by `model-router-python.test.ts`.
   it("exits non-zero when model router reconciliation throws (#5974)", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    const session = createSession({ provider: "custom-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { deps, calls } = createDeps({
       isInferenceRouteReady: vi.fn(() => true),
@@ -1271,7 +1274,7 @@ describe("handleProviderInferenceState", () => {
   // survive in the gateway and break inference.local from the sandbox.
   it("re-upserts the routed provider with the host alias on resume (#4564)", async () => {
     const session = createSession({
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       endpointUrl: "http://localhost:4000/v1",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
@@ -1288,7 +1291,7 @@ describe("handleProviderInferenceState", () => {
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledWith(
       "nemoclaw",
-      "nvidia-router",
+      "custom-router",
       "http://localhost:4000/v1",
       "NVIDIA_INFERENCE_API_KEY",
     );
@@ -1298,7 +1301,7 @@ describe("handleProviderInferenceState", () => {
 
   it("reserves an authoritative routed repair inside the same gateway lock", async () => {
     const session = createSession({
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       endpointUrl: "http://localhost:4000/v1",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
@@ -1346,7 +1349,7 @@ describe("handleProviderInferenceState", () => {
 
     expect(gatewayLocks).toEqual(["nemoclaw"]);
     expect(calls.reserveRoute).toHaveBeenCalledWith("router-rebuild", {
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       endpointUrl: "http://host.openshell.internal:4000/v1",
       endpointSource: null,
@@ -1359,7 +1362,7 @@ describe("handleProviderInferenceState", () => {
 
   it("aborts resume when re-upserting the routed provider fails (#4564)", async () => {
     const session = createSession({
-      provider: "nvidia-router",
+      provider: "custom-router",
       model: "router/model",
       endpointUrl: "http://localhost:4000/v1",
     });

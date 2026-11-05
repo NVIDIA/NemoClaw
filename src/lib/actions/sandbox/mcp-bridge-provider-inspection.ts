@@ -18,7 +18,10 @@ import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-obser
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
-import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
+import {
+  resolveGatewayCredentialMutationAuthority,
+  resolveGatewayObservationAuthority,
+} from "../../onboard/gateway-teardown-authority";
 import {
   evaluateGatewayAttachmentConfiguration,
   isExternallySupervised,
@@ -135,10 +138,13 @@ function providerRuntimeLocalTlsDir(
 
 export function getMcpProviderInspectionRuntimeSelection(
   sandbox: SandboxEntry,
+  options: { observationOnly?: boolean } = {},
 ): McpProviderInspectionRuntimeSelection {
   const providerRuntimeGateway = getPersistedSandboxTargetGateway(sandbox);
   const { gatewayName, gatewayPort } = providerRuntimeGateway;
-  const owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
+  const owner = options.observationOnly
+    ? resolveGatewayObservationAuthority({ gatewayName, gatewayPort })
+    : resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
   const localTlsDir = providerRuntimeLocalTlsDir(owner, providerRuntimeGateway.selectedInProcess);
   return {
     gatewayName,
@@ -149,10 +155,11 @@ export function getMcpProviderInspectionRuntimeSelection(
 
 export function resolveSandboxConfigRuntimeSelection(
   sandboxName: string,
+  options: { observationOnly?: boolean } = {},
 ): OpenShellRuntimeSelection {
   const sandbox = getKnownSandboxTarget(sandboxName);
   if (!sandbox) throw new Error(`Sandbox '${sandboxName}' has no recorded runtime target.`);
-  return getMcpProviderInspectionRuntimeSelection(sandbox);
+  return getMcpProviderInspectionRuntimeSelection(sandbox, options);
 }
 
 export async function inspectMcpProvider(

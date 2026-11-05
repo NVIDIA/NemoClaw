@@ -10,6 +10,10 @@ import { ROOT } from "../runner";
 
 export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.116";
 
+export function usesOpenShellNativeProjection(version: string): boolean {
+  return version === "0.1.3" || version === "0.1.5";
+}
+
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
   if (versionOutput !== null) return parseOpenShellVersionFromText(versionOutput);
   const observation = cliOpenShellInstalledVersionObserver.observeInstalledVersion();

@@ -68,6 +68,7 @@ const rejectedHermesReleaseIdentities = reviewedHermesReleaseIdentities.flatMap(
     })),
 );
 const commands = [
+  "agent-home",
   "auxiliary-token-limit",
   "cron-backup",
   "cron-create",
@@ -88,6 +89,7 @@ const commands = [
   "session-state-create",
   "session-state-reopen",
   "secure-directory-modes",
+  "web-search-availability",
 ] as const;
 
 function writeExecutable(target: string, source: string): void {
@@ -263,6 +265,36 @@ module.verify_session_delete()
   }
 }
 
+function runWebSearchAvailabilityProbe(web: unknown, tools: string[]) {
+  const source = `
+import importlib.util
+import json
+import sys
+import types
+
+web, tools = json.loads(sys.argv[2]), json.loads(sys.argv[3])
+modules = {
+    "hermes_cli": types.ModuleType("hermes_cli"),
+    "hermes_cli.config": types.SimpleNamespace(load_config=lambda: {}),
+    "hermes_cli.tools_config": types.SimpleNamespace(_get_platform_tools=lambda _c, _p: {"web"}),
+    "managed_policy": types.SimpleNamespace(load_managed_policy=lambda: {"config": {"web": web}}),
+    "model_tools": types.SimpleNamespace(
+        get_tool_definitions=lambda **_k: [{"function": {"name": name}} for name in tools]
+    ),
+}
+sys.modules.update(modules)
+spec = importlib.util.spec_from_file_location("image_build_probes", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.verify_web_search_availability()
+`;
+  return spawnSync(
+    "python3",
+    ["-I", "-c", source, probes, JSON.stringify(web), JSON.stringify(tools)],
+    { encoding: "utf8", timeout: 5000 },
+  );
+}
+
 function runGoogleChatOverrideSeamsProbe() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-seams-"));
   const adapter = path.join(temporaryRoot, "adapter.py");
@@ -293,6 +325,58 @@ module.verify_googlechat_override_seams(pathlib.Path(sys.argv[2]))
 `;
   try {
     return spawnSync("python3", ["-I", "-c", source, probes, adapter], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  } finally {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+}
+
+function runAgentHomeProbe(resolution: "patched" | "upstream") {
+  const temporaryRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-home-probe-")),
+  );
+  const source = `
+import importlib.util
+import pathlib
+import sys
+import types
+
+home = pathlib.Path(sys.argv[2]) / ".hermes"
+(home / "runtime").mkdir(parents=True)
+(home / "state.db").symlink_to("runtime/state.db")
+linked_ledger = home / "runtime" / "state.db"
+
+def agent_home(agent):
+    db_path = pathlib.Path(agent._session_db.db_path)
+    return home if sys.argv[3] == "patched" and db_path == linked_ledger else db_path.parent
+
+agent_package = types.ModuleType("agent")
+agent_package.__path__ = []
+system_prompt = types.ModuleType("agent.system_prompt")
+system_prompt._agent_home = agent_home
+system_prompt._agent_skills_dir = lambda agent: agent_home(agent) / "skills"
+agent_package.system_prompt = system_prompt
+tools_package = types.ModuleType("tools")
+tools_package.__path__ = []
+bot_mode_dm = types.ModuleType("tools.bot_mode_dm")
+bot_mode_dm._agent_home = lambda agent: str(agent_home(agent))
+tools_package.bot_mode_dm = bot_mode_dm
+sys.modules.update({
+    "agent": agent_package,
+    "agent.system_prompt": system_prompt,
+    "tools": tools_package,
+    "tools.bot_mode_dm": bot_mode_dm,
+})
+
+spec = importlib.util.spec_from_file_location("image_build_probes", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.verify_agent_home(hermes_home=home)
+`;
+  try {
+    return spawnSync("python3", ["-I", "-c", source, probes, temporaryRoot, resolution], {
       encoding: "utf8",
       timeout: 5000,
     });
@@ -405,11 +489,44 @@ describe("Hermes image build probes", () => {
     );
   });
 
+  it.each([
+    ["no web backend without web tools", { keyless_fallback: false }, ["terminal"], 0, ""],
+    [
+      "no web backend with web tools",
+      { keyless_fallback: false },
+      ["terminal", "web_search", "web_extract"],
+      1,
+      "offers web_search",
+    ],
+    ["a web backend with web tools", { backend: "tavily" }, ["web_search", "web_extract"], 0, ""],
+    ["a web backend without web tools", { backend: "tavily" }, ["terminal"], 1, "omits web_search"],
+  ])("checks Hermes web tool exposure for %s (#13584)", (_name, web, tools, status, message) => {
+    const result = runWebSearchAvailabilityProbe(web, tools);
+
+    expect(result.status, result.stderr).toBe(status);
+    expect(result.stderr).toContain(message);
+  });
+
   it("accepts the Hermes 0.21.3 Google Chat override seams", () => {
     const result = runGoogleChatOverrideSeamsProbe();
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
+  });
+
+  it("accepts the Hermes home as the agent home for the linked default-profile ledger", () => {
+    const result = runAgentHomeProbe("patched");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects the runtime directory as the agent home for the linked default-profile ledger", () => {
+    const result = runAgentHomeProbe("upstream");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("AssertionError");
+    expect(result.stderr).toContain(".hermes/runtime/skills");
   });
 
   it("accepts the exact previous 0.20.6 Hermes release identity tuple", () => {
@@ -455,10 +572,17 @@ describe("Hermes image build probes", () => {
       path.join(import.meta.dirname, "../../../agents/hermes/cron-restore-control.py"),
     );
     const cronRestoreDigest = createHash("sha256").update(cronRestoreControl).digest("hex");
+    const profilePolicyPatcher = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/patch-profile-policy-defaults.py"),
+    );
+    const patcherDigest = createHash("sha256").update(profilePolicyPatcher).digest("hex");
 
     expect(imageDockerfile).toContain(digestBinding);
     expect(imageDockerfile).toContain(
       `ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=${cronRestoreDigest}`,
+    );
+    expect(imageDockerfile).toContain(
+      `ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=${patcherDigest}`,
     );
     expect(
       Array.from(
@@ -707,12 +831,20 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     const sessionStateLayers = runInstructions.filter(({ text }) =>
       text.includes(`${imageProbePath} session-state-`),
     );
+    const agentHomeLayer = runInstructions.find(({ text }) =>
+      text.includes(`${imageProbePath} agent-home`),
+    );
+    const ledgerLayoutLayer = runInstructions.find(({ text }) =>
+      text.includes('ln -s "runtime/${name}" "/sandbox/.hermes/${name}"'),
+    );
 
     expect({
       cron: layersFor("cron").length,
       discord: layersFor("discord").length,
       sessionState: sessionStateLayers.length,
     }).toEqual({ cron: 2, discord: 2, sessionState: 1 });
+    expect(agentHomeLayer?.start).toBeGreaterThan(ledgerLayoutLayer?.start ?? Infinity);
+    expect(agentHomeLayer?.start).toBe(sessionStateLayers[0]?.start);
     expect(sessionStateLayers[0]?.start).toBe(
       layersFor("cron").find(({ text }) => text.includes(`${imageProbePath} cron-create`))?.start,
     );

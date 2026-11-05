@@ -495,7 +495,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
   const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
   const trustedMainPlanCondition =
-    "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+    "${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
   if (qualificationPlan.if !== trustedMainPlanCondition) {
     errors.push("Native runtime qualification producer plan must execute only from trusted main");
   }
@@ -917,8 +917,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     );
   }
   const matrix = workflow.jobs["generate-matrix"] ?? {};
-  if (needs(matrix).length !== 0) {
-    errors.push("generate-matrix must not wait for managed-image publication");
+  if (!isDeepStrictEqual(needs(matrix), ["package-openshell-sdk"])) {
+    errors.push("generate-matrix must wait only for reviewed SDK packaging");
   }
   const matrixOutputs = matrix.outputs ?? {};
   if (
@@ -966,18 +966,24 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }) ||
     !isReviewedOpenShellSdkInstallStep(sdkInstall) ||
     !(
-      prepareIndex >= 0 &&
-      prepareIndex < downloadIndex &&
-      downloadIndex < installIndex &&
+      downloadIndex >= 0 &&
+      downloadIndex < prepareIndex &&
+      prepareIndex < installIndex &&
       installIndex < runIndex
     )
   ) {
     errors.push(
-      "live E2E must download and install the reviewed SDK after workspace preparation and before tests",
+      "live E2E must download the reviewed SDK before workspace preparation and install it before tests",
     );
   }
   const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
-  if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
+  if (
+    !sameMembers(needs(cloudOnboard), [
+      "base-image-publication",
+      "generate-matrix",
+      "package-openshell-sdk",
+    ])
+  ) {
     errors.push("cloud-onboard must wait for matrix generation and base-image publication");
   }
   if (
@@ -1710,9 +1716,10 @@ function validateSparkQualificationBoundary(errors: string[], workflow: Operatio
   const qualification = workflow.jobs["llama-cpp-dgx-spark-qualification"] ?? {};
   if (
     plan.if !==
-      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}" ||
+      "${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.jobs == 'llama-cpp-dgx-spark-qualification' && inputs.targets == '' }}" ||
     !sameMembers(needs(plan), ["generate-matrix"]) ||
-    qualification.if !== "${{ needs.llama-cpp-dgx-spark-plan.result == 'success' }}" ||
+    qualification.if !==
+      "${{ !cancelled() && needs.llama-cpp-dgx-spark-plan.result == 'success' }}" ||
     !sameMembers(needs(qualification), ["llama-cpp-dgx-spark-plan"])
   )
     errors.push("Spark qualification must depend on authenticated trusted-main planning");

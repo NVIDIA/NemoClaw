@@ -9,9 +9,10 @@ import {
 import { isTelemetryConfigurationKey } from "../domain/telemetry/event";
 import {
   readModelSelectionProvenance,
+  readHermesModelSelectionTuple,
   selectedModelProvenance,
 } from "../domain/telemetry/provenance";
-import { CLI_NAME } from "../cli/branding";
+import { dcodeSelectionChangeGuidance } from "../inference/managed-dcode/selection-guidance";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding/identity";
 import { isConfigObject, type ConfigObject } from "../security/credential-filter";
 import type { AgentConfigTarget } from "./agent-config";
@@ -37,40 +38,31 @@ export function persistConfigurationTelemetry(
       pending === undefined ? {} : { configurationApplyPending: pending ? true : undefined };
     if (config) {
       const modelConfig = isConfigObject(config.model) ? config.model : {};
-      const model = modelConfig.default;
       const nativeProvider = modelConfig.provider;
       const upstream = isConfigObject(config._nemoclaw_upstream)
         ? config._nemoclaw_upstream.provider
         : undefined;
-      const provider = nativeProvider === "custom" ? upstream : nativeProvider;
-      const apiMode = modelConfig.api_mode;
-      const api =
-        apiMode === undefined || apiMode === ""
-          ? "openai-completions"
-          : apiMode === "anthropic_messages"
-            ? "anthropic-messages"
-            : apiMode === "codex_responses"
-              ? "openai-responses"
-              : typeof apiMode === "string"
-                ? apiMode
-                : null;
+      const tuple = readHermesModelSelectionTuple(config);
       const previous = readModelSelectionProvenance(entry.nativeModelSelectionProvenance);
       const source =
         key === "model.default" && newModelSelection
           ? "custom"
-          : previous && previous.model === model && previous.provider === provider
+          : previous &&
+              previous.model === tuple?.model &&
+              previous.provider === tuple.provider &&
+              previous.apiFamily === tuple.apiFamily
             ? previous.modelSource
             : undefined;
       updates.nativeModelSelectionProvenance =
-        typeof model === "string" && typeof provider === "string" && source
+        tuple && source
           ? selectedModelProvenance({
-              model,
-              provider,
+              model: tuple.model,
+              provider: tuple.provider,
               endpointUrl:
                 nativeProvider === "custom" && upstream === entry.provider
                   ? entry.endpointUrl
                   : undefined,
-              preferredInferenceApi: api,
+              preferredInferenceApi: tuple.apiFamily,
               modelSource: source,
             })
           : undefined;
@@ -109,7 +101,6 @@ export function retireNativeConfigurationTelemetry(sandboxName: string, gatewayN
 /** Enforce the existing host config-mutation surface before any write or receipt. */
 export function configSetUnsupportedAgentMessage(
   target: AgentConfigTarget,
-  sandboxName: string,
   configKey: string,
   quote: (value: string) => string,
 ): string | readonly string[] | null {
@@ -119,7 +110,7 @@ export function configSetUnsupportedAgentMessage(
       `  Connect to the sandbox and use the native command instead: openclaw config set ${quote(configKey)} <value>`,
     ];
   if (target.agentName !== "hermes" && target.format === "toml")
-    return `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${quote(sandboxName)} --fresh).`;
+    return `  config set is not available for '${target.agentName}'. ${dcodeSelectionChangeGuidance()}`;
   return target.agentName === "hermes"
     ? null
     : `  config set is available only for Hermes; '${target.agentName}' config was not changed. Use the agent's native configuration command.`;

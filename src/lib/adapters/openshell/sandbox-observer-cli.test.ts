@@ -326,6 +326,7 @@ describe("CLI OpenShell sandbox observer", () => {
           `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
         ),
       )
+      .mockReturnValueOnce(captured(1, "", `Error: code: 'NotFound', message: "sandbox not found"`))
       .mockReturnValueOnce(
         captured(1, "", "Error: authentication failed: sandbox not found: bearer value"),
       );
@@ -337,11 +338,35 @@ describe("CLI OpenShell sandbox observer", () => {
       displayOutput: "",
     });
     await expect(lookup(request)).resolves.toEqual({
+      result: { ok: true, value: { state: "missing" } },
+      displayOutput: "",
+    });
+    await expect(lookup(request)).resolves.toEqual({
       result: {
         ok: false,
         error: {
           kind: "authentication",
           message: "OpenShell could not authenticate the sandbox observation.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
+  it("does not retire ownership from compact NotFound status (#12740)", async () => {
+    const lookup = createCliOpenShellSandboxLookup({
+      capture: () => captured(1, "", `status: NotFound, message: "sandbox not found"`),
+    });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The OpenShell sandbox observation failed.",
         },
       },
       displayOutput: "",

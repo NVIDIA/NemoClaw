@@ -8,7 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
 import * as receiptAuthority from "../../lib/onboard/experimental/hermes-portable-receipt";
+import { isUnlockedSandboxStatusRead } from "../../lib/actions/sandbox/status-snapshot";
 import { isMcpLifecycleLockHeld } from "../../lib/state/mcp-lifecycle-lock-acquisition";
+import { portableHostFencePath } from "../../lib/state/portable-uninstall-retirement";
+import { acquireProcessBoundLockAt, releaseProcessBoundLock } from "../../lib/state/registry/lock";
 
 const mocks = vi.hoisted(() => {
   class SandboxConfigError extends Error {
@@ -272,6 +275,49 @@ describe("sandbox oclif command adapters", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("routes the text status command through the unlocked read during ordinary host contention (#11903)", async () => {
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+    mocks.showSandboxStatus.mockImplementationOnce(async (name: string) => {
+      expect(name).toBe("alpha");
+      expect(isUnlockedSandboxStatusRead()).toBe(true);
+      expect(isMcpLifecycleLockHeld(name)).toBe(false);
+    });
+    const fence = acquireProcessBoundLockAt(portableHostFencePath(stateDir));
+    try {
+      await SandboxStatusCommand.run(["alpha"], rootDir);
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+
+    expect(mocks.showSandboxStatus).toHaveBeenCalledWith("alpha");
+  });
+
+  it("routes the JSON status command through the unlocked read during ordinary host contention (#11903)", async () => {
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+    mocks.getSandboxStatusReport.mockImplementationOnce(async (name: string) => {
+      expect(name).toBe("alpha");
+      expect(isUnlockedSandboxStatusRead()).toBe(true);
+      expect(isMcpLifecycleLockHeld(name)).toBe(false);
+      return {
+        schemaVersion: 1,
+        name,
+        found: true,
+        gatewayState: "present",
+        inferenceProbeSuppressed: true,
+      };
+    });
+    const fence = acquireProcessBoundLockAt(portableHostFencePath(stateDir));
+    try {
+      await SandboxStatusCommand.run(["alpha", "--json"], rootDir);
+    } finally {
+      releaseProcessBoundLock(fence);
+    }
+
+    expect(mocks.getSandboxStatusReport).toHaveBeenCalledWith("alpha");
+  });
+
   it("keeps policy list pending until the asynchronous action completes", async () => {
     let finish!: () => void;
     mocks.listSandboxPolicies.mockImplementationOnce(
@@ -388,7 +434,23 @@ describe("sandbox oclif command adapters", () => {
     expect(DestroyCliCommand.id).toBe("sandbox:destroy");
     expect(usage(DestroyCliCommand)).toContain("[--yes|-y|--force]");
     expect(RecoverCliCommand.id).toBe("sandbox:recover");
-    expect(RecoverCliCommand.summary).toMatch(/Repair a stopped sandbox gateway/);
+    expect(RecoverCliCommand.summary).toBe(
+      "Verify sandbox gateway health and repair host forwards",
+    );
+    expect(RecoverCliCommand.description).not.toContain("repair stopped gateways");
+    expect(RecoverCliCommand.description).toContain(
+      "the Hermes supervisor can wait for authenticated gated recovery",
+    );
+    expect(RecoverCliCommand.description).toContain("After a clean exit or exit status 79");
+    expect(RecoverCliCommand.description).toContain(
+      "In that state, `recover` requests a supervised gateway relaunch before verification",
+    );
+    expect(RecoverCliCommand.description).toContain(
+      "For other stopped gateways or a forced runtime reload, use `gateway restart`",
+    );
+    expect(RecoverCliCommand.description).toContain(
+      "validate and release a NemoClaw cron restore gate",
+    );
     expect(RecoverCliCommand.description).toContain("A healthy gateway is not restarted");
     expect(RecoverCliCommand.description).toContain("gateway restart");
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);

@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SUPPORTED_OPENSHELL_FALLBACK_VERSION } from "../../onboard/openshell-version";
+import {
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  usesOpenShellNativeProjection,
+} from "../../onboard/openshell-version";
 
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -40,6 +43,7 @@ import {
   reportsExactProviderNotFound,
   reportsExactSandboxNotFound,
   reportsProviderNotAttached,
+  reportsUnqualifiedSandboxNotFound,
 } from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
@@ -479,6 +483,7 @@ function parseProviderAttachmentNames(output: string): string[] | null {
   return names;
 }
 
+/** Create a provider adapter that scopes CLI commands to the requested gateway and classifies their results. */
 export function createCliOpenShellProviderAdapter(
   deps: CliOpenShellProviderAdapterDeps = {},
 ): CliOpenShellProviderAdapter {
@@ -750,7 +755,7 @@ export function createCliOpenShellProviderAdapter(
 
     let pageToken = "";
     const seenPageTokens = new Set<string>();
-    const projectedRuntime = String(SUPPORTED_OPENSHELL_FALLBACK_VERSION) === "0.1.3";
+    const projectedRuntime = usesOpenShellNativeProjection(SUPPORTED_OPENSHELL_FALLBACK_VERSION);
     for (
       let offset = 0;
       offset < 10 * PROVIDER_INVENTORY_LIMIT;
@@ -938,6 +943,7 @@ export function createCliOpenShellProviderAdapter(
       : mutationSuccess();
   };
 
+  /** Detach a provider, distinguishing confirmed non-attachment and sandbox absence from other failures. */
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async (
     request: DetachOpenShellProviderRequest,
   ) => {
@@ -965,7 +971,11 @@ export function createCliOpenShellProviderAdapter(
       !result.signal &&
       result.status !== null &&
       error?.kind === "command" &&
-      reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+      (reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT) ||
+        // The detach command itself binds this exact, strictly structured
+        // NotFound response to its sandbox operand even when the gateway omits
+        // the sandbox name from the human-readable message.
+        reportsUnqualifiedSandboxNotFound(output, PROVIDER_GET_DIAGNOSTIC_LIMIT))
     ) {
       return failure({
         kind: "command",

@@ -104,6 +104,7 @@ describe("nemoclaw <sandbox> policy-explain (E2E)", () => {
     expect(productGrammar.stdout).toContain("Explain the active policy context for the sandbox");
     expect(productGrammar.stdout).toContain("--json");
     expect(productGrammar.stdout).toContain("--write");
+    expect(productGrammar.stdout).toContain("For OpenClaw sandboxes");
 
     const oclifTopic = runCli({ HOME: scratchHome }, ["sandbox", "policy", "explain", "--help"]);
     expect(oclifTopic.status).toBe(0);

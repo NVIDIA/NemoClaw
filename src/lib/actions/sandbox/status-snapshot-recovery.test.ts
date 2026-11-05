@@ -10,7 +10,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceRouteHealth } from "./inference-route-health";
 import type { SandboxStatusPreflightResult } from "./status-preflight";
-import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
+import * as gatewayState from "./gateway-state";
+import * as gatewayIdentity from "../../onboard/gateway-binding/identity";
+import {
+  collectSandboxStatusSnapshot,
+  getSandboxStatusReport,
+  resolveSandboxStatusSessionGatewayName,
+  withUnlockedSandboxStatusRead,
+} from "./status-snapshot";
 
 const sandbox: SandboxEntry = {
   name: "alpha",
@@ -20,6 +27,26 @@ const sandbox: SandboxEntry = {
   openshellDriver: "docker",
   dashboardPort: 18789,
 };
+
+describe("sandbox status session gateway", () => {
+  it.each([
+    [{ gatewayName: "nemoclaw-8091" }, "nemoclaw-8091"],
+    [{ gatewayPort: 8092 }, "nemoclaw-8092"],
+    [{}, "nemoclaw-9090"],
+  ] as const)(
+    "preserves recorded bindings and uses the selected gateway for %j",
+    (binding, expected) => {
+      const selected = vi
+        .spyOn(gatewayIdentity, "resolveGatewayName")
+        .mockReturnValue("nemoclaw-9090");
+      try {
+        expect(resolveSandboxStatusSessionGatewayName({ ...sandbox, ...binding })).toBe(expected);
+      } finally {
+        selected.mockRestore();
+      }
+    },
+  );
+});
 
 const stoppedPreflight: SandboxStatusPreflightResult = {
   failure: {
@@ -174,6 +201,49 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unlocked status observations free of gateway and recovery mutations (#11903)", async () => {
+    const lookup = {
+      state: "present" as const,
+      phase: "Ready",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+    };
+    const reconcile = vi
+      .spyOn(gatewayState, "getReconciledSandboxGatewayState")
+      .mockResolvedValue(lookup as never);
+    const { reconcile: _defaultReconcile, ...baseDeps } = snapshotDeps({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    const recordSandboxStopIntent = vi.fn(() => false);
+    const deps = { ...baseDeps, recordSandboxStopIntent };
+
+    try {
+      await withUnlockedSandboxStatusRead(() =>
+        collectSandboxStatusSnapshot("alpha", {
+          sandboxEntry: { ...sandbox, stopped: true },
+          preflight: clearPreflight,
+          suppressInferenceProbe: true,
+          deps,
+        }),
+      );
+
+      expect(reconcile).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          gatewayRecovery: "observe",
+          selectOwningGateway: false,
+        }),
+      );
+      expect(recordSandboxStopIntent).not.toHaveBeenCalled();
+      expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    } finally {
+      reconcile.mockRestore();
     }
   });
 

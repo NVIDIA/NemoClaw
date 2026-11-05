@@ -138,6 +138,18 @@ export function resolveCpuModel(
 
 // ── Implementation ───────────────────────────────────────────────
 
+const BINARY_MEMORY_UNITS = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"];
+
+/** Convert the kubelet's allocatable memory from bytes or binary units to MiB. */
+function parseAllocatableMemoryMB(quantity: string): number | undefined {
+  const match = /^(\d+)([A-Za-z]*)$/.exec(quantity);
+  if (!match) return undefined;
+  const unitPower = BINARY_MEMORY_UNITS.indexOf(match[2]);
+  if (unitPower < 0) return undefined;
+  const bytes = Number(match[1]) * 1024 ** unitPower;
+  return Number.isFinite(bytes) ? Math.round(bytes / 1024 ** 2) : undefined;
+}
+
 /**
  * Query system hardware resources. Returns CPU, memory, and GPU info.
  * Also attempts to read Kubernetes node allocatable capacity from the
@@ -179,9 +191,7 @@ export function getHardwareResources(): HardwareResources {
       const alloc = nodes.items?.[0]?.status?.allocatable;
       if (alloc) {
         allocatableCpu = alloc.cpu;
-        const memStr: string = alloc.memory || "";
-        const kiMatch = memStr.match(/^(\d+)Ki$/);
-        if (kiMatch) allocatableMemMB = Math.round(parseInt(kiMatch[1], 10) / 1024);
+        allocatableMemMB = parseAllocatableMemoryMB(alloc.memory ?? "");
       }
     }
   } catch {
@@ -272,18 +282,24 @@ export function printHardwareResources(json: boolean): HardwareResources {
   return hw;
 }
 
+/** Validate a CPU or memory resource value and throw when a percentage is not an integer from 1% to 100%. */
+export function validateResourceValue(value: string): void {
+  const trimmed = value.trim();
+  // Kubernetes quantities never contain "%", so a value with "%" must be a whole-number percentage.
+  if (trimmed.includes("%") && !/^(?:[1-9]\d?|100)%$/.test(trimmed)) {
+    throw new Error(`Invalid percentage '${trimmed}': must be an integer between 1% and 100%`);
+  }
+}
+
 /**
  * Resolve a resource value that may be a percentage or absolute quantity.
  * Throws on invalid percentages so callers can surface clear errors.
  */
 export function resolveResourceValue(value: string, total: number, unit: "cpu" | "memory"): string {
   if (!value) return "";
+  validateResourceValue(value);
   const trimmed = value.trim();
   if (trimmed.endsWith("%")) {
-    // Strict validation: only accept integers 1-100 followed by %
-    if (!/^(?:[1-9]\d?|100)%$/.test(trimmed)) {
-      throw new Error(`Invalid percentage '${trimmed}': must be an integer between 1% and 100%`);
-    }
     const pct = parseInt(trimmed.slice(0, -1), 10);
     if (unit === "cpu") {
       const milliCores = Math.max(1, Math.floor((total * 1000 * pct) / 100));
@@ -333,16 +349,17 @@ export function resolveProfile(profile: ResourceProfile, hw: HardwareResources):
 }
 
 /**
- * Append resource flags to an openshell sandbox create args array.
- * Resolves percentage values against detected hardware before passing.
- * Gracefully degrades: checks `openshell sandbox create --help` for flag
- * support and skips silently if the installed OpenShell doesn't have them.
+ * Append resolved --cpu and --memory flags to an `openshell sandbox create` args array.
+ * Throws on an invalid percentage before it checks OpenShell flag support.
+ * Returns false when `openshell sandbox create --help` fails or lacks --cpu or --memory.
  */
 export function appendResourceFlags(
   args: string[],
   profile: ResourceProfile,
   openshellBinary = "openshell",
 ): boolean {
+  validateResourceValue(profile.cpu);
+  validateResourceValue(profile.memory);
   try {
     const result = spawnSync(openshellBinary, ["sandbox", "create", "--help"], {
       encoding: "utf-8",
@@ -357,15 +374,11 @@ export function appendResourceFlags(
   } catch {
     return false;
   }
-  try {
-    const hw = getHardwareResources();
-    const resolved = resolveProfile(profile, hw);
-    if (resolved.cpu) args.push("--cpu", resolved.cpu);
-    if (resolved.memory) args.push("--memory", resolved.memory);
-    return true;
-  } catch {
-    return false;
-  }
+  const hw = getHardwareResources();
+  const resolved = resolveProfile(profile, hw);
+  if (resolved.cpu) args.push("--cpu", resolved.cpu);
+  if (resolved.memory) args.push("--memory", resolved.memory);
+  return true;
 }
 
 function normalizeResourceProfile(prof: Record<string, unknown>): ResourceProfile | null {

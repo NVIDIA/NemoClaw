@@ -4,6 +4,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { stripVTControlCharacters } from "node:util";
+
+import { redactFullWithUrls } from "../../src/lib/security/redact";
 
 import { hasMaintainerBudgetApproval } from "./e2e-budget-approval";
 
@@ -52,9 +56,9 @@ function parseChangedFiles(source: string): PullRequestFile[] {
   return files;
 }
 
-function readGitFile(ref: string, file: string): string | null {
+function readGitFile(ref: string, file: string, repoRoot = REPO_ROOT): string | null {
   const result = spawnSync("git", ["show", `${ref}:${file}`], {
-    cwd: REPO_ROOT,
+    cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -168,16 +172,117 @@ function assertCommitSha(sha: string, label: string): void {
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`${label} must be a full commit SHA`);
 }
 
-function fetchPullHead(prNumber: string, expectedHeadSha: string): void {
-  execFileSync("git", ["fetch", "--no-tags", "--depth=1", "origin", `refs/pull/${prNumber}/head`], {
-    cwd: REPO_ROOT,
-    stdio: "ignore",
-  });
-  const fetchedHead = execFileSync("git", ["rev-parse", "FETCH_HEAD"], {
-    cwd: REPO_ROOT,
+function preparePullRequestTree(
+  prNumber: string,
+  expectedHeadSha: string,
+  baseSha: string,
+  repoRoot: string,
+): string {
+  const initialDepth = 32;
+  const historyDepth = 1024;
+  const started = performance.now();
+  const preparationLimit = 180_000;
+  const commandTimeout = (phase: string, limit: number): number => {
+    const remaining = Math.floor(preparationLimit - (performance.now() - started));
+    if (remaining <= 0)
+      throw new Error(
+        `PR #${prNumber}: ${phase}: preparation budget exhausted (${preparationLimit}ms).`,
+      );
+    return Math.min(limit, remaining);
+  };
+  const failure = (
+    phase: string,
+    timeout: number,
+    depth: string,
+    result: {
+      code?: string;
+      status?: number | null;
+      signal?: string | null;
+      stderr?: string | Buffer | null;
+    },
+  ): Error => {
+    const details = redactFullWithUrls(stripVTControlCharacters(String(result.stderr ?? ""))).slice(
+      0,
+      2048,
+    );
+    return new Error(
+      `PR #${prNumber}: growth comparison preparation failed during ${phase} ` +
+        `(${depth}, history limit ${historyDepth}, command limit ${timeout}ms, ` +
+        `elapsed ${Math.round(performance.now() - started)}ms, ` +
+        `code ${result.code ?? "none"}, exit ${result.status ?? "none"}, signal ${result.signal ?? "none"}).` +
+        (details ? `\n${details}` : ""),
+    );
+  };
+  const git = (phase: string, args: string[]): string => {
+    const timeout = commandTimeout(phase, args[0] === "fetch" ? 90_000 : 30_000);
+    try {
+      return execFileSync("git", args, {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 64 * 1024,
+        timeout,
+      }).trim();
+    } catch (cause) {
+      // Raw subprocess errors retain unredacted output and must not reach Vitest's serializer.
+      throw failure(
+        phase,
+        timeout,
+        args.find((arg) => arg.startsWith("--depth=")) ?? "local",
+        cause as Parameters<typeof failure>[3],
+      );
+    }
+  };
+  const shallow = git("history inspection", ["rev-parse", "--is-shallow-repository"]);
+  const fetchHistory = (depth: number): void => {
+    if (shallow === "true") {
+      git("trusted-base history fetch", [
+        "fetch",
+        "--no-tags",
+        `--depth=${depth}`,
+        "origin",
+        baseSha,
+      ]);
+    }
+    git("PR commit fetch", [
+      "fetch",
+      "--no-tags",
+      `--depth=${depth}`,
+      "origin",
+      `refs/pull/${prNumber}/head`,
+    ]);
+    const fetchedHead = git("PR commit verification", ["rev-parse", "FETCH_HEAD"]);
+    if (fetchedHead !== expectedHeadSha)
+      throw new Error(`PR #${prNumber}: Fetched PR head does not match HEAD_SHA`);
+  };
+  fetchHistory(initialDepth);
+  const timeout = commandTimeout("merge base inspection", 30_000);
+  const mergeBase = spawnSync("git", ["merge-base", baseSha, expectedHeadSha], {
+    cwd: repoRoot,
     encoding: "utf8",
-  }).trim();
-  if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024,
+    timeout,
+  });
+  if (mergeBase.error || (mergeBase.status !== 0 && mergeBase.status !== 1)) {
+    throw failure("merge base inspection", timeout, "local", {
+      ...mergeBase,
+      code: (mergeBase.error as NodeJS.ErrnoException | undefined)?.code,
+    });
+  }
+  // Deepen once before rejecting a branch whose merge base is beyond the shallow fetch.
+  if (mergeBase.status === 1) fetchHistory(historyDepth);
+  // Merge candidate objects without checking out or executing candidate code.
+  const mergedTree = git("merge tree construction", [
+    "merge-tree",
+    "--write-tree",
+    "--no-messages",
+    baseSha,
+    expectedHeadSha,
+  ]);
+  if (!/^[0-9a-f]{40}$/.test(mergedTree))
+    throw new Error(`PR #${prNumber}: Invalid prospective merge tree SHA`);
+  return mergedTree;
 }
 
 /** Independent pull_request_target enforcement must never consume candidate policy. */
@@ -185,19 +290,19 @@ function pullRequestExceptionPolicySource(eventName: string | undefined): "base"
   return eventName === "pull_request" ? "head" : "base";
 }
 
-function loadPullRequestDiff(): GrowthGuardrailDiff {
+function loadPullRequestDiff(repoRoot = REPO_ROOT): GrowthGuardrailDiff {
   const prNumber = requiredEnvironment("PR_NUMBER");
   const baseSha = requiredEnvironment("BASE_SHA");
   const headSha = requiredEnvironment("HEAD_SHA");
   assertPullNumber(prNumber);
   assertCommitSha(baseSha, "BASE_SHA");
   assertCommitSha(headSha, "HEAD_SHA");
-  fetchPullHead(prNumber, headSha);
+  const mergedTree = preparePullRequestTree(prNumber, headSha, baseSha, repoRoot);
   const changed = execFileSync(
     "git",
-    ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"],
+    ["diff", "--name-status", "-z", "-M", baseSha, mergedTree, "--"],
     {
-      cwd: REPO_ROOT,
+      cwd: repoRoot,
       encoding: "utf8",
     },
   );
@@ -217,10 +322,10 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
         }
       : {}),
     async readBase(paths) {
-      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file, repoRoot));
     },
     async readHead(paths) {
-      return readFilesCached(paths, headCache, (file) => readGitFile(headSha, file));
+      return readFilesCached(paths, headCache, (file) => readGitFile(mergedTree, file, repoRoot));
     },
   };
 }
@@ -230,6 +335,7 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
 }
 
 export const testOnly = {
+  loadPullRequestDiff,
   pullRequestExceptionPolicySource,
   parseAncestorProbe,
   parseChangedFiles,
