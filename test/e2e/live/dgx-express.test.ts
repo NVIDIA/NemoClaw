@@ -14,7 +14,6 @@ import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
-import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
@@ -27,7 +26,6 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { runStationExpressSmoke, STATION_SMOKE_PHASES } from "../support/dgx-station-express.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
@@ -237,6 +235,7 @@ test(
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     validateSandboxName(SANDBOX_NAME);
     assertLocalDockerEnvironment(process.env);
+    const { detectVllmProfile } = await import("../../../src/lib/inference/vllm.ts");
     const plan = vllmProfilePlan();
     const baseProfile = detectVllmProfile({ platform: "spark" });
     assert(baseProfile, "the DGX Spark vLLM base profile is unavailable");
@@ -449,9 +448,18 @@ test(
   "dgx-station-express: Station Express installs cached Super VL vLLM and NemoClaw, routes inference, and cleans up runtime",
   {
     timeout: 48 * 60_000,
-    meta: { e2ePhases: STATION_SMOKE_PHASES, e2eCleanupTimeoutMs: 6 * 60_000 },
+    meta: {
+      e2ePhases: [
+        "inspect the prepared Station",
+        "install Station Express from the candidate checkout",
+        "assert managed Super VL and routed inference",
+        "clean up the job runtime",
+      ],
+      e2eCleanupTimeoutMs: 6 * 60_000,
+    },
   },
   async ({ host, sandbox, artifacts, progress, cleanup }) => {
+    const { runStationExpressSmoke } = await import("../support/dgx-station-express.ts");
     await artifacts.target.declare({
       id: "dgx-station-express",
       contract: [
