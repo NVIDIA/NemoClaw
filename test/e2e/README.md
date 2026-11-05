@@ -505,6 +505,8 @@ interpreter inherits the approval wrapper while isolating the script's exit and 
 preserves the credential boundary without feeding a bulk script through terminal line editing.
 Cleanup removes the temporary script after success or failure; a cleanup failure also fails the fixture. The fixture checks
 the transferred bytes against the host's digest before evaluation and rejects a replaced script.
+If approval fails, the fixture records the command exit code and whether that request remains pending.
+It discards raw device records and command output after emitting fixed diagnostic categories.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
