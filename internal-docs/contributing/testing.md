@@ -384,7 +384,7 @@ After committing, run `cargo run -p nemoclaw-build --no-default-features -- chan
 The [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model run on NVIDIA hosted inference or the NVIDIA GPU runner.
 Whenever the plan selects the live suites, Linux AMD64 runs the hosted cases as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
 On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts.
-Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run. Dispatch it to run the hosted or GPU cases alone against that build.
+Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run, and each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services. Dispatch it to run the hosted or GPU cases alone against that build.
 
 A selected live suite that fails fails its platform's `Test / PLATFORM` check.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
