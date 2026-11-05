@@ -6,7 +6,9 @@
 //! run `probe` from this binary once per target through `tests/e2e/hcl/verifier`.
 //! OpenTofu installs providers that a case's own modules use, such as Helm for
 //! a kind case's fixtures, from the bundle. A kind case's `tests/e2e/hcl/kind`
-//! module runs `issuer` once for its existing OIDC issuer. The caller
+//! module runs `issuer` once for its existing OIDC issuer, and
+//! `tests/e2e/hcl/admission` runs `admission` to refuse, then allow,
+//! StatefulSets in a kind case's namespace. The caller
 //! destroys the deployment, so cleanup also runs after a failed, cancelled, or
 //! timed-out job: `nemoclaw destroy --state-dir "$NEMOCLAW_HCL_RUN/deployment"`.
 //! After `tofu test`, `case` reports how long each run block took, on stderr
@@ -14,7 +16,9 @@
 //! test.
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_e2e::state::{runtime_id, sandbox_binding, successful_invocation};
+use nemoclaw_e2e::state::{
+    bound, gateway_release, runtime_id, sandbox_binding, successful_invocation,
+};
 use nemoclaw_sdk::{EnvironmentSecrets, config::Document};
 use nemoclaw_test_fixtures::Bundle;
 use openshell_provider::OpenShell;
@@ -324,6 +328,135 @@ fn issuer() {
         .unwrap()
         .write_all(material.token(i64::try_from(now).unwrap()).as_bytes())
         .unwrap();
+}
+
+/// The message of the admission policy that `admission` creates: one word, so
+/// that OpenTofu's line wrapping can't split it in the CLI's error.
+const REFUSAL: &str = "nemoclaw-live-test-refuses-statefulsets";
+
+/// Refuse or allow StatefulSets in a kind case's namespace with a
+/// `ValidatingAdmissionPolicy`, so that a gateway install fails after Helm has
+/// stored its release (#14155). `refuse` creates the policy and its binding and
+/// reports whether the API server enforces them within a minute; `allow`
+/// removes them and reports how many records of the gateway's release remain
+/// and which resources the state binds.
+#[tokio::test]
+#[ignore = "run by tests/e2e/hcl/admission for a kind case"]
+async fn admission() {
+    use k8s_openapi::api::{
+        admissionregistration::v1::{ValidatingAdmissionPolicy, ValidatingAdmissionPolicyBinding},
+        apps::v1::StatefulSet,
+        core::v1::Secret,
+    };
+    use kube::{
+        Api,
+        api::{DeleteParams, ListParams, PostParams},
+    };
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let document = Document::parse(fs::File::open(input("CONFIG")).unwrap()).unwrap();
+    let kubernetes = document
+        .spec
+        .gateway
+        .as_managed()
+        .and_then(|gateway| gateway.kubernetes.as_deref())
+        .expect("a kind case has a managed Kubernetes gateway");
+    let target = nemoclaw_sdk::kubernetes::ClusterTarget {
+        kubeconfig: var(&kubernetes.kubeconfig.as_ref().unwrap().env)
+            .unwrap()
+            .into(),
+        context: kubernetes.context.clone().unwrap(),
+    };
+    let client = nemoclaw_sdk::kubernetes::connect(&target).await.unwrap();
+    let namespace = &kubernetes.namespace;
+    // Cluster-scoped, so named for the case's namespace.
+    let name = format!("{namespace}-refuse-statefulsets");
+    let policies = Api::<ValidatingAdmissionPolicy>::all(client.clone());
+    let bindings = Api::<ValidatingAdmissionPolicyBinding>::all(client.clone());
+    let report = match input("ACTION").as_str() {
+        "refuse" => {
+            let policy = serde_json::from_value(json!({
+                "metadata": {"name": name},
+                "spec": {
+                    "failurePolicy": "Fail",
+                    "matchConstraints": {"resourceRules": [{
+                        "apiGroups": ["apps"], "apiVersions": ["v1"],
+                        "operations": ["CREATE"], "resources": ["statefulsets"],
+                    }]},
+                    "validations": [{"expression": "false", "message": REFUSAL}],
+                },
+            }))
+            .unwrap();
+            let binding = serde_json::from_value(json!({
+                "metadata": {"name": name},
+                "spec": {
+                    "policyName": name, "validationActions": ["Deny"],
+                    "matchResources": {"namespaceSelector": {"matchLabels": {
+                        "kubernetes.io/metadata.name": namespace,
+                    }}},
+                },
+            }))
+            .unwrap();
+            policies
+                .create(&PostParams::default(), &policy)
+                .await
+                .unwrap();
+            bindings
+                .create(&PostParams::default(), &binding)
+                .await
+                .unwrap();
+            // The API server enforces a new policy once it has loaded it: wait
+            // until it refuses a dry-run StatefulSet.
+            let probe: StatefulSet = serde_json::from_value(json!({
+                "metadata": {"name": "admission-probe"},
+                "spec": {
+                    "serviceName": "admission-probe",
+                    "selector": {"matchLabels": {"probe": "admission"}},
+                    "template": {
+                        "metadata": {"labels": {"probe": "admission"}},
+                        "spec": {"containers": [{"name": "probe", "image": "probe"}]},
+                    },
+                },
+            }))
+            .unwrap();
+            let sets = Api::<StatefulSet>::namespaced(client.clone(), namespace);
+            let dry_run = PostParams {
+                dry_run: true,
+                ..Default::default()
+            };
+            let mut refusing = false;
+            for _ in 0..60 {
+                if let Err(error) = sets.create(&dry_run, &probe).await
+                    && error.to_string().contains(REFUSAL)
+                {
+                    refusing = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            json!({"refusing": refusing})
+        }
+        "allow" => {
+            bindings
+                .delete(&name, &DeleteParams::default())
+                .await
+                .unwrap();
+            policies
+                .delete(&name, &DeleteParams::default())
+                .await
+                .unwrap();
+            let state = PathBuf::from(input("STATE"));
+            let (release, release_namespace) = gateway_release(&state);
+            let records = Api::<Secret>::namespaced(client.clone(), &release_namespace)
+                .list(&ListParams::default().labels(&format!("owner=helm,name={release}")))
+                .await
+                .unwrap()
+                .items
+                .len();
+            json!({"releases": records, "bound": bound(&state)})
+        }
+        action => panic!("unknown admission action {action}"),
+    };
+    fs::write(input("REPORT"), report.to_string()).unwrap();
 }
 
 /// The row for the time `tofu test` spends destroying the runs' state after
