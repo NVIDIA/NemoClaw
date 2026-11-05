@@ -33,7 +33,8 @@ Preserve historical reports and their cutoffs. Optional later commit or merge re
 The description becomes the squash commit's message, so it stays in the history.
 
 - The first paragraph says what changes and for whom; a reviewer who reads only that paragraph knows what the diff does. Keep the rest as long as the change needs: a small change gets a few lines.
-- Back every claim with a check under Validation, and make no claim stronger than that check shows. Write "Resolves #N" only when every acceptance criterion is met.
+- Back every claim with CI or a check under Beyond CI, and make no claim stronger than that check shows. Write "Resolves #N" only when every acceptance criterion is met.
+- Don't list checks that CI runs; reviewers read CI's results on the final commit. Report local runs to whoever asked for the change, not in the description.
 - Write only what stays true after merge. CI status, review state, run IDs, and links readers outside NVIDIA can't open go in a PR comment, beside the session report.
 
 ## Session Report

@@ -11,6 +11,6 @@
 
 <!-- What is different, as a short list a reviewer can map to the diff. Why this approach, the alternatives you rejected, and what is deliberately left out. For a workaround of another component, the upstream issue and when the workaround can go. -->
 
-## Validation
+## Beyond CI
 
-<!-- Each check and what it shows, not only that it ran. What remains unverified, and why. Checks deferred to CI, with reasons. -->
+<!-- Optional. Checks that CI doesn't run and what they showed, such as a live, hardware, or manual run, and what remains unverified, with why. Leave this section out when CI covers the change. -->
