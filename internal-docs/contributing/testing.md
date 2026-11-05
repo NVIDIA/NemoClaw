@@ -290,17 +290,15 @@ Documentation previews publish only for PRs targeting `v1`.
 
 | Workflow | Checks |
 |---|---|
-| CI / Bundle | `Unit`, `Contract`, `Integration`, `E2E`, and `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their layer, such as `linux_amd64 / Contract / 1` or `linux_amd64 / E2E / Live / Docker` |
+| CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract / 1` or `linux_amd64 / E2E / Live / Docker` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
-The `v1` ruleset requires the `Test / PLATFORM`, `Build / PLATFORM`, `Policy`, and `Validate` checks; `Unit`, `Contract`, `Integration`, and `E2E` are the checks for each test layer, which the ruleset should require in place of the four `Test / PLATFORM` checks.
+The `v1` ruleset requires the first eight checks.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
-`Unit`, `Contract`, and `Integration` each fail unless every platform reports its layer passing or, for `Contract` and `Integration`, not selected by the plan; [live suites](#live-suites) says when `E2E` fails.
-A `Test / PLATFORM` check succeeds only when every job of that platform's build, bundle, unit, contract, and integration tests succeeds.
-`E2E` covers the live suites; see [live suites](#live-suites).
+A `Test / PLATFORM` check succeeds only when every job of that platform that runs succeeds: its unit, contract, and integration tests, and, on Linux, its selected live suites. A job the plan doesn't select is skipped.
 
 Each bundle or image workflow calls the [shared planner](../../.github/workflows/validation-plan.yml) once on Linux before its platform jobs.
 It builds without the SDK, protoc, or nextest, reads old and new Cargo metadata once, and reports the decisions in the job summary.
@@ -323,7 +321,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When selected and the build and bundle jobs finish, `Contract / N` and `Integration / N` run their layers in partitions, and `Contract / Timing` and `Integration / Timing` then report each whole suite and check the binary budgets.
 4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E / Build live images` with `cargo ci live-images`, and `E2E / Live / Docker` and `E2E / Live / Kind`, from the platform's archive and bundle. Linux AMD64 also runs `E2E / HCL`; see [live suites](#live-suites).
-5. `Layer results` reports each layer's result to the `Unit`, `Contract`, `Integration`, and `E2E` checks.
+
 When no image input changed since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images.
 
 Each platform starts its jobs after its own build; it does not wait for the other platforms.
@@ -387,7 +385,7 @@ After committing, run `cargo run -p nemoclaw-build --no-default-features -- chan
 [Live / HCL](../../.github/workflows/hcl-e2e.yml) builds its own bundle, test executable, and agent images and runs the [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model, on hosted NVIDIA inference or the NVIDIA GPU runner.
 CI / Bundle runs them as `linux_amd64 / E2E / HCL` whenever the plan selects the live suites, except on a fork's pull request, which cannot use the inference secret. On a pull request it runs only the hosted cases, because NVIDIA's GPU runners refuse jobs that a pull request starts; `v1` pushes and manual runs add the GPU cases. Dispatch Live / HCL to run it alone, with or without the GPU cases.
 
-The required `E2E` check fails when the plan fails or a selected live suite fails; it passes when the plan selects no live suite.
+A selected live suite that fails fails its platform's `Test / PLATFORM` check.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Dependency Policy

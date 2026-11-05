@@ -42,19 +42,6 @@ on:
         description: Also run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs.
         type: boolean
         default: false
-    outputs:
-      unit:
-        description: success or failure.
-        value: ${{ jobs.results.outputs.unit }}
-      contract:
-        description: success, failure, or not-selected.
-        value: ${{ jobs.results.outputs.contract }}
-      integration:
-        description: success, failure, or not-selected.
-        value: ${{ jobs.results.outputs.integration }}
-      e2e:
-        description: success, failure, or not-selected.
-        value: ${{ jobs.results.outputs.e2e }}
 # The live suites read the per-commit image package for images to reuse.
 permissions:
   contents: read
@@ -70,7 +57,8 @@ env:
 # runners; the contract, integration, and live jobs start when both have
 # uploaded their artifacts. Artifact names carry the run attempt, and consumers
 # read them from the producers' outputs, so rerunning a failed shard reuses an
-# earlier attempt's artifacts.
+# earlier attempt's artifacts. The caller's Test / PLATFORM check requires every
+# job here that runs; a job the plan does not select is skipped.
 jobs:
   build:
     name: Unit / Build and test
@@ -396,54 +384,3 @@ jobs:
       gpu: ${{ inputs.hcl-gpu }}
     # The hosted cases read NVIDIA_API_KEY.
     secrets: inherit
-
-  # Each layer's result for the caller's Unit, Contract, Integration, and E2E
-  # checks. A layer the plan did not select reports not-selected; a skipped job
-  # whose layer was selected, such as after a failed bundle, reports failure.
-  results:
-    name: Layer results
-    if: ${{ !cancelled() }}
-    needs: [build, bundle, contract, contract-timing, integration, integration-timing, e2e, hcl]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      unit: ${{ steps.layers.outputs.unit }}
-      contract: ${{ steps.layers.outputs.contract }}
-      integration: ${{ steps.layers.outputs.integration }}
-      e2e: ${{ steps.layers.outputs.e2e }}
-    steps:
-      - name: Decide each layer's result
-        id: layers
-        env:
-          SELECTED: ${{ inputs.lifecycle }}
-          E2E_SELECTED: ${{ inputs.e2e }}
-          HCL_SELECTED: ${{ inputs.hcl }}
-          BUILD: ${{ needs.build.result }}
-          BUNDLE: ${{ needs.bundle.result }}
-          CONTRACT: ${{ needs.contract.result }}
-          CONTRACT_TIMING: ${{ needs.contract-timing.result }}
-          INTEGRATION: ${{ needs.integration.result }}
-          INTEGRATION_TIMING: ${{ needs.integration-timing.result }}
-          E2E: ${{ needs.e2e.result }}
-          HCL: ${{ needs.hcl.result }}
-        run: |
-          echo "unit=$BUILD" >> "$GITHUB_OUTPUT"
-          layer() {
-            if [ "$SELECTED" != true ]; then
-              echo not-selected
-            elif [ "$BUILD" = success ] && [ "$BUNDLE" = success ] && [ "$1" = success ] && [ "$2" = success ]; then
-              echo success
-            else
-              echo failure
-            fi
-          }
-          echo "contract=$(layer "$CONTRACT" "$CONTRACT_TIMING")" >> "$GITHUB_OUTPUT"
-          echo "integration=$(layer "$INTEGRATION" "$INTEGRATION_TIMING")" >> "$GITHUB_OUTPUT"
-          e2e=not-selected
-          if [ "$E2E_SELECTED" = true ]; then
-            [ "$E2E" = success ] && e2e=success || e2e=failure
-          fi
-          if [ "$HCL_SELECTED" = true ] && [ "$e2e" != failure ]; then
-            [ "$HCL" = success ] && e2e=success || e2e=failure
-          fi
-          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"

@@ -23,8 +23,8 @@ jobs:
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
-  # Each platform runs its four test layers: Unit, Contract, Integration, and,
-  # on Linux when the plan selects the live suites, E2E. Linux AMD64 also runs
+  # Each platform runs its test layers: Unit, Contract, and Integration, and, on
+  # Linux when the plan selects the live suites, E2E. Linux AMD64 also runs
   # the HCL E2E cases that need a model; they use the inference secret, so a
   # fork's pull request skips them, and the ones on the NVIDIA GPU runner, which
   # refuses pull request jobs, run on v1 pushes and manual runs.
@@ -71,106 +71,10 @@ jobs:
       # integration tests use a third partition to keep that path closer to
       # the other platforms.
       integration-shards: "[1, 2, 3]"
-  # One required check per test layer, across every platform. A skipped,
-  # cancelled, or failed platform must never become a successful check: a
-  # missing result fails it. A layer the plan did not select passes.
-  unit:
-    name: Unit
-    if: ${{ !cancelled() }}
-    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require Unit on every platform
-        env:
-          RESULTS: >-
-            ${{ needs.linux_arm64.outputs.unit }}
-            ${{ needs.linux_amd64.outputs.unit }}
-            ${{ needs.darwin_arm64.outputs.unit }}
-            ${{ needs.windows_amd64.outputs.unit }}
-        run: |
-          set -- $RESULTS
-          test "$#" = 4
-          for result; do
-            case "$result" in
-              success) ;;
-              *) echo "a platform reported $result"; exit 1 ;;
-            esac
-          done
-  contract:
-    name: Contract
-    if: ${{ !cancelled() }}
-    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require Contract on every platform
-        env:
-          RESULTS: >-
-            ${{ needs.linux_arm64.outputs.contract }}
-            ${{ needs.linux_amd64.outputs.contract }}
-            ${{ needs.darwin_arm64.outputs.contract }}
-            ${{ needs.windows_amd64.outputs.contract }}
-        run: |
-          set -- $RESULTS
-          test "$#" = 4
-          for result; do
-            case "$result" in
-              success | not-selected) ;;
-              *) echo "a platform reported $result"; exit 1 ;;
-            esac
-          done
-  integration:
-    name: Integration
-    if: ${{ !cancelled() }}
-    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require Integration on every platform
-        env:
-          RESULTS: >-
-            ${{ needs.linux_arm64.outputs.integration }}
-            ${{ needs.linux_amd64.outputs.integration }}
-            ${{ needs.darwin_arm64.outputs.integration }}
-            ${{ needs.windows_amd64.outputs.integration }}
-        run: |
-          set -- $RESULTS
-          test "$#" = 4
-          for result; do
-            case "$result" in
-              success | not-selected) ;;
-              *) echo "a platform reported $result"; exit 1 ;;
-            esac
-          done
-  e2e:
-    name: E2E
-    if: ${{ !cancelled() }}
-    needs: [plan, linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require E2E on every platform
-        env:
-          PLAN: ${{ needs.plan.result }}
-          RESULTS: >-
-            ${{ needs.linux_arm64.outputs.e2e }}
-            ${{ needs.linux_amd64.outputs.e2e }}
-            ${{ needs.darwin_arm64.outputs.e2e }}
-            ${{ needs.windows_amd64.outputs.e2e }}
-        run: |
-          test "$PLAN" = success || { echo "the plan reported $PLAN"; exit 1; }
-          set -- $RESULTS
-          test "$#" = 4
-          for result; do
-            case "$result" in
-              success | not-selected) ;;
-              *) echo "a platform reported $result"; exit 1 ;;
-            esac
-          done
-  # Keep the v1 ruleset's check names until it requires the layer checks. Each
-  # platform's check covers its build, bundle, unit, contract, and integration
-  # tests, not its live suites.
+  # The v1 ruleset requires one check per platform. Each covers the platform's
+  # four test layers, Unit, Contract, Integration, and E2E, which the run page
+  # groups under the platform. Each platform's jobs start after its own build,
+  # not after the slowest member of a global build matrix.
   native:
     name: Test / ${{ matrix.platform }}
     # Unlike always(), this reports a cancelled run's gates as cancelled, not failed;
@@ -185,16 +89,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require this platform's unit, contract, and integration tests
+      - name: Require all checks for this platform
         env:
-          UNIT: ${{ needs[matrix.platform].outputs.unit }}
-          CONTRACT: ${{ needs[matrix.platform].outputs.contract }}
-          INTEGRATION: ${{ needs[matrix.platform].outputs.integration }}
-        run: |
-          test "$UNIT" = success
-          for result in "$CONTRACT" "$INTEGRATION"; do
-            case "$result" in
-              success | not-selected) ;;
-              *) echo "a layer reported $result"; exit 1 ;;
-            esac
-          done
+          RESULT: ${{ needs[matrix.platform].result }}
+        run: test "$RESULT" = success
