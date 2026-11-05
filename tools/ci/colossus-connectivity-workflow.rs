@@ -30,6 +30,7 @@ fn scripts(step: &str) -> Vec<String> {
 }
 
 #[test]
+/// Both jobs reject either actor when permission lookup fails or grants insufficient access.
 fn authorizes_both_actors_and_fails_closed_in_each_job() {
     let scripts = scripts("Authorize maintainers");
     assert_eq!(
@@ -82,6 +83,7 @@ gh() {{
 }
 
 #[test]
+/// Synthetic SSH output must stay private, and every exit must remove credential files.
 fn publishes_only_outcome_and_commit_and_removes_credentials() {
     let script = &scripts("Verify SSH connectivity")[0];
     for scenario in [
@@ -121,6 +123,7 @@ timeout)
   if [[ "$scenario" == interrupted ]]; then kill -TERM "$PPID"; exit 143; fi
   exec "$@" ;;
 ssh)
+  : > "${0%/*}/ssh-invoked"
   args=" $* "
   for requirement in ' -F /dev/null ' ' StrictHostKeyChecking=yes ' ' BatchMode=yes ' ' IdentityAgent=none ' ' ForwardAgent=no ' ' ClearAllForwardings=yes ' ' /usr/bin/true '; do
     [[ "$args" == *"$requirement"* ]] || exit 80
@@ -189,6 +192,12 @@ esac
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary_text = fs::read_to_string(&summary).unwrap();
         let allowed = scenario == "success";
+        if scenario.starts_with("missing_") || scenario.starts_with("invalid_") {
+            assert!(
+                !bin.join("ssh-invoked").exists(),
+                "SSH invoked with rejected inputs in {scenario}"
+            );
+        }
         assert_eq!(output.status.success(), allowed, "{scenario}: {stderr}");
         assert_eq!(
             stdout.trim(),

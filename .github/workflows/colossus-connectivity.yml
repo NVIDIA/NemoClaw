@@ -66,7 +66,7 @@ jobs:
 
   probe:
     needs: authorize
-    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
+    if: needs.authorize.result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
     runs-on:
       group: nv-cpu-general
     environment: colossus-connectivity
