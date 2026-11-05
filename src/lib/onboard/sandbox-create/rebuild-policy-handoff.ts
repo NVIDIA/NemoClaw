@@ -320,6 +320,7 @@ export function mergeReplacementPolicyAccess(
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
   readonly sandboxName?: string;
+  readonly agentName?: string | null;
   readonly livePolicyPath: string;
   readonly livePolicySource?: string;
   readonly replacementPolicy: InitialSandboxPolicy;
@@ -337,11 +338,16 @@ export function materializeRebuildPolicyHandoff(input: {
   // Compare only base grants; OpenShell recreates provider-composed rules from attachments.
   const reconciledSource =
     input.inferenceProvider &&
-    usesAttachedCustomNvidiaPolicy(input.inferenceProvider, input.nativeHostedProviderAttachment)
+    usesAttachedCustomNvidiaPolicy(
+      input.inferenceProvider,
+      input.nativeHostedProviderAttachment,
+      input.agentName,
+    )
       ? buildNativeHostedSandboxPolicy(
           stripProviderComposedPolicies(liveSource),
           input.inferenceProvider,
           input.nativeHostedProviderAttachment,
+          input.agentName,
         )
       : liveSource;
   const merged = mergeReplacementPolicyAccess(

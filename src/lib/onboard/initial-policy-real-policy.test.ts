@@ -92,6 +92,39 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
+  it.each(["hermes", undefined])(
+    "preserves Hermes NVIDIA access with a canonical custom endpoint and agent %s (#14013)",
+    (agentName) => {
+      const basePath = repoPath("agents", "hermes", "policy-additions.yaml");
+      const base = YAML.parse(fs.readFileSync(basePath, "utf8")) as PolicyDocument;
+      const definition = customNativeProvider({
+        provider: "compatible-endpoint",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        api: "openai-completions",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        allowedIps: ["8.8.8.8"],
+      });
+      const policy = readPreparedPolicy(
+        prepareInitialSandboxCreatePolicy(basePath, [], {
+          agentName,
+          inferenceProvider: definition.providerName,
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            providerId: "hermes-custom-provider",
+            profileId: definition.profileId,
+            providerName: definition.providerName,
+            endpointUrl: definition.endpointUrl,
+            allowedIps: definition.allowedIps,
+            custom: definition.custom,
+          },
+        }),
+      );
+      expect(policy.network_policies?.nvidia).toEqual(base.network_policies?.nvidia);
+      expect(policy.network_policies?.native_hosted_inference?.endpoints).toContainEqual(
+        expect.objectContaining({ host: "integrate.api.nvidia.com", allowed_ips: ["8.8.8.8"] }),
+      );
+    },
+  );
   it.each(["openai-completions", "openai-responses"])(
     "creates a Balanced OpenClaw policy for a pinned NVIDIA-compatible %s endpoint (#14013)",
     (api) => {

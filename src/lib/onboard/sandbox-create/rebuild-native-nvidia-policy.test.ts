@@ -214,6 +214,59 @@ describe("retained custom NVIDIA base access", () => {
     },
   );
 
+  it.each([
+    { label: "captured", source: (source: string) => source },
+    { label: "disk", source: (_source: string) => undefined },
+    {
+      label: "captured without a base grant",
+      source: (source: string) => {
+        const policy = YAML.parse(source);
+        delete policy.network_policies.native_hosted_inference;
+        return YAML.stringify(policy);
+      },
+    },
+  ])("preserves Hermes NVIDIA grants during $label policy rebuild (#14013)", ({ source }) => {
+    const { custom, receipt, legacy } = fixture();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-rebuild-policy-test-"));
+    roots.push(root);
+    const policy = {
+      version: 1,
+      network_policies: {
+        nvidia: {
+          name: "nvidia",
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }],
+          binaries: [{ path: "/opt/hermes/.venv/bin/python" }],
+        },
+        native_hosted_inference: legacy,
+        host_rule: hostPolicy,
+      },
+    };
+    const document = YAML.stringify(policy);
+    const livePath = path.join(root, "live.yaml");
+    const replacementPath = path.join(root, "replacement.yaml");
+    fs.writeFileSync(livePath, document, { mode: 0o600 });
+    fs.writeFileSync(replacementPath, document, { mode: 0o600 });
+    const handoff = selectRebuildCreatePolicy(
+      livePath,
+      { policyPath: replacementPath, appliedPresets: [] },
+      [],
+      [],
+      [],
+      "hermes",
+      null,
+      "hermes-custom",
+      [],
+      source(document),
+      custom.providerName,
+      receipt,
+    );
+    cleanups.push(() => handoff.cleanup?.());
+    expect(YAML.parse(fs.readFileSync(handoff.policyPath, "utf8")).network_policies).toEqual(
+      policy.network_policies,
+    );
+    expect(fs.readFileSync(livePath, "utf8")).toBe(document);
+  });
+
   it("materializes cleanup when reading the retained policy directly from disk (#14013)", () => {
     const { custom, receipt, legacy } = fixture();
     const result = rebuild(custom.providerName, undefined, legacy, receipt);

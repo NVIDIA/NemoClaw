@@ -302,14 +302,15 @@ export function usesNativeHostedProvider(inferenceProvider: string | null): bool
   return isNativeHostedProviderName(inferenceProvider);
 }
 
-/** Attached custom NVIDIA profiles own access without a persistent base grant. */
+/** OpenClaw's attached custom NVIDIA profiles own access without a persistent base grant. */
 export function requiresNativeHostedBasePolicy(
   inferenceProvider: string | null,
   receipt?: SandboxEntry["nativeHostedProviderAttachment"],
+  agentName: string | null = "openclaw",
 ): boolean {
   return (
     usesNativeHostedProvider(inferenceProvider) &&
-    !usesAttachedCustomNvidiaPolicy(inferenceProvider, receipt)
+    !usesAttachedCustomNvidiaPolicy(inferenceProvider, receipt, agentName)
   );
 }
 

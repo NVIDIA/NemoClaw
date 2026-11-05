@@ -23,13 +23,15 @@ import {
 
 export const NATIVE_HOSTED_INFERENCE_POLICY_KEY = "native_hosted_inference";
 
-/** The attached profile owns canonical custom NVIDIA access for its entire lifetime. */
+/** OpenClaw's attached profile owns canonical custom NVIDIA access for its entire lifetime. */
 export function usesAttachedCustomNvidiaPolicy(
   providerName: string | null,
   receipt?: NativeProviderAttachment,
+  agentName: string | null = "openclaw",
 ): boolean {
   const definition = hostedNativeProviderForAttachment(receipt);
   return Boolean(
+    agentName === "openclaw" &&
     definition?.providerName === providerName &&
     definition?.custom &&
     definition.endpoint === "https://integrate.api.nvidia.com/v1",
@@ -40,6 +42,7 @@ export function buildNativeHostedSandboxPolicy(
   basePolicy: string,
   providerName: string,
   receipt?: NativeProviderAttachment,
+  agentName: string | null = "openclaw",
 ): string {
   const definition: HostedProviderDefinition | undefined = receipt
     ? hostedNativeProviderForAttachment(receipt)
@@ -71,7 +74,7 @@ export function buildNativeHostedSandboxPolicy(
   };
   const policies = policy.network_policies ?? {};
   let replacedBundledRule = false;
-  if (definition.custom && definition.endpoint === "https://integrate.api.nvidia.com/v1") {
+  if (usesAttachedCustomNvidiaPolicy(providerName, receipt, agentName)) {
     const bundled = parseOpenShellPolicy(
       fs.readFileSync(
         path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
@@ -96,7 +99,7 @@ export function buildNativeHostedSandboxPolicy(
       "The native hosted inference policy conflicts with the selected provider profile",
     );
   }
-  if (usesAttachedCustomNvidiaPolicy(providerName, receipt)) {
+  if (usesAttachedCustomNvidiaPolicy(providerName, receipt, agentName)) {
     // Sandbox creation attaches the verified profile, including its IP pins.
     // A second base grant would survive detachment and conflict with native NVIDIA.
     delete policies[NATIVE_HOSTED_INFERENCE_POLICY_KEY];

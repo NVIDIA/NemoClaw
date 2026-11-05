@@ -385,7 +385,7 @@ export function selectRebuildCreatePolicy(
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
-  messagingAgent: string | null | undefined,
+  agentName: string | null | undefined,
   messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
@@ -395,7 +395,7 @@ export function selectRebuildCreatePolicy(
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
-      agent: messagingAgent,
+      agent: agentName,
       sandboxName,
       messagingConfig,
     });
@@ -408,6 +408,7 @@ export function selectRebuildCreatePolicy(
   });
   return materializeRebuildPolicyHandoff({
     sandboxName,
+    agentName,
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
@@ -416,7 +417,11 @@ export function selectRebuildCreatePolicy(
     requiredNetworkPolicyKeys: [
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
-      ...(requiresNativeHostedBasePolicy(inferenceProvider, nativeHostedProviderAttachment)
+      ...(requiresNativeHostedBasePolicy(
+        inferenceProvider,
+        nativeHostedProviderAttachment,
+        agentName,
+      )
         ? ["native_hosted_inference"]
         : []),
     ],
