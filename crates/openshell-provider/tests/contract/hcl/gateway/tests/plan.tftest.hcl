@@ -35,6 +35,11 @@ run "plan" {
   }
 
   assert {
+    condition     = openshell_gateway_storage.docker.name == "nc-0123456789abcdef-gateway" && openshell_gateway_storage.docker.compute_driver == "docker"
+    error_message = "The Docker gateway's storage must plan from its typed settings, without writing to the engine."
+  }
+
+  assert {
     condition     = data.openshell_gateway_prerequisites.docker.status == "available"
     error_message = "A Docker engine must host a Docker-driver gateway."
   }

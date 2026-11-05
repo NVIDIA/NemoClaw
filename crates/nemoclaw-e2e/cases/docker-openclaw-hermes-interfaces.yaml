@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# OpenClaw's Control UI and Hermes's API server and dashboard behind a managed
+# Docker gateway, on a stub model that answers every chat completion with the
+# same reply and refuses any request without the run's key. Apply reports
+# each interface; a person reaches it with the pinned OpenShell CLI's forward
+# and the token apply names. cargo ci live-docker gives each run a fresh
+# identity, gateway port and subnet, stub address, and agent images.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-interfaces
+  uid: 9d4c1f2e-6b3a-4c8d-a5e7-2f1b0c9d8e76
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    engine: unix:///var/run/docker.sock
+    endpoint: http://127.0.0.1:17698
+    networkCIDR: 172.30.123.0/24
+    config:
+      openshell.drivers.docker:
+        allow_driver_config: true
+  inferenceProviders:
+    model:
+      provider: openai
+      # The stub listens on the host; sandboxes reach it at the gateway
+      # network's host address.
+      endpoint: http://172.30.123.1:17699/v1
+      credential:
+        env: NEMOCLAW_TEST_INTERFACES_MODEL_KEY
+  sandboxes:
+    claw:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+        settings:
+          interfaces:
+            dashboard:
+              port: 18789
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
+    hermes:
+      image:
+        ref: nc-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.hermes
+        settings:
+          interfaces:
+            api:
+              port: 8642
+            dashboard:
+              port: 9119
+      agent:
+        name: hermes
+        inference:
+          routes:
+            - name: primary
+              providerRef: model
+              overrides:
+                model: fixture-model
