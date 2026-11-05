@@ -10,7 +10,7 @@ description: Decide which layer and suite a new test belongs in (unit, contract,
 
 This skill decides where a test goes and what it asserts.
 `test-driven-development` decides how to write it: a failing behavioral test first.
-[Test layers](../../../docs/contributing/testing.md#test-layers) and [run integration tests](../../../docs/contributing/integration-tests.md) describe each suite and how to run it.
+[Test layers](../../../internal-docs/contributing/testing.md#test-layers) and [run integration tests](../../../internal-docs/contributing/integration-tests.md) describe each suite and how to run it.
 
 ## 1. Name the behavior and its owner
 

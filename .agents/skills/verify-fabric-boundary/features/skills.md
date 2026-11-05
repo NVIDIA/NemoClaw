@@ -12,7 +12,7 @@ Files that survive a transition aren't enough: each phase needs fresh native dis
 
 - `skill-discovery`: native skill discovery lists the supplied `capability-probe` skill and views it, as the current turn's native discovery or loading record shows, not only the reply. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `skill-execution`: asked only to use `capability-probe`, the agent loads it natively, or reuses its earlier view as [Instruction Evidence](#instruction-evidence) allows, and follows its undisclosed recipe, writing `results/skill-result.json` with `probe` set to `agent-capability-probe` and the input's nonce and phase. Phases: Initial, After stop/start, After recreate, After config change, After restore.
-- `mounted-skill-yaml`: the adapter's YAML mount and skill-path fields resolve to a native discovery root at `/sandbox/workspace/skills`, and the supplied skill is discovered and runs from it without manual configuration or loader calls. Phases: Initial.
+- `mounted-skill-yaml`: with the adapter's declared mount and skill-path fields configured, the supplied skill is discovered and runs from its mounted location without manual configuration or loader calls. Phases: Initial.
 - `mounted-skill-first-start`: the skill seeded before the first runtime starts is discovered and runs on first startup, before any install, reload, activation restart, or manual import. Phases: Initial.
 - `mounted-supplied-skill`: the supplied skill keeps its seeded hash, is discovered and loaded natively, and produces fresh output after every transition; persistence, discovery, loading, and output are each required. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
 - `generated-skill`: the agent creates a run-named skill with a unique marker once, through its native authoring mechanism, and native discovery finds and views it after every transition without re-creation. Phases: Initial, After stop/start, After recreate, After config change, After restore.
@@ -117,8 +117,7 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    grep -n -F /sandbox/workspace/skills "$EVIDENCE/deployment.yaml" | tee "$CHECK_DIR/yaml.txt"
    ```
 
-   Copy the native configuration that `bindings.md` names for skill paths from the sandbox into `$CHECK_DIR/native-config.txt`, redacting credentials.
-   Result: `yaml.txt` shows the skill-path field the adapter declares and the workspace mount; `native-config.txt` lists `/sandbox/workspace/skills` as a discovery root; and `$EVIDENCE/initial/mounted-skill-first-start/` shows discovery and a passing run.
+   Result: `yaml.txt` shows the skill-path field the adapter declares and the workspace mount, and `$EVIDENCE/initial/mounted-skill-first-start/` shows discovery and a passing run from the configured mounted location.
    Record directory configuration and per-item discovery as separate evidence.
    No declared skill-path field is Failed with a finding; don't invent a key.
 5. **`skill-discovery` and `skill-execution`:** set `CASE` and `CHECK_DIR` for each, then send step 2's `discover` prompt for `skill-discovery` and its `run` prompt, with the stale-output removal, for `skill-execution`.

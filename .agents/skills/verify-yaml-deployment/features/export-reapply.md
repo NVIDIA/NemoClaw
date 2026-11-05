@@ -13,7 +13,7 @@ Reapplying the export changes nothing, so the authored YAML stays the source of 
 
 ## How to get to it (user POV)
 
-- `nemoclaw export --state-dir PATH` and `nemoclaw apply`, as [usage.md](../../../../docs/usage.md#verify-an-unchanged-reapply) documents.
+- `nemoclaw export --state-dir PATH` and `nemoclaw apply`, as [usage.md](../../../../docs/build-deploy/usage.md#verify-an-unchanged-reapply) documents.
 
 ## Driving it with the nemoclaw CLI
 

@@ -3,7 +3,7 @@
 
 # Change a Service Exposure
 
-A sandbox's `serviceExposures` belong to its creation, so adding, changing, or removing one replaces the sandbox and its agent runtime, as [usage.md](../../../../docs/usage.md#choose-the-change-path)'s change-path table states.
+A sandbox's `serviceExposures` belong to its creation, so adding, changing, or removing one replaces the sandbox and its agent runtime, as [usage.md](../../../../docs/build-deploy/usage.md#choose-the-change-path)'s change-path table states.
 The plan says so before apply, the gateway records the exposure after it, and the agent answers in the new sandbox.
 
 ## Sub-features
@@ -19,28 +19,19 @@ The plan says so before apply, the gateway records the exposure after it, and th
 
 Preconditions: [export-reapply](export-reapply.md) passed, and the agent's interface feature ran first; this feature deletes the conversation history.
 
-1. Change the exposure: switch a `BEARER_PASSTHROUGH` exposure to `STRIP`, or else add a `probe` exposure on 18800, keeping any others:
+1. Change the exposure by hand in `$RUN_DIR/deployment.yaml`, keeping any others.
+   When `spec.sandboxes.assistant.serviceExposures` has a `BEARER_PASSTHROUGH` exposure, as the `openclaw` agent file declares for `dashboard`, set that exposure's `authorizationMode: STRIP` and `SERVICE` to its name.
+   Otherwise, as for `hermes` and `deepagents-code`, add a `probe` exposure and set `SERVICE=probe`: put it in the existing `serviceExposures` map, or add the map under the sandbox, beside its `image` and `harness`:
+   ```yaml
+         serviceExposures:
+           probe:
+             targetPort: 18800
+   ```
+   Then record the change:
    ```sh
    SANDBOX_BEFORE=$SANDBOX_CONTAINER
    RUNTIME_BEFORE=$(jq -r '.resources[] | select(.type == "fabric_agent") | .instances[].attributes | select(.name == "assistant") | .runtime_id' "$STATE/terraform.tfstate")
-   SERVICE=$(python3 - "$RUN_DIR/deployment.yaml" <<'PY'
-   import sys, yaml
-   path = sys.argv[1]
-   doc = yaml.safe_load(open(path))
-   sandbox = doc["spec"]["sandboxes"]["assistant"]
-   exposures = sandbox.get("serviceExposures") or {}
-   passthrough = [k for k, v in exposures.items() if v.get("authorizationMode") == "BEARER_PASSTHROUGH"]
-   if passthrough:
-       name = passthrough[0]
-       exposures[name]["authorizationMode"] = "STRIP"
-   else:
-       name = next(n for n in ("probe", "probe2", "probe3") if n not in exposures)
-       exposures[name] = {"targetPort": 18800}
-   sandbox["serviceExposures"] = exposures
-   yaml.safe_dump(doc, open(path, "w"), sort_keys=False)
-   print(name)
-   PY
-   )
+   SERVICE=REPLACE_WITH_SERVICE
    cp "$RUN_DIR/deployment.yaml" "$EVIDENCE/deployment-changed.yaml"
    diff "$EVIDENCE/deployment.yaml" "$EVIDENCE/deployment-changed.yaml"
    ```
@@ -52,7 +43,7 @@ Preconditions: [export-reapply](export-reapply.md) passed, and the agent's inter
    grep -c 'delete → create  agent runtime/assistant' "$EVIDENCE/change-plan.txt"
    grep -c 'Service URLs' "$EVIDENCE/change-plan.txt"
    ```
-   Result: `delete → create  sandbox/assistant`, `Deletes sandbox files and conversation history.`, and `Replacement; service interruption may occur.`; then `1`, then `0`.
+   Result: `delete → create  sandbox/assistant`, `Deletes sandbox files and conversation history, except on mounted volumes.`, and `Replacement; service interruption may occur.`; then `1`, then `0`.
 3. **XC2:**
    ```sh
    nc apply "$RUN_DIR/deployment.yaml" --progress off > "$EVIDENCE/change-apply.txt" 2>&1
@@ -62,7 +53,7 @@ Preconditions: [export-reapply](export-reapply.md) passed, and the agent's inter
    openshell service list assistant | tee "$EVIDENCE/services-changed.txt"
    docker ps --format '{{.Names}}' | grep -cx "$SANDBOX_BEFORE"
    ```
-   Result: `1`; `Sandbox files and conversation history deleted.` under the sandbox line; one `assistant/$SERVICE: URL` line; the exposure's row shows `strip`; then `0`, the old sandbox gone.
+   Result: `1`; `Sandbox files and conversation history deleted, except on mounted volumes.` under the sandbox line; one `assistant/$SERVICE: URL` line; the exposure's row shows `strip`; then `0`, the old sandbox gone.
    An omitted mode lists as OpenShell's default, `strip`.
    Rerun the doctor to pick up the new sandbox container, then [deploy-and-answer](deploy-and-answer.md)'s steps 1 and 2: read `RUNTIME_ID` again, which must differ from `$RUNTIME_BEFORE`, then send DA1 with the word `CHANGED_OK` and the file `answer-changed.json`.
 

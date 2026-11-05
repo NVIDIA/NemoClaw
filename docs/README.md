@@ -1,97 +1,98 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Documentation
+# Documentation Index
 
-These guides describe the v1 development branch.
-[Current limits](limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
+These guides describe NemoClaw v1. The operational updates beyond the first-deployment tutorial reflect inspected implementation `origin/v1` at `86b8d94273a76a696e06b300dc29f7035b163667`; use a matched checkout and bundle when following them. The published [v1 field reference](references/v1-configuration.md) is a snapshot generated at that implementation revision. This checkout's [generator-owned reference](reference/configuration.md) has the same named-map configuration shape but differs on three optional field types; use the snapshot and schema from the bundle's source revision when checking field types. For the source-pinned first deployment, use the [tutorial](get-started/first-deployment.md).
+[Current limits](resources/limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
+
+## About
+
+Start with the product overview, then use the architecture and ecosystem guides to distinguish deployment behavior from adjacent services.
+
+| Reader goal | Guide |
+|---|---|
+| Understand the product and choose an interface | [NemoClaw overview](about/overview.md) |
+| Follow the components and deployment flow | [Architecture overview](about/architecture-overview.md) |
+| Distinguish upstream responsibilities | [Ecosystem](about/ecosystem.md) |
+| Check v1 development status and changes | [Release Notes](about/release-notes.md) |
 
 ## Get Started
 
-| Task | Guide |
+Check the prerequisites before following the first deployment; migration is a separate path for existing users.
+
+| Reader goal | Guide |
 |---|---|
-| Understand the product and choose an interface | [NemoClaw overview](overview.md) |
-| Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
-| Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
-| Assess a move from an earlier version | [Migration](migration.md) |
-| Find release information | [Release notes](release-notes.md) |
-| Check what v1 does not do yet | [Current limits](limits.md) |
+| Check client, runtime, and model-host requirements | [Prerequisites](get-started/prerequisites.md) |
+| Deploy OpenClaw with existing gateway and inference services | [First deployment](get-started/first-deployment.md) |
+| Assess a move from an earlier version | [Migration](get-started/migration.md) |
 
 ## Build and Deploy
 
-| Task | Guide |
+Choose the guide for the artifact or deployment operation you need to perform.
+
+| Reader goal | Guide |
 |---|---|
-| Build the CLI bundle and runtime images | [Build local artifacts](build.md) |
-| Extend an agent image with your own skills and tools | [Derived agent images](derived-images.md) |
-| Configure, apply, export, recover, and destroy a deployment | [Use desired state](usage.md) |
-| Run sandboxes on an existing Kubernetes or OpenShift cluster | [Deploy to Kubernetes or OpenShift](kubernetes.md) |
-| Choose inline configuration or shared definitions | [Definitions and references](configuration-references.md) |
-| Locate deployment state and understand backup limits | [Deployment state](state.md) |
-| Diagnose a failed operation | [Troubleshooting](troubleshooting.md) |
-| Review trust, credential storage and access, and isolation | [Security](security.md) |
-| Understand what a deployment protects, and from whom | [Threat model](threat-model.md) |
-| Rotate a credential | [Rotate credentials](credential-rotation.md) |
-| Declare sandbox filesystem, process, and egress settings | [Sandbox policy](sandbox-network.md) |
+| Build a matched bundle and runtime image | [Build local artifacts](build-deploy/build.md) |
+| Extend an agent image with your own tools | [Derived agent images](build-deploy/derived-images.md) |
+| Configure, apply, export, recover, and destroy | [Use desired state](build-deploy/usage.md) |
+| Deploy on Kubernetes or OpenShift | [Cluster deployment](build-deploy/kubernetes.md) |
+| Share or inline definitions | [Definitions and references](build-deploy/configuration-references.md) |
+| Retain data and clean up safely | [Deployment state](build-deploy/state.md) |
+| Run an application-owned container on managed Docker | [Container service](build-deploy/container-services.md) |
 
 ## Agents and Inference
 
-| Task | Guide |
+Configure the agent and its inference connection, then verify a reply through a native interface.
+
+| Reader goal | Guide |
 |---|---|
-| Select inference APIs, OpenClaw limits, and Hermes authentication | [Inference configuration](inference.md) |
-| Configure and access native dashboards | [Agent interfaces](interfaces.md) |
-| Choose an agent and access its native runtime | [Agent runtimes](agents.md) |
-| Register an operator-managed OAuth-refresh API credential | [OpenShell OAuth-refresh providers](oauth-refresh.md) |
-| Enable tracing or selected-agent web search | experimental [Hermes Relay](agents.md#hermes-relay-tracing) and [web search](agents.md#web-search) |
-| Choose a public model for managed vLLM | [Select a managed model](models.md) |
-| Package model-specific preparation | [Inline model recipes](recipes.md) |
-| Place inference on an SSH-selected Docker engine | [Configure an SSH model service](remote-service.md) |
+| Select and invoke an agent | [Agent runtimes](agents-inference/agents.md) |
+| Reach a native interface | [Agent interfaces](agents-inference/interfaces.md) |
+| Configure model connections and verify a request | [Inference](agents-inference/inference.md) |
+| Select a managed model | [Models](agents-inference/models.md) |
+| Package model preparation | [Recipes](agents-inference/recipes.md) |
+| Place inference over SSH | [SSH model service](agents-inference/remote-service.md) |
+| Attach an operator-managed refresh credential | [OAuth-refresh providers](agents-inference/oauth-refresh.md) |
 
-## Integrate and Look Up Behavior
+## Observability
 
-| Task | Guide |
+Use operation output and runtime evidence to identify where a deployment or agent request failed.
+
+| Reader goal | Guide |
 |---|---|
-| Call deployment operations programmatically | [Use the SDK](sdk.md) |
-| Understand the bundled OpenTofu provider | [Provider](provider.md) |
-| Check what each release guarantees | [Compatibility](compatibility.md) |
-| Integrate an image-owned service or adapt VoiceClaw | [Container service contract](design/container-contract.md) |
-| Look up CLI commands and options | [CLI reference](reference/cli.md) |
-| Look up YAML fields, defaults, and constraints | [Configuration reference](reference/configuration.md) |
-| Find documentation for coding agents, contribution guidance, and licenses | [Resources](resources.md) |
+| Collect operation output, sandbox logs, native artifacts, and available traces; distinguish readiness from a reply | [Troubleshooting](observability/troubleshooting.md) |
 
-## Develop and Validate
+## References
 
-| Task | Guide |
+Look up the pinned v1 interface contract before adapting a command, configuration, or SDK call.
+
+| Reader goal | Guide |
 |---|---|
-| Run workspace checks and collect coverage | [Tests](contributing/testing.md) |
-| Exercise OpenTofu and bundles with local fixtures | [Run integration tests](contributing/integration-tests.md) |
-| Test explicitly owned live resources | [Run live tests](contributing/live-tests.md) |
-| Stage a private v1 release | [Stage a v1 release](contributing/releases.md) |
-| Assess saved image inventories | [Image assessment](contributing/image-assessment.md) |
-| Write or reorganize documentation | [Contribute documentation](contributing/documentation.md) |
-| Validate, preview, or publish the v1 site | [Documentation build](contributing/documentation-build.md) |
-| Update the generated schema and field reference | [Schema maintenance](contributing/configuration-schema.md) |
+| Look up commands and options | [CLI](references/cli.md) |
+| Look up fields for the pinned v1 source | [V1 configuration reference](references/v1-configuration.md) |
+| Compare harness descriptors and examples | [Fabric harnesses](references/fabric-harnesses.md) |
+| Integrate with the Rust API or OpenTofu | [SDK](references/sdk.md), [provider](references/provider.md) |
+| Check release guarantees | [Compatibility](references/compatibility.md) |
 
-## Understand the Design
+## Resources
 
-Start with the architecture page to follow one deployment through the SDK, OpenTofu, and backend APIs.
-Then use the runtime, execution-target, and recipe pages to understand decisions inside that lifecycle.
-The design decision defines current invariants.
+Use these sources to find help, development status, and currently documented limits.
 
-| Topic | Owner |
+| Reader goal | Guide |
 |---|---|
-| Accepted scope, implementation boundaries, and invariants | [Design decision](design/scope.md) |
-| Authoring concepts, ownership, and validation gates | [Authoring domain model](design/authoring-domain.md) |
-| Partial-document onboarding coverage and open design questions | [Onboarding journey prototype](design/onboarding-journeys.md) |
-| SDK ownership, durable state, staged apply, and retained storage | [Architecture](design/architecture.md) |
-| Apply stages, component handoffs, and agent harness startup | [Apply flow](design/apply-flow.md) |
-| Process lifetime, watchdog recovery, and agent ownership | [Runtime design](design/runtime.md) |
-| Fabric runtime ownership and observation limits | [Fabric management](design/fabric-management.md) |
-| Connections, engine identity, inference traffic, host capacity, and their implementation constraints | [Execution targets](design/execution-targets.md) |
-| Artifact ownership, preparation verification, and output manifests | [Recipe design](design/recipes.md) |
+| Find version-matched documentation and reporting channels | [Project resources](resources/resources.md) |
+| Check release status | [Release Notes](about/release-notes.md) |
+| Find unimplemented or unqualified paths | [Current limits](resources/limits.md) |
 
-## Sources and Fixtures
+## Security
 
-- [Agent runtime source notices](../image/NOTICE.md).
-- [Generic vLLM source notices](../image/vllm/NOTICE.md).
-- [Configuration fixture provenance](../crates/nemoclaw-sdk/tests/fixtures/config/README.md).
-- [Managed runtime fixture provenance](../crates/nemoclaw-provider/src/managed/REFERENCE.md).
+Review trust boundaries before configuring sandbox access or rotating credentials.
+
+| Reader goal | Guide |
+|---|---|
+| Understand credential storage and trust boundaries | [Security](security/security.md), [threat model](security/threat-model.md) |
+| Configure isolation and egress | [Sandbox policy](security/sandbox-network.md) |
+| Revoke or rotate credentials | [Credential rotation](security/credential-rotation.md) |
+
+Maintainers can find contribution procedures, design records, and artifact provenance in the [repository-only maintainer index](../internal-docs/README.md). These pages are not part of the published v1 guide.
