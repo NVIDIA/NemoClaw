@@ -45,7 +45,7 @@ jobs:
   # no image input changed since a v1 commit that pushed them, the live jobs
   # pull that commit's images instead.
   live-images:
-    name: Build images
+    name: E2E build images
     if: inputs.live-images-commit == ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
@@ -80,7 +80,7 @@ jobs:
   # platform's archived test executables and bundle, load its live images, and
   # compile nothing. No required check depends on them.
   live-docker:
-    name: Docker tests
+    name: E2E Docker tests
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
@@ -107,7 +107,7 @@ jobs:
           images-commit: ${{ inputs.live-images-commit }}
 
   live-kind:
-    name: Kubernetes (kind) tests
+    name: E2E Kubernetes (kind) tests
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
@@ -136,7 +136,7 @@ jobs:
   # The HCL E2E cases that use NVIDIA hosted inference, from this platform's
   # test archive, bundle, and live images, like the live suites.
   hcl:
-    name: HCL / ${{ matrix.case }}
+    name: E2E HCL ${{ matrix.case }}
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.

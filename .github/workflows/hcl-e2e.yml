@@ -42,7 +42,7 @@ env:
 
 jobs:
   build:
-    name: Build
+    name: E2E HCL build
     # The GPU runner and the inference secret exist only in this repository;
     # CI / Bundle does not call this workflow for a fork's pull request.
     if: github.repository == 'NVIDIA/NemoClaw' && (inputs.hosted || inputs.gpu)
@@ -81,7 +81,7 @@ jobs:
 
   # The cases the inputs select.
   cases:
-    name: Select cases
+    name: E2E HCL case selection
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -109,7 +109,7 @@ jobs:
           echo "include=$include" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: ${{ matrix.case }}
+    name: E2E HCL ${{ matrix.case }}
     needs: [build, cases]
     # Runs only when the build ran and selected a case.
     if: needs.build.result == 'success' && needs.cases.outputs.include != '[]'

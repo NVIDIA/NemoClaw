@@ -53,7 +53,7 @@ env:
   TEST_PLATFORM: ${{ inputs.platform }}
   CARGO_INCREMENTAL: "0"
 # Each job's name starts with its test layer: Unit, Contract, Integration, or
-# E2E. Unit / Build and test, and Build bundle, run in parallel on separate
+# E2E. Unit build and test, and Build bundle, run in parallel on separate
 # runners; the contract, integration, and live jobs start when both have
 # uploaded their artifacts. Artifact names carry the run attempt, and consumers
 # read them from the producers' outputs, so rerunning a failed shard reuses an
@@ -61,7 +61,7 @@ env:
 # job here that runs; a job the plan does not select is skipped.
 jobs:
   build:
-    name: Unit / Build and test
+    name: Unit build and test
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -171,7 +171,7 @@ jobs:
           if-no-files-found: error
 
   contract:
-    name: Contract / Tests ${{ matrix.shard }} of ${{ strategy.job-total }}
+    name: Contract tests ${{ matrix.shard }} of ${{ strategy.job-total }}
     # The bundle job runs whenever contract and integration tests do.
     if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
@@ -224,7 +224,7 @@ jobs:
   # partitions, so this job enforces the binary budgets: on Linux, a binary
   # over its budget fails the Contract check.
   contract-timing:
-    name: Contract / Timing report
+    name: Contract timing report
     needs: [build, contract]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.contract.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
@@ -254,7 +254,7 @@ jobs:
           "$tool" suite-timing contract .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
   integration:
-    name: Integration / Tests ${{ matrix.shard }} of ${{ strategy.job-total }}
+    name: Integration tests ${{ matrix.shard }} of ${{ strategy.job-total }}
     # The bundle job runs whenever contract and integration tests do.
     if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
@@ -331,7 +331,7 @@ jobs:
   # partitions, so this job enforces the binary budgets: on Linux, a binary
   # over its budget fails the Integration check.
   integration-timing:
-    name: Integration / Timing report
+    name: Integration timing report
     needs: [build, integration]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.integration.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
@@ -381,7 +381,7 @@ jobs:
   # jobs. Live / HCL builds them a candidate against an older glibc, which the
   # runner can run.
   gpu:
-    name: E2E / GPU
+    name: E2E GPU
     if: inputs.hcl-gpu
     uses: ./.github/workflows/hcl-e2e.yml
     with:
