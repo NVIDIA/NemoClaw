@@ -10,7 +10,7 @@ description: Create or update a NemoClaw v1 pull request with its authoring-sess
 
 Adapted from main's PR creation skill at `8c72b552cc92fe7082908f3a13db7dc94f2f6685`, without its npm, governance, and draft steps, and with a session report added.
 
-1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`, then apply the [clarity pass](#description-clarity-pass); keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
+1. Write the description from `.github/PULL_REQUEST_TEMPLATE.md`, following [WRITING.md](../../../WRITING.md) and the [description rules](#description-rules); keep the report out of it. Prepare a separate comment from `.github/SESSION_REPORT_TEMPLATE.md` using the [evidence rules](#session-report). Keep `<details>` without `open`.
 2. Validate the comment:
 
    ```sh
@@ -28,11 +28,13 @@ The check uses the candidate checkout's validator and workflow. It does not prot
 
 Preserve historical reports and their cutoffs. Optional later commit or merge reports may use the same collapsed format with a distinct summary and revision; they do not replace the opening report or create a publication requirement.
 
-## Description Clarity Pass
+## Description Rules
 
-Draft the description from the evidence, then rewrite it in plain language for a colleague who has not followed the work.
-Keep the template sections and enough detail to explain the problem, decision, and validation.
-Compare the rewrite with the draft: preserve facts, commands, identifiers, limitations, and uncertainty; add no claims or stronger conclusions.
+The description becomes the squash commit's message, so it stays in the history.
+
+- The first paragraph says what changes and for whom; a reviewer who reads only that paragraph knows what the diff does. Keep the rest as long as the change needs: a small change gets a few lines.
+- Back every claim with a check under Validation, and make no claim stronger than that check shows. Write "Resolves #N" only when every acceptance criterion is met.
+- Write only what stays true after merge. CI status, review state, run IDs, and links readers outside NVIDIA can't open go in a PR comment, beside the session report.
 
 ## Session Report
 

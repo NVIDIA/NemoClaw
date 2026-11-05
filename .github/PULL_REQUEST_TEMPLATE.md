@@ -1,14 +1,16 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-## Failure
+<!-- One or two sentences: what changes, and for whom. The squash commit starts with this paragraph. -->
 
-<!-- When does the problem occur, and what does the user or contributor experience? For improvements without a bug, describe the current limitation. -->
+## Problem
 
-## Decision
+<!-- What happens today, when, and who notices: an example or the exact error. For an improvement, the current limitation. Write "Resolves #N" only if this meets every acceptance criterion; otherwise "Part of #N" and what is left. -->
 
-<!-- What changes, and why was this approach chosen? Use a concrete before-and-after example when helpful, and link related issues when applicable. -->
+## Change
+
+<!-- What is different, as a short list a reviewer can map to the diff. Why this approach, the alternatives you rejected, and what is deliberately left out. For a workaround of another component, the upstream issue and when the workaround can go. -->
 
 ## Validation
 
-<!-- What did the completed checks verify, and what were the results? State what remains untested and which checks are deferred to CI, with reasons. -->
+<!-- Each check and what it shows, not only that it ran. What remains unverified, and why. Checks deferred to CI, with reasons. -->
