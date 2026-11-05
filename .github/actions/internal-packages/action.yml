@@ -5,7 +5,7 @@ description: >-
   Check that every package an image push targets already exists and isn't
   public. A workflow must never create a package: packages its token creates
   inherit this public repository's visibility. Administrators create them as
-  internal first (docs/contributing/releases.md).
+  internal first (internal-docs/contributing/releases.md).
 inputs:
   namespace:
     description: Registry namespace, such as ghcr.io/nvidia/nemoclaw/v1-ci.
@@ -40,7 +40,7 @@ runs:
         for name in $NAMES; do
           package="${NAMESPACE#ghcr.io/nvidia/}/$name"
           if ! visibility=$(gh api "/orgs/NVIDIA/packages/container/${package//\//%2F}" --jq .visibility 2> /dev/null); then
-            echo "::$level::$package doesn't exist or can't be read; an administrator must create it as internal and grant this repository's Actions write access (docs/contributing/releases.md)"
+            echo "::$level::$package doesn't exist or can't be read; an administrator must create it as internal and grant this repository's Actions write access (internal-docs/contributing/releases.md)"
             ready=false
           elif [ "$visibility" = public ]; then
             echo "::$level::$package is public; nothing is pushed to public packages before a release is published"

@@ -10,7 +10,7 @@ The adapter runs Hermes in the sandbox, keeps its state across runtimes in `/san
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [hermes-interfaces](../features/hermes-interfaces.md) | `24b35280fb` | 2026-11-02 |
+| dgx-spark | existing endpoint | deploy-and-answer, export-reapply, exposure-change, [hermes-interfaces](../features/hermes-interfaces.md) | `b5489e5768` | 2026-11-04 |
 
 ## YAML Edits
 
@@ -45,5 +45,5 @@ Result: `["api","dashboard"]`.
 
 ## Known Gaps
 
-- **Dashboard without sign-in.** Anyone who reaches its forward can use it, including browser chat without approvals ([docs/interfaces.md](../../../../docs/interfaces.md#who-can-use-an-interface)).
+- **Dashboard without sign-in.** Anyone who reaches its forward can use it, including browser chat without approvals ([docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
 - **Interface failures stay silent.** A Hermes interface process that exits leaves the agent running and plan unchanged until the next runtime start.

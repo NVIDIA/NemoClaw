@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A model service's replacement whose cleanup failed leaves the old container
 //! in OpenTofu state as a deposed object. OpenTofu and the Docker provider own
-//! that cleanup (`docs/provider.md`); the SDK must let apply and destroy finish
+//! that cleanup (`docs/references/provider.md`); the SDK must let apply and destroy finish
 //! it, and export must refuse until it is done.
 //!
 //! The canned plans and states have the shapes the pinned OpenTofu and Docker

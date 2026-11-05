@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_sdk::{Deployment, Error, Progress};
+use nemoclaw_sdk::{CancellationToken, Deployment, Error, Progress};
 use std::{path::Path, sync::Arc};
 
 pub(crate) fn create(
     state_dir: &Path,
     bundle_dir: Option<&Path>,
+    force_stop: &CancellationToken,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
 ) -> Result<Deployment, Box<dyn std::error::Error>> {
     let bundle = match bundle_dir {
@@ -17,5 +18,7 @@ pub(crate) fn create(
             .ok_or(Error::Bundle("cannot locate runtime bundle"))?
             .into(),
     };
-    Ok(Deployment::new(state_dir, &bundle).with_progress(progress))
+    Ok(Deployment::new(state_dir, &bundle)
+        .with_progress(progress)
+        .with_force_stop(force_stop.clone()))
 }
