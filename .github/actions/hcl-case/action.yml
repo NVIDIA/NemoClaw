@@ -91,24 +91,28 @@ runs:
           echo "the test archive must hold one e2e test executable; found ${#found[@]}" >&2
           exit 1
         fi
-        # The same images the platform's live suites run, under the names
-        # cargo ci live-images saves them with.
+        # The same images the platform's live suites run. A case names its
+        # images as nc-fabric@DIGEST, which Docker resolves only in the
+        # repository that holds the image, so name them as the candidate does.
         if [[ -n $IMAGES_COMMIT ]]; then
           printf '%s\n' "$PULL_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for name in openclaw hermes; do
             pushed="ghcr.io/nvidia/nemoclaw/v1-ci:$name-$IMAGES_COMMIT-${PLATFORM#linux_}"
             docker pull --quiet "$pushed"
-            docker tag "$pushed" "nc-live-images:$name"
+            docker tag "$pushed" "nc-fabric:$name"
           done
           docker logout ghcr.io
         else
           zstd -d -c -q .build/ci/live-images.tar.zst | docker load
+          for name in openclaw hermes; do
+            docker tag "nc-live-images:$name" "nc-fabric:$name"
+          done
         fi
         {
           echo "HCL_E2E=$GITHUB_WORKSPACE/${found[0]}"
           echo "NEMOCLAW_TEST_BUNDLE=$GITHUB_WORKSPACE/dist/$PLATFORM"
-          echo "HCL_OPENCLAW=nc-live-images:openclaw"
-          echo "HCL_HERMES=nc-live-images:hermes"
+          echo "HCL_OPENCLAW=nc-fabric:openclaw"
+          echo "HCL_HERMES=nc-fabric:hermes"
         } >> "$GITHUB_ENV"
     - name: Bind the case to this run's images
       shell: bash
