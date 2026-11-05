@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Plan expensive validation from changed paths and simulated Cargo builds.
 
-use determinator::{Determinator, Utf8Paths0, rules::DeterminatorRules};
+use determinator::{
+    Determinator, Utf8Paths0,
+    rules::{DeterminatorMarkChanged, DeterminatorPostRule, DeterminatorRules, PathRule},
+};
 use guppy::{
     MetadataCommand,
     graph::{
@@ -12,7 +15,12 @@ use guppy::{
     },
 };
 use serde::Serialize;
-use std::{collections::BTreeSet, fs, path::Path, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+    process::Command,
+};
 
 pub const RULES: &str = ".config/determinator-images.toml";
 pub const LIVE_RULES: &str = ".config/determinator-live.toml";
@@ -140,19 +148,191 @@ pub fn decide(root: &Path, base: &str, workflow: Workflow) -> Decision {
         })
 }
 
+/// The directory of case documents, which live HCL scenarios and other tests deploy.
+pub const HCL_CASE_DOCUMENTS: &str = "crates/nemoclaw-e2e/cases";
+/// The live HCL scenarios: each one deploys the case document of the same name.
+pub const HCL_SCENARIOS: &str = "crates/nemoclaw-e2e/tests/e2e/hcl/tests";
+
+/// The live HCL cases that a change affects.
+#[derive(Serialize)]
+pub struct CaseSelection {
+    /// The commit analyzed: the clean checkout's `HEAD`.
+    pub commit: String,
+    /// The selected case IDs, sorted.
+    pub selected: Vec<String>,
+    /// Every live HCL case's decision.
+    pub cases: BTreeMap<String, Decision>,
+}
+
+/// Select the live HCL cases that the changes since the merge base of `base`
+/// and `HEAD` affect. A case's own document and scenario select only that
+/// case; any other input of the live suites selects every case.
+/// `requested` cases, such as maintainer-reviewed recommendations, are added
+/// and never remove a selection. An analysis failure selects every case.
+pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelection> {
+    let commit = revision(root, "HEAD")?;
+    let ids = live_cases(root)?;
+    if let Some(id) = requested.iter().find(|id| !ids.contains(*id)) {
+        let known: Vec<&str> = ids.iter().map(String::as_str).collect();
+        return Err(format!(
+            "{id} is not a live HCL case; the live cases are {}",
+            known.join(", ")
+        ));
+    }
+    let mut cases = select_cases(root, base, &ids).unwrap_or_else(|error| {
+        ids.iter()
+            .map(|id| {
+                let reason =
+                    format!("could not analyze changes since {base} ({error}); running every case");
+                (id.clone(), Decision { run: true, reason })
+            })
+            .collect()
+    });
+    for id in requested {
+        let decision = cases.get_mut(id).expect("requested cases are live cases");
+        if !decision.run {
+            *decision = Decision {
+                run: true,
+                reason: "requested with --add".into(),
+            };
+        }
+    }
+    let selected = cases
+        .iter()
+        .filter(|(_, decision)| decision.run)
+        .map(|(id, _)| id.clone())
+        .collect();
+    Ok(CaseSelection {
+        commit,
+        selected,
+        cases,
+    })
+}
+
+/// The live HCL cases at `HEAD`: each scenario with a case document of the same name.
+fn live_cases(root: &Path) -> Result<BTreeSet<String>> {
+    let listed = git(
+        root,
+        &[
+            "ls-tree",
+            "-z",
+            "--name-only",
+            "HEAD",
+            &format!("{HCL_SCENARIOS}/"),
+            &format!("{HCL_CASE_DOCUMENTS}/"),
+        ],
+    )?;
+    let listed = String::from_utf8(listed).map_err(|_| "a case file name is not UTF-8")?;
+    let files: BTreeSet<&str> = listed.split_terminator('\0').collect();
+    let mut ids = BTreeSet::new();
+    for file in &files {
+        let Some(id) = file
+            .strip_prefix(HCL_SCENARIOS)
+            .and_then(|name| name.strip_prefix('/'))
+            .and_then(|name| name.strip_suffix(".tftest.hcl"))
+        else {
+            continue;
+        };
+        if !files.contains(case_files(id)[0].as_str()) {
+            continue;
+        }
+        // Case files become path rule globs, which these characters can't disturb.
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(format!(
+                "live HCL case {id:?} must be named with lowercase letters, digits, and hyphens"
+            ));
+        }
+        ids.insert(id.to_owned());
+    }
+    Ok(ids)
+}
+
+/// A live case's own files: its document and its scenario.
+fn case_files(id: &str) -> [String; 2] {
+    [
+        format!("{HCL_CASE_DOCUMENTS}/{id}.yaml"),
+        format!("{HCL_SCENARIOS}/{id}.tftest.hcl"),
+    ]
+}
+
+fn select_cases(
+    root: &Path,
+    base: &str,
+    ids: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Decision>> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    // Compare from the branch point so that changes the base made since don't select cases.
+    let base = revision(root, base)?;
+    let fork = String::from_utf8(git(root, &["merge-base", &base, "HEAD"])?)
+        .map_err(|_| "git printed a non-UTF-8 revision")?
+        .trim()
+        .to_owned();
+    let owners: BTreeMap<String, &str> = ids
+        .iter()
+        .flat_map(|id| case_files(id).map(|file| (file, id.as_str())))
+        .collect();
+    let ignored: Vec<String> = owners.keys().cloned().collect();
+    analyze(root, &fork, false, |fork, paths, old, new| {
+        let shared = decide_build(root, Workflow::Live, &ignored, fork, paths, old, new)?;
+        Ok(ids
+            .iter()
+            .map(|id| {
+                let own = paths
+                    .into_iter()
+                    .find(|path| owners.get(path.as_str()) == Some(&id.as_str()));
+                let decision = if shared.run {
+                    Decision {
+                        run: true,
+                        reason: format!("every case runs: {}", shared.reason),
+                    }
+                } else if let Some(path) = own {
+                    Decision {
+                        run: true,
+                        reason: format!("{path} changed"),
+                    }
+                } else {
+                    Decision {
+                        run: false,
+                        reason: format!(
+                            "neither the live build nor this case's files changed since {fork}"
+                        ),
+                    }
+                };
+                (id.clone(), decision)
+            })
+            .collect())
+    })
+}
+
 fn analyze_many(
     root: &Path,
     base: &str,
     worktree: bool,
     workflows: &[Workflow],
 ) -> Result<Vec<Decision>> {
-    let base = String::from_utf8(git(
-        root,
-        &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
-    )?)
-    .map_err(|_| "git printed a non-UTF-8 revision")?
-    .trim()
-    .to_owned();
+    analyze(root, base, worktree, |base, paths, old, new| {
+        workflows
+            .iter()
+            .map(|workflow| decide_build(root, *workflow, &[], base, paths, old, new))
+            .collect()
+    })
+}
+
+/// Find the paths changed since `base` and the old and new package graphs,
+/// then decide with them.
+fn analyze<T>(
+    root: &Path,
+    base: &str,
+    worktree: bool,
+    decide: impl FnOnce(&str, &Utf8Paths0, &PackageGraph, &PackageGraph) -> Result<T>,
+) -> Result<T> {
+    let base = revision(root, base)?;
     if !worktree && !git(root, &["status", "--porcelain", "--untracked-files=normal"])?.is_empty() {
         return Err(
             "committed analysis requires a clean checkout; use --worktree to include local edits"
@@ -203,54 +383,72 @@ fn analyze_many(
     } else {
         &new
     };
-    workflows
-        .iter()
-        .map(|workflow| {
-            let rules =
-                fs::read_to_string(root.join(workflow.rules())).map_err(|e| e.to_string())?;
-            let rules =
-                DeterminatorRules::parse(&rules).map_err(|e| format!("invalid path rules: {e}"))?;
-            let mut determinator = Determinator::new(old, &new);
-            determinator.set_rules(&rules).map_err(|e| e.to_string())?;
-            determinator.add_changed_paths(&paths);
-            // These decisions concern specific feature sets, not every possible
-            // build of each affected package. Intersect changed paths with that
-            // build's dependency closure, then compare its dependency/feature summary.
-            let path_changed = determinator.compute().path_changed_set;
-            let build_for = |graph| match workflow {
-                Workflow::Images => image_build(graph),
-                Workflow::Live => live_build(graph),
-                Workflow::Bundle => bundle_build(graph),
-                Workflow::Lifecycle => lifecycle_build(graph),
-            };
-            let build = build_for(&new)?;
-            let subject = workflow.subject();
-            for package in packages(&build).packages(DependencyDirection::Forward) {
-                if path_changed
-                    .contains(package.id())
-                    .map_err(|e| e.to_string())?
-                {
-                    return Ok(Decision {
-                        run: true,
-                        reason: format!(
-                            "{} is part of the {subject} build and changed",
-                            package.name()
-                        ),
-                    });
-                }
-            }
-            if summary(&build) != summary(&build_for(old)?) {
-                return Ok(Decision {
-                    run: true,
-                    reason: format!("the {subject} build's dependencies or features changed"),
-                });
-            }
-            Ok(Decision {
-                run: false,
-                reason: format!("no {subject} inputs changed since {base}"),
-            })
-        })
-        .collect()
+    decide(&base, &paths, old, &new)
+}
+
+/// Whether `workflow`'s build changed, leaving the paths that match `ignored`
+/// out of its path rules.
+fn decide_build(
+    root: &Path,
+    workflow: Workflow,
+    ignored: &[String],
+    base: &str,
+    paths: &Utf8Paths0,
+    old: &PackageGraph,
+    new: &PackageGraph,
+) -> Result<Decision> {
+    let rules = fs::read_to_string(root.join(workflow.rules())).map_err(|e| e.to_string())?;
+    let mut rules =
+        DeterminatorRules::parse(&rules).map_err(|e| format!("invalid path rules: {e}"))?;
+    if !ignored.is_empty() {
+        rules.path_rules.insert(
+            0,
+            PathRule {
+                globs: ignored.to_vec(),
+                mark_changed: DeterminatorMarkChanged::Packages(Vec::new()),
+                post_rule: DeterminatorPostRule::Skip,
+            },
+        );
+    }
+    let mut determinator = Determinator::new(old, new);
+    determinator.set_rules(&rules).map_err(|e| e.to_string())?;
+    determinator.add_changed_paths(paths);
+    // These decisions concern specific feature sets, not every possible
+    // build of each affected package. Intersect changed paths with that
+    // build's dependency closure, then compare its dependency/feature summary.
+    let path_changed = determinator.compute().path_changed_set;
+    let build_for = |graph| match workflow {
+        Workflow::Images => image_build(graph),
+        Workflow::Live => live_build(graph),
+        Workflow::Bundle => bundle_build(graph),
+        Workflow::Lifecycle => lifecycle_build(graph),
+    };
+    let build = build_for(new)?;
+    let subject = workflow.subject();
+    for package in packages(&build).packages(DependencyDirection::Forward) {
+        if path_changed
+            .contains(package.id())
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(Decision {
+                run: true,
+                reason: format!(
+                    "{} is part of the {subject} build and changed",
+                    package.name()
+                ),
+            });
+        }
+    }
+    if summary(&build) != summary(&build_for(old)?) {
+        return Ok(Decision {
+            run: true,
+            reason: format!("the {subject} build's dependencies or features changed"),
+        });
+    }
+    Ok(Decision {
+        run: false,
+        reason: format!("no {subject} inputs changed since {base}"),
+    })
 }
 
 fn bundle_build(graph: &PackageGraph) -> Result<CargoSet<'_>> {
@@ -291,6 +489,17 @@ fn selected_build<'g>(
     )
     .map_err(|e| e.to_string())
 }
+/// The commit that `revision` names.
+fn revision(root: &Path, revision: &str) -> Result<String> {
+    Ok(String::from_utf8(git(
+        root,
+        &["rev-parse", "--verify", &format!("{revision}^{{commit}}")],
+    )?)
+    .map_err(|_| "git printed a non-UTF-8 revision")?
+    .trim()
+    .to_owned())
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .args(args)
