@@ -465,14 +465,22 @@ NemoClaw configures the capable target as the routing judge and derives the inte
 The file must not contain credentials, endpoints, or internal routing fragments.
 This option requires the managed Hermes image; Portable and custom images are not supported.
 
+Fresh setup creates OpenShell-managed providers for the selected profiles and attaches them to the new sandbox.
+NemoClaw verifies and records their identities before completing setup.
+Switchyard clients use observed native endpoints and endpoint-scoped credential references, not raw keys or `inference.local`.
+Raw provider credentials remain in OpenShell credential storage.
+
 <Note>
-Provider credential attachment for the routed targets remains tracked in [issue #13863](https://github.com/NVIDIA/NemoClaw/issues/13863).
-Generating this configuration does not establish production routing.
+Full adaptive-routing qualification remains tracked in [issue #13866](https://github.com/NVIDIA/NemoClaw/issues/13866).
+Successful provider setup does not establish that qualification.
 </Note>
 
-Changing or disabling the saved routing configuration requires `--recreate-sandbox`.
+Switchyard onboarding supports fresh provider creation only.
+It rejects reuse of recorded Switchyard bindings, including resumed provider setup, without changing those bindings.
+Neither `--resume --switchyard-config <file>` nor `--recreate-sandbox` enables provider reuse, routing changes, or credential rotation.
 While routing is configured, `inference set` refuses changes.
-To return to a single model, re-onboard with `--recreate-sandbox` and omit `--switchyard-config`.
+To use different selections, preserve the existing sandbox and onboard with a new name.
+For a new single-model sandbox, omit `--switchyard-config`.
 
 ```json
 {
@@ -483,7 +491,7 @@ To return to a single model, re-onboard with `--recreate-sandbox` and omit `--sw
 ```
 
 ```bash
-$$nemoclaw onboard --agent hermes --switchyard-config ./switchyard.json
+$$nemoclaw onboard --agent hermes --fresh --name routed-hermes --switchyard-config ./switchyard.json
 ```
 
 #### External Component Onboarding
@@ -561,6 +569,14 @@ This surface observes the canonical onboarding session and does not accept input
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue. Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, custom Dockerfile path, read-only host-mount declarations, and any explicitly selected serving-profile provenance recorded by the original run. For a profile-backed session, resume requires the same catalog, preset, and recipe digests and exits before effects if the installed definition changed. Omit `--profile` to reuse that recorded selection, or pass the same profile explicitly; use `--fresh` to adopt a changed catalog definition. Sessions without a serving-profile provenance record can resume when their checkpoint uses schema 4, but they cannot acquire a new `--profile` selection during resume.
+
+<AgentOnly variant="hermes">
+
+Switchyard provider reuse is not supported during resume, even when you supply the original `--switchyard-config` file.
+If provider setup must run again after bindings were recorded, onboarding stops without changing those bindings.
+Use a new sandbox name for fresh Switchyard setup instead of clearing the recorded bindings.
+
+</AgentOnly>
 
 If policy application stops or OpenShell refuses the write, `--resume` reuses the selected presets for the same sandbox.
 NemoClaw checks the sandbox identity and preset availability before it reapplies the selection.

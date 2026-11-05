@@ -102,3 +102,56 @@ it.each(["gpt-5", "another-model"])(
     }
   },
 );
+
+it.each(["load", "save"] as const)(
+  "identifies the sandbox and preserves the cause when binding validation prevents %s (#13863)",
+  async (operation) => {
+    const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-switchyard-invalid-"));
+    vi.stubEnv("HOME", testHome);
+    vi.resetModules();
+    try {
+      const persistence = await import("./registry/persistence");
+      const routing = createHermesSwitchyardRoutingIntent({
+        efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+        capable: { provider: "openai-api", model: "gpt-5" },
+      });
+      const bindings = switchyardBindingFixture(routing);
+      const data = {
+        defaultSandbox: null,
+        sandboxes: {
+          routed: {
+            name: "routed",
+            hermesSwitchyard: {
+              routing,
+              bindings: { ...bindings, judge: { ...bindings.judge, model: "wrong-model" } },
+            },
+          },
+        },
+      };
+      persistence.save({ defaultSandbox: null, sandboxes: {} });
+      const attempts = {
+        load: async () => {
+          await fs.writeFile(persistence.REGISTRY_FILE, JSON.stringify(data));
+          return () => persistence.load();
+        },
+        save: async () => () => persistence.save(data),
+      };
+      const attempt = await attempts[operation]();
+      const before = await fs.readFile(persistence.REGISTRY_FILE, "utf8");
+      const error = await Promise.resolve()
+        .then(attempt)
+        .catch((failure: unknown) => failure);
+      expect(error).toMatchObject({
+        message: expect.stringContaining(`Cannot ${operation} sandbox "routed"`),
+        cause: expect.any(Error),
+      });
+      expect((error as Error).message).toContain(
+        "Inspect and repair hermesSwitchyard before retrying",
+      );
+      expect(await fs.readFile(persistence.REGISTRY_FILE, "utf8")).toBe(before);
+    } finally {
+      await fs.rm(testHome, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

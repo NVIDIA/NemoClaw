@@ -98,13 +98,13 @@ async function readyReuseFixture() {
       getSandboxReuseState: () => "ready",
       getSandboxRegistryEntry: () => recorded,
       getSandboxRecreateObservation: journal.observe,
-      switchyardProviderAdapter: fixture.input.adapter,
     },
     session,
   );
   return {
     fixture,
     calls,
+    recorded,
     reuse: () =>
       handleSandboxState({
         ...baseOptions(deps, session),
@@ -121,17 +121,17 @@ async function readyReuseFixture() {
 }
 
 describe("Hermes Switchyard sandbox reuse", () => {
-  it("verifies provider attachments before finalizing Ready sandbox reuse (#13863)", async () => {
-    const { fixture, calls, reuse } = await readyReuseFixture();
-    await expect(reuse()).resolves.toMatchObject({ sandboxName: "hermes" });
-    expect(fixture.methods.listProviderAttachments).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      sandboxName: "hermes",
-    });
-    expect(calls.finalizeRouteReservation).toHaveBeenCalledOnce();
-    expect(fixture.methods.createProvider).toHaveBeenCalledTimes(2);
-    expect(fixture.methods.deleteProvider).not.toHaveBeenCalled();
-    expect(fixture.methods.updateProvider).not.toHaveBeenCalled();
+  it("rejects Ready sandbox reuse before provider access or reservation finalization (#13863)", async () => {
+    const { fixture, calls, recorded, reuse } = await readyReuseFixture();
+    const before = structuredClone(recorded);
+    vi.clearAllMocks();
+    await expect(reuse()).rejects.toThrow("fresh sandbox");
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(Object.values(fixture.methods).every((method) => method.mock.calls.length === 0)).toBe(
+      true,
+    );
+    expect(recorded).toEqual(before);
   });
 
   it.each([
@@ -160,7 +160,7 @@ describe("Hermes Switchyard sandbox reuse", () => {
     async ({ mutate }) => {
       const { fixture, calls, reuse } = await readyReuseFixture();
       mutate(fixture);
-      await expect(reuse()).rejects.toThrow("provider binding");
+      await expect(reuse()).rejects.toThrow("fresh sandbox");
       expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
       expect(calls.recordSkip).not.toHaveBeenCalled();
       expect(fixture.methods.createProvider).toHaveBeenCalledTimes(2);
@@ -169,7 +169,7 @@ describe("Hermes Switchyard sandbox reuse", () => {
     },
   );
 
-  it("checks routing and attachments before restoring an accepted replacement (#13863)", async () => {
+  it("rejects routed replacement restoration before dashboard or registry effects (#13863)", async () => {
     const fixture = createSwitchyardProviderFixture(ROUTING, "nemoclaw", "hermes");
     const { bindings } = await fixture.setup();
     const releaseDashboardPort = vi.fn(async () => undefined);
@@ -194,7 +194,6 @@ describe("Hermes Switchyard sandbox reuse", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       getSandbox: () => ({ ...entry(ROUTING), hermesSwitchyard: { routing: ROUTING, bindings } }),
-      switchyardProviderAdapter: fixture.input.adapter,
       manageDashboard: false,
       releaseDashboardPort,
       ensureDashboardForward: vi.fn(() => 0),
@@ -213,30 +212,53 @@ describe("Hermes Switchyard sandbox reuse", () => {
     expect(updateSandbox).not.toHaveBeenCalled();
     await expect(
       restoreReusedSandboxDashboardState({ ...input, env: environment(ROUTING) }),
-    ).resolves.toMatchObject({ dashboardPort: 0 });
-    expect(releaseDashboardPort).toHaveBeenCalledOnce();
-    fixture.names.splice(0, 1);
-    await expect(
-      restoreReusedSandboxDashboardState({ ...input, env: environment(ROUTING) }),
-    ).rejects.toThrow("provider binding");
-    expect(releaseDashboardPort).toHaveBeenCalledOnce();
-    expect(updateReusedSandboxMetadata).toHaveBeenCalledOnce();
-    expect(updateSandbox).toHaveBeenCalledOnce();
+    ).rejects.toThrow("fresh sandbox");
+    expect(releaseDashboardPort).not.toHaveBeenCalled();
+    expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["enabled", ROUTING],
-    ["disabled", null],
-  ] as const)("reuses a sandbox with matching %s routing (#13862)", (_label, routing) => {
+  it("preserves ordinary sandbox reuse with routing disabled (#13863)", () => {
     expect(() =>
       assertHermesSwitchyardRoutingReusable({
         agentName: "hermes",
-        entry: entry(routing),
-        env: environment(routing),
+        entry: entry(null),
+        env: {},
         recreate: false,
         sandboxState: "ready",
       }),
     ).not.toThrow();
+  });
+
+  it("rejects matching routed profiles until provider reuse is supported (#13863)", () => {
+    expect(() =>
+      assertHermesSwitchyardRoutingReusable({
+        agentName: "hermes",
+        entry: entry(ROUTING),
+        env: environment(ROUTING),
+        recreate: false,
+        sandboxState: "ready",
+      }),
+    ).toThrow("fresh sandbox");
+  });
+
+  it("rejects recorded bindings even when a legacy sandbox has no routing profile (#13863)", () => {
+    const sandbox = {
+      name: "hermes",
+      agent: "hermes",
+      hermesSwitchyard: { routing: ROUTING, bindings: switchyardBindingFixture(ROUTING) },
+    };
+    const before = structuredClone(sandbox);
+    expect(() =>
+      assertHermesSwitchyardRoutingReusable({
+        agentName: "hermes",
+        entry: sandbox,
+        env: {},
+        recreate: false,
+        sandboxState: "ready",
+      }),
+    ).toThrow("fresh sandbox");
+    expect(sandbox).toEqual(before);
   });
 
   it.each([
@@ -250,7 +272,7 @@ describe("Hermes Switchyard sandbox reuse", () => {
         capable: { provider: "openai-api", model: "capable-model" },
       }),
     ],
-  ] as const)("requires recreation when routing is %s (#13862)", (_label, recorded, desired) => {
+  ] as const)("requires a new sandbox when routing is %s (#13863)", (_label, recorded, desired) => {
     const sandbox = entry(recorded);
     const before = structuredClone(sandbox);
     const input = {
@@ -260,7 +282,7 @@ describe("Hermes Switchyard sandbox reuse", () => {
       recreate: false,
       sandboxState: "ready",
     };
-    expect(() => assertHermesSwitchyardRoutingReusable(input)).toThrow("--recreate-sandbox");
+    expect(() => assertHermesSwitchyardRoutingReusable(input)).toThrow("new sandbox name");
     expect(sandbox).toEqual(before);
     expect(() => assertHermesSwitchyardRoutingReusable({ ...input, recreate: true })).not.toThrow();
   });
@@ -276,10 +298,10 @@ describe("Hermes Switchyard sandbox reuse", () => {
         recreate: false,
         sandboxState: "ready",
       }),
-    ).toThrow("Cannot verify");
+    ).toThrow("Preserve this sandbox and onboard with a new sandbox name");
   });
 
-  it("requires recreation when a legacy Hermes sandbox has no routing profile (#13862)", () => {
+  it("requires a new sandbox when a legacy Hermes sandbox has no routing profile (#13863)", () => {
     expect(() =>
       assertHermesSwitchyardRoutingReusable({
         agentName: "hermes",
@@ -288,7 +310,7 @@ describe("Hermes Switchyard sandbox reuse", () => {
         recreate: false,
         sandboxState: "ready",
       }),
-    ).toThrow("--recreate-sandbox");
+    ).toThrow("new sandbox name");
   });
 
   it("preserves ordinary legacy reuse and ignores other agents (#13862)", () => {

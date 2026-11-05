@@ -148,7 +148,7 @@ describe("Switchyard provider bindings", () => {
     },
   );
 
-  it("retains providers after a reservation write commits then throws and permits resume (#13863)", async () => {
+  it("retains providers after an uncertain reservation write and rejects provider reuse (#13863)", async () => {
     const f = fixture();
     let recorded: SandboxEntry | null = null;
     const failure = new Error("reservation durability is uncertain");
@@ -166,10 +166,13 @@ describe("Switchyard provider bindings", () => {
     expect(f.methods.deleteProvider).not.toHaveBeenCalled();
     expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
 
-    input.deps.updateSandbox = () => true;
-    await expect(setupSwitchyardInference(input)).resolves.toEqual({ ok: true });
+    const retryReservation = vi.fn(() => true);
+    input.deps.updateSandbox = retryReservation;
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("fresh sandbox");
     expect(f.methods.createProvider).toHaveBeenCalledTimes(2);
-    expect(input.environment).toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(retryReservation).not.toHaveBeenCalled();
+    expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
   it("retains fresh providers when reservation readback is unavailable (#13863)", async () => {
@@ -245,26 +248,24 @@ describe("Switchyard provider bindings", () => {
     expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
-  it("preserves recorded providers when a resumed reservation is refused (#13863)", async () => {
+  it("rejects a recorded pending binding without attempting a resumed reservation (#13863)", async () => {
     const f = fixture();
     const { bindings } = await f.setup();
-    const input = setupInput(
-      f,
-      () => false,
-      () => ({
-        name: f.input.sandboxName,
-        gatewayName: f.input.gatewayName,
-        provider: routing.capable.provider,
-        model: routing.capable.model,
-        pendingRouteReservation: true,
-        reservationSessionId: "session-test",
-        hermesSwitchyard: { routing, bindings },
-      }),
-    );
+    const updateSandbox = vi.fn(() => false);
+    const input = setupInput(f, updateSandbox, () => ({
+      name: f.input.sandboxName,
+      gatewayName: f.input.gatewayName,
+      provider: routing.capable.provider,
+      model: routing.capable.model,
+      pendingRouteReservation: true,
+      reservationSessionId: "session-test",
+      hermesSwitchyard: { routing, bindings },
+    }));
 
-    await expect(setupSwitchyardInference(input)).rejects.toThrow("could not reserve");
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("fresh sandbox");
     expect(f.providers.size).toBe(2);
     expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
     expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
@@ -281,7 +282,7 @@ describe("Switchyard provider bindings", () => {
     expect(bindings.efficient.model).not.toBe(bindings.capable.model);
   });
 
-  it("reverifies a published binding without provider creation, credential reads, or route reservation (#13863)", async () => {
+  it("rejects a published binding without provider access, credential reads, or route reservation (#13863)", async () => {
     const f = fixture();
     const { bindings } = await f.setup();
     const environment: NodeJS.ProcessEnv = {};
@@ -311,13 +312,11 @@ describe("Switchyard provider bindings", () => {
         }),
       },
     };
-    f.methods.createProvider.mockClear();
-    await expect(setupSwitchyardInference(input)).resolves.toEqual({ ok: true });
+    vi.clearAllMocks();
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("fresh sandbox");
     expect(updateSandbox).not.toHaveBeenCalled();
     expect(hydrateCredentialEnv).not.toHaveBeenCalled();
-    expect(f.methods.createProvider).not.toHaveBeenCalled();
-    f.names.splice(0, 1);
-    await expect(setupSwitchyardInference(input)).rejects.toThrow("no longer attached");
+    expect(Object.values(f.methods).every((method) => method.mock.calls.length === 0)).toBe(true);
     expect(environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
@@ -435,7 +434,7 @@ describe("Switchyard provider bindings", () => {
     expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
-  it("rejects a changed identity before activating recorded bindings (#13863)", async () => {
+  it("rejects recorded bindings before entering lifecycle or provider work (#13863)", async () => {
     const f = fixture();
     const { bindings } = await f.setup();
     f.methods.createProvider.mockClear();
@@ -447,14 +446,12 @@ describe("Switchyard provider bindings", () => {
       model: routing.capable.model,
       hermesSwitchyard: { routing, bindings },
     }));
-    input.options.revalidateSandboxIdentity = vi
-      .fn<(operation: string) => void>()
-      .mockImplementationOnce(() => {})
-      .mockImplementationOnce(() => {
-        throw new Error("registered identity changed");
-      });
+    input.options.revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("must not enter unsupported provider reuse");
+    });
 
-    await expect(setupSwitchyardInference(input)).rejects.toThrow("registered identity");
+    await expect(setupSwitchyardInference(input)).rejects.toThrow("fresh sandbox");
+    expect(input.options.revalidateSandboxIdentity).not.toHaveBeenCalled();
     expect(f.providers.size).toBe(2);
     expect(f.methods.createProvider).not.toHaveBeenCalled();
     expect(f.methods.deleteProvider).not.toHaveBeenCalled();

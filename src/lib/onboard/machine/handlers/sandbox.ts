@@ -134,7 +134,6 @@ import {
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
   reserveSandboxResumeRoute,
-  verifyHermesSwitchyardReuseBindings,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
@@ -350,9 +349,6 @@ export interface SandboxStateOptions<
     ): boolean | Promise<boolean>;
     nativeLocalProviderAdapter?: Parameters<
       typeof ensureResumedNativeLocalProviderAttached
-    >[0]["adapter"];
-    switchyardProviderAdapter?: Parameters<
-      typeof verifyHermesSwitchyardReuseBindings
     >[0]["adapter"];
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
@@ -1526,17 +1522,12 @@ class SandboxStateFlow<
       await this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
       const entry = this.deps.getSandboxRegistryEntry(state.sandboxName);
-      await verifyHermesSwitchyardReuseBindings({
+      assertHermesSwitchyardRoutingReusable({
         agentName: (this.options.agent as { name?: string } | null)?.name,
-        sandboxName: state.sandboxName,
-        gatewayName: this.options.gatewayName,
         entry,
         env: this.options.env,
-        adapter: this.deps.switchyardProviderAdapter,
-        revalidateSandboxIdentity: createRegisteredSandboxIdentityRevalidation(entry, {
-          readRegistration: this.deps.getSandboxRegistryEntry,
-          observe: this.deps.getSandboxRecreateObservation,
-        }),
+        recreate: false,
+        sandboxState: "ready",
       });
       await this.restoreNativeRouterAttachment(state.sandboxName);
       if (state.webSearchConfig) {

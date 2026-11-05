@@ -37,6 +37,18 @@ import {
 import type { SandboxEntry, SandboxRegistry } from "./types";
 import { cloneSandboxWorkloadReceipt } from "./workload";
 
+function requireValidSwitchyardState(entry: SandboxEntry, operation: "load" | "save"): void {
+  if (entry.hermesSwitchyard === undefined) return;
+  try {
+    validateSwitchyardBindingState(entry.hermesSwitchyard);
+  } catch (cause) {
+    throw new Error(
+      `Cannot ${operation} sandbox ${JSON.stringify(entry.name)}: invalid hermesSwitchyard state in sandboxes.json. Inspect and repair hermesSwitchyard before retrying.`,
+      { cause },
+    );
+  }
+}
+
 function cloneSandboxWorkloadReceiptOrThrow(
   value: SandboxEntry["workload"],
   operation: "load" | "save",
@@ -247,7 +259,7 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
-  if (entry.hermesSwitchyard !== undefined) validateSwitchyardBindingState(entry.hermesSwitchyard);
+  requireValidSwitchyardState(entry, "load");
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -308,7 +320,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
  * sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
-  if (entry.hermesSwitchyard !== undefined) validateSwitchyardBindingState(entry.hermesSwitchyard);
+  requireValidSwitchyardState(entry, "save");
   // Defensively drop non-durable recovery markers and legacy
   // providerCredentialHashes so they can never reach sandboxes.json even if a
   // caller force-passed them through updateSandbox().
