@@ -6,9 +6,11 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type E2eWorkflow = {
+  env?: Record<string, string>;
   jobs: Record<
     string,
     {
+      env?: Record<string, string>;
       steps: Array<{
         env?: Record<string, string>;
         id?: string;
@@ -67,5 +69,31 @@ describe("trusted E2E planning boundary", () => {
     run.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
     expect(validateE2eWorkflow(workflow)).toContain(validationError);
+  });
+
+  describe.each(["workflow", "job", "step"] as const)("hosted %s environment", (scope) => {
+    it.each([
+      ["TAVILY_API_KEY", "${{ secrets.TAVILY_API_KEY }}"],
+      ["TAVILY_API_KEY", ""],
+      ["NEMOCLAW_E2E_TAVILY_AUTHENTICATED", "1"],
+      ["NEMOCLAW_E2E_TAVILY_AUTHENTICATED", ""],
+    ] as const)("rejects %s set to %j (#13082)", (key, value) => {
+      const workflow = readWorkflow() as E2eWorkflow;
+      const live = workflow.jobs.live!;
+      const run = live.steps.find((step) => step.name === "Run live E2E tests")!;
+      const environments = {
+        workflow: (workflow.env ??= {}),
+        job: (live.env ??= {}),
+        step: (run.env ??= {}),
+      };
+      const env = environments[scope];
+      const validationError =
+        "hosted live E2E must not define TAVILY_API_KEY or NEMOCLAW_E2E_TAVILY_AUTHENTICATED";
+      expect(validateE2eWorkflow(workflow)).toEqual([]);
+
+      env[key] = value;
+
+      expect(validateE2eWorkflow(workflow)).toContain(validationError);
+    });
   });
 });

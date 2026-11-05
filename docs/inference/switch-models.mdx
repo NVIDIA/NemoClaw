@@ -9,8 +9,8 @@ keywords: ["switch nemoclaw model", "change inference model", "nemoclaw inferenc
 content:
   type: "how_to"
 ---
-Change the model on an existing provider route with a runtime update or a fresh sandbox recreation.
-The command requires both the provider and model even when the provider does not change.
+Change the model with a runtime update or onboard under a new sandbox name.
+Runtime updates require both the provider and model even when the provider does not change.
 
 ## Check the Current Route
 
@@ -26,8 +26,23 @@ Use the provider ID in the output with the new model ID.
 
 <AgentOnly variant="openclaw,hermes">
 
-Runtime model changes update the OpenShell route and synchronize the selected running agent configuration.
+Runtime model changes synchronize the selected running agent configuration.
+Shared-route selections also update the OpenShell route.
 Pass `--sandbox <name>` when you do not want to use the default sandbox.
+
+For an older NVIDIA Endpoints sandbox without a native provider attachment, a same-provider model change exits with status `2`.
+Follow the recreation guidance in [Use NVIDIA Endpoints](../hosted-inference/use-nvidia-endpoints#onboard) before retrying.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+If the current or selected route uses a native hosted or local provider, the model change restarts the Hermes gateway.
+Active agent requests can be interrupted during the restart.
+If restart fails, the selection remains committed.
+Follow the restart recovery in [Switch Providers](switch-providers#switch-the-provider-at-runtime).
+
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 
 Switch the model with one host command.
 
@@ -57,22 +72,24 @@ When it cannot resolve a value, NemoClaw omits the field so Hermes can discover 
 
 <AgentOnly variant="deepagents">
 
-Deep Agents uses the fresh recreation path for model changes.
-This path keeps the OpenShell route and `/sandbox/.deepagents/config.toml` aligned.
-
-```bash
-$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
-```
-
-To validate a new model before replacing the current sandbox, onboard it under a new name and make it the default after validation.
+Deep Agents has no runtime `inference set` path.
+Named recreation restores `/sandbox/.deepagents/config.toml`, including saved model and endpoint preferences.
+If those preferences conflict with the requested selection, validation stops before NemoClaw updates the registry.
+The replacement still exists with an unverified route.
+Keep the backup and follow the printed recovery instructions; do not rebuild without verified registry metadata.
+For a different model, follow [Validate a Different Deep Agents Selection](switch-providers#validate-a-different-deep-agents-selection).
+That workflow creates a new native configuration under a new sandbox name.
+It also explains how to restore the existing default during testing because onboarding changes the default before final verification.
 
 </AgentOnly>
 
 ## Account for Shared Gateways
 
-One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Shared-route sandboxes on one gateway use one live route, even when NemoClaw records different intended routes for them.
+This applies to retained legacy, custom, local, and Model Router shared routes.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
-Runtime `inference set` remains fail-closed when the requested change conflicts with another registered sandbox or when route metadata is incomplete.
+For shared-route selections, runtime `inference set` stops when provider identity conflicts or required route metadata is incomplete.
+Native model changes affect only the selected sandbox and do not change the shared gateway route.
 
 ## Verify the Change
 

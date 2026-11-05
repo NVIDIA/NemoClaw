@@ -5,11 +5,27 @@
 
 Direct E2E coverage runs through Vitest.
 
+Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
+switching, and token-rotation targets use a
+test-only Node preload for their synthetic Discord enrollment tokens. The
+fixture runs in installer and CLI children and returns a bot identity only for
+the matching synthetic token at Discord's identity endpoint. Other requests
+and real credentials retain normal authentication. This fixture establishes
+enrollment state for those targets; it does not prove live Discord authentication
+or message delivery. `support/discord-enrollment-child.test.ts` owns the child
+transport and production compiler contract. Existing live assertions still own
+provider attachment, persisted state, native configuration, stop/start, and cleanup.
+The native Hermes rebuild receives the synthetic transport separately from the
+stored bot token. The rebuild still reads that token from its credential store.
+
 The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
-native loading and cleanup on the image's architecture. It does not install routing
-configuration or qualify provider routing. `test/agents/hermes/hermes-switchyard-package.test.ts`
+native loading and cleanup on the image's architecture. The isolated process loads the
+production-generated adaptive deployment with local upstream fixtures. It sends one request
+through the `switchyard` route and requires the classifier to select the efficient target.
+The probe does not call external providers or change the supervised gateway.
+`test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
 The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
 amd64 and arm64 runners against each job's built image. Both the PR build and publication
@@ -32,6 +48,28 @@ NVIDIA endpoint keeps its existing request shape. The headless check verifies
 that malformed native inference evidence stops connect before session attach;
 native response bodies remain absent from diagnostics.
 
+The `ubuntu-repo-cloud-langchain-deepagents-code` target requires only `NVIDIA_INFERENCE_API_KEY`.
+It always runs the Tavily check without a Tavily credential: managed Python may reach the preset,
+system and project Python are denied, and the preset's removal denies managed Python again.
+A failure of that check fails the target. The workflow forwards no Tavily credential.
+Authenticated Tavily qualification is manual. An operator runs the check directly with
+`NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1` and a real `TAVILY_API_KEY` held on the host;
+the check registers a uniquely named disposable provider on the host and attaches it to the test sandbox.
+The real key stays in the host/gateway credential path. Sandbox Python submits a placeholder
+that OpenShell rewrites at egress. The check requires HTTP 200 before removal and a new
+`DENIED` audit event for `api.tavily.com:443` afterward.
+The audit event must follow the captured log cursor and identify the fresh managed-Python probe process.
+Cleanup removes the disposable provider and restores the prior `ocsf_json_enabled` setting, including its unset state.
+Cleanup removes the Tavily preset only after this invocation successfully applied it.
+Earlier setup failures preserve existing policy while disposable-provider removal and audit-setting restoration still run.
+Removal preserves shared gateway credentials and unrelated sandbox attachments.
+Adding the preset alone restores its direct network rule; provider access requires an explicit attachment.
+A raw OpenShell attachment is temporary: it leaves the saved opt-out unchanged, so rebuild omits Tavily again.
+Linux x86_64 qualification uses the existing target. WSL ARM qualification remains manual;
+there is no supported WSL ARM selector for this scenario.
+The policy live-state tests own attachment discovery, identity checks, partial failures, and operator-rule preservation.
+The extra-provider planning and recreate tests own rebuild exclusion and explicit re-enable behavior.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
@@ -42,8 +80,10 @@ for both onboarding calls, rebuild, restart, consumer, credential scan and sibli
 denial. Its catalogue job adds both DCode scenario budgets to the existing
 75-minute routing allowance, for a total of 243 minutes. This preserves the
 inherited suite's overall limit instead of summing every per-test failure guard.
-Manual PR runs use the catalogue from the trusted workflow commit on `main`, so
+Manual PR runs use the catalogue and job timeout from the trusted workflow commit on `main`, so
 a candidate's job-timeout change applies only after it reaches that commit.
+The protected managed-image GPU job allows 90 minutes, with 60 minutes for setup and providers,
+15 minutes for rollback, and 15 minutes reserved for cleanup, evidence, and runner headroom.
 
 On disposable GitHub runners, the `full-e2e` OpenClaw launch segment uses the
 final host user's home at mode `0775` with `umask 0002`. It removes only that
@@ -83,7 +123,9 @@ The install refuses package removals, preserving the runner's Docker and contain
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
-  components. The scenario proves that mismatched receipt and registry authority
+  components. The scenario retains the trusted job's compatible crun selection
+  when host preparation replaces the client configuration, so local image builds
+  and the managed registry use the reviewed runtime. It proves that mismatched receipt and registry authority
   pauses onboarding and makes `doctor` fail. It then restores valid authority
   and requires finalization and `doctor` to accept the same authenticated
   readiness evidence. Deterministic finalization tests own unhealthy gateway,
@@ -234,9 +276,14 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
-The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
-It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
-Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
+The `managed-image-multiarch-startup` job builds the candidate CLI and its shared policy boundary before native Hermes qualification.
+It rejects preexisting output, verifies the required artifacts, and then starts the direct managed-image contracts.
+When an older trusted workflow exports startup evidence without a Hermes Discord result,
+the candidate consumer builds its CLI and runs the native contract against the same immutable Hermes image.
+Identity validation precedes that execution. A failed native contract rejects qualification,
+and the original evidence artifact remains unchanged.
+Its amd64 shard exports digest-addressed npm and agent system inputs for protected offline builds.
+For the `sandbox` runtime user, it also exports the completed OpenClaw image with only its candidate revision tag.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
 base activation. PR image-publication runs build all three managed-agent bases
 from the selected checkout's Dockerfiles, pins and lockfiles on native CPU runners.
@@ -458,6 +505,8 @@ interpreter inherits the approval wrapper while isolating the script's exit and 
 preserves the credential boundary without feeding a bulk script through terminal line editing.
 Cleanup removes the temporary script after success or failure; a cleanup failure also fails the fixture. The fixture checks
 the transferred bytes against the host's digest before evaluation and rejects a replaced script.
+If approval fails, the fixture records the command exit code and whether that request remains pending.
+It discards raw device records and command output after emitting fixed diagnostic categories.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
 agent session. Sessions/agents coverage requires the main session seed to succeed and does not
@@ -692,7 +741,10 @@ It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in fo
 The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
-The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+The first WSL shard has a 300-minute budget: 90 minutes for shared setup and non-live tests,
+100 minutes for full E2E, 50 minutes for the selected Hermes dashboard case, and 15 minutes
+after each live suite for cleanup and artifact retention. A further 30 minutes covers shard-1
+root contracts, runtime startup, and live-evidence upload. The other shards have 90 minutes.
 
 WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
 probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
@@ -701,6 +753,8 @@ distro so the masks survive a restart. The test script checks Docker again immed
 Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
+WSL shard 1 also runs the Hermes case from `dashboard-remote-bind` through the production installer and OpenShell CLI.
+It checks remote dashboard reachability, loopback API health, and non-loopback API refusal before and after sandbox restart.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -724,7 +778,7 @@ and staging Launchable job own its product coverage:
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
 | `messaging-compatible-endpoint` | Unified E2E | `messaging-compatible-endpoint` |
-| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup. |
+| `dashboard-remote-bind` | Unified E2E | `dashboard-remote-bind` owns install, onboard, artifacts, and terminal cleanup for OpenClaw and Hermes. It retains OpenClaw remote-dashboard audit findings and verifies after onboarding and restart that Hermes API health works on loopback while the host non-loopback API port refuses TCP connections. |
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
@@ -773,6 +827,15 @@ discovery command locally to inspect the generated test matrix:
 ```bash
 npx tsx tools/e2e/credential-free-tests.mts
 ```
+
+The `vllm-docker-storage` job also checks startup log history through a real
+Docker daemon at `/run/docker.sock`. A pinned CPU-only BusyBox container emits
+a startup error, restarts automatically, and emits 80 newer records. The production
+log reader must recover the earlier stderr error before fixture cleanup.
+The fixture has no network access, host mounts, GPU, or credentials. Cleanup
+removes only its uniquely named container and retains the shared image cache.
+Source tests own record bounds, ordering, redaction, fallback, and installer cleanup ordering.
+The support test owns the shell fixture's two-attempt output.
 
 ### External gateway health
 
@@ -841,6 +904,12 @@ a five-second kill grace. A failed command or timeout marks cleanup as failed, r
 directory and recovery instructions, and allows policy and capture cleanup to continue.
 The same target writes an npm cache marker under the DCode native home before its existing rebuild.
 After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
+The thread-approval check also saves a preference through the pinned DCode writer before its first named rebuild.
+It requires comment removal and byte-identical restoration of the saved config through production state transfer.
+Before and after rebuild, all three identity aliases must exit successfully and report the configured route,
+provider, model, and endpoint. Both installed identity files must remain root-owned with mode `0444`,
+and the sandbox user must be unable to open them for writing. Wrapper unit tests own metadata parsing,
+legacy fallback, unsafe-file rejection, and output filtering; this live check owns installed startup and restore composition.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
@@ -923,25 +992,37 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
-The `openclaw-inference-switch` target owns fresh custom-image route initialization.
-Its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff;
-the successful onboard and authenticated baseline request require a ready sandbox from that image.
+The `openclaw-inference-switch` target owns baseline route initialization, lifecycle, and provider switching.
+Its Docker variant also owns fresh custom-image route initialization.
+On Docker, its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff.
+Podman uses stock managed-image onboarding because its driver does not support Dockerfile workloads.
+The host fixture checks its durable managed-image receipt against the selected cohort before post-onboarding probes.
+Both paths require a ready sandbox and an authenticated baseline request from the selected image.
 The deterministic build, inspect, create-reference, and failed-build stop checks live in
 `test/onboarding/onboard-custom-dockerfile.test.ts`.
-Its fixture contains only a different baked model and stale limits.
+The Dockerfile fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
 The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
-Both endpoints use the runner's private address through the existing explicit private-host trust setting.
+Both Anthropic-variant endpoints use public HTTPS quick tunnels from the verified cloudflared package.
+Rootless Pasta copies the runner's primary IP into its namespace, so that IP cannot identify the host fixture there.
+The local HTTP hop stays on the runner; host and sandbox probes use the same public endpoint without private-host trust overrides.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+The interactive policy-preset sequencing fixture uses the same public HTTPS transport and retains its Personal shared-route assertions.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
 The baseline model expectation comes from the environment passed to installation.
 The native NVIDIA variant then switches to the public endpoint with its public credential.
+Its sandbox inference and Hermes API probes retain response bodies and record curl's HTTP status separately in stderr.
+HTTP 408, 429, and 5xx responses can use the existing three-attempt limit with five seconds between attempts.
+A curl timeout after HTTP 200 headers can also retry when its diagnostic identifies a transient transport failure.
+Authentication, authorization, policy, and malformed-input diagnostics prevent retries even when the HTTP status would otherwise qualify.
+A successful probe still requires HTTP 200, the selected model, and a `PONG` response.
+Each attempt retains its command artifact, and the retry artifact distinguishes first-attempt success, recovery, and exhaustion.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
@@ -976,11 +1057,69 @@ The execution profile owns the credentials available to its target step:
   The reusable workflow enforces this boundary; an authenticated same-repository PR caller sets `trusted_main` to `true`.
 
 `common-egress-agent` runs 4 isolated scenario shards.
+The balanced OpenClaw shard also checks the installed no-search configuration and sends a fresh documentation-search request.
+Its structured reply must report unavailable search and contain no installation-documentation result; reduced tool evidence must show no successful fetch or search-provider call, execution, or result.
+This fresh turn must disclose the known disabled-search state without tool activity. Its payload and final visible answer must both satisfy the unavailable-search reply contract. C1 opts into `finalReplyContract: "unavailable-search"`; missing or fabricated `meta.finalAssistantVisibleText` rejects an otherwise successful CLI turn deterministically. Final text cannot override a failed or replay-risk CLI response. C1 rejects every tool call, execution, and result, including generic search, file reads, shell commands, memory access, and unknown tools. This restriction belongs to the unavailable-search evidence check. The Personal fetch scenario retains its progressive tool disclosure support.
+The plugin, agent manifest, and blueprint require OpenClaw 2026.9.2 or newer. Image builds enforce the blueprint minimum and include only the current reviewed runtime pins. Rebuild coverage uses the exact managed image. Historical gateway-upgrade coverage injects a reviewed archive into the frozen old installer; it does not use the current Dockerfiles. Generated configuration grants conversation-hook access only to the NemoClaw plugin. Before gateway startup, the entrypoint also reconciles that grant in restored native configuration, preserving unrelated plugin settings. Both root and non-root startup apply it after offline restoration. Direct OpenClaw commands reconcile the grant without rotating an existing valid gateway token. OpenClaw requires this opt-in for the prompt, turn-admission and completion hooks; without it, prompt filtering and lifecycle cleanup cannot run. The real-distribution proof checks the generated grant against the pinned loader policy before exercising those hooks. The real-distribution proof exercises the OpenClaw 2026.9.2 compatibility minimum, including propagation of the prompt hook’s tool allowlist. The source hook tests own prompt construction and tool denial.
+
+When search is disabled, requests for web research receive an empty per-turn tool allowlist before inference. This keeps discovery and substitute tools out of those requests. Search, research, look-up, find and related discovery requests without a supplied source identify external research, as do provider requests such as “Google” and requests for official installation documentation. A local task or supplied URL does not exempt a separate request for web research. Questions about local work, such as “What files are in the current directory?”, keep their tools without naming a local path. Searches targeting the project, current directory, logs, memory or a supplied URL retain their tools. A local term in the research topic does not identify a local source. Direct URL retrieval also keeps its tools. Words inside a supplied URL do not establish intent to search the web. The real distribution harness verifies prompt-hook propagation and the runtime prompt-policy and filtering contract. The execution hook also blocks search-provider calls and discovery immediately.
+
+Identified substitute probes are blocked after a denied search, using run or session identity. Each active turn retains at most three aliases: run ID, session key, and session ID. A matching `agent_end` releases that turn through any unique associated alias. A known run ID takes precedence over shared session aliases; ambiguous session-only cleanup cannot release either active run. The state table reserves ownership for at most 1,024 concurrent turns while search is disabled, including ordinary turns. Completed ordinary turns release their slots immediately.
+Before inference, `before_agent_run` reserves turn ownership and initializes supplied-source scope from its prompt. Prompt construction is read-only, and a tool denial cannot reserve an unadmitted identity. Abandoned prompt builds therefore do not consume turn capacity. At capacity, new turns are refused. Untracked substitute calls remain blocked even after another turn completes, while a new admitted turn can use the freed slot. No global overflow deadline prevents recovery after completion.
+
+Repeated admission does not erase a retained denial. One unreferenced timer expires abandoned turn ownership after OpenClaw's maximum timer-safe turn window plus one minute for cleanup. Matching completion releases a retained identity immediately. A static warning reports refused admission at capacity. Configuration recovery and gateway shutdown clear turn ownership and its timer.
+
+Required prompt, admission, tool-safety, and lifecycle hooks must register successfully; an error aborts plugin registration even if search is currently enabled. Calls without identity fail closed for substitute tools; lifecycle events cannot make them safe to correlate. Ordinary local work and direct fetches remain available in admitted runs that have not attempted search, including when other turns fill the remaining slots. A turn explicitly scoped to user-supplied sources can continue that work after a denied search-provider call. A separate web-research request removes that exception; completion clears it with the owning turn. The real OpenClaw distribution harness exercises the installed tool wrapper and hook runner with controlled search and substitute calls, proving denial before tool execution. This agent turn owns model compliance after unavailable search.
+The parsed JSON must contain only the two requested fields. Surrounding prose must consist only of recognized unavailable-search disclosures or a search-provider setup instruction. A paired Markdown JSON code fence is allowed. Other prose, unsupported search or documentation claims, extra JSON objects, and extra fields fail validation.
+Changes to `agents/openclaw/manifest.yaml`, `nemoclaw-blueprint/blueprint.yaml`, `nemoclaw/package.json`, `nemoclaw/src/index.ts`, `nemoclaw/src/denied-search-state.ts`, `nemoclaw/src/runtime-context.ts`, `nemoclaw/src/search-config.ts`, `scripts/generate-openclaw-config.mts`, `scripts/nemoclaw-start.sh`, or `src/lib/openclaw/agent-json-provenance.ts` select this balanced OpenClaw shard.
+Each attempt records bounded reply diagnostics before validation, including parse and surrounding-prose status, expected field names, extra-field count, search-status category, and documentation value type.
+Artifacts retain no raw reply, arbitrary field names, queries, URLs, or retrieved content.
+The negative-path reducer uses no expected fetch URL; its validator checks the unavailable-search behavior directly.
+Each scenario supplies its validator and diagnostic projector together. Unavailable-search artifacts contain only fixed counts for tool activity, discovery, successful fetches, provider mentions, and completion, plus the same acceptance result. Both rejected completed turns and failed-turn collection use that projector. Personal fetch retains its own evidence projector and expected-content diagnostics.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
-The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
+The Personal and C2 OpenClaw public-reference agent assertions disable ordinary agent-attempt shell artifacts because OpenClaw stdout can contain fetched content and complete URLs.
+OpenShell SSH configuration stays in a private temporary file outside the artifact directory.
+The assertion attempts removal after it finishes and fails if the directory remains.
+A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
 Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
-The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
+When a redacted agent turn fails with tool-evidence validation enabled, the helper also attempts a read-only session reduction before cleanup.
+The failure artifact records fixed collection status and the existing aggregate tool-evidence projection, without raw session data or command errors.
+This diagnostic read cannot accept the failed turn or change its retry classification.
+Both scenarios collect bounded session tool-result diagnostics even when the agent reply fails its assertion.
+At most 64 tool-result records retain numeric HTTP status, a tool-error flag, and a call-pairing flag.
+HTTP status comes from a numeric tool-result field or the fixed `Web fetch failed (NNN):` prefix in an OpenClaw `web_fetch` error result.
+These records exclude raw content, URLs, and credentials.
+An agent's final text alone does not establish the HTTP result.
+Missing tool-result evidence remains unavailable; collection does not add retries or change the fetch and reply assertions.
+After an unsuccessful agent assertion, both scenarios make one separate sandbox curl request to the same expected HTTPS URL.
+The probe uses a 15-second curl limit within a 20-second command limit and does not follow redirects.
+Its artifact records HTTP status, exit code, signal, and timeout state, or marks the probe unavailable.
+It does not retain response bodies, headers, or raw errors.
+This separate request cannot establish the original `web_fetch` response and never changes success or retry decisions.
+Diagnostic write errors after a failed turn preserve the original retry classification.
+Required evidence for a successful turn must still be saved.
+The Personal live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
+C2 retains its expected-reply and parsed-result checks; its tool-result diagnostics do not add the Personal validation contract.
+
+The `concurrent-gateway-ports` target records the original dashboard listener before and after its raw, unscoped OpenShell restart.
+A separate observed forward uses an ephemeral localhost port and records readiness, exit status, signal, and allowlisted sandbox-state or bind-failure flags.
+Its diagnostics exclude raw process output and credentials.
+An unavailable forward or an unset flag does not establish the cause of an earlier dashboard failure.
+The observed forward cannot recover the original dashboard or satisfy its assertions.
+Diagnostic cleanup terminates only the separately owned forward; the target retains its existing sandbox and gateway cleanup.
+Listener inspection and diagnostic write failures do not replace the restart outcome.
+Unconfirmed observer cleanup fails an otherwise successful restart.
+After raw stop/start succeeds and the sandbox reaches Ready or Running, the target waits for OpenClaw's in-sandbox HTTP endpoint.
+It uses the manifest endpoint, `http://localhost:18789/`, independently of the host dashboard forward.
+The read-only poll accepts HTTP 200 or 401 and retries only curl connection-refused or empty-response results (7 or 52 with HTTP 000).
+Transport failures, other curl results, and unexpected HTTP responses fail immediately; each attempt has its own artifact.
+The target then runs one `nemoclaw <sandbox> recover` in the survivor's gateway context.
+The readiness poll and recovery share the existing 120-second recovery deadline; the poll also retains the configured probe-attempt bound.
+Recovery runs after both listener snapshots and observer cleanup, so it cannot hide the original forward's exit.
+Both gateway-cleanup policies require recovery to succeed and the dashboard to answer within the existing probe budget.
+The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
+Raw OpenShell start does not restore a forward that exits when its readiness poll observes the stopped sandbox.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
@@ -1432,6 +1571,16 @@ run, restart survival, credential non-exposure, and removal in one sandbox.
 After replacing plugin v1 with v2, it restarts through the native gateway
 command and invokes the updated tool through the running gateway. A separate
 CLI inspection cannot prove that the gateway discarded its cached plugin code.
+Each fixture version registers a distinct, no-argument local tool. A normal
+agent turn exercises admission and execution; metadata-only audit records must
+pair a successful completion with a start for the same run, tool, and call.
+This avoids assertions on weather fields, tool arguments, or reply wording.
+The audit read polls at most five times, one second apart, for asynchronous
+persistence; it never repeats the agent turn. Existing admin approval grants
+access to the audit command. Execution of each version's distinct tool proves
+installation and replacement; JSON plugin inventory proves removal. Those
+postconditions replace redundant install and uninstall exit checks. The same
+checks run for source installs and baked Launchables.
 `rebuild-openclaw` proves a user-installed native plugin survives rebuild with
 no NemoClaw ownership metadata. On the pinned Docker runtime it then kills the exact test-owned
 container, observes `Error`, and requires a different container to restore both the workspace and
@@ -2286,9 +2435,20 @@ For a manual PR run, the protected startup job uses a trusted resolver to compar
 the candidate's OpenClaw base Dockerfile and its inputs with the published base's
 source revision. Matching inputs permit an immutable published base reference.
 Changed or unverified inputs use a base built from the exact candidate instead.
-The final managed image always builds from the selected candidate commit, and the
-GPU job verifies the same-run build-cache identity and any published OpenClaw
-base digest before its offline rebuild.
+The final managed image always builds from the selected candidate commit.
+The GPU job verifies the same-run build-cache identity and any published OpenClaw base digest.
+For OpenClaw with the `sandbox` runtime user, it reuses the completed CPU image only when the producer and consumer attempts match.
+The receipt binds the candidate, workflow, cohort, platform, runtime user, base reference, image config digest, and archive digest and size.
+The CPU job derives the config digest from the hash-verified immutable registry manifest; Docker's local image ID remains a separate contract field.
+The GPU job verifies the receipt, archive, config, Docker metadata, and any OCI metadata before loading the single image and revision tag.
+It rejects an existing destination tag, then checks the loaded image's labels, platform, and runtime user.
+It publishes the verified image to the isolated registry and pins the resulting manifest digest while requiring the same config digest.
+An invalid handoff fails qualification.
+A missing handoff from an older CPU producer, an earlier-attempt handoff, or the legacy `root` runtime user retains the offline OpenClaw build.
+Hermes and Deep Agents Code retain their existing offline builds.
+Runtime assertions, phase deadlines, and cleanup reserves remain unchanged; image reuse alone does not establish a passing runtime result.
+Manual PR qualification runs the GPU build helper from trusted `main`, so a premerge run cannot exercise candidate changes to that helper.
+Validate those changes separately through an explicitly authorized local run while retaining the trusted workflow boundary.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.
@@ -2380,13 +2540,20 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
-The 75-minute job records its start before checkout. Setup and provider qualification share the first
-45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
+The 90-minute job records its start before checkout. Setup and provider qualification share the first
+60 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
 limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
 and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
 and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
 fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
 NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
+NIM and vLLM readiness probes attempt to retain bounded, redacted container state and the last 200
+log lines when they fail or receive SIGTERM or SIGINT. Diagnostics use the verified full container
+ID before owner cleanup removes the container. The existing command timeout and kill grace bound
+diagnostic collection: after supervisor termination, it has only the remaining grace period.
+A hung diagnostic command is killed when that grace expires, so evidence may be partial.
+Successful readiness does not collect logs. The AMD64 cache upload uses fast compression for its
+uncompressed Docker image archive; image identities and offline-build checks remain unchanged.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.

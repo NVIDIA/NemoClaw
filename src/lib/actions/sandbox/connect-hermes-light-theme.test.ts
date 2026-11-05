@@ -67,6 +67,38 @@ describe("Hermes retired light terminal skin cleanup", () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
+  it("uses the owning gateway for Hermes cleanup when an ambient gateway has the same sandbox name (#12665)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      hermesConfig: { display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME } },
+      sessionAgent: {
+        name: "hermes",
+        runtime: { kind: "terminal", interactive_command: "hermes" },
+      },
+      registryEntry: { gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw-8091" },
+    });
+    expect(removalCalls(harness)[0]?.[0]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "-g",
+      "nemoclaw-8091",
+      "--",
+      "sh",
+      "-s",
+    ]);
+  });
+
   it("leaves an operator-selected Hermes skin unchanged (#6380)", async () => {
     const harness = hermesHarness({ display: { skin: "solarized-light" } });
 

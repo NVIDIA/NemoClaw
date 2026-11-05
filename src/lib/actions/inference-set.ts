@@ -19,7 +19,7 @@ import type {
   OpenShellInferenceRouteObserver,
 } from "../adapters/openshell/inference-route";
 import { CLI_NAME } from "../cli/branding";
-import { shellQuote } from "../core/shell-quote";
+import { dcodeSelectionChangeGuidance } from "../inference/managed-dcode/selection-guidance";
 import { applyHermesManagedRoute } from "../hermes-managed-route";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
@@ -142,6 +142,7 @@ import {
   readOpenClawPrimaryReplyBudget,
 } from "./inference-set-reply-budget";
 import {
+  assertHermesSwitchyardInferenceSetAvailable,
   type EnsureHttpsPinRuntimeAdapterFn,
   finalizeInferenceSetRoute,
   type InferenceSetProviderBinding,
@@ -214,6 +215,10 @@ function providerCommitFailureAfterSelection(options: {
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+  sandboxPolicyReader?: Pick<
+    import("../adapters/openshell/sandbox-policy").OpenShellSandboxPolicyReader,
+    "readSandboxPolicy"
+  >;
   requireNativeProviderPolicy?: typeof requireNativeProviderPolicy;
   resolveLocalSwitchRuntime?: typeof resolveLocalSwitchRuntime;
   getDefaultSandbox: () => string | null;
@@ -467,6 +472,7 @@ function normalizeSandboxAgent(agentName: string | null | undefined): string {
   return (trimmed || "openclaw").toLowerCase();
 }
 
+/** Keep a managed Switchyard route active until onboarding performs an explicit transition. */
 function assertSandboxRouteReservationComplete(entry: SandboxEntry): void {
   if (entry.pendingRouteReservation === true) {
     throw new InferenceSetError(
@@ -1263,16 +1269,9 @@ async function runInferenceSetWithoutHostLock(
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   const priorHttpsPinRouteId = parseHttpsPinRouteId(entry.endpointUrl);
   if (agentName !== "openclaw" && agentName !== "hermes") {
-    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
-    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
-    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
-    // Hermes — it has no runtime inference-set config-mutation path. The blunt
-    // "supports OpenClaw and Hermes" message left dcode users with no next step;
-    // point them at the only way to change a Deep Agents model: re-onboard with
-    // a new selection.
     const dcodeHint =
       agentName === "langchain-deepagents-code"
-        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        ? ` Deep Agents Code has no runtime inference-set path. ${dcodeSelectionChangeGuidance()}`
         : "";
     throw new InferenceSetError(
       `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
@@ -2271,11 +2270,13 @@ export async function runInferenceSet(
   }
   assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
   assertInferenceSetCommandAvailable(selected.sandboxName);
+  assertHermesSwitchyardInferenceSetAvailable(selected.entry, selected.agentName);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
     enforceRemovedImmutabilityMigrationBoundary(selected.sandboxName);
     assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
+    assertHermesSwitchyardInferenceSetAvailable(lockedSelection.entry, lockedSelection.agentName);
     const runtimeProvider = assertInferenceSetRuntimeAuthority(
       lockedSelection.entry,
       deps.runtimeProviders,

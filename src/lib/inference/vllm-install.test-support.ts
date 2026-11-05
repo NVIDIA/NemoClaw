@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Shared setup for the source tests that exercise installVllm:
-// vllm.test.ts, vllm-install-storage.test.ts, and
-// vllm-compute-capability.test.ts (#8351). vi.hoisted and
-// vi.mock are hoisted per file, so each suite still declares and owns its own
+// vllm.test.ts, vllm-install-storage.test.ts,
+// vllm-compute-capability.test.ts (#8351), and vllm-dual-station.test.ts.
+// vi.hoisted and vi.mock are hoisted per file, so each suite still declares and owns its own
 // mocks. Exports that configure suite mocks take that suite's `mocks` object
 // as a parameter. The setup helpers replace probe results and Docker ownership
 // responses for each setup. This is not a *.test.ts file, so Vitest does not
@@ -79,7 +79,7 @@ export function vllmHostCommandCapture(options: {
         }
         return options.gpuMemory[Math.min(gpuMemorySample++, options.gpuMemory.length - 1)] ?? "";
       case "curl":
-        return options.curl ?? '{"data":[]}';
+        return options.curl ?? '{"data":[]}\n200';
       default:
         return "";
     }
@@ -268,6 +268,19 @@ export function mockDockerSpawnSuccess(): SpawnedProcessStub {
   return proc;
 }
 
+export function mockDockerSpawnWithLogs(output: string) {
+  return (args: readonly string[]): SpawnedProcessStub => {
+    // Download progress must not satisfy the startup-diagnostic assertions.
+    if (args[0] !== "logs") return mockDockerSpawnSuccess();
+    const proc = spawnedProcessStub();
+    process.nextTick(() => {
+      proc.stderr.emit("data", Buffer.from(output));
+      proc.emit("close", 0);
+    });
+    return proc;
+  };
+}
+
 export function mockDockerSpawnFailure(
   chunks: readonly { stream: "stdout" | "stderr"; data: string | Buffer }[],
   exitCode = 1,
@@ -300,7 +313,7 @@ export function mockSuccessfulVllmInstall(
   ownershipResponses: readonly (() => string)[] = [() => "", () => ""],
 ): void {
   const runCaptureByCommand: Record<string, string> = {
-    curl: '{"data":[]}',
+    curl: '{"data":[]}\n200',
     sh: "/usr/bin/tool\n",
   };
   mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
