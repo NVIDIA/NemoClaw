@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Register manual dispatch on the default branch.
-name: E2E / SSH connectivity
+name: E2E / SSH connectivity registration
 
 on:
   workflow_dispatch:
@@ -10,6 +10,7 @@ permissions: {}
 
 jobs:
   registration:
+    name: Registration only (no SSH check)
     if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 1
