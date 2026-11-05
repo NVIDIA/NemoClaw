@@ -10,11 +10,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Image setup leaves /tmp/node-compile-cache owned by root. The sandbox user
 // cannot create OpenClaw's version namespace there, so native activation fails.
-// Keep root/host defaults and explicit overrides; use the sandbox user's cache.
+// Keep disposable bytecode outside the native home archive, below a root-owned
+// parent with a private sandbox-owned cache. Preserve host defaults and overrides.
 const ROOT_MARKER = "/* nemoclaw: private sandbox compile cache */";
 const ROOT_BEFORE = 'path.join(os.tmpdir(), "node-compile-cache")';
 const ROOT_AFTER = `(env.OPENSHELL_SANDBOX === "1" && typeof process.getuid === "function" && process.getuid() !== 0
-? path.join(os.homedir(), ".cache", "nemoclaw-node-compile-cache")
+? "/tmp/nemoclaw/node-compile-cache"
 : ${ROOT_BEFORE}) ${ROOT_MARKER}`;
 const INHERIT_MARKER = "// nemoclaw: inherit the enabled native compile cache in workers";
 const WORKER_MARKER = "// nemoclaw: publish parent bytecode before worker startup";
@@ -113,15 +114,25 @@ async function probeSandboxCompileCache(dist: string): Promise<void> {
   if (process.getuid?.() !== 998) throw new Error("Compile cache probe requires sandbox user");
   // Native SQLite snapshots also create private siblings below this parent.
   fs.accessSync(path.join(os.homedir(), ".cache"), fs.constants.W_OK | fs.constants.X_OK);
+  const cacheRoot = "/tmp/nemoclaw/node-compile-cache";
+  const parent = fs.lstatSync(path.dirname(cacheRoot));
+  const cache = fs.lstatSync(cacheRoot);
+  if (
+    !parent.isDirectory() ||
+    parent.uid !== 0 ||
+    (parent.mode & 0o022) !== 0 ||
+    !cache.isDirectory() ||
+    cache.uid !== 998 ||
+    (cache.mode & 0o777) !== 0o700
+  )
+    throw new Error("Unsafe sandbox compile cache ownership or permissions");
   patchOpenClawNodeCompileCache(dist, true);
   const root = path.dirname(dist);
   const { resolveOpenClawCompileCacheDirectory } = await import(
     pathToFileURL(path.join(root, "node-compile-cache.mjs")).href
   );
   const directory = resolveOpenClawCompileCacheDirectory({ installRoot: root });
-  const prefix =
-    path.join(os.homedir(), ".cache", "nemoclaw-node-compile-cache", "openclaw", "2026.10.5") +
-    path.sep;
+  const prefix = path.join(cacheRoot, "openclaw", "2026.10.5") + path.sep;
   if (typeof directory !== "string" || !directory.startsWith(prefix)) {
     throw new Error("Unexpected sandbox compile cache root");
   }

@@ -89,7 +89,7 @@ describe("native OpenClaw compile cache repair", () => {
     }
   });
 
-  it("uses the sandbox user's home without changing root, host, or explicit cache selection", () => {
+  it("keeps disposable bytecode outside captured home without changing host or overrides", () => {
     const run = (uid: number, env: Record<string, string>) => {
       const resolve = vm.runInNewContext(`(${patchCompileCacheRoot(rootSource)})`, {
         path,
@@ -98,9 +98,7 @@ describe("native OpenClaw compile cache repair", () => {
       });
       return resolve(env);
     };
-    expect(run(998, { OPENSHELL_SANDBOX: "1" })).toBe(
-      "/sandbox/.cache/nemoclaw-node-compile-cache",
-    );
+    expect(run(998, { OPENSHELL_SANDBOX: "1" })).toBe("/tmp/nemoclaw/node-compile-cache");
     expect(run(0, { OPENSHELL_SANDBOX: "1" })).toBe("/tmp/node-compile-cache");
     expect(run(998, {})).toBe("/tmp/node-compile-cache");
     expect(run(998, { OPENSHELL_SANDBOX: "1", NODE_COMPILE_CACHE: "/chosen" })).toBe("/chosen");

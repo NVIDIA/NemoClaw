@@ -492,7 +492,7 @@ async function runOpenClawSubagentTurn(
   ).toBe(true);
 }
 
-export function managedActivationOpenClawPluginScript(): string {
+export function managedActivationOpenClawPluginScript(home = "/sandbox"): string {
   const packageJson = JSON.stringify({
     name: "@nemoclaw/managed-activation-native-plugin",
     version: "1.0.0",
@@ -511,14 +511,19 @@ export function managedActivationOpenClawPluginScript(): string {
   });
   const entrypoint =
     'export default { id: "managed-activation-native", name: "Managed Activation Native Plugin", version: "1.0.0", register() {} };\n';
+  const dotenv = shellQuote(path.posix.join(home, ".openclaw", ".env"));
   return [
-    "source_dir=/sandbox/managed-activation-native-plugin",
+    `source_dir=${shellQuote(path.posix.join(home, "managed-activation-native-plugin"))}`,
     'rm -rf -- "$source_dir"',
     'mkdir -p -- "$source_dir"',
     `printf '%s' ${shellQuote(packageJson)} > "$source_dir/package.json"`,
     `printf '%s' ${shellQuote(manifest)} > "$source_dir/openclaw.plugin.json"`,
     `printf '%s' ${shellQuote(entrypoint)} > "$source_dir/index.js"`,
-    'HOME=/sandbox openclaw plugins install --force --accept-capabilities "$source_dir"',
+    // This fixture uses synthetic credentials. Retain native bootstrap errors
+    // across restart without replacing an existing native dotenv file.
+    `(umask 077; printf 'OPENCLAW_DEBUG=1\\n' > "$source_dir/bootstrap.env")`,
+    `mv -nT -- "$source_dir/bootstrap.env" ${dotenv}`,
+    `HOME=${shellQuote(home)} openclaw plugins install --force --accept-capabilities "$source_dir"`,
   ].join("\n");
 }
 

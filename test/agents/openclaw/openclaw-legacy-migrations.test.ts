@@ -501,7 +501,7 @@ describe("OpenClaw intermediate restore migrations", () => {
       env.NODE_DISABLE_COMPILE_CACHE === undefined;
     const expected =
       childEnv.NODE_COMPILE_CACHE ??
-      (privateDefault ? path.join(proof.home, ".cache", "nemoclaw-node-compile-cache") : undefined);
+      (privateDefault ? "/tmp/nemoclaw/node-compile-cache" : undefined);
     expect(proof.calls().map((call) => call.cache)).toEqual(Array(4).fill(expected));
     expect(proof.calls().map((call) => call.disabled)).toEqual(
       Array(4).fill(env.NODE_DISABLE_COMPILE_CACHE),

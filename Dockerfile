@@ -1635,13 +1635,14 @@ RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
     && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
     && chmod 644 /sandbox/.bashrc /sandbox/.profile \
     && if [ "$OPENCLAW_VERSION" = "2026.10.5" ]; then \
-        install -d -o sandbox -g sandbox -m 0700 /sandbox/.cache /sandbox/.cache/nemoclaw-node-compile-cache; \
+        install -d -o root -g root -m 755 /tmp/nemoclaw; \
+        install -d -o sandbox -g sandbox -m 700 /sandbox/.cache /tmp/nemoclaw/node-compile-cache; \
         runuser -u sandbox -- env -u NODE_COMPILE_CACHE -u NODE_DISABLE_COMPILE_CACHE HOME=/sandbox OPENSHELL_SANDBOX=1 \
         node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts --probe /usr/local/lib/node_modules/openclaw/dist; \
     fi
 USER sandbox
 
-# Generate token-free config; entrypoint supplies auth. Defer the managed proxy.
+# Entrypoint supplies auth; defer managed proxy.
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
     node /scripts/generate-openclaw-config.mts
 

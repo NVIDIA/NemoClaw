@@ -4,7 +4,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
@@ -457,7 +456,7 @@ function child(args: string[], timeout: number, inspect: boolean, input?: string
     env.NODE_COMPILE_CACHE === undefined &&
     env.NODE_DISABLE_COMPILE_CACHE === undefined
   ) {
-    env.NODE_COMPILE_CACHE = path.join(os.homedir(), ".cache", "nemoclaw-node-compile-cache");
+    env.NODE_COMPILE_CACHE = "/tmp/nemoclaw/node-compile-cache";
   }
   const result = spawnSync(process.execPath, args, {
     encoding: "utf8",
