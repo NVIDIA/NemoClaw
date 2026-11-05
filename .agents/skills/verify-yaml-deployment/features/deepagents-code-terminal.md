@@ -3,7 +3,7 @@
 
 # Deep Agents Code Terminal
 
-The author enables `harness.settings.interfaces.terminal`, as [docs/interfaces.md](../../../../docs/agents-inference/interfaces.md#open-deep-agents-codes-terminal) documents.
+The author enables `harness.settings.interfaces.terminal`, as [docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#open-deep-agents-codes-terminal) documents.
 Apply prints the command that opens `dcode`'s terminal UI with the current runtime's launcher, and no forward or token.
 In a terminal, the UI uses the configured model and answers a prompt; Ctrl-D quits it.
 

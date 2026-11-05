@@ -61,6 +61,6 @@ Result: `accepts` lists `models` and `models.base_url`; `settings` includes `app
 
 ## Known Gaps
 
-- **No sign-in.** OpenShell's access control is the only authentication: anyone who can run `openshell sandbox exec` in the workspace can open the terminal UI ([docs/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
+- **No sign-in.** OpenShell's access control is the only authentication: anyone who can run `openshell sandbox exec` in the workspace can open the terminal UI ([docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
 - **Unauthenticated agent server.** While the terminal UI runs, its own agent server listens on loopback in the sandbox without authentication; don't forward or expose it.
 - **Late validation.** A public Fabric field the adapter doesn't accept passes plan and fails at apply ([#13319](https://github.com/NVIDIA/NemoClaw/issues/13319)); the plan's "capabilities are unverified" line doesn't say which.

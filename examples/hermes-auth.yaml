@@ -23,7 +23,7 @@ spec:
   sandboxes:
     assistant:
       image:
-        # Replace with the digest from a fresh Hermes image build; see docs/inference.md.
+        # Replace with the digest from a fresh Hermes image build; see docs/agents-inference/inference.md.
         ref: local-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated

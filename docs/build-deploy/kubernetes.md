@@ -49,10 +49,17 @@ A cluster sandbox names its image's metadata bundle in `image.metadata`, because
 For a published release, take both from the release: use an agent image's index reference from its notes in `image.ref`, and download the matching `<image>.metadata.json` it attaches.
 One bundle covers every Linux platform the index lists, so it serves ARM64 and AMD64 nodes.
 
-For an image you build, from the repository root, build it, then write its bundle to a new file:
+An image you build must match the architecture of the nodes that run the sandboxes; list each node's architecture:
 
 ```sh
-cargo images build --platform linux/amd64 openclaw
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.nodeInfo.architecture}{"\n"}{end}'
+```
+
+On a native host of that architecture, from the repository root, build the image for its platform, `linux/arm64` or `linux/amd64`, then write its bundle to a new file:
+
+```sh
+PLATFORM=linux/arm64 # or linux/amd64, to match the nodes
+cargo images build --platform "$PLATFORM" openclaw
 cargo images export-metadata nc-fabric:openclaw --output openclaw.metadata.json
 ```
 

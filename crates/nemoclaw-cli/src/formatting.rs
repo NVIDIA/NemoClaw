@@ -579,7 +579,7 @@ fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool
     }
     if invocable {
         output.push_str(
-            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents.md.\n",
+            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
         );
     }
     output
@@ -654,12 +654,12 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
         .partition(|access| access.sign_in == SignIn::SandboxExec);
     if !others.is_empty() {
         output.push_str(
-            "  The agent's own tools can read these tokens and reach these ports; see docs/interfaces.md.\n",
+            "  The agent's own tools can read these tokens and reach these ports; see docs/agents-inference/interfaces.md.\n",
         );
     }
     if !launchers.is_empty() {
         output.push_str(
-            "  The agent's own tools can change a terminal launcher, and a terminal session's agent server listens in the sandbox without authentication; see docs/interfaces.md.\n",
+            "  The agent's own tools can change a terminal launcher, and a terminal session's agent server listens in the sandbox without authentication; see docs/agents-inference/interfaces.md.\n",
         );
     }
     output
@@ -747,7 +747,7 @@ pub(crate) fn render_error(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/inference.md#set-container-limits-and-update-policy."
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#set-container-limits-and-update-policy."
         ))),
         _ => None,
     };
@@ -898,6 +898,10 @@ mod tests {
         }
         // Only the two interfaces with a token get a command that reads one.
         assert_eq!(text.matches("sandbox exec").count(), 2, "{text}");
+        assert!(
+            text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
+            "{text}"
+        );
         let machine: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
             result,
@@ -960,6 +964,10 @@ mod tests {
             assert!(!text.contains(absent), "unexpected {absent:?}:\n{text}");
         }
         assert!(text.contains("change a terminal launcher"), "{text}");
+        assert!(
+            text.contains("without authentication; see docs/agents-inference/interfaces.md."),
+            "{text}"
+        );
         let machine: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
             result,
@@ -1013,6 +1021,10 @@ mod tests {
                 text.matches("fabric-agent-ctl invoke").count(),
                 1,
                 "{command}: only the agent with a runtime is invocable:\n{text}"
+            );
+            assert!(
+                text.contains("reads it from stdin; see docs/agents-inference/agents.md."),
+                "{command}: {text}"
             );
             let machine: Value = serde_json::from_str(&render(
                 &["nemoclaw", command, "deployment.yaml", "-o", "json"],
@@ -1452,7 +1464,7 @@ mod tests {
             let help = json["help"].as_str().unwrap();
             for expected in [
                 "spec.services.qwen.updatePolicy: Recreate",
-                "docs/inference.md#set-container-limits-and-update-policy",
+                "docs/agents-inference/inference.md#set-container-limits-and-update-policy",
             ] {
                 assert!(help.contains(expected), "missing {expected}: {help}");
             }

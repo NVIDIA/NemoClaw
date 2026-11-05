@@ -3,16 +3,16 @@
 
 # Run Integration Tests
 
-This page covers the [contract and system layers](testing.md#test-layers): tests that run pinned OpenTofu from a bundle against local fixtures and temporary state.
+This page covers the [contract and integration layers](testing.md#test-layers): tests that run pinned OpenTofu from a bundle against local fixtures and temporary state.
 They create no Docker, OpenShell, Kubernetes, or inference resources; tests that use a real Docker engine are [live tests](live-tests.md#docker-live-suite).
 Complete the [build prerequisites](../../docs/build-deploy/build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
 
-The contract and system tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
+The contract and integration tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
 The bundle supplies the OpenTofu version pinned in `versions.json`, the CLI, and the providers.
 Each provider's contract tests run instead the provider Cargo built with them, so they test the checkout without a new bundle; the other providers they need come from the bundle.
-System tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
+Integration tests run the bundle's CLI and providers, so rebuild the bundle after changing either.
 
 To run the whole layer pair as CI does, four tests at a time, run from the repository root:
 
@@ -54,7 +54,7 @@ Each `tests/contract` directory separates the two kinds of test:
 `main.rs` starts each module's fakes and runs it; the other Rust files hold shared fakes and checks of plans and state that `tofu test` cannot show.
 A Rust test starts the module's fixtures and runs its test files with `TofuWorkspace`; `openshell::test_against_gateways` runs them side by side, each against its own fake OpenShell gateway.
 To run one module, name its Rust test, for example `cargo test -p openshell-provider --test contract standalone_resources -- --ignored`.
-A module that observes the fake gateway reads `data.fixture_state` from `nemoclaw-fixture-control`; the system tests read the same observations, from `openshell::State::observations`.
+A module that observes the fake gateway reads `data.fixture_state` from `nemoclaw-fixture-control`; the integration tests read the same observations, from `openshell::State::observations`.
 The data source depends on the module's resources, so OpenTofu reads it after they change and each run checks its own result.
 A run that only targets the data source can change the gateway outside OpenTofu, such as `{ change = { forget_registrations = true } }`, before the run that should meet the change.
 `tofu test` keeps the state in memory and fails a run on any provider error, so Rust tests keep the checks that need a failed command, a saved plan or its planned actions, or the state file.
@@ -132,9 +132,9 @@ The tests in `failures/agent.rs` check failures: an invalid configuration fails 
 On Unix, the `capabilities` test runs the `capabilities` module, which reads `fabric_harnesses` from a fake Docker engine's image metadata: a compatible image reports its runtime binaries; another platform, or a read policy without the runtime's paths, is unsupported; a missing image is unknown.
 `every_fabric_type_has_a_contract_test` requires a contract test for every Fabric type.
 
-## System Tests
+## Integration Tests
 
-The system tests are the ignored tests in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which the `lifecycle` profile selects whole.
+The integration tests are the ignored tests in `nemoclaw-e2e`'s `integration` binary, `crates/nemoclaw-e2e/tests/integration`, which the `lifecycle` profile selects whole.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts.
 
 Choose the directory by what the behavior needs:
@@ -144,7 +144,7 @@ Choose the directory by what the behavior needs:
 
 The binary's other modules are offline checks of the fixtures and clients these tests use, and run with the unit tests.
 
-To run the Rust system tests:
+To run the Rust integration tests:
 
 ```sh
 cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider

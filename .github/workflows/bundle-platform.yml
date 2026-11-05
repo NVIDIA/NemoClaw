@@ -15,7 +15,7 @@ on:
         type: boolean
         default: true
       lifecycle:
-        description: Run contract and system tests when their inputs are affected.
+        description: Run contract and integration tests when their inputs are affected.
         type: boolean
         default: true
       lifecycle-shards:
