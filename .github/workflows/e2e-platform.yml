@@ -30,6 +30,10 @@ on:
         description: Also run the HCL E2E cases that use NVIDIA hosted inference; the caller passes the inference secret.
         type: boolean
         default: false
+      hcl-cases:
+        description: The validation plan's live HCL case selection, as JSON with the selected cases by where they run.
+        type: string
+        required: true
 permissions:
   contents: read
   packages: read
@@ -105,14 +109,16 @@ jobs:
           bundle: ${{ inputs.bundle }}
           images: ${{ needs.live-images.outputs.artifact }}
           images-commit: ${{ inputs.live-images-commit }}
+          hcl-cases: ${{ join(fromJSON(inputs.hcl-cases).runners['live-docker'], ',') }}
 
   live-kind:
     name: E2E Kubernetes (kind) tests
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
-    # commit's images.
+    # commit's images, when the plan selected a kind case: the suite runs
+    # only those.
     if: >-
-      ${{ !cancelled() &&
+      ${{ !cancelled() && fromJSON(inputs.hcl-cases).runners['live-kind'][0] != null &&
       (needs.live-images.result == 'success' ||
       (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     runs-on: ${{ inputs.runner }}
@@ -132,24 +138,23 @@ jobs:
           bundle: ${{ inputs.bundle }}
           images: ${{ needs.live-images.outputs.artifact }}
           images-commit: ${{ inputs.live-images-commit }}
+          hcl-cases: ${{ join(fromJSON(inputs.hcl-cases).runners['live-kind'], ',') }}
 
-  # The HCL E2E cases that use NVIDIA hosted inference, from this platform's
-  # test archive, bundle, and live images, like the live suites.
-  # The HCL cases that use NVIDIA hosted inference, from the same test archive,
-  # bundle, and images as the live suites.
+  # The selected HCL E2E cases that use NVIDIA hosted inference, from this
+  # platform's test archive, bundle, and live images, like the live suites.
   hcl:
     name: E2E HCL ${{ matrix.case }}
     needs: [live-images]
     # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
     if: >-
-      ${{ !cancelled() && inputs.hcl &&
+      ${{ !cancelled() && inputs.hcl && fromJSON(inputs.hcl-cases).runners.hosted[0] != null &&
       (needs.live-images.result == 'success' ||
       (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
     strategy:
       fail-fast: false
       matrix:
-        case: [docker-openclaw-nvidia, docker-openclaw-v0-parity, docker-hermes-v0-parity]
+        case: ${{ fromJSON(inputs.hcl-cases).runners.hosted }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     env:

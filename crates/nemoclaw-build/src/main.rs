@@ -105,13 +105,13 @@ enum Action {
         /// or integration; archive, live-docker, and live-kind run only when named.
         step: Option<String>,
         /// Override the detected PR base (fallback: origin/v1), including local edits.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         base: Option<String>,
         /// Run every local check without impact analysis or PR discovery.
-        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images", "images_commit"])]
+        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         full: bool,
         /// Print the selected steps and their plan as JSON without running checks.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         dry_run: bool,
         /// Nextest partition for an explicitly selected contract or integration run (for example slice:1/2).
         #[arg(long)]
@@ -127,6 +127,11 @@ enum Action {
         /// per-commit package instead of building them.
         #[arg(long)]
         images_commit: Option<String>,
+        /// Run only these comma-separated live HCL cases, each of which must run
+        /// in the named live suite; empty runs none. Without it, the suite runs
+        /// every case placed on it.
+        #[arg(long, value_name = "CASES")]
+        hcl_cases: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -144,8 +149,11 @@ enum Action {
         #[arg(long)]
         worktree: bool,
         /// Base revision, such as the pull request base commit.
-        #[arg(long)]
-        base: String,
+        #[arg(long, required_unless_present = "all")]
+        base: Option<String>,
+        /// With `cases`, select every case without analysis, as for `v1` pushes.
+        #[arg(long, conflicts_with = "base")]
+        all: bool,
         /// With `cases`, also select this live HCL case, such as a reviewed
         /// recommendation. Repeat for more cases.
         #[arg(long = "add", value_name = "CASE")]
@@ -735,24 +743,26 @@ async fn main() -> Result<()> {
     if let Action::Changes {
         workflow,
         base,
+        all,
         worktree,
         add,
     } = &cli.command
     {
-        if !add.is_empty() && !matches!(workflow, ChangedWorkflow::Cases) {
-            return Err("--add requires changes cases".into());
+        if (*all || !add.is_empty()) && !matches!(workflow, ChangedWorkflow::Cases) {
+            return Err("--all and --add require changes cases".into());
         }
-        if matches!(workflow, ChangedWorkflow::Plan) {
-            let plan = nemoclaw_build::changes::plan(Path::new("."), base, *worktree);
-            println!("{}", serde_json::to_string_pretty(&plan)?);
-            return Ok(());
-        }
-        if *worktree {
+        if *worktree && !matches!(workflow, ChangedWorkflow::Plan) {
             return Err("--worktree requires changes plan".into());
         }
         if matches!(workflow, ChangedWorkflow::Cases) {
-            let selection = nemoclaw_build::changes::cases(Path::new("."), base, add)?;
+            let selection = nemoclaw_build::changes::cases(Path::new("."), base.as_deref(), add)?;
             println!("{}", serde_json::to_string_pretty(&selection)?);
+            return Ok(());
+        }
+        let base = base.as_deref().expect("clap requires --base without --all");
+        if matches!(workflow, ChangedWorkflow::Plan) {
+            let plan = nemoclaw_build::changes::plan(Path::new("."), base, *worktree);
+            println!("{}", serde_json::to_string_pretty(&plan)?);
             return Ok(());
         }
         if matches!(workflow, ChangedWorkflow::LiveImages) {
@@ -787,11 +797,23 @@ async fn main() -> Result<()> {
         archive_file,
         images,
         images_commit,
+        hcl_cases,
         base,
         full,
         dry_run,
     } = &cli.command
     {
+        if hcl_cases.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
+            return Err("--hcl-cases requires ci live-docker or live-kind".into());
+        }
+        let hcl_cases: Option<Vec<String>> = hcl_cases.as_deref().map(|cases| {
+            cases
+                .split(',')
+                .map(str::trim)
+                .filter(|case| !case.is_empty())
+                .map(str::to_owned)
+                .collect()
+        });
         if partition.is_some() && !matches!(step.as_deref(), Some("contract" | "integration")) {
             return Err("--partition requires ci contract or integration".into());
         }
@@ -862,8 +884,11 @@ async fn main() -> Result<()> {
             step.as_deref(),
             partition.as_deref(),
             archive_file.as_deref(),
-            images.as_deref(),
-            images_commit.as_deref(),
+            run_ci::LiveInputs {
+                images: images.as_deref(),
+                images_commit: images_commit.as_deref(),
+                hcl_cases: hcl_cases.as_deref(),
+            },
             plan.as_ref(),
         )
         .await;

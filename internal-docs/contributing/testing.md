@@ -319,7 +319,7 @@ Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workf
 1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
 2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
 3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
-4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the HCL cases that use NVIDIA hosted inference, from the same artifacts, and `E2E GPU` for those on the NVIDIA GPU runner; see [live suites](#live-suites).
+4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the selected HCL cases that use NVIDIA hosted inference, from the same artifacts, and `E2E GPU` for those on the NVIDIA GPU runner; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
@@ -381,25 +381,37 @@ A file inside a crate counts when that crate is in the live build: the packages 
 [Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suites.
 After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
 
-The [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model run on NVIDIA hosted inference or the NVIDIA GPU runner.
-Whenever the plan selects the live suites, Linux AMD64 runs the hosted cases as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts.
+When the plan selects the live suites, it also selects the [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) to run: on a pull request, those its changes affect, as below; on `v1` pushes and manual runs, every case.
+Each case runs where its document's needs are met, in this order:
+
+| The case document | Runs in |
+|---|---|
+| Has a `kubernetes` or `openshift` gateway runtime | `E2E Kubernetes (kind) tests` |
+| Declares a `vllm` or `ollama` service | Live / HCL on the NVIDIA GPU runner |
+| Reads `NVIDIA_INFERENCE_API_KEY` | `E2E HCL CASE`, on NVIDIA hosted inference |
+| None of these | `E2E Docker tests` |
+
+Only the hosted and GPU jobs receive the key, and a GPU case receives it only when it reads it.
+`E2E Docker tests` binds each case to its run with code in `run_ci/live_docker.rs`, and refuses a case without it.
+`E2E Kubernetes (kind) tests` runs only HCL cases, so it is skipped when none is selected; `cargo ci live-docker` and `live-kind` take the selection as `--hcl-cases`, and without it run every case placed on them.
+
+Whenever the plan selects a hosted case, Linux AMD64 runs it as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
+On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts, so a pull request never runs them.
 Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run, and each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services. Dispatch it to run the hosted or GPU cases alone against that build.
 
-To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, run from a clean checkout of its commit:
+To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, which its CI does not run, run from a clean checkout of its commit:
 
 ```sh
 cargo run --locked -p nemoclaw-build --no-default-features -- changes cases --base origin/v1
 ```
 
-The JSON names the commit analyzed, the selected case IDs, and each case's reason.
+The JSON names the commit analyzed, the selected case IDs, each case's reason, the selected cases by where they run, and those that read the NVIDIA API key; `--all` selects every case without analysis.
 A live case is a scenario in `crates/nemoclaw-e2e/tests/e2e/hcl/tests/` with a case document of the same name in `crates/nemoclaw-e2e/cases/`.
 The command compares the checkout's `HEAD` with its merge base with `--base`, so changes the base made since don't count.
 A case's own document and scenario select only that case.
 A model runtime image's directory, `image/vllm/` or `image/ollama/`, selects the cases whose documents declare a service of that `kind`, and `image/supervisor/` selects every case that runs either.
 Any other change that selects the live suites selects every case, and a failed analysis selects every case.
 Add `--add CASE` for each reviewed recommendation; it adds the case and removes none.
-The command selects cases only; it runs nothing.
 
 A selected live suite that fails fails its platform's `Test / PLATFORM` check.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).

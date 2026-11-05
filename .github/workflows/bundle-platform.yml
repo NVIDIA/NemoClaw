@@ -41,6 +41,10 @@ on:
         description: Run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
         type: boolean
         default: false
+      hcl-cases:
+        description: The validation plan's live HCL case selection, by where each case runs; required with e2e.
+        type: string
+        default: ""
 # The live suites read the per-commit image package for images to reuse.
 permissions:
   contents: read
@@ -297,6 +301,7 @@ jobs:
       bundle: ${{ needs.bundle.outputs.artifact }}
       live-images-commit: ${{ inputs.live-images-commit }}
       hcl: ${{ inputs.hcl }}
+      hcl-cases: ${{ inputs.hcl-cases }}
     # The HCL cases read NVIDIA_API_KEY.
     secrets: inherit
 
@@ -309,5 +314,6 @@ jobs:
     uses: ./.github/workflows/hcl-e2e.yml
     with:
       hosted: false
+      cases: ${{ inputs.hcl-cases }}
     # The Ollama case reads NVIDIA_API_KEY.
     secrets: inherit

@@ -158,6 +158,10 @@ pub struct CaseSelection {
     pub selected: Vec<String>,
     /// Every live HCL case's decision.
     pub cases: BTreeMap<String, Decision>,
+    /// The selected cases by where they run, with every runner present.
+    pub runners: BTreeMap<hcl_cases::Runner, Vec<String>>,
+    /// The selected cases that read the NVIDIA API key.
+    pub nvidia_key: Vec<String>,
 }
 
 /// Select the live HCL cases that the changes since the merge base of `base`
@@ -165,8 +169,9 @@ pub struct CaseSelection {
 /// case, and the files that only runtime images read select the cases that
 /// run those images; any other input of the live suites selects every case.
 /// `requested` cases, such as maintainer-reviewed recommendations, are added
-/// and never remove a selection. An analysis failure selects every case.
-pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelection> {
+/// and never remove a selection. An analysis failure selects every case, and
+/// without a `base` every case is selected without analysis.
+pub fn cases(root: &Path, base: Option<&str>, requested: &[String]) -> Result<CaseSelection> {
     let commit = revision(root, "HEAD")?;
     let ids = hcl_cases::live(root)?;
     // Case files become path rule globs, which these characters can't disturb.
@@ -186,15 +191,23 @@ pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelect
             known.join(", ")
         ));
     }
-    let mut cases = select_cases(root, base, &ids).unwrap_or_else(|error| {
+    let placements = hcl_cases::placements(root)?;
+    let every = |reason: &str| {
         ids.iter()
             .map(|id| {
-                let reason =
-                    format!("could not analyze changes since {base} ({error}); running every case");
+                let reason = reason.to_owned();
                 (id.clone(), Decision { run: true, reason })
             })
             .collect()
-    });
+    };
+    let mut cases = match base {
+        None => every("every case selected with --all"),
+        Some(base) => select_cases(root, base, &ids).unwrap_or_else(|error| {
+            every(&format!(
+                "could not analyze changes since {base} ({error}); running every case"
+            ))
+        }),
+    };
     for id in requested {
         let decision = cases.get_mut(id).expect("requested cases are live cases");
         if !decision.run {
@@ -204,15 +217,29 @@ pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelect
             };
         }
     }
-    let selected = cases
+    let selected: Vec<String> = cases
         .iter()
         .filter(|(_, decision)| decision.run)
         .map(|(id, _)| id.clone())
         .collect();
+    let mut runners: BTreeMap<hcl_cases::Runner, Vec<String>> = hcl_cases::Runner::ALL
+        .into_iter()
+        .map(|runner| (runner, Vec::new()))
+        .collect();
+    let mut nvidia_key = Vec::new();
+    for id in &selected {
+        let needed = placements[id];
+        runners.entry(needed.runner).or_default().push(id.clone());
+        if needed.nvidia_key {
+            nvidia_key.push(id.clone());
+        }
+    }
     Ok(CaseSelection {
         commit,
         selected,
         cases,
+        runners,
+        nvidia_key,
     })
 }
 
