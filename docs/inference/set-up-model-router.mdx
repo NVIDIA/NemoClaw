@@ -26,6 +26,8 @@ A nondefault gateway port uses `~/.nemoclaw/gateways/<port>/state/model-router.l
 NemoClaw creates or reopens the log with owner-only permissions.
 Each Model Router start appends to the same file.
 NemoClaw does not truncate or rotate the file.
+Each completed routed request adds a model-selection record alongside the router's existing process output.
+Monitor available disk space and account for request traffic when retaining this log.
 If output capture fails, router startup continues without captured output.
 NemoClaw sends one semantic health request at a time so slow upstream checks do not overlap.
 Each request uses only the time that remains in the 10-minute startup limit.
@@ -106,6 +108,8 @@ The router does not rank cost or difficulty and does not fail over to another mo
 Responses include `X-Model-Router-Selected` and `X-Model-Router-Rule` selection evidence.
 The selection record contains only the model and rule.
 Streaming and structured tool calls use the same policy.
+The rules policy accepts at most 64 MiB for the entire JSON request body, including base64-encoded images.
+Larger bodies return HTTP `413` before JSON parsing or provider dispatch.
 
 ## Restart an Old Running Pool
 

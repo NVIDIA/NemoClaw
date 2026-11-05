@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 LIGHTNING = "nvidia/nemotron-3.5-lightning-30b-a3b"
 SUPER_VL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
 POLICY = "rules-v1"
+MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 _selection = contextvars.ContextVar("nemoclaw_selection", default=None)
 
 
@@ -100,7 +101,10 @@ class RulesMiddleware:
                 event = await receive()
                 if event["type"] == "http.disconnect":
                     return
-                body.extend(event.get("body", b""))
+                chunk = event.get("body", b"")
+                if len(chunk) > MAX_REQUEST_BODY_BYTES - len(body):
+                    return await self.reject(send, "Model Router request body exceeds 64 MiB.", 413)
+                body.extend(chunk)
                 if not event.get("more_body", False):
                     break
             try:

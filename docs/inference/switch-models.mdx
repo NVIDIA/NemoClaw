@@ -86,10 +86,17 @@ It also explains how to restore the existing default during testing because onbo
 ## Account for Shared Gateways
 
 Shared-route sandboxes on one gateway use one live route, even when NemoClaw records different intended routes for them.
-This applies to retained legacy, custom, local, and Model Router shared routes.
+This applies to retained legacy, custom, local, and retained Model Router shared routes.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
 For shared-route selections, runtime `inference set` stops when provider identity conflicts or required route metadata is incomplete.
 Native model changes affect only the selected sandbox and do not change the shared gateway route.
+
+<AgentOnly variant="openclaw">
+
+New OpenClaw Model Router selections use a sandbox-attached native provider.
+Retained Model Router shared routes keep the shared ownership described above.
+
+</AgentOnly>
 
 ## Verify the Change
 

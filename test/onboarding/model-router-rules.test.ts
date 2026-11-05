@@ -162,6 +162,58 @@ except ValueError as error:
   });
 });
 
+it.each([
+  ["single", 413, 1, 0, 0, false],
+  ["chunked", 413, 2, 0, 0, false],
+  ["boundary", 204, 1, 1, 1, true],
+])(
+  "bounds actual request bytes before parsing or dispatch for %s bodies (#14066)",
+  (mode, status, reads, parses, dispatches, unchanged) => {
+    expect(
+      python(
+        String.raw`
+import asyncio, json, sys
+import rules
+mode = json.load(sys.stdin)["mode"]
+limit = rules.MAX_REQUEST_BODY_BYTES
+valid = b'{"messages":[{"role":"user","content":"hello"}]}'
+boundary = valid + b" " * (limit - len(valid))
+chunks = {
+    "single": lambda: [b"x" * (limit + 1), b"unread"],
+    "chunked": lambda: [b"x" * limit, b"x", b"unread"],
+    "boundary": lambda: [boundary],
+}[mode]()
+reads = parses = dispatches = 0
+unchanged = False
+events = []
+original_parse = rules.json.loads
+def counted_parse(body):
+    global parses
+    parses += 1
+    return original_parse(body)
+rules.json.loads = counted_parse
+async def receive():
+    global reads
+    reads += 1
+    body = chunks.pop(0)
+    return {"type": "http.request", "body": body, "more_body": bool(chunks)}
+async def send(event): events.append(event)
+async def app(scope, receive, send):
+    global dispatches, unchanged
+    dispatches += 1
+    event = await receive()
+    unchanged = event["body"] == boundary
+    await send({"type": "http.response.start", "status": 204, "headers": []})
+    await send({"type": "http.response.body", "body": b""})
+asyncio.run(rules.RulesMiddleware(app)({"type": "http", "path": "/v1/chat/completions", "headers": [(b"content-length", b"1")]}, receive, send))
+print(json.dumps({"limit": limit, "status": events[0]["status"], "reads": reads, "parses": parses, "dispatches": dispatches, "unchanged": unchanged}))
+`,
+        { mode },
+      ),
+    ).toEqual({ limit: 64 * 1024 * 1024, status, reads, parses, dispatches, unchanged });
+  },
+);
+
 it("registers rules after LiteLLM initializes its router and rejects startup without it (#14066)", () => {
   expect(
     python(String.raw`
