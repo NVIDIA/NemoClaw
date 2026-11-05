@@ -608,10 +608,11 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const probeDocker = !isPodmanGatewayRuntimeEnabled(env);
   const runCaptureImpl =
     opts.runCaptureImpl ??
-    ((command: readonly string[], options?: { ignoreError?: boolean; timeout?: number }) =>
+    ((command: readonly string[], options?: RunCaptureOpts) =>
       runCapture(command, {
         ignoreError: options?.ignoreError ?? false,
         timeout: options?.timeout,
+        killSignal: options?.killSignal,
       }));
   const runCaptureExImpl =
     opts.runCaptureExImpl ?? (opts.runCaptureImpl === undefined ? runCaptureEx : undefined);

@@ -13,12 +13,16 @@ export {
 const fs = require("fs");
 
 export const WSL_NVIDIA_SMI_PATH = "/usr/lib/wsl/lib/nvidia-smi";
+const NVIDIA_SMI_TIMEOUT_MS = 10_000;
 
 export interface NvidiaSmiOptions {
   isWsl?: boolean;
   /** Skip a candidate whose output this rejects, so the next candidate runs. */
   acceptOutput?: (output: string) => boolean;
-  runCaptureImpl: (command: readonly string[], options: { ignoreError: boolean }) => string;
+  runCaptureImpl: (
+    command: readonly string[],
+    options: { ignoreError: boolean; timeout?: number; killSignal?: NodeJS.Signals },
+  ) => string;
 }
 
 function nvidiaSmiCandidates(isWsl: boolean): string[] {
@@ -29,7 +33,11 @@ function nvidiaSmiCandidates(isWsl: boolean): string[] {
 export function captureNvidiaSmi(args: readonly string[], options: NvidiaSmiOptions): string {
   const runningInWsl = options.isWsl ?? detectWsl();
   for (const command of nvidiaSmiCandidates(runningInWsl)) {
-    const output = options.runCaptureImpl([command, ...args], { ignoreError: true });
+    const output = options.runCaptureImpl([command, ...args], {
+      ignoreError: true,
+      timeout: NVIDIA_SMI_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
     if (output.trim() && (options.acceptOutput?.(output) ?? true)) return output;
   }
   return "";
