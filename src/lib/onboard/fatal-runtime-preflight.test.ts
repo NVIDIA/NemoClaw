@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { assessFallbackOnlyWslHost } from "../../../test/helpers/wsl-host-readiness-report";
 
 const mocks = vi.hoisted(() => ({
   preparePortableExperimentalHost: vi.fn(),
@@ -991,7 +992,7 @@ describe("readiness-gated runtime preflight", () => {
     expect(detectGpu).not.toHaveBeenCalled();
   });
 
-  it("runs the bounded WSL GPU proof only after host and gateway admission", async () => {
+  it("runs the bounded GPU proof after WSL fallback detection and gateway admission", async () => {
     const calls: string[] = [];
     const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
       const isObservation = deps?.proveArm64ContainerGpu === null;
@@ -1018,7 +1019,7 @@ describe("readiness-gated runtime preflight", () => {
         },
         assessHost: () => {
           calls.push("host-observation");
-          return wslDockerDesktopHost();
+          return assessFallbackOnlyWslHost();
         },
         detectGpu,
         warnIfHostProxyMissesLoopback: vi.fn(),
