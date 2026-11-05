@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::Path,
@@ -24,6 +24,29 @@ const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
 const REFERENCE_ADAPTER: &str = "org.nemoclaw.dummy";
 // The reference runtime starts and answers without a model.
 const QUALIFY_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The model runtime images, by Bake target. A managed service whose `kind`
+/// names one runs the image that target builds from `image/<target>/` and the
+/// supervisor in [`RUNTIME_SUPERVISOR`]. CI builds a live HCL case's runtime
+/// images from this list, and `changes cases` uses it to select the cases
+/// whose runtime images a change affects.
+pub const RUNTIMES: [&str; 2] = ["ollama", "vllm"];
+/// The directory of the supervisor that every runtime image includes.
+pub const RUNTIME_SUPERVISOR: &str = "image/supervisor";
+
+/// The runtime images, as Bake targets, that a NemoClaw document's managed
+/// services run.
+pub fn runtime_targets(document: &str) -> Result<BTreeSet<&'static str>> {
+    let document: Value =
+        serde_saphyr::from_str(document).map_err(|error| format!("invalid document: {error}"))?;
+    let services = document["spec"]["services"].as_object();
+    Ok(services
+        .into_iter()
+        .flat_map(|services| services.values())
+        .filter_map(|service| service["kind"].as_str())
+        .filter_map(|kind| RUNTIMES.into_iter().find(|runtime| *runtime == kind))
+        .collect())
+}
 
 fn docker() -> Command {
     let mut command = Command::new("docker");

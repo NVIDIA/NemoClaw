@@ -201,14 +201,23 @@ fn runtime_images_build_only_for_the_host_with_their_supervisor() {
     let Some(targets) = plan(other, &["runtimes"]) else {
         return;
     };
-    assert_eq!(
-        names(&targets),
-        BTreeSet::from(["ollama", "supervisor", "vllm"])
-    );
+    // CI builds a case's runtime images, and `changes cases` selects cases by
+    // their files, from this list and directory layout.
+    let mut expected = BTreeSet::from(nemoclaw_build::images::RUNTIMES);
+    expected.insert("supervisor");
+    assert_eq!(names(&targets), expected);
     for (name, target) in &targets {
         assert_eq!(platforms(target), [host_platform()], "{name}");
     }
-    for name in ["vllm", "ollama"] {
+    assert_eq!(
+        targets["supervisor"]["dockerfile"],
+        format!("{}/Dockerfile", nemoclaw_build::images::RUNTIME_SUPERVISOR)
+    );
+    for name in nemoclaw_build::images::RUNTIMES {
+        assert_eq!(
+            targets[name]["dockerfile"],
+            format!("image/{name}/Dockerfile")
+        );
         assert_eq!(targets[name]["contexts"]["supervisor"], "target:supervisor");
         let output = &targets[name]["output"][0];
         assert_eq!(output["rewrite-timestamp"], "true", "{name}: {output}");

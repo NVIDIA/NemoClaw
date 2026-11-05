@@ -146,6 +146,10 @@ enum Action {
         /// Base revision, such as the pull request base commit.
         #[arg(long)]
         base: String,
+        /// With `cases`, also select this live HCL case, such as a reviewed
+        /// recommendation. Repeat for more cases.
+        #[arg(long = "add", value_name = "CASE")]
+        add: Vec<String>,
     },
     /// Report a platform's whole contract or integration suite from its
     /// partitions' JUnit artifacts, and add the report to the GitHub job
@@ -180,6 +184,9 @@ enum ChangedWorkflow {
     Live,
     /// The `v1` commit whose pushed images the live suites can pull, or none.
     LiveImages,
+    /// The live HCL cases that the changes since the merge base with the base
+    /// revision affect, as JSON with the analyzed commit and each case's reason.
+    Cases,
 }
 #[cfg(feature = "sdk")]
 #[derive(Subcommand)]
@@ -232,6 +239,9 @@ enum ImageAction {
         #[arg(required = true)]
         images: Vec<String>,
     },
+    /// Print each live HCL case's model runtime images as JSON: the Bake
+    /// targets to build before the case runs, read from its document.
+    Runtimes,
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
         /// A local image, by tag or digest, or with --registry an image in a
@@ -678,6 +688,13 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
+            ImageAction::Runtimes => {
+                nemoclaw_build::hcl_cases::runtimes(root).and_then(|runtimes| {
+                    let runtimes = serde_json::to_string(&runtimes).map_err(|e| e.to_string())?;
+                    println!("{runtimes}");
+                    Ok(())
+                })
+            }
             ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
                 nemoclaw_build::images::qualify(image)
@@ -719,8 +736,12 @@ async fn main() -> Result<()> {
         workflow,
         base,
         worktree,
+        add,
     } = &cli.command
     {
+        if !add.is_empty() && !matches!(workflow, ChangedWorkflow::Cases) {
+            return Err("--add requires changes cases".into());
+        }
         if matches!(workflow, ChangedWorkflow::Plan) {
             let plan = nemoclaw_build::changes::plan(Path::new("."), base, *worktree);
             println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -728,6 +749,11 @@ async fn main() -> Result<()> {
         }
         if *worktree {
             return Err("--worktree requires changes plan".into());
+        }
+        if matches!(workflow, ChangedWorkflow::Cases) {
+            let selection = nemoclaw_build::changes::cases(Path::new("."), base, add)?;
+            println!("{}", serde_json::to_string_pretty(&selection)?);
+            return Ok(());
         }
         if matches!(workflow, ChangedWorkflow::LiveImages) {
             let (commit, reason) =
@@ -744,7 +770,9 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         let (workflow, name) = match workflow {
-            ChangedWorkflow::Plan | ChangedWorkflow::LiveImages => unreachable!(),
+            ChangedWorkflow::Plan | ChangedWorkflow::LiveImages | ChangedWorkflow::Cases => {
+                unreachable!()
+            }
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
             ChangedWorkflow::Live => (nemoclaw_build::changes::Workflow::Live, "live"),
         };
