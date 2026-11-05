@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Colossus SSH reachability
+
+on:
+  workflow_dispatch:
+    inputs:
+      hostname:
+        description: Colossus machine FQDN to probe on TCP port 22
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: colossus-ssh-reachability
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Check Colossus SSH reachability
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    runs-on:
+      group: nv-cpu-general
+    timeout-minutes: 2
+    env:
+      COLOSSUS_HOSTNAME: ${{ inputs.hostname }}
+    steps:
+      # Keep this probe independent of candidate code and SSH credentials.
+      - name: Resolve the hostname and check the SSH endpoint
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import socket
+
+          hostname = os.environ["COLOSSUS_HOSTNAME"]
+          if len(hostname) > 253 or not re.fullmatch(
+              r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+              r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+              r"\.colossus\.nvidia\.com",
+              hostname,
+              flags=re.IGNORECASE,
+          ):
+              raise SystemExit("Expected a machine FQDN under colossus.nvidia.com")
+
+          result = {"hostname": hostname, "port": 22, "status": "failed"}
+          stage = "dns"
+          try:
+              socket.getaddrinfo(hostname, 22, type=socket.SOCK_STREAM)
+              stage = "tcp"
+              with socket.create_connection((hostname, 22), timeout=10) as connection:
+                  connection.settimeout(5)
+                  stage = "ssh_banner"
+                  banner = b""
+                  while b"\n" not in banner and len(banner) < 255:
+                      chunk = connection.recv(255 - len(banner))
+                      if not chunk:
+                          break
+                      banner += chunk
+                  if not banner.startswith(b"SSH-2.0-"):
+                      raise ValueError("Endpoint did not return an SSH 2.0 banner")
+              result["status"] = "succeeded"
+          except (OSError, ValueError) as error:
+              result["failed_stage"] = stage
+              result["error_type"] = type(error).__name__
+          print(json.dumps(result, sort_keys=True))
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(
+              "## Colossus SSH reachability\n\n```json\n"
+              + json.dumps(result, indent=2, sort_keys=True)
+              + "\n```\n\nThis probe does not authenticate or execute remote commands.\n"
+          )
+          if result["status"] != "succeeded":
+              raise SystemExit(1)
+          PYTHON
