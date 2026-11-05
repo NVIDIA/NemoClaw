@@ -358,10 +358,10 @@ async fn a_first_apply_starts_opentofu_with_a_state_file() {
 }
 
 /// A deployment whose first apply bound storage and authentication and then
-/// failed while Helm installed the gateway release, so the release is a record
-/// in the cluster that the state does not bind: the next plan refreshes
-/// authentication, which observes the record.
-async fn failed_during_the_helm_install(scripted: &Scripted) -> Deployment {
+/// stopped at once while Helm installed the gateway release, so the release is
+/// a record in the cluster that the state does not bind: the next plan
+/// refreshes authentication, which observes the record.
+async fn stopped_during_the_helm_install(scripted: &Scripted) -> Deployment {
     scripted.set("root.apply", "fail");
     let deployment = scripted.deployment(&missing(scripted));
     assert!(
@@ -389,49 +389,29 @@ async fn failed_during_the_helm_install(scripted: &Scripted) -> Deployment {
     deployment
 }
 
-/// After an apply failed while Helm installed the gateway release, plan and
-/// apply stop before OpenTofu applies anything and name the release that the
-/// deployment's install record claims, which destroy removes.
+/// After an apply stopped at once while Helm installed the gateway release,
+/// plan and apply stop before OpenTofu applies anything, name the release, and
+/// leave it: NemoClaw can't tell it from another owner's release.
 ///
 /// Catches an apply that plans a second install, which Helm refuses with
 /// "cannot re-use a name that is still in use" after the apply has started.
 #[tokio::test]
-async fn plan_and_apply_after_a_failed_helm_install_name_the_leftover_release() {
+async fn plan_and_apply_after_a_stopped_helm_install_name_the_unbound_release() {
     let scripted = fresh();
-    let deployment = failed_during_the_helm_install(&scripted).await;
+    let deployment = stopped_during_the_helm_install(&scripted).await;
     let applies = count(&scripted.commands(), "root apply");
     let planned = deployment.plan(&original(), &uncancelled()).await;
     let applied = deployment.apply(&original(), &uncancelled()).await;
     for (operation, result) in [("plan", planned), ("apply", applied)] {
         match result {
-            Err(Error::LeftoverRelease { release, namespace }) => {
+            Err(Error::UnboundRelease { release, namespace }) => {
                 assert_eq!(namespace, "agents", "{operation}");
                 assert!(release.ends_with("-gateway"), "{operation}: {release}");
             }
-            other => panic!("{operation}: expected the leftover release, got {other:?}"),
+            other => panic!("{operation}: expected the unbound release, got {other:?}"),
         }
     }
-    assert_applies(&scripted, applies, "after the failed install");
-}
-
-/// Without an install record, for example in state that an earlier version
-/// wrote, the release is not claimed: apply stops and names it, and says that
-/// NemoClaw leaves it.
-///
-/// Catches an SDK that claims a release by its name alone.
-#[tokio::test]
-async fn a_leftover_release_without_an_install_record_is_named_but_not_claimed() {
-    let scripted = fresh();
-    let deployment = failed_during_the_helm_install(&scripted).await;
-    // An earlier version writes no install record.
-    let _ = fs::remove_file(scripted.state().join("helm-install.json"));
-    match deployment.apply(&original(), &uncancelled()).await {
-        Err(Error::UnclaimedRelease { release, namespace }) => {
-            assert_eq!(namespace, "agents");
-            assert!(release.ends_with("-gateway"), "{release}");
-        }
-        other => panic!("expected an unclaimed release, got {other:?}"),
-    }
+    assert_applies(&scripted, applies, "after the stopped install");
 }
 
 /// OpenTofu has started creating the storage resource.

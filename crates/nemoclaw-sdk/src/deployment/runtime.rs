@@ -10,7 +10,7 @@ pub(super) mod tests;
 
 use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
-pub(super) use helm_install::{check_install, record_install};
+pub(super) use helm_install::check_install;
 const GATEWAY_STORAGE: &str = "openshell_gateway_storage.runtime";
 const KUBERNETES_STORAGE: &str = "openshell_kubernetes_storage.runtime";
 const KUBERNETES_AUTH: &str = "openshell_kubernetes_auth.runtime";
