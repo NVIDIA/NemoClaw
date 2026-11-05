@@ -1111,9 +1111,7 @@ describe("readiness-gated runtime preflight", () => {
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
     const runCaptureImpl = vi.fn((command: readonly string[]) =>
-      command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"))
-        ? `${gpuName}, 63936, 60000\n`
-        : "",
+      command[0] === "/usr/lib/wsl/lib/nvidia-smi" ? `${gpuName}, 63936, 60000\n` : "",
     );
 
     const result = await withLinuxArm64(() =>
@@ -1122,7 +1120,7 @@ describe("readiness-gated runtime preflight", () => {
         {
           nonInteractive: true,
           collectGatewayReadiness: async () => collectedGatewayReadiness(),
-          assessHost: wslDockerDesktopHost,
+          assessHost: () => assessFallbackOnlyWslHost(gpuName),
           runCaptureImpl,
           collectWslNvidiaProduct: vi.fn(() =>
             n1xWslProduct === undefined ? undefined : { n1x: n1xWslProduct, stationGb300: false },
@@ -1160,7 +1158,7 @@ describe("readiness-gated runtime preflight", () => {
     ],
     ["an unlisted GPU name and a qualifying chassis model", UNLISTED_N1X_GPU_NAME, true, "linux"],
   ])(
-    "carries a real provider capture through real GPU detection to Ollama selection with %s",
+    "carries WSL fallback detection through the provider CUDA proof to Ollama selection with %s",
     async (_label, gpuName, n1xWslProduct, platform) => {
       const { gpu, captureHostCommand } = await runRealProviderPreflight(gpuName, n1xWslProduct);
 

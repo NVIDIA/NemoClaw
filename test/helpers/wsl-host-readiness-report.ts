@@ -5,14 +5,14 @@ import { projectHostReadiness, type HostObservations } from "../../src/lib/readi
 import type { SystemReadinessReport } from "../../src/lib/readiness/types";
 import { assessHost } from "../../src/lib/onboard/preflight";
 
-export function assessFallbackOnlyWslHost() {
+export function assessFallbackOnlyWslHost(gpuName = "JMJWOA-Generic-GPU") {
   return assessHost({
     platform: "linux",
     env: { WSL_DISTRO_NAME: "Ubuntu" },
     dockerInfoOutput: "Server Version: 27.4.0\nOS: Docker Desktop",
     commandExistsImpl: (name) => name === "docker" || name === "node" || name === "openshell",
     runCaptureImpl: (command) =>
-      command[0] === "/usr/lib/wsl/lib/nvidia-smi" ? "GPU 0: JMJWOA-Generic-GPU (UUID: GPU-1)" : "",
+      command[0] === "/usr/lib/wsl/lib/nvidia-smi" ? `GPU 0: ${gpuName} (UUID: GPU-1)` : "",
   });
 }
 
