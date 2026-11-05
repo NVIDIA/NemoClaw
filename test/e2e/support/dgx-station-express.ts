@@ -25,12 +25,6 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 
 export const STATION_SMOKE_SANDBOX = "e2e-station-express";
 export const STATION_SMOKE_MODEL = "nvidia-nemotron-3.5-super-vl-120b-a12b-nvfp4";
-export const STATION_SMOKE_PHASES = [
-  "inspect the prepared Station",
-  "install Station Express from the candidate checkout",
-  "assert managed Super VL and routed inference",
-  "clean up the job runtime",
-] as const;
 
 function requireCondition(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
