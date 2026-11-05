@@ -21,8 +21,7 @@
   A headless request can't substitute for native interaction.
   Never launch a second loader or standalone harness process, dispatch a hook by hand, or paste a skill's contents into a prompt to bypass discovery.
 - **Current-turn tool calls.** Save the current turn's native calls separately from earlier conversation history.
-  Earlier calls do not prove current execution or effects.
-  Skill execution may reference an earlier load only under [instruction evidence](skills.md#instruction-evidence); retain that evidence separately from current-turn calls.
+  A reply or call from an earlier turn proves nothing for this check, except a skill view that a skill run may reuse under [Instruction Evidence](skills.md#instruction-evidence).
 - **Independent effect checks.** Read every effect yourself, outside the agent's reply, for example with `openshell sandbox exec -n assistant --no-tty -- cat PATH`, a hash, or an exit code.
   The agent's report alone never passes a check.
   Before retrying a request that timed out, check its effects and the current turn's calls: it may have succeeded.

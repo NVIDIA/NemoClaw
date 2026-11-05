@@ -4,14 +4,14 @@
 # Supplied and Generated Skills
 
 A user keeps skills on the mounted workspace at `/sandbox/workspace/skills/`, and the agent finds them through its native skill discovery from its first start.
-Asked only to use a skill by name, the agent loads it or reuses its verified instructions in the active conversation, then follows them; the execution request does not repeat the recipe.
+Asked only to use a skill by name, the agent loads it, or reuses the view from earlier in the same conversation, and follows its instructions, which the request doesn't repeat.
 The agent also creates a skill of its own through its native authoring mechanism; that skill is saved in the same mounted directory without the user choosing a path, and the agent finds and uses it again after every lifecycle transition.
 Files that survive a transition aren't enough: each phase needs fresh native discovery and a fresh result.
 
 ## Sub-features
 
 - `skill-discovery`: native skill discovery lists the supplied `capability-probe` skill and views it, as the current turn's native discovery or loading record shows, not only the reply. Phases: Initial, After stop/start, After recreate, After config change, After restore.
-- `skill-execution`: asked only to use `capability-probe`, the agent follows its undisclosed recipe using the [instruction evidence](#instruction-evidence) below, writing `results/skill-result.json` with `probe` set to `agent-capability-probe` and the input's nonce and phase. Phases: Initial, After stop/start, After recreate, After config change, After restore.
+- `skill-execution`: asked only to use `capability-probe`, the agent loads it natively, or reuses its earlier view as [Instruction Evidence](#instruction-evidence) allows, and follows its undisclosed recipe, writing `results/skill-result.json` with `probe` set to `agent-capability-probe` and the input's nonce and phase. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `mounted-skill-yaml`: the adapter's YAML mount and skill-path fields resolve to a native discovery root at `/sandbox/workspace/skills`, and the supplied skill is discovered and runs from it without manual configuration or loader calls. Phases: Initial.
 - `mounted-skill-first-start`: the skill seeded before the first runtime starts is discovered and runs on first startup, before any install, reload, activation restart, or manual import. Phases: Initial.
 - `mounted-supplied-skill`: the supplied skill keeps its seeded hash, is discovered and loaded natively, and produces fresh output after every transition; persistence, discovery, loading, and output are each required. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
@@ -27,27 +27,24 @@ Files that survive a transition aren't enough: each phase needs fresh native dis
 
 ## Instruction Evidence
 
-Apply this rule to supplied and generated skill execution, including Hermes and OpenClaw.
-Keep the discovery/view requests and every lifecycle phase below.
-For each execution, save `$CHECK_DIR/loading.md` with the skill identity, discovered file path, sealed hash, runtime ID, native session identity, and links to the supporting native records.
-Require current native discovery or the current turn's skill catalog to show the skill available, plus one of these instruction sources before the current input read:
+When a harness keeps one conversation per runtime, an agent that viewed a skill in this phase's discovery request may follow it in the run request without loading it again.
+Loading passes when either of these holds before the run request reads its input:
 
-- **Current load:** the current turn's successful native skill view, load, or file read returned the skill's instructions from the discovered path.
-- **Conversation reuse:** a successful native view, load, or file read earlier in the same native session returned those instructions, the file still matches the sealed hash, and the execution turn's native context or retained message history shows those instructions remain available to the model.
-  Link the earlier request and tool result separately; never copy earlier calls into `run.calls.txt` or count them as new calls.
+- **Current load:** the run request's own native calls view or load the skill, or read the file that native discovery listed.
+- **Reuse:** all of these hold:
+  - This phase's discovery request viewed the skill, as its saved `discover.calls.txt` or `discover.skills.txt` shows. For `skill-execution`, that is the `skill-discovery` check's request.
+  - Both replies show the same runtime ID.
+  - The skill file still matches its sealed hash in this phase, as step 2's hash lines check for the supplied skill and step 10's for the generated one.
+  - The harness's session record shows no compaction, reset, or new session between that view and the run request. Save the part of the record that shows this in `$CHECK_DIR/session.txt`.
 
-Record the harness-specific evidence source in `bindings.md`: a catalog snapshot advertises availability; a skill view or file-read result supplies instructions; a native context or retained-history record establishes reuse.
-A matching session ID or an archived transcript alone does not establish that the model still has the instructions after context pruning, compaction, or a reset.
-If instruction availability cannot be established and no other exercised assertion failed, record Not tested with the evidence gap.
-Keep independently observed discovery, input-read, or output failures Failed and describe the loading evidence gap separately.
-Do not infer reuse from correct output or ask for a retry solely to obtain a passing trace.
-If native evidence shows the instructions were unavailable and the agent did not load them, record Failed.
-Authoring prompts, generated file writes, skill names, descriptions, and the agent's claims do not replace a successful native read of the saved skill.
+`bindings.md` names where the session record is; for Hermes, it is the session database, read from a copy as the [native records](README.md#driving-conventions) convention says.
+If the session record can't show whether the context was compacted or reset, Loading is Not tested, with that gap in a finding; a discovery, input-read, or output failure that you observe independently stays Failed.
+Otherwise, if neither holds, Loading is Failed.
 
-After each lifecycle transition, repeat the prescribed discovery/view in the current runtime and session before relying on conversation reuse in that phase.
-A new session cannot inherit proof from the previous session.
-A current catalog entry does not excuse the agent reporting no skills or failing the requested view; keep that discovery failure separate from execution's loading evidence.
-Current-turn input reads, result writes, recipe-required readback, and independent output verification remain required even when instructions are reused.
+- After every lifecycle transition, the phase's own discovery request must view the skill before a run may rely on reuse.
+- Never copy the discovery request's calls into `run.calls.txt`.
+- Correct output alone never proves loading.
+- Authoring prompts and the agent's claims never replace a native read of the saved skill.
 
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
@@ -100,7 +97,7 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    Read each result separately:
    - **Persistence:** `grep` prints the seeded hash's line.
    - **Discovery:** `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `capability-probe` from `/sandbox/workspace/skills/capability-probe/`, and a native view of its content.
-   - **Loading:** `loading.md` establishes [instruction evidence](#instruction-evidence) for `capability-probe` before the current input read, using either a current load or verified conversation reuse.
+   - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `capability-probe`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json`, wrote `results/skill-result.json`, and read the result back.
 3. **`mounted-skill-first-start`:** run it first in the Initial phase, before any other request in this run, including `inference`:
 
@@ -209,13 +206,13 @@ MARKER=%s
     Write `$CHECK_DIR/result.md` with four separate lines:
     - **Persistence:** `same`, at the recorded save location.
     - **Discovery:** the current turn's native discovery lists `$SKILL_NAME` from that location.
-    - **Loading:** `loading.md` establishes [instruction evidence](#instruction-evidence) for the sealed generated skill before the current input read, using either a current load or verified conversation reuse.
-    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, with current-turn native file calls reading `fixtures/probe-input.json`, and writing `results/generated-skill-result.json`.
+    - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `$SKILL_NAME`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
+    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/generated-skill-result.json`.
 
     Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
 ## Gotchas
 
-- Never paste a saved skill's contents or its expected output into an execution prompt. The run prompts name the skill only; correct output alone proves neither loading nor instruction reuse.
+- Never paste a saved skill's contents or its expected output into an execution prompt. The run prompts name the skill only, and correct output alone never proves loading.
 - Some harnesses list skills in the system prompt instead of through a tool. Then the discovery evidence is the runtime's loaded skill list for the turn, not the reply.
 - `skill-execution` and `mounted-supplied-skill` both write `results/skill-result.json`. Remove it before each run so one check can't pass on the other's output.
 - Retained files prove neither discovery nor fresh execution. [lifecycle-and-retention](lifecycle-and-retention.md)'s `retention` check tracks the supplied skill's hash; these checks need a fresh native discovery in each phase.
