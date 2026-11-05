@@ -9,7 +9,7 @@
 # step's profile in .config/nextest.toml must use test_seconds as its
 # slow-timeout period; it stops a test at a multiple of it. Lower a budget when
 # a change makes the step faster; raising one needs the reason in the pull
-# request. See docs/contributing/testing.md.
+# request. See internal-docs/contributing/testing.md.
 #
 # binaries budgets the providers' contract binaries by their nextest name, in
 # the contract step: summed_seconds bounds the binary's test times added up

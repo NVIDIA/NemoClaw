@@ -10,4 +10,4 @@ Do not put vulnerability details in public issues or pull requests.
 
 Include the affected branch and source/bundle revision, reproduction steps, potential impact, and a minimal proof of concept when available.
 Remove unrelated credentials, private conversations, and deployment data from attachments.
-The [security guide](docs/security.md) describes v1's implementation boundaries; passing tests do not establish security qualification for every host or configuration.
+The [security guide](docs/security/security.md) describes v1's implementation boundaries; passing tests do not establish security qualification for every host or configuration.

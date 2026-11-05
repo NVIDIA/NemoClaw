@@ -3,7 +3,7 @@
 
 # Hermes API Server and Dashboard
 
-The author declares Hermes's API server and dashboard under `harness.settings.interfaces`, as [docs/interfaces.md](../../../../docs/interfaces.md#reach-an-agent-interface) documents.
+The author declares Hermes's API server and dashboard under `harness.settings.interfaces`, as [docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#reach-an-agent-interface) documents.
 Apply prints how to forward each one, and the command that reads the API server's token; the dashboard has no sign-in.
 Through the forwards, the API server answers an authenticated chat request and the dashboard serves its page.
 

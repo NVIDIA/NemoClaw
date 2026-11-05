@@ -11,13 +11,13 @@ disable-model-invocation: true
 
 This skill drives the `nemoclaw` CLI the way a configuration author does: start from a repository example, edit it into one YAML file, plan, apply, talk to the agent, export, reapply, and destroy.
 It owns one deployment per run and never touches another.
-The [live tests](../../../docs/contributing/live-tests.md) stay the gate; turn a journey that must hold on every change into a Rust live test.
+The [live tests](../../../internal-docs/contributing/live-tests.md) stay the gate; when a journey must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## Scope
 
 - **Gateway:** a managed Docker gateway on the host running the skill. Kubernetes, OpenShift, Podman, and external gateways launch, inspect, and clean up differently; they need their own skill.
-- **Agent:** one sandbox with one Fabric agent, chosen from [agents/](agents/).
-- **Target:** one host type, chosen from [targets/](targets/), which names the example to start from and the inference source.
+- **Agent:** one sandbox with one Fabric agent, chosen from [agents/](agents).
+- **Target:** one host type, chosen from [targets/](targets), which names the example to start from and the inference source.
 
 Each agent file lists the agent–target pairs proven live, with the revision and date.
 A pair that isn't listed is unproven: say so with the result.
@@ -85,7 +85,7 @@ IMAGE=$(docker image inspect "nc-fabric:$AGENT" --format '{{index .RepoDigests 0
 echo "$IMAGE" > "$EVIDENCE/image.txt"
 ```
 
-Copy the bundle so a later `cargo ci bundle` can't change it mid-run, as [Spark and Fabric](../../../docs/contributing/live-tests.md#spark-and-fabric) advises.
+Copy the bundle so a later `cargo ci bundle` can't change it mid-run, as [Spark and Fabric](../../../internal-docs/contributing/live-tests.md#spark-and-fabric) advises.
 `ls dist` must print one platform; remove stale platform directories first.
 The agent file names any other image it needs.
 
@@ -113,13 +113,17 @@ cp "$EXAMPLE" "$RUN_DIR/deployment.yaml"
 4. The inference source's edits from the target file, such as replacing `services` and `inferenceProviders`.
 5. The agent file's edits, such as `serviceExposures` and `harness.settings`.
 
-Edit the file by hand or with the target file's snippet; keep the sandbox name `assistant`.
-Then check that it parses and save it:
+Edit the file by hand, as a configuration author does; keep the sandbox name `assistant`.
+Then save it and the edits, and check the UID:
 
 ```sh
 cp "$RUN_DIR/deployment.yaml" "$EVIDENCE/deployment.yaml"
+diff -u "$EXAMPLE" "$RUN_DIR/deployment.yaml" > "$EVIDENCE/yaml-edits.diff"
 grep -c "$UID_" "$RUN_DIR/deployment.yaml"
 ```
+
+Result: `yaml-edits.diff` shows only the listed edits, and the count is `1`.
+Plan reports any field the edits broke.
 
 Starting from the example keeps the run honest: a changed example changes what the skill tests.
 Never copy a secret value into the YAML; credentials are environment references.
@@ -194,11 +198,11 @@ grep -q 'No resource changes planned.' "$EVIDENCE/destroy-check.txt" && echo DES
 ```
 
 Continue only after `DESTROYED` prints.
-When destroy fails, keep the state directory and the bundle: they are the only record of what to remove. Fix the cause and destroy again; [Updates and Recovery](../../../docs/usage.md#updates-and-recovery) covers interrupted operations.
+When destroy fails, keep the state directory and the bundle: they are the only record of what to remove. Fix the cause and destroy again; [Updates and Recovery](../../../docs/build-deploy/usage.md#updates-and-recovery) covers interrupted operations.
 Run destroy and the removal below in one sequence, never concurrently: removing the state or bundle mid-destroy fails it and strands the deployment.
 
 Destroy retains the gateway's storage and, for a managed model service, its model data.
-Remove what this run created with [Remove Retained Resources](../../../docs/usage.md#remove-retained-resources), selecting by this run's UID only:
+Remove what this run created with [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources), selecting by this run's UID only:
 
 ```sh
 owner_label="label=nemoclaw.nvidia.com/uid=$UID_"
@@ -207,6 +211,8 @@ docker volume ls --filter "$owner_label" --format '{{.Name}}'
 docker network ls --filter "$owner_label" --format '{{.Name}}'
 ```
 
+Ask the user before the removal below deletes a model this run downloaded; keeping it is the user's decision.
+If the user keeps it, stop here and keep the state directory and bundle; #14181 tracks what such a run reports.
 Continue only when every name starts with `$WORKSPACE` and no container is running, then:
 
 ```sh
@@ -215,32 +221,44 @@ docker volume ls --quiet --filter "$owner_label" | xargs -r docker volume rm
 docker network ls --quiet --filter "$owner_label" | xargs -r docker network rm
 { docker container ls --all --quiet --filter "$owner_label"; docker volume ls --quiet --filter "$owner_label"; docker network ls --quiet --filter "$owner_label"; } | wc -l
 docker ps --all --format '{{.Names}}' | grep -c "^openshell-$WORKSPACE--" || true
+```
+
+Both counts must be 0; otherwise keep the state directory and the bundle, as [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources) requires.
+Then remove them and check that the evidence still lists:
+
+```sh
 rm -rf "$STATE" "$BUNDLE" "$RUN_DIR/pw"
 ls "$EVIDENCE"
 ```
 
-Both counts must be 0, and the evidence must still list.
 Remove images only when this run built them and no other deployment uses them.
-Keep a downloaded model when the user may reuse it; removing it is the user's decision.
 Never remove anything without this run's UID; never stop processes or containers by name.
 Run cleanup after a failed run too.
 
 ### Without State
 
 If the state directory is lost, NemoClaw can't destroy the deployment: there is no adoption workflow.
-Remove its parts by the run's identity, in this order, after confirming each name belongs to `$WORKSPACE`:
+Remove its parts by the run's identity. First check that the workspace is this run's:
 
 ```sh
+owner_label="label=nemoclaw.nvidia.com/uid=$UID_"
 export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:$GATEWAY_PORT OPENSHELL_WORKSPACE=$WORKSPACE
 openshell workspace list
-openshell sandbox delete assistant
 openshell provider list
-openshell provider delete REPLACE_WITH_PROVIDER_NAME
 docker container ls --all --filter "$owner_label" --format '{{.Names}} {{.Status}}'
-docker container stop "$WORKSPACE-gateway"
 ```
 
-`openshell workspace list` must show `$WORKSPACE` labeled with `$UID_`; stop otherwise.
+Continue only when `openshell workspace list` shows `$WORKSPACE` labeled with `$UID_` and every container name starts with `$WORKSPACE`.
+Then delete the sandbox, and wait until it leaves `openshell sandbox list` before deleting the provider: OpenShell refuses to delete a provider attached to a sandbox that is still deleting.
+If the wait prints `sandbox still listed`, stop there; don't delete the provider or stop the gateway:
+
+```sh
+openshell sandbox delete assistant
+timeout 300 sh -c 'while openshell sandbox list --names | grep -qx assistant; do sleep 2; done' || { echo 'sandbox still listed'; false; }
+openshell provider delete REPLACE_WITH_PROVIDER_NAME
+docker container ls --quiet --filter "$owner_label" | xargs -r docker container stop
+```
+
 Then run the removal above; with its gateway stopped, the volume and network come off too.
 
 ## Report

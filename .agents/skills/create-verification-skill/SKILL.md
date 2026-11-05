@@ -13,7 +13,7 @@ disable-model-invocation: true
 
 This skill generates `.agents/skills/verify-<surface>/`, a scripted way for an agent to drive NemoClaw the way a user does and capture evidence.
 Write it for an agent who reads it cold, mid-task.
-It complements the [live tests](../../../docs/contributing/live-tests.md), which stay the gate: when a journey must hold on every change, turn it into a Rust live test instead.
+It complements the [live tests](../../../internal-docs/contributing/live-tests.md), which stay the gate: when a journey must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## 1. Interview the Repository
 
@@ -21,7 +21,7 @@ Answer from the code and docs; ask the user only what you cannot observe.
 
 - **Surface:** what the user touches, such as the `nemoclaw` CLI (`plan`, `apply`, `export`, `destroy`), onboarding, the SDK, or an agent's interfaces reached through OpenShell.
   Pick one surface per skill and note the rest.
-- **Run:** how a verified bundle, images, and a deployment document reach a usable deployment, per [Usage](../../../docs/usage.md) and the matching live-test section.
+- **Run:** how a verified bundle, images, and a deployment document reach a usable deployment, per [Usage](../../../docs/build-deploy/usage.md) and the matching live-test section.
   Note the gateway port, subnet, images by digest, and the credentials the deployment needs.
 - **Drive:** reuse `nemoclaw-e2e` fixtures, the reference dummy image, and existing commands first.
   Only then add a terminal session for a TUI or HTTP requests for a service.
@@ -45,7 +45,7 @@ Ground each section in what the interview found, with no placeholders:
   Exercise the user's path, not internal setters or test-only endpoints.
   Capture the action and the resulting state, and check side effects such as files written, resources created, and retained storage.
   Never write credential or token values into evidence.
-- **Cleanup:** `nemoclaw destroy --state-dir PATH`, then removal of only the resources labeled with the run's UID; for retained storage, follow [Remove Retained Resources](../../../docs/usage.md#remove-retained-resources).
+- **Cleanup:** `nemoclaw destroy --state-dir PATH`, then removal of only the resources labeled with the run's UID; for retained storage, follow [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources).
   Never stop processes or containers by name.
   Cleanup keeps the evidence.
 - **Helpers:** prefer commands in the skill body.

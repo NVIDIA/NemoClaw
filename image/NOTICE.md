@@ -36,4 +36,4 @@ Not every package is under an OSI-approved license: `langgraph-runtime-inmem` 0.
 The image never installs or updates `dcode` at runtime.
 
 
-The [image metadata contract](../docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.
+The [image metadata contract](../internal-docs/design/fabric-management.md#image-metadata) describes the catalog labels and runtime manifests these recipes produce.

@@ -54,9 +54,41 @@ impl OperationResult {
     }
 }
 
-/// Warns that a successful apply reported no service URLs because reading them failed.
-pub(super) const SERVICE_URLS_UNREAD: &str =
-    "Apply succeeded, but the sandbox service URLs weren't read; run apply again to report them.";
+/// Warns that a successful apply reported no service URLs or runtime IDs
+/// because reading its state failed.
+pub(super) const STATE_UNREAD: &str = "Apply succeeded, but its state wasn't read, so the result omits the sandbox service URLs and agent runtime IDs; run apply again to report them.";
+
+/// Each sandbox's agent, by sandbox name, with the runtime ID its binding
+/// records. A recorded runtime keeps the name it was started with, which
+/// `fabric-agent-ctl invoke` needs until apply replaces it.
+pub(super) fn agents(
+    document: &Document,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> BTreeMap<String, AgentRuntime> {
+    document
+        .sandboxes()
+        .map(|sandbox| {
+            let runtime = bindings
+                .get(&format!(
+                    "{}.{}",
+                    nemoclaw_fabric::agent::RESOURCE_TYPE,
+                    sandbox.name
+                ))
+                .filter(|binding| !binding.runtime_id.is_empty());
+            let agent = runtime
+                .map(|binding| binding.name.as_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&sandbox.agent.name);
+            (
+                sandbox.name.to_owned(),
+                AgentRuntime {
+                    agent: agent.to_owned(),
+                    runtime_id: runtime.map(|binding| binding.runtime_id.clone()),
+                },
+            )
+        })
+        .collect()
+}
 
 /// The URLs each bound sandbox's exposures report, by sandbox name; sandboxes
 /// without any are left out.

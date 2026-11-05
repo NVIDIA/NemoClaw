@@ -33,21 +33,22 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
    - **Bundled plugin:** a harmless plugin that ships in the selected image, the YAML field that enables it, the event its hook observes, the exact effect it writes, and the evidence path that shows the effect. Choose one whose event a native tool call or model turn fires. A tool, MCP service, middleware, or separate diagnostic process is not a native plugin.
    - **Registration record:** where the managed runtime records the plugins it registered, such as its startup log or its tool list for a turn. A native CLI that reads configuration shows enablement, not registration.
    - **Plugin format:** the native manifest format, language, and directory layout the agent's plugin must use, with the source or guidance that establishes it.
+   - **Authoring reference:** the plugin guidance the agent gets before it writes its plugin, for the selected harness revision: either locations the agent has read with its own tools, or the plugin API written out for the prompt. Record the source and revision. The runner reading a file through OpenShell or in the image doesn't show that the agent can read it.
    - **Native validation:** a static check of a plugin's manifest and source, if the harness has one that doesn't load the plugin into a second runtime; otherwise `none`.
    - **Installer and enablement:** the native installer, the native enablement control, the native enablement record (a file or command), and the native install location.
 
    If no supported bundled plugin or observable hook route exists, write `none`, record one missing-implementation finding with the source and image evidence, and mark every `plugin-load` and `plugin-hooks` row Failed without sending its prompt.
    If the evidence can't decide the route, write the cause in a finding and mark them Not tested.
    Don't install an alternate service or invent a plugin API to fill the gap.
-2. **`plugin-load`:** in every phase it lists, save the deployed enablement and the runtime's registration record for this runtime ID:
+2. **`plugin-load`:** in every phase it lists, save the runtime's registration record for this runtime ID:
 
    ```sh
    CASE=plugin-load; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
    echo "$RUNTIME_ID" > "$CHECK_DIR/runtime.txt"
    ```
 
-   Copy the native configuration that enables the bundled plugin into `$CHECK_DIR/config.txt`, redacting credentials, and the registration record that `bindings.md` names, for this runtime only, into `$CHECK_DIR/registration.txt`.
-   Result: `config.txt` shows the plugin enabled, and `registration.txt` shows that the managed runtime with `$RUNTIME_ID` registered it.
+   Copy the registration record that `bindings.md` names, for this runtime only, into `$CHECK_DIR/registration.txt`, redacting credentials.
+   Result: `registration.txt` shows that the managed runtime with `$RUNTIME_ID` registered the bundled plugin enabled in the run's YAML.
    Configuration or code on disk alone leaves registration unverified: Failed when the runtime is available and its record lacks the plugin.
 3. **`plugin-hooks`:** in every phase it lists, after `plugin-load`, save the effect path's current contents in `$CHECK_DIR/effect.before.txt` and confirm it holds no entry for this nonce, then send one request that fires the recorded event:
 
@@ -63,7 +64,14 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
    Result: `request.calls.txt` shows the current-turn native action that fires the recorded event, and `effect.after.txt` holds one new entry with the exact recorded effect, attributable to this runtime and turn, that `effect.before.txt` lacks.
    Missing supported hooks are Failed with the missing-implementation finding; an effect you can't attribute to this turn is Not tested, with the cause in a finding.
    Never call the hook by hand or count an old entry, and don't clean up the effect path.
-4. **`agent-plugin-author`:** in the Initial phase only. Choose the run-scoped names, then send the authoring prompt once, with the `plugin format` constraint that `bindings.md` records appended:
+4. **`agent-plugin-author`:** in the Initial phase only. First, settle which plugin guidance the agent gets, in one of two ways:
+   - **Guidance the agent can read:** send a read-only request that asks the agent to read the guidance's locations with its own tools, and save the request, its native calls, and what they returned under `$EVIDENCE/authoring-reference/`. Only a native read in that request counts; the agent saying it read them, or the runner reading them, doesn't. The request must not write, install, or load a plugin. List in the authoring prompt only the locations the agent read, and the tool it read them with.
+   - **The API in the prompt:** write out the plugin API of the selected harness revision, checked against its source: the manifest fields, file layout, and entry point; how to register a tool, with its signature and schema; the handler's arguments and return value; how to register a hook, with its callback's arguments; and which fields the native file-write event carries for the path and the call ID, including any it lacks. Record the text, its source, and the revision in `bindings.md`. It must be complete enough that the agent needn't browse source or import modules.
+
+   Never point the agent at installed source just because the runner can read it.
+   If the agent can't read the guidance, put the API in the prompt. If neither is possible, mark the check Not tested with a finding, and don't send the authoring prompt. Keep that finding apart from any later runtime failure: neither one alone shows whether the model or the adapter is at fault.
+   Explain the API only; don't give the agent the finished plugin or write its files. Writing the plugin is what this check tests.
+   Choose the run-scoped names, then send the authoring prompt once, with the `plugin format` and `authoring reference` that `bindings.md` records appended:
 
    ```sh
    CASE=agent-plugin-author; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -72,7 +80,7 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
    AGENT_PLUGIN_DIR=/sandbox/workspace/extensions/plugins/$AGENT_PLUGIN_ID
    printf 'AGENT_PLUGIN_ID=%s\nAGENT_PLUGIN_TOOL=%s\nAGENT_PLUGIN_DIR=%s\n' "$AGENT_PLUGIN_ID" "$AGENT_PLUGIN_TOOL" "$AGENT_PLUGIN_DIR" > "$EVIDENCE/agent-plugin.env"
    fill - <<EOF | ask create
-   Use <file-write-tool> to create a native plugin for this harness in $AGENT_PLUGIN_DIR, in the harness's native plugin format, with plugin ID $AGENT_PLUGIN_ID. You may read the harness's native plugin developer guidance first. The plugin must do exactly two things and nothing else. First, register a native tool named $AGENT_PLUGIN_TOOL that takes one string argument, nonce, and returns a JSON object with exactly three keys: origin set to agent-generated, nonce set to the argument, and kind set to native-tool. For example, for nonce abc123 it returns {"origin":"agent-generated","nonce":"abc123","kind":"native-tool"}. Second, register a hook that runs after each native file-write tool call. When the written path is exactly /sandbox/workspace/results/agent-plugin-trigger.txt, it appends one line to /sandbox/workspace/results/agent-plugin-ledger.jsonl: a JSON object with origin set to agent-generated, nonce set to the first line of the trigger file, tool set to the native tool name, and call_id set to the tool call ID if the event carries one. For any other path it does nothing. The plugin must have no dependencies, network access or other file access. Do not install, enable, load or run it. Report what each tool returned.
+   Use <file-write-tool> to create a native plugin for this harness in $AGENT_PLUGIN_DIR, in the harness's native plugin format, with plugin ID $AGENT_PLUGIN_ID. Use the plugin guidance appended below. Read guidance only at the locations it lists, and don't search for or import harness source that isn't listed. The plugin must do exactly two things and nothing else. First, register a native tool named $AGENT_PLUGIN_TOOL that takes one string argument, nonce, and returns a JSON object with exactly three keys: origin set to agent-generated, nonce set to the argument, and kind set to native-tool. For example, for nonce abc123 it returns {"origin":"agent-generated","nonce":"abc123","kind":"native-tool"}. Second, register a hook that runs after each native file-write tool call. When the written path is exactly /sandbox/workspace/results/agent-plugin-trigger.txt, it appends one line to /sandbox/workspace/results/agent-plugin-ledger.jsonl: a JSON object with origin set to agent-generated, nonce set to the first line of the trigger file, tool set to the native tool name, and call_id set to the tool call ID if the event carries one. For any other path it does nothing. The plugin must have no dependencies, network access or other file access. Do not install, enable, load or run it. Report what each tool returned.
    EOF
    ```
 
@@ -191,7 +199,7 @@ The runner never installs, enables, or loads a plugin for the agent, and never p
 
    Save the runtime ID, the sandbox container ID, the installed tree's hashes, and the enablement record in `$CHECK_DIR/before.txt`.
    Run [Plan and Apply](../../verify-yaml-deployment/SKILL.md#plan-and-apply) with the unchanged YAML, saving the plan and apply output in `$CHECK_DIR/`, then the [doctor](../SKILL.md#doctor), and read `RUNTIME_ID` again.
-   Save the same four values in `$CHECK_DIR/after.txt`, then send step 8's request for the plugin's effect in this `CHECK_DIR`.
+   Save the same four values in `$CHECK_DIR/after.txt`, write a fresh nonce as [fresh phase input](README.md#driving-conventions) does, then send step 8's request for the plugin's effect in this `CHECK_DIR`.
    Result: `unchanged`; the plan lists no change to the declared configuration; the sandbox container ID is the same; the installed hashes and enablement in `after.txt` match `before.txt`; registration and the fresh effect hold as in step 8.
    Overwritten enablement is Failed, even under a documented reset policy. Don't export the change back into YAML or re-enable the plugin to make it pass.
 ## Gotchas

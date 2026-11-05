@@ -509,11 +509,15 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             output.push_str(&format!("  {}\n", terminal_text(reason)));
         }
     }
+    let mut selected = false;
+    if !result.agents.is_empty() {
+        output.push_str(&agent_invocation(result, planned, &mut selected));
+    }
     if planned {
         output.push_str("\nNo runtime resources changed.\n");
     }
     if result.outcome == Outcome::Succeeded && !result.interfaces.is_empty() {
-        output.push_str(&interface_access(result));
+        output.push_str(&interface_access(result, selected));
     }
     if result.outcome == Outcome::Succeeded {
         output.push_str("\nModel and agent responses were not tested.\n");
@@ -521,30 +525,76 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
     output
 }
 
+/// The commands that select this deployment's gateway and workspace, as the
+/// interface guide describes.
+fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String {
+    let mut output =
+        String::from("  In each terminal, select this deployment's gateway and workspace:\n");
+    let endpoint = terminal_text(&connection.gateway_endpoint);
+    if connection.plaintext_loopback() {
+        output.push_str(&format!(
+            "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
+        ));
+    } else {
+        output.push_str(&format!(
+            "    unset OPENSHELL_GATEWAY_ENDPOINT\n    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for {endpoint}\n"
+        ));
+    }
+    output.push_str(&format!(
+        "    export OPENSHELL_WORKSPACE={}\n",
+        terminal_text(&connection.workspace)
+    ));
+    output
+}
+
+/// The command that invokes each agent whose runtime the state records, under
+/// the gateway and workspace selection, which `selected` records printing. A
+/// plan lists the runtimes the last apply left, which its changes may replace.
+fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
+    let mut output = String::from(if planned {
+        "\nAgents, as last applied:\n"
+    } else {
+        "\nAgents:\n"
+    });
+    let invocable = result
+        .agents
+        .values()
+        .any(|agent| agent.runtime_id.is_some());
+    if invocable && let Some(connection) = &result.connection {
+        output.push_str(&gateway_selection(connection));
+        *selected = true;
+    }
+    for (sandbox, agent) in &result.agents {
+        let sandbox = terminal_text(sandbox);
+        let name = terminal_text(&agent.agent);
+        match &agent.runtime_id {
+            Some(runtime) => {
+                let runtime = terminal_text(runtime);
+                output.push_str(&format!(
+                    "  {sandbox}: agent {name}, runtime {runtime}\n    Invoke:   openshell sandbox exec -n {sandbox} --no-tty -- fabric-agent-ctl invoke --agent {name} --runtime-id {runtime} --input FILE\n"
+                ));
+            }
+            None => output.push_str(&format!("  {sandbox}: agent {name}, no runtime recorded\n")),
+        }
+    }
+    if invocable {
+        output.push_str(
+            "  FILE is a file in the sandbox holding one JSON value, such as a prompt string; --input - reads it from stdin; see docs/agents-inference/agents.md.\n",
+        );
+    }
+    output
+}
+
 /// How to reach each enabled interface: the commands a person runs, under the
-/// gateway and workspace selection that the interface guide describes. Only
-/// the person's own retrieval command discloses a token. A terminal interface
-/// is opened by running its launcher in the sandbox; it has no forward or
-/// token.
-fn interface_access(result: &OperationResult) -> String {
+/// gateway and workspace selection, unless the agents' section printed it.
+/// Only the person's own retrieval command discloses a token. A terminal
+/// interface is opened by running its launcher in the sandbox; it has no
+/// forward or token.
+fn interface_access(result: &OperationResult, selected: bool) -> String {
     use nemoclaw_sdk::SignIn;
     let mut output = String::from("\nAgent interfaces:\n");
-    if let Some(connection) = &result.connection {
-        output.push_str("  In each terminal, select this deployment's gateway and workspace:\n");
-        let endpoint = terminal_text(&connection.gateway_endpoint);
-        if connection.plaintext_loopback() {
-            output.push_str(&format!(
-                "    unset OPENSHELL_GATEWAY\n    export OPENSHELL_GATEWAY_ENDPOINT={endpoint}\n"
-            ));
-        } else {
-            output.push_str(&format!(
-                "    unset OPENSHELL_GATEWAY_ENDPOINT\n    export OPENSHELL_GATEWAY=REPLACE_WITH_PROFILE_NAME  # your profile for {endpoint}\n"
-            ));
-        }
-        output.push_str(&format!(
-            "    export OPENSHELL_WORKSPACE={}\n",
-            terminal_text(&connection.workspace)
-        ));
+    if !selected && let Some(connection) = &result.connection {
+        output.push_str(&gateway_selection(connection));
     }
     for access in &result.interfaces {
         let sandbox = terminal_text(&access.sandbox);
@@ -604,12 +654,12 @@ fn interface_access(result: &OperationResult) -> String {
         .partition(|access| access.sign_in == SignIn::SandboxExec);
     if !others.is_empty() {
         output.push_str(
-            "  The agent's own tools can read these tokens and reach these ports; see docs/interfaces.md.\n",
+            "  The agent's own tools can read these tokens and reach these ports; see docs/agents-inference/interfaces.md.\n",
         );
     }
     if !launchers.is_empty() {
         output.push_str(
-            "  The agent's own tools can change a terminal launcher, and a terminal session's agent server listens in the sandbox without authentication; see docs/interfaces.md.\n",
+            "  The agent's own tools can change a terminal launcher, and a terminal session's agent server listens in the sandbox without authentication; see docs/agents-inference/interfaces.md.\n",
         );
     }
     output
@@ -697,7 +747,7 @@ pub(crate) fn render_error(
             "Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.",
         )),
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
-            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/inference.md#set-container-limits-and-update-policy."
+            "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/agents-inference/inference.md#set-container-limits-and-update-policy."
         ))),
         _ => None,
     };
@@ -848,6 +898,10 @@ mod tests {
         }
         // Only the two interfaces with a token get a command that reads one.
         assert_eq!(text.matches("sandbox exec").count(), 2, "{text}");
+        assert!(
+            text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
+            "{text}"
+        );
         let machine: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
             result,
@@ -910,6 +964,10 @@ mod tests {
             assert!(!text.contains(absent), "unexpected {absent:?}:\n{text}");
         }
         assert!(text.contains("change a terminal launcher"), "{text}");
+        assert!(
+            text.contains("without authentication; see docs/agents-inference/interfaces.md."),
+            "{text}"
+        );
         let machine: Value = serde_json::from_str(&render(
             &["nemoclaw", "apply", "deployment.yaml", "-o", "json"],
             result,
@@ -926,6 +984,74 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("--tty"), "{text}");
+    }
+
+    fn agents() -> Value {
+        json!({
+            "assistant": {"agent": "main", "runtimeId": "rt-1"},
+            "reviewer": {"agent": "critic"}
+        })
+    }
+
+    /// Plan and apply print the command that invokes each agent with a recorded
+    /// runtime, under this deployment's gateway and workspace selection, and
+    /// say which agent has none; JSON carries the same facts under `agents`.
+    #[test]
+    fn plan_and_apply_output_tells_how_to_invoke_each_agent() {
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
+        for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
+            let result = json!({"outcome": outcome, "changes": [], "connection": connection, "agents": agents()});
+            let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
+            let lines: Vec<String> = text
+                .lines()
+                .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect();
+            for expected in [
+                "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671",
+                "export OPENSHELL_WORKSPACE=nc-1234567890abcdef",
+                "Invoke: openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent main --runtime-id rt-1 --input FILE",
+                "reviewer: agent critic, no runtime recorded",
+            ] {
+                assert!(
+                    lines.iter().any(|line| line == expected),
+                    "{command}: missing {expected:?}:\n{text}"
+                );
+            }
+            assert_eq!(
+                text.matches("fabric-agent-ctl invoke").count(),
+                1,
+                "{command}: only the agent with a runtime is invocable:\n{text}"
+            );
+            assert!(
+                text.contains("reads it from stdin; see docs/agents-inference/agents.md."),
+                "{command}: {text}"
+            );
+            let machine: Value = serde_json::from_str(&render(
+                &["nemoclaw", command, "deployment.yaml", "-o", "json"],
+                result,
+            ))
+            .unwrap();
+            assert_eq!(machine["agents"], agents(), "{command}");
+        }
+    }
+
+    /// Agents and interfaces share one gateway and workspace selection.
+    #[test]
+    fn apply_output_selects_the_gateway_once_for_agents_and_interfaces() {
+        let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
+        let result = json!({"outcome": "succeeded", "changes": [], "connection": connection,
+            "agents": agents(), "interfaces": interfaces()});
+        let text = render(&["nemoclaw", "apply", "deployment.yaml"], result);
+        assert_eq!(
+            text.matches("export OPENSHELL_WORKSPACE=").count(),
+            1,
+            "{text}"
+        );
+        assert!(text.contains("--runtime-id rt-1"), "{text}");
+        assert!(
+            text.contains("openshell forward service assistant"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1338,7 +1464,7 @@ mod tests {
             let help = json["help"].as_str().unwrap();
             for expected in [
                 "spec.services.qwen.updatePolicy: Recreate",
-                "docs/inference.md#set-container-limits-and-update-policy",
+                "docs/agents-inference/inference.md#set-container-limits-and-update-policy",
             ] {
                 assert!(help.contains(expected), "missing {expected}: {help}");
             }

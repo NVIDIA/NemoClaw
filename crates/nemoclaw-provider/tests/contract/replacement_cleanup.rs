@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! How pinned OpenTofu and the bundled Docker provider report a container
 //! replacement whose cleanup is unfinished. OpenTofu and the provider own that
-//! cleanup (`docs/provider.md`), so this test pins only the plans and state the
+//! cleanup (`docs/references/provider.md`), so this test pins only the plans and state the
 //! SDK reads. The SDK's `replacement_cleanup` test drives `Deployment` with
 //! canned copies of these shapes, so a change here must change it too.
 
