@@ -33,6 +33,7 @@ test -n "$pid"
 import asyncio
 import base64
 import hashlib
+import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import version
 import json
@@ -127,7 +128,8 @@ assert {str(p.relative_to(bundle)) for p in bundle.rglob('*') if p.is_file()} ==
     'notices/protocol/LICENSE', 'notices/protocol/NOTICE',
     'notices/switchyard-translation/LICENSE', 'notices/switchyard-translation/NOTICE',
 }
-for entry in [*bundle.parents, bundle, *bundle.rglob('*')]:
+for entry in [*bundle.parents, bundle, *bundle.rglob('*'),
+              Path('/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py')]:
     assert not entry.is_symlink(), entry
     assert entry.stat().st_uid == 0, entry
     assert entry.stat().st_mode & 0o022 == 0, entry
@@ -219,10 +221,22 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
 
         result = asyncio.run(execute_switchyard_route())
         assert result['choices'][0]['message']['content'] == 'routed-efficient'
-        assert len(capable.calls) == 1
+        # Exercise the shipped qualification consumer against native marks and accounting.
+        # The local endpoints substitute only fixture transport, not the classifier or Relay API.
+        runtime.shutdown()
+        runtime = None
+        spec = importlib.util.spec_from_file_location(
+            'judge_qualification', '/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py')
+        qualification = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(qualification)
+        qualification.PLUGINS_PATH = str(config)
+        qualification.qualify(
+            ('fixture-capable', 'fixture-efficient', 'fixture-capable'),
+            relay=nemo_relay, runtime_factory=relay_runtime.RelayRuntime)
+        assert len(capable.calls) == 2
         assert capable.calls[0]['model'] == 'fixture-capable'
         assert capable.calls[0]['response_format']['type'] == 'json_schema'
-        assert len(efficient.calls) == 1
+        assert len(efficient.calls) == 2
         assert efficient.calls[0]['model'] == 'fixture-efficient'
         assert state.read_bytes() == state_before
     finally:

@@ -22,8 +22,12 @@ The clean Hermes root-entrypoint scenario also owns the Switchyard package's rea
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
 native loading and cleanup on the image's architecture. The isolated process loads the
-production-generated adaptive deployment with local upstream fixtures. It sends one request
+production-generated adaptive deployment with local upstream fixtures. It sends a request
 through the `switchyard` route and requires the classifier to select the efficient target.
+It then runs the shipped judge qualifier against native routing marks and separate
+judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
+cleanup, and both gateway launch gates. The image probe does not qualify real provider credentials
+or the root-owned production routing files; those remain part of assembled routing E2E.
 The probe does not call external providers or change the supervised gateway.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.

@@ -16,6 +16,8 @@ import {
   type HermesSwitchyardRoutingIntent,
   validateHermesSwitchyardRoutingIntent,
   switchyardClientProfile,
+  switchyardJudgeSelection,
+  switchyardPhysicalProviders,
 } from "../../hermes-switchyard-routing";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
 import { fixedNativeProvider } from "../../inference/native-provider/fixed";
@@ -112,7 +114,7 @@ export async function observeSwitchyardProviderBindings(
   input: ObserveBindingsInput,
 ): Promise<SwitchyardProviderBindings> {
   const routing = validateHermesSwitchyardRoutingIntent(input.routing);
-  const logicalProviders = [...new Set([routing.efficient.provider, routing.capable.provider])];
+  const logicalProviders = switchyardPhysicalProviders(routing);
   const names = logicalProviders.map((provider) => input.providerNames[provider]);
   if (
     Object.keys(input.providerNames).length !== logicalProviders.length ||
@@ -140,7 +142,11 @@ export async function observeSwitchyardProviderBindings(
       providers,
       efficient: role(routing.efficient),
       capable,
-      judge: { ...capable, mode: routing.judge.mode, target: routing.judge.target },
+      judge: {
+        ...role(switchyardJudgeSelection(routing)),
+        mode: routing.judge.mode,
+        target: routing.judge.target,
+      },
     },
     routing,
   );

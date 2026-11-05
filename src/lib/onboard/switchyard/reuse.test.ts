@@ -72,7 +72,7 @@ function entry(routing: HermesSwitchyardRoutingIntent | null) {
   } satisfies SandboxEntry;
 }
 
-async function readyReuseFixture() {
+async function readyReuseFixture(options: { sandboxState?: string; recreate?: boolean } = {}) {
   const fixture = createSwitchyardProviderFixture(ROUTING, "nemoclaw", "hermes");
   const { bindings } = await fixture.setup();
   const session = createSession({ sandboxName: "hermes", agent: "hermes" });
@@ -95,7 +95,7 @@ async function readyReuseFixture() {
   };
   const { deps, calls } = createDeps(
     {
-      getSandboxReuseState: () => "ready",
+      getSandboxReuseState: () => options.sandboxState ?? "ready",
       getSandboxRegistryEntry: () => recorded,
       getSandboxRecreateObservation: journal.observe,
     },
@@ -112,6 +112,7 @@ async function readyReuseFixture() {
         sandboxName: "hermes",
         gatewayName: "nemoclaw",
         agent: { name: "hermes" },
+        recreateSandbox: () => options.recreate ?? false,
         provider: ROUTING.capable.provider,
         model: ROUTING.capable.model,
         endpointUrl: "https://api.openai.com/v1",
@@ -121,6 +122,26 @@ async function readyReuseFixture() {
 }
 
 describe("Hermes Switchyard sandbox reuse", () => {
+  it.each(["ready", "not_ready", "missing"])(
+    "rejects recreation of a %s routed sandbox before lifecycle effects (#13863)",
+    async (sandboxState) => {
+      const { fixture, calls, recorded, reuse } = await readyReuseFixture({
+        sandboxState,
+        recreate: true,
+      });
+      const before = structuredClone(recorded);
+      vi.clearAllMocks();
+      await expect(reuse()).rejects.toThrow("new sandbox name");
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+      expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+      expect(Object.values(fixture.methods).every((method) => method.mock.calls.length === 0)).toBe(
+        true,
+      );
+      expect(recorded).toEqual(before);
+    },
+  );
+
   it("rejects Ready sandbox reuse before provider access or reservation finalization (#13863)", async () => {
     const { fixture, calls, recorded, reuse } = await readyReuseFixture();
     const before = structuredClone(recorded);
@@ -218,16 +239,98 @@ describe("Hermes Switchyard sandbox reuse", () => {
     expect(updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("preserves ordinary sandbox reuse with routing disabled (#13863)", () => {
+  it.each(["ready", "not_ready", "missing"])(
+    "preserves ordinary recreation of a %s sandbox with routing disabled (#13863)",
+    (sandboxState) => {
+      expect(() =>
+        assertHermesSwitchyardRoutingReusable({
+          agentName: "hermes",
+          entry: entry(null),
+          env: {},
+          recreate: true,
+          sandboxState,
+        }),
+      ).not.toThrow();
+    },
+  );
+
+  it.each([undefined, "other-session"])(
+    "requires matching fresh binding ownership and routing when session=%s (#13863)",
+    (reservationSessionId) => {
+      const sandbox: SandboxEntry = {
+        name: "hermes",
+        agent: "hermes",
+        pendingRouteReservation: true,
+        reservationSessionId: "current-session",
+        hermesSwitchyard: { routing: ROUTING, bindings: switchyardBindingFixture(ROUTING) },
+      };
+      const before = structuredClone(sandbox);
+      const input = {
+        agentName: "hermes",
+        entry: sandbox,
+        env: environment(ROUTING),
+        recreate: false,
+        sandboxState: "missing",
+        reservationSessionId,
+      };
+      expect(() => assertHermesSwitchyardRoutingReusable(input)).toThrow("new sandbox name");
+      expect(sandbox).toEqual(before);
+    },
+  );
+
+  it("accepts an owned fresh reservation only with matching routing (#13863)", () => {
+    const sandbox: SandboxEntry = {
+      name: "hermes",
+      agent: "hermes",
+      pendingRouteReservation: true,
+      reservationSessionId: "current-session",
+      hermesSwitchyard: { routing: ROUTING, bindings: switchyardBindingFixture(ROUTING) },
+    };
+    const before = structuredClone(sandbox);
+    const input = {
+      agentName: "hermes",
+      entry: sandbox,
+      env: environment(ROUTING),
+      recreate: false,
+      sandboxState: "missing",
+      reservationSessionId: "current-session",
+    };
+    expect(() => assertHermesSwitchyardRoutingReusable(input)).not.toThrow();
+    const changed = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: ROUTING.efficient.provider, model: "changed-efficient-model" },
+      capable: ROUTING.capable,
+    });
+    expect(() =>
+      assertHermesSwitchyardRoutingReusable({ ...input, env: environment(changed) }),
+    ).toThrow("new sandbox name");
+    expect(sandbox).toEqual(before);
+  });
+
+  it("allows fresh routed creation without a recorded sandbox (#13863)", () => {
     expect(() =>
       assertHermesSwitchyardRoutingReusable({
         agentName: "hermes",
-        entry: entry(null),
-        env: {},
+        entry: null,
+        env: environment(ROUTING),
         recreate: false,
-        sandboxState: "ready",
+        sandboxState: "missing",
       }),
     ).not.toThrow();
+  });
+
+  it("rejects replacing a recorded routed sandbox with another agent (#13863)", () => {
+    expect(() =>
+      assertHermesSwitchyardRoutingReusable({
+        agentName: "openclaw",
+        entry: {
+          ...entry(ROUTING),
+          hermesSwitchyard: { routing: ROUTING, bindings: switchyardBindingFixture(ROUTING) },
+        },
+        env: {},
+        recreate: true,
+        sandboxState: "ready",
+      }),
+    ).toThrow("new sandbox name");
   });
 
   it("rejects matching routed profiles until provider reuse is supported (#13863)", () => {
@@ -284,7 +387,10 @@ describe("Hermes Switchyard sandbox reuse", () => {
     };
     expect(() => assertHermesSwitchyardRoutingReusable(input)).toThrow("new sandbox name");
     expect(sandbox).toEqual(before);
-    expect(() => assertHermesSwitchyardRoutingReusable({ ...input, recreate: true })).not.toThrow();
+    expect(() => assertHermesSwitchyardRoutingReusable({ ...input, recreate: true })).toThrow(
+      "new sandbox name",
+    );
+    expect(sandbox).toEqual(before);
   });
 
   it("rejects an unreadable stored profile before reuse (#13862)", () => {

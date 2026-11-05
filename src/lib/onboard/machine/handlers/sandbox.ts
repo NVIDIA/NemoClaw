@@ -842,6 +842,7 @@ class SandboxStateFlow<
       env: this.options.env,
       recreate: this.options.recreateSandbox(false),
       sandboxState: sandboxReuseState,
+      reservationSessionId: state.session?.sessionId,
     });
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,

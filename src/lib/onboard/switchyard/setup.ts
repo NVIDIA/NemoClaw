@@ -9,6 +9,7 @@ import {
   type HermesSwitchyardRoutingIntent,
   validateHermesSwitchyardRoutingIntent,
   readHermesSwitchyardRoutingEnvironment,
+  switchyardPhysicalProviders,
 } from "../../hermes-switchyard-routing";
 import {
   type SwitchyardProviderBindings,
@@ -163,7 +164,7 @@ export async function prepareSwitchyardProviders(input: {
     .update(JSON.stringify([input.gatewayName, input.sandboxName]))
     .digest("hex")
     .slice(0, 24);
-  const selections = [...new Set([routing.efficient.provider, routing.capable.provider])];
+  const selections = switchyardPhysicalProviders(routing);
   const definitions = selections.map((provider, index) => ({
     ...switchyardProviderDefinition(provider),
     providerName: `nemoclaw-sy-${identity}-${index}`,

@@ -114,6 +114,22 @@ export async function verifySwitchyardAttachmentAfterCreate(
   });
 }
 
+/** Keep the workload held until its native provider attachments have been verified. */
+export async function runWithVerifiedSwitchyardAttachments<T>(
+  sandboxName: string,
+  input: ProviderPreparationInput,
+  deps: ProviderPreparationDeps,
+  revalidateSandboxIdentity: (operation: string) => void,
+  activate: () => T,
+): Promise<T> {
+  if (input.hermesSwitchyard) {
+    revalidateSandboxIdentity("verify Switchyard providers before managed startup");
+    await verifySwitchyardAttachmentAfterCreate(sandboxName, input, deps);
+    revalidateSandboxIdentity("activate verified Switchyard provider attachments");
+  }
+  return activate();
+}
+
 function expectedMessagingBindings(input: ProviderPreparationInput) {
   return new Map(
     input.messagingProviderRequests

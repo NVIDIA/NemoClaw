@@ -208,7 +208,7 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     }),
     "switchyard-config": Flags.string({
       description:
-        "Configure adaptive Hermes routing from high-level efficient and capable provider/model selections",
+        "Configure adaptive Hermes routing from efficient/capable selections and an optional dedicated judge",
     }),
     [NOTICE_ACCEPT_FLAG_NAME]: Flags.boolean({
       description: "Accept the third-party software notice",

@@ -15,7 +15,7 @@ import {
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
-  assertSwitchyardProviderEnvironment,
+  assertSwitchyardRootApplyEnvironment,
   readHermesSwitchyardRoutingEnvironment,
   readSwitchyardProviderBindingsEnvironment,
   serializeHermesSwitchyardRouting,
@@ -1758,7 +1758,7 @@ export async function applyManagedStartupImageProfile(
   }
   if (profile.agentConfig.agent === "hermes" && profile.agentConfig.switchyardRouting) {
     if (!profile.agentConfig.switchyardBindings) fail("Switchyard provider bindings are missing");
-    assertSwitchyardProviderEnvironment(env, {
+    assertSwitchyardRootApplyEnvironment(env, {
       routing: profile.agentConfig.switchyardRouting,
       bindings: profile.agentConfig.switchyardBindings,
     });

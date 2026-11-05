@@ -122,6 +122,7 @@ COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw
 COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py
 COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
+COPY --chmod=0444 agents/hermes/qualify-switchyard-judge.py /opt/nemoclaw-hermes-config/qualify-switchyard-judge.py
 COPY agents/hermes/migrate-dashboard-state.py /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py
 COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py

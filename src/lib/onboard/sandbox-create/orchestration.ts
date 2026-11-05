@@ -100,6 +100,7 @@ import {
   verifyNativeNvidiaAttachmentAfterCreate,
   validateAttachedSwitchyardProvidersBeforeSandboxCreation,
   verifySwitchyardAttachmentAfterCreate,
+  runWithVerifiedSwitchyardAttachments,
 } from "./provider-publication";
 import {
   materializeRebuildPolicyHandoff,
@@ -2458,6 +2459,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         env: process.env,
         recreate: isRecreateSandbox(createIntent?.recreate),
         sandboxState: existingSandboxState,
+        reservationSessionId: inferenceRouteReservationAuthority?.sessionId,
       });
       const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
       let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
@@ -3482,31 +3484,37 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   let managedStartupTransaction: ProviderManagedStartupTransaction | null;
                   const progress: { phase: "apply" | "commit" | "release" } = { phase: "apply" };
                   try {
-                    managedStartupTransaction =
-                      managedWorkloadOnboard.completeProviderManagedStartup(
-                        {
-                          runtimeProvider: managedStartupRuntimeProvider,
-                          sandboxName,
-                          sandboxId: identity.sandboxId,
-                          bootstrapIdentity: managedBootstrapIdentity,
-                          request: managedStartupRootApplyRequest,
-                          ...(expectedContainerId ? { expectedContainerId } : {}),
-                        },
-                        {
-                          onApplied(transaction) {
-                            managedStartupProtocol = transaction?.protocol ?? "identity-bound";
-                            console.log("  ✓ Applied the managed startup profile");
+                    managedStartupTransaction = await runWithVerifiedSwitchyardAttachments(
+                      sandboxName,
+                      providerPreparationInput,
+                      providerPreparationDeps,
+                      context.revalidateSandboxIdentity,
+                      () =>
+                        managedWorkloadOnboard.completeProviderManagedStartup(
+                          {
+                            runtimeProvider: managedStartupRuntimeProvider,
+                            sandboxName,
+                            sandboxId: identity.sandboxId,
+                            bootstrapIdentity: managedBootstrapIdentity,
+                            request: managedStartupRootApplyRequest,
+                            ...(expectedContainerId ? { expectedContainerId } : {}),
                           },
-                          onPhase(phase) {
-                            progress.phase = phase;
-                            if (phase === "commit")
-                              console.log("  Committing managed startup shared state...");
-                            if (phase === "release")
-                              console.log("  ✓ Committed managed startup shared state");
+                          {
+                            onApplied(transaction) {
+                              managedStartupProtocol = transaction?.protocol ?? "identity-bound";
+                              console.log("  ✓ Applied the managed startup profile");
+                            },
+                            onPhase(phase) {
+                              progress.phase = phase;
+                              if (phase === "commit")
+                                console.log("  Committing managed startup shared state...");
+                              if (phase === "release")
+                                console.log("  ✓ Committed managed startup shared state");
+                            },
                           },
-                        },
-                        managedWorkloadOnboard,
-                      );
+                          managedWorkloadOnboard,
+                        ),
+                    );
                   } catch (error) {
                     const prefix = {
                       apply: "Managed startup root apply failed",

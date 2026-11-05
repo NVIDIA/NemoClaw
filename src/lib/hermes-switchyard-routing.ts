@@ -72,10 +72,12 @@ export interface HermesSwitchyardRoutingIntent {
   readonly routeId: typeof HERMES_SWITCHYARD_ROUTE_ID;
   readonly efficient: HermesSwitchyardTargetSelection;
   readonly capable: HermesSwitchyardTargetSelection;
-  readonly judge: {
-    readonly mode: "reuse-capable";
-    readonly target: "capable";
-  };
+  readonly judge:
+    | { readonly mode: "reuse-capable"; readonly target: "capable" }
+    | (HermesSwitchyardTargetSelection & {
+        readonly mode: "dedicated";
+        readonly target: "judge";
+      });
 }
 
 export interface SerializedHermesSwitchyardRouting {
@@ -169,31 +171,74 @@ export function validateHermesSwitchyardRoutingIntent(
   if (efficient.model === capable.model) {
     fail("efficient and capable must select different model IDs");
   }
-  const judge = record(routing.judge, "routing.judge");
-  rejectUnknownKeys(judge, new Set(["mode", "target"]), "routing.judge");
-  if (judge.mode !== "reuse-capable" || judge.target !== "capable") {
-    fail("judge must explicitly reuse the capable target");
+  const requestedJudge = record(routing.judge, "routing.judge");
+  let judge: HermesSwitchyardRoutingIntent["judge"];
+  if (requestedJudge.mode === "dedicated") {
+    rejectUnknownKeys(
+      requestedJudge,
+      new Set(["mode", "target", "provider", "model"]),
+      "routing.judge",
+    );
+    if (requestedJudge.target !== "judge") fail("routing.judge.target must be judge");
+    const selection = target(
+      { provider: requestedJudge.provider, model: requestedJudge.model },
+      "routing.judge",
+    );
+    if (selection.model === capable.model || selection.model === efficient.model)
+      fail("routing.judge must select a dedicated model ID");
+    judge = { mode: "dedicated", target: "judge", ...selection };
+  } else {
+    rejectUnknownKeys(requestedJudge, new Set(["mode", "target"]), "routing.judge");
+    if (requestedJudge.mode !== "reuse-capable" || requestedJudge.target !== "capable")
+      fail("routing.judge must reuse capable or select a dedicated judge");
+    judge = { mode: "reuse-capable", target: "capable" };
   }
   return {
     schemaVersion: HERMES_SWITCHYARD_ROUTING_SCHEMA_VERSION,
     routeId: HERMES_SWITCHYARD_ROUTE_ID,
     efficient,
     capable,
-    judge: { mode: "reuse-capable", target: "capable" },
+    judge,
   };
 }
 
 export function createHermesSwitchyardRoutingIntent(input: {
   readonly efficient: unknown;
   readonly capable: unknown;
+  readonly judge?: unknown;
 }): HermesSwitchyardRoutingIntent {
   return validateHermesSwitchyardRoutingIntent({
     schemaVersion: HERMES_SWITCHYARD_ROUTING_SCHEMA_VERSION,
     routeId: HERMES_SWITCHYARD_ROUTE_ID,
     efficient: input.efficient,
     capable: input.capable,
-    judge: { mode: "reuse-capable", target: "capable" },
+    judge:
+      input.judge === undefined
+        ? { mode: "reuse-capable", target: "capable" }
+        : { mode: "dedicated", target: "judge", ...target(input.judge, "routing.judge") },
   });
+}
+
+/** Preserve the judge's logical role when it shares a target's physical provider. */
+export function switchyardJudgeSelection(
+  routing: HermesSwitchyardRoutingIntent,
+): HermesSwitchyardTargetSelection {
+  return routing.judge.mode === "dedicated"
+    ? { provider: routing.judge.provider, model: routing.judge.model }
+    : routing.capable;
+}
+
+/** One native provider per fixed credential and endpoint boundary, not per model role. */
+export function switchyardPhysicalProviders(
+  routing: HermesSwitchyardRoutingIntent,
+): readonly HermesSwitchyardProvider[] {
+  return [
+    ...new Set([
+      routing.efficient.provider,
+      routing.capable.provider,
+      switchyardJudgeSelection(routing).provider,
+    ]),
+  ];
 }
 
 export function encodeHermesSwitchyardRoutingIntent(value: HermesSwitchyardRoutingIntent): string {
@@ -308,7 +353,7 @@ function tomlStringMap(value: Readonly<Record<string, string>>): string {
 }
 
 function clientAndTargetToml(
-  role: "efficient" | "capable",
+  role: "efficient" | "capable" | "judge",
   selection: HermesSwitchyardTargetSelection,
   bindings: SwitchyardProviderBindings,
 ): string[] {
@@ -358,11 +403,14 @@ export function serializeHermesSwitchyardRouting(
     "",
     ...clientAndTargetToml("efficient", routing.efficient, bindings),
     ...clientAndTargetToml("capable", routing.capable, bindings),
+    ...(routing.judge.mode === "dedicated"
+      ? clientAndTargetToml("judge", switchyardJudgeSelection(routing), bindings)
+      : []),
     `[routes.${routing.routeId}]`,
     `id = ${tomlString(routing.routeId)}`,
     'type = "llm_classifier"',
     'mode = "capability"',
-    'classifier_target = "capable"',
+    `classifier_target = ${tomlString(routing.judge.target)}`,
     'strong_target = "capable"',
     'weak_target = "efficient"',
     "base_threshold = 0.5",
@@ -431,8 +479,8 @@ export interface SwitchyardProviderBindings {
   readonly efficient: SwitchyardTargetBinding;
   readonly capable: SwitchyardTargetBinding;
   readonly judge: SwitchyardTargetBinding & {
-    readonly mode: "reuse-capable";
-    readonly target: "capable";
+    readonly mode: HermesSwitchyardRoutingIntent["judge"]["mode"];
+    readonly target: HermesSwitchyardRoutingIntent["judge"]["target"];
   };
 }
 
@@ -487,7 +535,7 @@ export function validateSwitchyardProviderBindings(
     "capable",
     "judge",
   ]);
-  const logicalProviders = [...new Set([routing.efficient.provider, routing.capable.provider])];
+  const logicalProviders = switchyardPhysicalProviders(routing);
   if (
     bindings.schemaVersion !== 1 ||
     !Array.isArray(bindings.providers) ||
@@ -563,11 +611,14 @@ export function validateSwitchyardProviderBindings(
   const efficient = role("efficient");
   const capable = role("capable");
   const judge = bindingRecord(bindings.judge, ["providerId", "model", "mode", "target"]);
+  const judgeSelection = switchyardJudgeSelection(routing);
+  const judgeProvider = providers.find((p) => p.logicalProvider === judgeSelection.provider);
   if (
+    !judgeProvider ||
     judge.mode !== routing.judge.mode ||
     judge.target !== routing.judge.target ||
-    judge.providerId !== capable.providerId ||
-    judge.model !== capable.model
+    judge.providerId !== judgeProvider.providerId ||
+    judge.model !== judgeSelection.model
   )
     return failBinding();
   return {
@@ -575,7 +626,12 @@ export function validateSwitchyardProviderBindings(
     providers,
     efficient,
     capable,
-    judge: { ...capable, ...routing.judge },
+    judge: {
+      providerId: judgeProvider.providerId,
+      model: judgeSelection.model,
+      mode: routing.judge.mode,
+      target: routing.judge.target,
+    },
   };
 }
 
@@ -607,22 +663,16 @@ export function readSwitchyardProviderBindingsEnvironment(
   return validateSwitchyardProviderBindings(parsed, routing);
 }
 
-/** Do not replace gateway-issued references with host keys or unscoped aliases. */
-export function assertSwitchyardProviderEnvironment(
+/** OpenShell injects workload references; root setup must not supply credential values or handles. */
+export function assertSwitchyardRootApplyEnvironment(
   env: Readonly<NodeJS.ProcessEnv>,
   state: SwitchyardBindingState,
 ): void {
   const validated = validateSwitchyardBindingState(state);
   for (const provider of validated.bindings.providers) {
-    const handle = env[provider.credentialEnv];
-    if (
-      !handle ||
-      !new RegExp(`^openshell:resolve:env:s[a-f0-9]{64}_${provider.credentialEnv}$`, "u").test(
-        handle,
-      )
-    )
+    if (env[provider.credentialEnv] !== undefined)
       throw new SwitchyardProviderBindingError(
-        "a required endpoint-scoped credential placeholder is missing or invalid.",
+        "managed startup must not supply provider credentials or credential placeholders.",
       );
   }
 }

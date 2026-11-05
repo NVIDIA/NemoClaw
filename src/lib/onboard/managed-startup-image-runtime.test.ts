@@ -905,4 +905,46 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
   });
+
+  it("applies a routed root request without transporting workload credential references (#13863)", async () => {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+      capable: { provider: "openai-api", model: "gpt-5" },
+    });
+    const base = managedStartupE2eProfile("hermes");
+    const profile = {
+      ...base,
+      agentConfig: {
+        agent: "hermes" as const,
+        webSearch: { enabled: false, provider: "tavily" as const },
+        switchyardRouting: routing,
+        switchyardBindings: switchyardBindingFixture(routing),
+      },
+    };
+    const request = createManagedStartupRootApplyRequest({
+      agent: "hermes",
+      encodedProfile: encodeManagedStartupProfile(profile),
+    });
+    mockRootReplayFilesystem([]);
+    vi.spyOn(process, "geteuid").mockReturnValue(0);
+    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
+      true,
+    );
+    const coordinatorFailure = new Error("coordinator boundary reached");
+    coordinatorMock.coordinateManagedStartupApplication.mockRejectedValue(coordinatorFailure);
+
+    await expect(
+      applyManagedStartupRootRequest(request, {
+        NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+        OPENAI_API_KEY: `openshell:resolve:env:s${"a".repeat(64)}_OPENAI_API_KEY`,
+      }),
+    ).rejects.toBe(coordinatorFailure);
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(1);
+    const applicationInput = coordinatorMock.coordinateManagedStartupApplication.mock.calls[0][0];
+    expect(applicationInput).toMatchObject({
+      encodedProfile: request.encodedProfile,
+      expectedAgent: "hermes",
+    });
+    expect(JSON.stringify(applicationInput)).not.toContain("openshell:resolve:env:");
+  });
 });

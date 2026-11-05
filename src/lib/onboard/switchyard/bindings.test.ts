@@ -8,7 +8,7 @@ import {
   serializeHermesSwitchyardRouting,
 } from "../../hermes-switchyard-routing";
 import {
-  assertSwitchyardProviderEnvironment,
+  assertSwitchyardRootApplyEnvironment,
   validateSwitchyardProviderBindings,
 } from "../../hermes-switchyard-routing";
 import { observeSwitchyardProviderBindings, verifySwitchyardProviderBindings } from "./bindings";
@@ -62,6 +62,87 @@ function setupInput(
 }
 
 describe("Switchyard provider bindings", () => {
+  it.each(["anthropic-prod", "openai-api"] as const)(
+    "binds an explicit %s judge and invalidates routing after its provider is removed (#13863)",
+    async (provider) => {
+      const intent = createHermesSwitchyardRoutingIntent({
+        efficient: routing.efficient,
+        capable: routing.capable,
+        judge: { provider, model: "dedicated-judge" },
+      });
+      const f = createSwitchyardProviderFixture(intent);
+      const { bindings, verify } = await f.setup();
+      expect(bindings.providers).toHaveLength(provider === "openai-api" ? 2 : 3);
+      expect(f.methods.createProvider).toHaveBeenCalledTimes(bindings.providers.length);
+      const judgeProvider = bindings.providers.find((p) => p.logicalProvider === provider)!;
+      expect(bindings.judge).toEqual({
+        providerId: judgeProvider.providerId,
+        model: "dedicated-judge",
+        mode: "dedicated",
+        target: "judge",
+      });
+      expect(() =>
+        validateSwitchyardProviderBindings(
+          {
+            ...bindings,
+            judge: { ...bindings.judge, model: intent.capable.model },
+          },
+          intent,
+        ),
+      ).toThrow("provider state");
+      await expect(verifySwitchyardProviderBindings(verify)).resolves.toEqual(bindings);
+      f.providers.delete(judgeProvider.providerName);
+      await expect(verifySwitchyardProviderBindings(verify)).rejects.toThrow("required provider");
+      expect(f.methods.updateProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires the explicit judge credential before creating any provider (#13863)", async () => {
+    const intent = createHermesSwitchyardRoutingIntent({
+      efficient: routing.efficient,
+      capable: routing.capable,
+      judge: { provider: "anthropic-prod", model: "dedicated-judge" },
+    });
+    const f = createSwitchyardProviderFixture(intent);
+    await expect(
+      prepareSwitchyardProviders({
+        ...f.input,
+        readCredential: (key) => (key === "ANTHROPIC_API_KEY" ? null : "test-secret"),
+      }),
+    ).rejects.toThrow("ANTHROPIC_API_KEY");
+    expect(f.methods.createProvider).not.toHaveBeenCalled();
+    expect(f.methods.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("removes both new target providers when dedicated judge creation fails (#13863)", async () => {
+    const intent = createHermesSwitchyardRoutingIntent({
+      efficient: routing.efficient,
+      capable: routing.capable,
+      judge: { provider: "anthropic-prod", model: "dedicated-judge" },
+    });
+    const f = createSwitchyardProviderFixture(intent);
+    const create = f.methods.createProvider.getMockImplementation()!;
+    f.methods.createProvider
+      .mockImplementationOnce(create)
+      .mockImplementationOnce(create)
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "failed", message: "test-secret-do-not-print" },
+      });
+    const error = await prepareSwitchyardProviders(f.input).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("setup failed");
+    expect((error as Error).message).not.toContain("test-secret-do-not-print");
+    expect(f.providers.size).toBe(0);
+    expect(f.methods.deleteProvider.mock.calls.map(([request]) => request.providerName)).toEqual(
+      f.methods.createProvider.mock.calls
+        .slice(0, 2)
+        .map(([request]) => request.name)
+        .reverse(),
+    );
+    expect(f.methods.updateProvider).not.toHaveBeenCalled();
+  });
+
   it("publishes both observations through onboarding without changing a shared inference route (#13863)", async () => {
     const f = fixture();
     const environment = {
@@ -680,22 +761,31 @@ describe("Switchyard provider bindings", () => {
     "test-secret-raw",
     "openshell:resolve:env:OPENAI_API_KEY",
     "openshell:resolve:env:v1_OPENAI_API_KEY",
+    `openshell:resolve:env:s${"a".repeat(64)}_OPENAI_API_KEY`,
   ])(
-    "rejects an unscoped or raw runtime credential without printing it (#13863)",
+    "rejects root-supplied provider credentials and handles without printing them (#13863)",
     async (value) => {
       const f = fixture();
       const { bindings } = await f.setup();
-      const env = Object.fromEntries(
-        bindings.providers.map((p) => [
-          p.credentialEnv,
-          `openshell:resolve:env:s${"a".repeat(64)}_${p.credentialEnv}`,
-        ]),
-      );
-      expect(() => assertSwitchyardProviderEnvironment(env, { routing, bindings })).not.toThrow();
-      env.OPENAI_API_KEY = value;
-      expect(() => assertSwitchyardProviderEnvironment(env, { routing, bindings })).toThrow(
-        "endpoint-scoped",
-      );
+      expect(() => assertSwitchyardRootApplyEnvironment({}, { routing, bindings })).not.toThrow();
+      const failure = (() => {
+        try {
+          assertSwitchyardRootApplyEnvironment({ OPENAI_API_KEY: value }, { routing, bindings });
+        } catch (error) {
+          return error;
+        }
+      })();
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain("must not supply provider credentials");
+      expect((failure as Error).message).not.toContain(value);
     },
   );
+
+  it("rejects an empty root-supplied provider credential (#13863)", async () => {
+    const f = fixture();
+    const { bindings } = await f.setup();
+    expect(() =>
+      assertSwitchyardRootApplyEnvironment({ OPENAI_API_KEY: "" }, { routing, bindings }),
+    ).toThrow("must not supply provider credentials");
+  });
 });

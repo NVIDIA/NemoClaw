@@ -73,9 +73,21 @@ export function assertHermesSwitchyardRoutingReusable(input: {
   env: NodeJS.ProcessEnv;
   recreate: boolean;
   sandboxState: string;
+  reservationSessionId?: string | null;
 }): void {
-  if (input.agentName !== "hermes" || input.recreate || input.sandboxState !== "ready") return;
-  const desired = readHermesSwitchyardRoutingEnvironment(input.env);
+  if (input.agentName !== "hermes" && !input.entry?.hermesSwitchyard) return;
+  const desired =
+    input.agentName === "hermes" ? readHermesSwitchyardRoutingEnvironment(input.env) : null;
+  if (input.sandboxState === "missing" && !input.entry?.workload) {
+    const ownsFreshReservation =
+      input.agentName === "hermes" &&
+      input.entry?.pendingRouteReservation === true &&
+      typeof input.reservationSessionId === "string" &&
+      input.reservationSessionId.length > 0 &&
+      input.entry.reservationSessionId === input.reservationSessionId &&
+      isDeepStrictEqual(input.entry.hermesSwitchyard?.routing, desired);
+    if (!input.entry?.hermesSwitchyard || ownsFreshReservation) return;
+  }
   let recorded = null;
   const workload = input.entry?.workload;
   if (workload?.kind === "managed-image") {
