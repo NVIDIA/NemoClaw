@@ -49,7 +49,7 @@ jobs:
       e2e: ${{ needs.plan.outputs.live == 'true' }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
       hcl: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-      hcl-gpu: ${{ github.event_name != 'pull_request' }}
+      hcl-gpu: ${{ needs.plan.outputs.live == 'true' && github.event_name != 'pull_request' }}
     secrets: inherit
   darwin_arm64:
     needs: plan

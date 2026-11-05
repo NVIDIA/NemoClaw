@@ -35,11 +35,11 @@ on:
         type: string
         default: ""
       hcl:
-        description: Run the HCL E2E cases that need a model; the caller passes the inference secret.
+        description: With e2e, also run the HCL E2E cases that use NVIDIA hosted inference; the caller passes the inference secret.
         type: boolean
         default: false
       hcl-gpu:
-        description: Also run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs.
+        description: Run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
         type: boolean
         default: false
 # The live suites read the per-commit image package for images to reuse.
@@ -373,14 +373,19 @@ jobs:
       tests: ${{ needs.build.outputs.artifact }}
       bundle: ${{ needs.bundle.outputs.artifact }}
       live-images-commit: ${{ inputs.live-images-commit }}
+      hcl: ${{ inputs.hcl }}
+    # The HCL cases read NVIDIA_API_KEY.
+    secrets: inherit
 
-  # The HCL E2E cases that need a model. They build their own candidate on
-  # Linux AMD64, so only that platform's caller selects them.
-  hcl:
-    name: E2E / HCL
-    if: inputs.hcl
+  # The HCL E2E cases on the NVIDIA GPU runner, which refuses pull request
+  # jobs. Live / HCL builds them a candidate against an older glibc, which the
+  # runner can run.
+  gpu:
+    name: E2E / GPU
+    if: inputs.hcl-gpu
     uses: ./.github/workflows/hcl-e2e.yml
     with:
-      gpu: ${{ inputs.hcl-gpu }}
-    # The hosted cases read NVIDIA_API_KEY.
+      hosted: false
+      gpu: true
+    # The Ollama case reads NVIDIA_API_KEY.
     secrets: inherit
