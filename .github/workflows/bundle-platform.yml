@@ -26,17 +26,23 @@ on:
         description: JSON list of integration shard numbers; its length is the partition count.
         type: string
         default: "[1, 2]"
-      live:
-        description: Also archive the Linux live tests and build the bundle for the E2E workflow.
+      e2e:
+        description: Run the Docker and Kubernetes live suites, which need a Linux runner.
+        type: boolean
+        default: false
+      live-images-commit:
+        description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
+        type: string
+        default: ""
+      hcl:
+        description: Run the HCL E2E cases that need a model; the caller passes the inference secret.
+        type: boolean
+        default: false
+      hcl-gpu:
+        description: Also run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs.
         type: boolean
         default: false
     outputs:
-      tests:
-        description: The test inputs artifact, for the E2E workflow.
-        value: ${{ jobs.build.outputs.artifact }}
-      bundle:
-        description: The bundle artifact, for the E2E workflow.
-        value: ${{ jobs.bundle.outputs.artifact }}
       unit:
         description: success or failure.
         value: ${{ jobs.results.outputs.unit }}
@@ -46,22 +52,28 @@ on:
       integration:
         description: success, failure, or not-selected.
         value: ${{ jobs.results.outputs.integration }}
+      e2e:
+        description: success, failure, or not-selected.
+        value: ${{ jobs.results.outputs.e2e }}
+# The live suites read the per-commit image package for images to reuse.
 permissions:
   contents: read
+  packages: read
 defaults:
   run:
     shell: bash
 env:
   TEST_PLATFORM: ${{ inputs.platform }}
   CARGO_INCREMENTAL: "0"
-# Build and unit test, and Build bundle, run in parallel on separate runners;
-# the contract and integration shards start when both have uploaded their
-# artifacts. Artifact names carry the run attempt, and consumers read them from
-# the producers' outputs, so rerunning a failed shard reuses an earlier
-# attempt's artifacts. The live suites run in the E2E workflow.
+# Each job's name starts with its test layer: Unit, Contract, Integration, or
+# E2E. Unit / Build and test, and Build bundle, run in parallel on separate
+# runners; the contract, integration, and live jobs start when both have
+# uploaded their artifacts. Artifact names carry the run attempt, and consumers
+# read them from the producers' outputs, so rerunning a failed shard reuses an
+# earlier attempt's artifacts.
 jobs:
   build:
-    name: Build and unit test
+    name: Unit / Build and test
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -103,14 +115,14 @@ jobs:
       - name: Check generated configuration schema and reference
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
-        if: inputs.lifecycle || inputs.live
+        if: inputs.lifecycle || inputs.e2e
         run: cargo ci archive
       - name: Identify lifecycle artifact
-        if: inputs.lifecycle || inputs.live
+        if: inputs.lifecycle || inputs.e2e
         id: identity
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload lifecycle inputs
-        if: inputs.lifecycle || inputs.live
+        if: inputs.lifecycle || inputs.e2e
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identity.outputs.artifact }}
@@ -124,7 +136,7 @@ jobs:
 
   bundle:
     name: Build bundle
-    if: inputs.bundle || inputs.lifecycle || inputs.live
+    if: inputs.bundle || inputs.lifecycle || inputs.e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -224,7 +236,7 @@ jobs:
   # partitions, so this job enforces the binary budgets: on Linux, a binary
   # over its budget fails the Contract check.
   contract-timing:
-    name: Contract timing
+    name: Contract / Timing
     needs: [build, contract]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.contract.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
@@ -331,7 +343,7 @@ jobs:
   # partitions, so this job enforces the binary budgets: on Linux, a binary
   # over its budget fails the Integration check.
   integration-timing:
-    name: Integration timing
+    name: Integration / Timing
     needs: [build, integration]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.integration.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
@@ -360,30 +372,60 @@ jobs:
           tar -xf .build/ci/lifecycle-inputs.tar "$tool"
           "$tool" suite-timing integration .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
-  # Each layer's result for the caller's Unit, Contract, and Integration checks.
-  # A layer the plan did not select reports not-selected; a skipped job whose
-  # layer was selected, such as after a failed bundle, reports failure.
+  # The Docker and Kubernetes live suites, from this platform's test archive and
+  # bundle.
+  e2e:
+    name: E2E
+    needs: [build, bundle]
+    if: ${{ !cancelled() && inputs.e2e && needs.build.result == 'success' && needs.bundle.result == 'success' }}
+    uses: ./.github/workflows/e2e-platform.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      tests: ${{ needs.build.outputs.artifact }}
+      bundle: ${{ needs.bundle.outputs.artifact }}
+      live-images-commit: ${{ inputs.live-images-commit }}
+
+  # The HCL E2E cases that need a model. They build their own candidate on
+  # Linux AMD64, so only that platform's caller selects them.
+  hcl:
+    name: E2E / HCL
+    if: inputs.hcl
+    uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      gpu: ${{ inputs.hcl-gpu }}
+    # The hosted cases read NVIDIA_API_KEY.
+    secrets: inherit
+
+  # Each layer's result for the caller's Unit, Contract, Integration, and E2E
+  # checks. A layer the plan did not select reports not-selected; a skipped job
+  # whose layer was selected, such as after a failed bundle, reports failure.
   results:
     name: Layer results
     if: ${{ !cancelled() }}
-    needs: [build, bundle, contract, contract-timing, integration, integration-timing]
+    needs: [build, bundle, contract, contract-timing, integration, integration-timing, e2e, hcl]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       unit: ${{ steps.layers.outputs.unit }}
       contract: ${{ steps.layers.outputs.contract }}
       integration: ${{ steps.layers.outputs.integration }}
+      e2e: ${{ steps.layers.outputs.e2e }}
     steps:
       - name: Decide each layer's result
         id: layers
         env:
           SELECTED: ${{ inputs.lifecycle }}
+          E2E_SELECTED: ${{ inputs.e2e }}
+          HCL_SELECTED: ${{ inputs.hcl }}
           BUILD: ${{ needs.build.result }}
           BUNDLE: ${{ needs.bundle.result }}
           CONTRACT: ${{ needs.contract.result }}
           CONTRACT_TIMING: ${{ needs.contract-timing.result }}
           INTEGRATION: ${{ needs.integration.result }}
           INTEGRATION_TIMING: ${{ needs.integration-timing.result }}
+          E2E: ${{ needs.e2e.result }}
+          HCL: ${{ needs.hcl.result }}
         run: |
           echo "unit=$BUILD" >> "$GITHUB_OUTPUT"
           layer() {
@@ -397,3 +439,11 @@ jobs:
           }
           echo "contract=$(layer "$CONTRACT" "$CONTRACT_TIMING")" >> "$GITHUB_OUTPUT"
           echo "integration=$(layer "$INTEGRATION" "$INTEGRATION_TIMING")" >> "$GITHUB_OUTPUT"
+          e2e=not-selected
+          if [ "$E2E_SELECTED" = true ]; then
+            [ "$E2E" = success ] && e2e=success || e2e=failure
+          fi
+          if [ "$HCL_SELECTED" = true ] && [ "$e2e" != failure ]; then
+            [ "$HCL" = success ] && e2e=success || e2e=failure
+          fi
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"

@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # The Docker and Kubernetes live suites for one Linux platform, from the test
-# inputs and bundle that its Bundle platform run uploaded. CI / Bundle calls it
-# whenever the plan selects the live suites, including on pull requests, and
-# reports it in the required E2E check.
+# inputs and bundle that its Bundle platform run uploaded, which calls it as
+# that platform's E2E jobs whenever the plan selects the live suites, including
+# on pull requests. CI / Bundle reports it in the required E2E check.
 name: E2E platform
 on:
   workflow_call:

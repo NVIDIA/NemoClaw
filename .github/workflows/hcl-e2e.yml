@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # The HCL E2E cases that need a model: hosted NVIDIA inference, or vLLM and
-# Ollama on an NVIDIA GPU runner. CI / Bundle calls it, passing its secrets,
-# whenever the plan selects the live suites, and reports it in the E2E check;
+# Ollama on an NVIDIA GPU runner. CI / Bundle's Linux AMD64 platform calls it,
+# passing the secrets, whenever the plan selects the live suites, and CI /
+# Bundle reports it in the E2E check;
 # it runs the GPU cases except on pull requests, which NVIDIA's GPU runners
 # refuse. Dispatch it to run it alone.
 name: Live / HCL

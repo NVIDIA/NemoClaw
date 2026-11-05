@@ -23,6 +23,11 @@ jobs:
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
+  # Each platform runs its four test layers: Unit, Contract, Integration, and,
+  # on Linux when the plan selects the live suites, E2E. Linux AMD64 also runs
+  # the HCL E2E cases that need a model; they use the inference secret, so a
+  # fork's pull request skips them, and the ones on the NVIDIA GPU runner, which
+  # refuses pull request jobs, run on v1 pushes and manual runs.
   linux_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -31,7 +36,8 @@ jobs:
       platform: linux_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ needs.plan.outputs.live == 'true' }}
+      e2e: ${{ needs.plan.outputs.live == 'true' }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
   linux_amd64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -40,7 +46,11 @@ jobs:
       platform: linux_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ needs.plan.outputs.live == 'true' }}
+      e2e: ${{ needs.plan.outputs.live == 'true' }}
+      live-images-commit: ${{ needs.plan.outputs.live_images }}
+      hcl: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      hcl-gpu: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit
   darwin_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -61,74 +71,6 @@ jobs:
       # integration tests use a third partition to keep that path closer to
       # the other platforms.
       integration-shards: "[1, 2, 3]"
-  # The live suites, whenever the plan selects them, including on pull
-  # requests. E2E / PLATFORM runs the Docker and Kubernetes suites from the
-  # platform's test archive and bundle. E2E / HCL builds its own candidate and
-  # runs the HCL E2E cases that need a model; they use the inference secret, so
-  # a fork's pull request skips them. The cases on the NVIDIA GPU runner, which
-  # refuses pull request jobs, run on v1 pushes and manual runs.
-  e2e_hcl:
-    name: E2E / HCL
-    needs: plan
-    if: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    uses: ./.github/workflows/hcl-e2e.yml
-    with:
-      gpu: ${{ github.event_name != 'pull_request' }}
-    # The hosted cases read NVIDIA_API_KEY.
-    secrets: inherit
-  e2e_linux_arm64:
-    name: E2E / linux_arm64
-    needs: [plan, linux_arm64]
-    if: >-
-      ${{ !cancelled() && needs.linux_arm64.outputs.tests != '' && needs.linux_arm64.outputs.bundle != '' &&
-      needs.plan.outputs.live == 'true' }}
-    uses: ./.github/workflows/e2e-platform.yml
-    with:
-      runner: ubuntu-24.04-arm
-      platform: linux_arm64
-      tests: ${{ needs.linux_arm64.outputs.tests }}
-      bundle: ${{ needs.linux_arm64.outputs.bundle }}
-      live-images-commit: ${{ needs.plan.outputs.live_images }}
-  e2e_linux_amd64:
-    name: E2E / linux_amd64
-    needs: [plan, linux_amd64]
-    if: >-
-      ${{ !cancelled() && needs.linux_amd64.outputs.tests != '' && needs.linux_amd64.outputs.bundle != '' &&
-      needs.plan.outputs.live == 'true' }}
-    uses: ./.github/workflows/e2e-platform.yml
-    with:
-      runner: ubuntu-24.04
-      platform: linux_amd64
-      tests: ${{ needs.linux_amd64.outputs.tests }}
-      bundle: ${{ needs.linux_amd64.outputs.bundle }}
-      live-images-commit: ${{ needs.plan.outputs.live_images }}
-  # The E2E layer's check, required like the other three. Each live suite counts
-  # when the plan selects it; a fork's pull request skips E2E / HCL. A failed
-  # plan fails the check.
-  e2e:
-    name: E2E
-    if: ${{ !cancelled() }}
-    needs: [plan, e2e_linux_arm64, e2e_linux_amd64, e2e_hcl]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require each selected live suite
-        env:
-          PLAN: ${{ needs.plan.result }}
-          LIVE: ${{ needs.plan.outputs.live }}
-          HCL_SELECTED: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-          ARM64: ${{ needs.e2e_linux_arm64.result }}
-          AMD64: ${{ needs.e2e_linux_amd64.result }}
-          HCL: ${{ needs.e2e_hcl.result }}
-        run: |
-          test "$PLAN" = success || { echo "the plan reported $PLAN"; exit 1; }
-          if [ "$LIVE" = true ]; then
-            test "$ARM64" = success || { echo "E2E / linux_arm64 reported $ARM64"; exit 1; }
-            test "$AMD64" = success || { echo "E2E / linux_amd64 reported $AMD64"; exit 1; }
-          fi
-          if [ "$HCL_SELECTED" = true ]; then
-            test "$HCL" = success || { echo "E2E / HCL reported $HCL"; exit 1; }
-          fi
   # One required check per test layer, across every platform. A skipped,
   # cancelled, or failed platform must never become a successful check: a
   # missing result fails it. A layer the plan did not select passes.
@@ -139,7 +81,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require unit tests on every platform
+      - name: Require Unit on every platform
         env:
           RESULTS: >-
             ${{ needs.linux_arm64.outputs.unit }}
@@ -162,7 +104,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require contract tests on every platform
+      - name: Require Contract on every platform
         env:
           RESULTS: >-
             ${{ needs.linux_arm64.outputs.contract }}
@@ -185,7 +127,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require integration tests on every platform
+      - name: Require Integration on every platform
         env:
           RESULTS: >-
             ${{ needs.linux_arm64.outputs.integration }}
@@ -201,10 +143,34 @@ jobs:
               *) echo "a platform reported $result"; exit 1 ;;
             esac
           done
+  e2e:
+    name: E2E
+    if: ${{ !cancelled() }}
+    needs: [plan, linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require E2E on every platform
+        env:
+          PLAN: ${{ needs.plan.result }}
+          RESULTS: >-
+            ${{ needs.linux_arm64.outputs.e2e }}
+            ${{ needs.linux_amd64.outputs.e2e }}
+            ${{ needs.darwin_arm64.outputs.e2e }}
+            ${{ needs.windows_amd64.outputs.e2e }}
+        run: |
+          test "$PLAN" = success || { echo "the plan reported $PLAN"; exit 1; }
+          set -- $RESULTS
+          test "$#" = 4
+          for result; do
+            case "$result" in
+              success | not-selected) ;;
+              *) echo "a platform reported $result"; exit 1 ;;
+            esac
+          done
   # Keep the v1 ruleset's check names until it requires the layer checks. Each
   # platform's check covers its build, bundle, unit, contract, and integration
-  # tests, not the live suites. Each platform's shards start after its own
-  # build, not after the slowest member of a global build matrix.
+  # tests, not its live suites.
   native:
     name: Test / ${{ matrix.platform }}
     # Unlike always(), this reports a cancelled run's gates as cancelled, not failed;
@@ -219,7 +185,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require all checks for this platform
+      - name: Require this platform's unit, contract, and integration tests
         env:
-          RESULT: ${{ needs[matrix.platform].result }}
-        run: test "$RESULT" = success
+          UNIT: ${{ needs[matrix.platform].outputs.unit }}
+          CONTRACT: ${{ needs[matrix.platform].outputs.contract }}
+          INTEGRATION: ${{ needs[matrix.platform].outputs.integration }}
+        run: |
+          test "$UNIT" = success
+          for result in "$CONTRACT" "$INTEGRATION"; do
+            case "$result" in
+              success | not-selected) ;;
+              *) echo "a layer reported $result"; exit 1 ;;
+            esac
+          done
