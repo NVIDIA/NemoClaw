@@ -171,7 +171,7 @@ jobs:
           if-no-files-found: error
 
   contract:
-    name: Contract / ${{ matrix.shard }}
+    name: Contract / Tests ${{ matrix.shard }} of ${{ strategy.job-total }}
     # The bundle job runs whenever contract and integration tests do.
     if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
@@ -224,7 +224,7 @@ jobs:
   # partitions, so this job enforces the binary budgets: on Linux, a binary
   # over its budget fails the Contract check.
   contract-timing:
-    name: Contract / Timing
+    name: Contract / Timing report
     needs: [build, contract]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.contract.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}
@@ -254,7 +254,7 @@ jobs:
           "$tool" suite-timing contract .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
   integration:
-    name: Integration / ${{ matrix.shard }}
+    name: Integration / Tests ${{ matrix.shard }} of ${{ strategy.job-total }}
     # The bundle job runs whenever contract and integration tests do.
     if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
@@ -331,7 +331,7 @@ jobs:
   # partitions, so this job enforces the binary budgets: on Linux, a binary
   # over its budget fails the Integration check.
   integration-timing:
-    name: Integration / Timing
+    name: Integration / Timing report
     needs: [build, integration]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.integration.result != 'skipped' }}
     runs-on: ${{ inputs.runner }}

@@ -176,7 +176,7 @@ enum ChangedWorkflow {
     Plan,
     /// `CI / Images`.
     Images,
-    /// `Live / Docker` and `Live / Kind`.
+    /// The live suites: `E2E / Docker tests` and `E2E / Kubernetes (kind) tests`.
     Live,
     /// The `v1` commit whose pushed images the live suites can pull, or none.
     LiveImages,

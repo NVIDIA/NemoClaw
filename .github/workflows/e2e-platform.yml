@@ -41,7 +41,7 @@ jobs:
   # no image input changed since a v1 commit that pushed them, the live jobs
   # pull that commit's images instead.
   live-images:
-    name: Build live images
+    name: Build images
     if: inputs.live-images-commit == ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
@@ -76,9 +76,9 @@ jobs:
   # platform's archived test executables and bundle, load its live images, and
   # compile nothing. No required check depends on them.
   live-docker:
-    name: Live / Docker
+    name: Docker tests
     needs: [live-images]
-    # Runs after Build live images, or in its place when the plan names a v1
+    # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
     if: >-
       ${{ !cancelled() &&
@@ -103,9 +103,9 @@ jobs:
           images-commit: ${{ inputs.live-images-commit }}
 
   live-kind:
-    name: Live / Kind
+    name: Kubernetes (kind) tests
     needs: [live-images]
-    # Runs after Build live images, or in its place when the plan names a v1
+    # Runs after Build images, or in its place when the plan names a v1
     # commit's images.
     if: >-
       ${{ !cancelled() &&
