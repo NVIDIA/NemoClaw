@@ -6,7 +6,7 @@
 # and one default StorageClass installed.
 # Replace the deployment UID and every image digest before applying.
 # Write each image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

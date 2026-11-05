@@ -236,7 +236,7 @@ Write each finding in `findings.md` as:
 - **What happened:** the observed behavior against the expected, with exact inputs.
 - **Revision:** the commit, image digest, and adapter or harness version it was observed at.
 - **Evidence:** paths under $EVIDENCE.
-- **Owner:** the component that must change to resolve it, NemoClaw or an upstream one, per the upstream boundaries in docs/design/scope.md.
+- **Owner:** the component that must change to resolve it, NemoClaw or an upstream one, per the upstream boundaries in internal-docs/design/scope.md.
 - **Next step:** what would resolve it.
 ```
 

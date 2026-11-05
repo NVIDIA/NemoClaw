@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! The application-container example and the `kind: container` boundary in
-//! docs/design/container-contract.md: the example's literal connection
+//! internal-docs/design/container-contract.md: the example's literal connection
 //! settings name its own deployment, options outside the contract are refused,
 //! and export and reapply keep the authored service.
 

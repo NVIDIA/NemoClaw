@@ -9,7 +9,7 @@
 # Replace the deployment UID, the context, and the image digests before applying.
 # Set GPU_INFERENCE_API_KEY to the chart's inference key where you run nemoclaw.
 # Write the image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
 # Adapted from openclaw-ollama.yaml in NVIDIA/NemoClaw#14009 at ac69c22.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
