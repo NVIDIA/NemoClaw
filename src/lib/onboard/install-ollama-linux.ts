@@ -68,7 +68,7 @@ export function ollamaInstallerDownloadFailureMessage(
     .at(-1);
   const curlDetail = curlError
     ? redactFullWithUrls(curlError)
-        .replace(/[\x00-\x1f\x7f]/gu, " ")
+        .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ")
         .slice(0, 240)
     : "";
   const lines = [

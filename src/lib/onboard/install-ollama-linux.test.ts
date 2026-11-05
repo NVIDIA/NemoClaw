@@ -530,6 +530,19 @@ describe("installOllamaOnLinux (system)", () => {
     expect(detail?.split("curl reported:")[1]?.trim().length).toBeLessThanOrEqual(240);
   });
 
+  it("removes terminal and bidirectional controls from redacted curl errors", () => {
+    const controls =
+      "\u0085\u009b\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
+    const message = ollamaInstallerDownloadFailureMessage(
+      7,
+      `curl: (7) Failed through https://user:FAKE_PROXY_PASSWORD@proxy.example ${controls}`,
+    );
+
+    expect(message).toContain("curl reported:     curl: (7) Failed through");
+    expect(message).not.toContain("FAKE_PROXY_PASSWORD");
+    expect(message).not.toMatch(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u);
+  });
+
   it("never executes a partially transferred installer (#9698)", () => {
     let installerPath = "";
     const runCaptureExImpl = vi.fn().mockImplementation((command: readonly string[]) => {
