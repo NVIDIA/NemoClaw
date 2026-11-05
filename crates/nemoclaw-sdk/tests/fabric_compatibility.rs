@@ -758,3 +758,142 @@ fn routes_set_the_harness_provider_and_sampling() {
     assert_eq!(model["top_p"], 0.9, "{model}");
     assert_eq!(model["max_tokens"], 8192, "{model}");
 }
+
+#[test]
+fn model_tuning_rejects_fields_the_adapter_does_not_accept() {
+    let text = include_str!("../../../examples/openclaw.yaml");
+    for (authored, value) in [
+        ("maxTokens", json!(8192)),
+        ("temperature", json!(0.2)),
+        ("topP", json!(0.9)),
+    ] {
+        let mut input: serde_json::Value = serde_saphyr::from_str(text).unwrap();
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+            json!("nvidia.fabric.langchain.deepagents-code");
+        input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
+            json!({"model":"test-model", authored:value});
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("unsupported authored tuning must not reach Fabric");
+        let message = error.to_string();
+        assert!(message.contains("assistant"), "{message}");
+        assert!(
+            message.contains(&format!(
+                "spec.sandboxes[assistant].agent.inference.routes[primary].overrides.{authored}"
+            )),
+            "{message}"
+        );
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let error = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0")
+            .expect_err("planning must reject unsupported model tuning");
+        let message = error.to_string();
+        assert!(message.contains("assistant"), "{message}");
+        assert!(
+            message.contains(&format!("overrides.{authored}")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn model_extensions_cannot_bypass_adapter_tuning_acceptance() {
+    for (field, value) in [
+        ("max_tokens", json!(8192)),
+        ("temperature", json!(0.2)),
+        ("top_p", json!(0.9)),
+    ] {
+        let mut input: serde_json::Value =
+            serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+            json!("nvidia.fabric.langchain.deepagents-code");
+        input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
+            json!({"model":"test-model", "extensions": {field:value}});
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("extensions must not bypass adapter acceptance");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("overrides.extensions.{field}")),
+            "{error}"
+        );
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let error = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0")
+            .expect_err("compilation must reject unsupported extension tuning");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("overrides.extensions.{field}")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn rejected_tuning_names_the_referenced_inference_definition() {
+    for shared in [false, true] {
+        let mut input: serde_json::Value =
+            serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
+        sandbox["harness"]["kind"] = json!("nvidia.fabric.langchain.deepagents-code");
+        let mut inference = sandbox["agent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("inference")
+            .unwrap();
+        inference["routes"][0]["overrides"] = json!({"model":"test-model", "maxTokens":8192});
+        sandbox["agent"]["inferenceRef"] = json!("shared");
+        let expected = if shared {
+            input["spec"]["inferences"]["shared"] = inference;
+            "spec.inferences[shared].routes[primary].overrides.maxTokens"
+        } else {
+            sandbox["inferences"]["shared"] = inference;
+            "spec.sandboxes[assistant].inferences[shared].routes[primary].overrides.maxTokens"
+        };
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("unsupported tuning must name its declaration");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn null_sampling_extensions_remain_unset_for_adapter_acceptance() {
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
+    input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] =
+        json!("nvidia.fabric.langchain.deepagents-code");
+    input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] = json!({"model":"test-model", "extensions": {"max_tokens":null,"temperature":null,"top_p":null}});
+    let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&document, document.sandbox("assistant").unwrap())
+            .expect("Fabric treats null optional sampling fields as unset");
+    for field in ["max_tokens", "temperature", "top_p"] {
+        assert!(config["models"]["primary"][field].is_null());
+    }
+}
