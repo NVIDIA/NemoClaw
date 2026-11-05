@@ -263,9 +263,10 @@ describe("rebuild post-restore phase", () => {
         },
       );
 
+      const health = vi.spyOn(rebuildMessaging, "runMessagingHealthChecksAfterRebuild");
       const args = { ...input(), messagingPlan: plan, mcpRuntimeSelection: runtimeSelection };
       await runRebuildPostRestorePhase(args);
-
+      expect(health).toHaveBeenCalledExactlyOnceWith("alpha", plan, args.log, runtimeSelection);
       expect(run).toHaveBeenCalled();
       expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).toHaveBeenCalledOnce();
       expect(args.bail).not.toHaveBeenCalled();

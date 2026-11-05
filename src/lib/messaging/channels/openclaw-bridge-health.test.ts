@@ -68,6 +68,7 @@ describe("OpenClaw bridge health hook", () => {
     ]);
     expect(logs.join("\n")).toContain("'slack' bridge logged credential/startup warnings");
     expect(logs.join("\n")).toContain("Verify the OpenShell provider for slack");
+    expect(logs.join("\n")).toContain("authentication rejected");
     expect(logs.join("\n")).not.toContain(secret);
     expect(logs.join("\n")).not.toContain("invalid_auth");
   });
@@ -166,6 +167,7 @@ describe("OpenClaw bridge health hook", () => {
 
     expect(logs.join("\n")).toContain("credential/startup warnings");
     expect(logs.join("\n")).not.toContain("identityless canonical placeholder");
+    expect(logs.join("\n")).toContain("credential placeholder configuration problem");
     expect(logs.join("\n")).not.toContain("fake-gateway-credential");
   });
 
@@ -209,5 +211,6 @@ describe("OpenClaw bridge health hook", () => {
 
     expect(logs.join("\n")).toContain("credential/startup warnings");
     expect(logs.join("\n")).not.toContain("non-placeholder source");
+    expect(logs.join("\n")).toContain("credential placeholder configuration problem");
   });
 });

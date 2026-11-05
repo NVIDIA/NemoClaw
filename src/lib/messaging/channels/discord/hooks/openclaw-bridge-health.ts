@@ -15,6 +15,7 @@ export const DISCORD_OPENCLAW_BRIDGE_HEALTH_HOOK_HANDLER_ID = "discord.openclawB
 
 export type OpenClawDiscordConnectionState =
   | "connected"
+  | "account_disabled"
   | "auth_failed"
   | "blocked"
   | "inactive"
@@ -54,7 +55,7 @@ export async function probeOpenClawDiscordConnection(
       ? accounts.find((entry: unknown) => isObjectRecord(entry) && entry.accountId === "default")
       : undefined;
     if (!isObjectRecord(account)) return "unknown";
-    if (account.enabled === false) return "inactive";
+    if (account.enabled === false) return "account_disabled";
     if (isObjectRecord(account.probe) && account.probe.status === 401) return "auth_failed";
     if (account.lifecycle === "blocked" || account.terminalDisconnect === true) return "blocked";
     if (
@@ -91,16 +92,18 @@ export function createDiscordOpenClawBridgeHealthHookRegistration(
         return {};
       }
       const detail =
-        state === "auth_failed"
-          ? "Discord rejected the bot token."
-          : state === "blocked"
-            ? "OpenClaw reports a blocked Discord gateway."
-            : state === "inactive"
-              ? "The Discord gateway is not connected."
-              : "The Discord gateway connection could not be verified.";
-      log(`  ⚠ ${detail}`);
+        state === "account_disabled"
+          ? "The managed Discord account is disabled."
+          : state === "auth_failed"
+            ? "Discord rejected the bot token."
+            : state === "blocked"
+              ? "OpenClaw reports a blocked Discord gateway."
+              : state === "inactive"
+                ? "The Discord gateway is not connected yet; it may still be starting."
+                : "The Discord gateway connection is not verified yet.";
+      log(`  ${state === "inactive" || state === "unknown" ? "ℹ" : "⚠"} ${detail}`);
       log(
-        `    Run '${cliName()} ${options.sandboxName?.trim() || "<sandbox-name>"} channels status --channel discord' for details.`,
+        `    Run '${cliName()} ${options.sandboxName?.trim() || "<sandbox-name>"} channels status --channel discord --wait' for details.`,
       );
       return {};
     },

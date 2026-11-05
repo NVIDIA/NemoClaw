@@ -156,7 +156,33 @@ describe("manifest-owned health checks after rebuild", () => {
       status: 1,
       config: {},
       log: "invalid-output-with-secret",
-      messages: [expect.stringContaining("The Discord gateway connection could not be verified")],
+      messages: [
+        expect.stringContaining("ℹ The Discord gateway connection is not verified yet"),
+        expect.stringContaining("channels status --channel discord --wait"),
+      ],
+      forbidden: "⚠",
+      command: "openclaw channels status --channel discord --probe --json --timeout 8000",
+      timeout: 8_000,
+    },
+    {
+      channel: "discord",
+      condition: "the gateway is still connecting",
+      config: {},
+      log: '{"channelAccounts":{"discord":[{"accountId":"default","enabled":true,"configured":true,"running":true,"connected":false,"lifecycle":"recovering"}]}}',
+      messages: [
+        expect.stringContaining("ℹ The Discord gateway is not connected yet"),
+        expect.stringContaining("channels status --channel discord --wait"),
+      ],
+      forbidden: "⚠",
+      command: "openclaw channels status --channel discord --probe --json --timeout 8000",
+      timeout: 8_000,
+    },
+    {
+      channel: "discord",
+      condition: "the account is disabled",
+      config: {},
+      log: '{"channelAccounts":{"discord":[{"accountId":"default","enabled":false}]}}',
+      messages: [expect.stringContaining("⚠ The managed Discord account is disabled")],
       command: "openclaw channels status --channel discord --probe --json --timeout 8000",
       timeout: 8_000,
     },
@@ -184,7 +210,10 @@ describe("manifest-owned health checks after rebuild", () => {
       condition: "credentials are rejected",
       config: { channels: { slack: { enabled: true } } },
       log: "[channels] [slack] provider failed to start: invalid_auth fake-gateway-credential\n",
-      messages: [expect.stringContaining("'slack' bridge logged credential/startup warnings")],
+      messages: [
+        expect.stringContaining("'slack' bridge logged credential/startup warnings"),
+        expect.stringContaining("authentication rejected"),
+      ],
       forbidden: "fake-gateway-credential",
       command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
       timeout: 10_000,
@@ -212,7 +241,7 @@ describe("manifest-owned health checks after rebuild", () => {
       condition: "startup times out",
       config: { channels: { telegram: { enabled: true } } },
       log: "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled",
-      messages: [expect.stringContaining("'telegram' bridge logged credential/startup warnings")],
+      messages: [expect.stringContaining("bridge startup timed out")],
       forbidden: "bridge startup detected",
       command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
       timeout: 10_000,
@@ -261,6 +290,7 @@ describe("manifest-owned health checks after rebuild", () => {
       honorCallerTimeout: true,
     });
     expect(log.mock.calls.flat()).toEqual(expect.arrayContaining(fixture.messages));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("invalid-output-with-secret");
     expect(JSON.stringify(log.mock.calls)).not.toContain(
       fixture.forbidden ?? "invalid-output-with-secret",
     );

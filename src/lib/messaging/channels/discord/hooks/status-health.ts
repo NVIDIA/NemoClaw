@@ -132,7 +132,9 @@ function healthReport(
             ? "inactive"
             : state === "blocked"
               ? "blocked"
-              : "unknown";
+              : agent === "openclaw" && state === "account_disabled"
+                ? "account_disabled"
+                : "unknown";
   const agentName = agent === "openclaw" ? "OpenClaw" : "Hermes";
   const detail =
     verdict === "credential_rejected"
@@ -143,7 +145,9 @@ function healthReport(
           ? `The ${agentName} Discord adapter is not connected.`
           : verdict === "blocked"
             ? `${agentName} reports a blocked Discord gateway.`
-            : "Discord authentication is unverified; configuration and policy do not establish a connection.";
+            : verdict === "account_disabled"
+              ? "The managed Discord account is disabled in OpenClaw."
+              : "Discord authentication is unverified; configuration and policy do not establish a connection.";
   const sandbox =
     typeof inputs.currentSandbox === "string" && inputs.currentSandbox
       ? `'${inputs.currentSandbox.replace(/'/g, "'\\''")}'`
@@ -156,7 +160,9 @@ function healthReport(
         ? undefined
         : verdict === "blocked"
           ? `Check Discord application settings and ${agentName} gateway logs, then retry ${command} channels status --channel discord.`
-          : `Inspect ${agentName} gateway status and logs, then retry ${command} channels status --channel discord.`;
+          : verdict === "account_disabled"
+            ? `Enable the managed Discord account, then retry ${command} channels status --channel discord --wait.`
+            : `Inspect ${agentName} gateway status and logs, then retry ${command} channels status --channel discord.`;
   const report: ChannelHealthReport = {
     schemaVersion: 1,
     channel: "discord",
@@ -184,7 +190,9 @@ function healthReport(
         severity:
           verdict === "healthy"
             ? "ok"
-            : verdict === "credential_rejected" || verdict === "blocked"
+            : verdict === "credential_rejected" ||
+                verdict === "blocked" ||
+                verdict === "account_disabled"
               ? "fail"
               : "warn",
         detail,
@@ -199,9 +207,13 @@ function healthReport(
       severity: "info",
       detail: "Not tested. Discord connectivity does not verify model responses.",
     });
-    const terminal = ["unconfigured", "policy_gap", "credential_rejected", "blocked"].includes(
-      verdict,
-    );
+    const terminal = [
+      "unconfigured",
+      "policy_gap",
+      "credential_rejected",
+      "blocked",
+      "account_disabled",
+    ].includes(verdict);
     report.readiness = {
       state: verdict === "healthy" ? "ready" : terminal ? "terminal" : "waiting",
       category: policyStatusUnavailable

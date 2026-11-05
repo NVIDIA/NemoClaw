@@ -29,6 +29,13 @@ describe("OpenClaw Discord channel status", () => {
   it.each([
     ["the gateway is connected", 0, openClawDiscordStatus(), "healthy", "ready"],
     [
+      "the account is disabled",
+      0,
+      openClawDiscordStatus({ enabled: false }),
+      "account_disabled",
+      "terminal",
+    ],
+    [
       "REST works while the gateway reconnects",
       0,
       openClawDiscordStatus({ connected: false, lifecycle: "recovering" }),
@@ -106,7 +113,7 @@ describe("OpenClaw Discord channel status", () => {
       expect(serialized.readiness).toMatchObject({
         state: readiness === "waiting" ? "timeout" : readiness,
         attempts: 1,
-        lastObserved: { state: readiness, retryable: readiness === "waiting" },
+        lastObserved: { state: readiness, reason: verdict, retryable: readiness === "waiting" },
       });
       expect(sleep).toHaveBeenCalledTimes(readiness === "waiting" ? 1 : 0);
       expect(report && exitCodeFor(report)).toBe(readiness === "ready" ? 0 : 1);
