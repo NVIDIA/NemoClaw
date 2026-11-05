@@ -91,7 +91,7 @@ Never send these prompts through `ask`: a headless request isn't a UI turn.
 - A listener, a `200` page, or a forward that connects proves no UI; only answered turns and the independent file effect do.
 - Never launch a separate harness process, such as a standalone `dcode`, `hermes`, or `openclaw` command outside the entry point apply prints, to get a UI pass. `openshell sandbox connect` attaches to the sandbox's main process and can't open a terminal UI.
 - No browser automation or pseudo-terminal on the runner, or no access to the gateway, is a runner problem: mark the check Not tested with a finding, not Failed.
-- Entry points name the runtime or rewrite the token at each runtime start. After every transition, read the `Open`, `Forward`, and `Token` lines again from the latest apply; an old launcher path or token is gone.
+- After every transition, read the `Open`, `Forward`, and `Token` lines again from the latest apply to drive the fresh UI checks. The SDK test `apply_reports_current_runtime_access_after_binding_changes` in `crates/nemoclaw-sdk/tests/interface_access.rs` owns current-runtime path selection and adapter-specific kept-state token paths; this live check owns whether those entry points serve a usable UI.
 - Use a new client home for the terminal UI and a fresh browser context after every transition: a cached page or home can show an earlier conversation, and each word must be new to it.
 - Quitting a terminal UI before its answer finishes interrupts the turn; wait for each answer before the next key.
 - A terminal session can be separate from Fabric's invocations and from the runtime's own thread. Don't require it to show `ask` turns, and resume an earlier terminal thread only through the interface's supported options.

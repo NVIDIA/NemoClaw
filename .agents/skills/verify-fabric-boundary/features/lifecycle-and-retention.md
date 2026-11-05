@@ -107,8 +107,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    Result: the stop and the start succeed; while stopped, OpenShell shows the sandbox stopped, the container keeps its ID and isn't `running`, and the exec exits nonzero; after the start, `assistant` returns to `Ready`.
    Wait for `Ready` before step 4; the gateway, model service, and Docker daemon keep running throughout.
    Run step 4 with the YAML unchanged.
-   Pass when the container IDs match, the plan doesn't replace the sandbox, and the request in step 4 succeeds.
-   The desired contract is that the same sandbox recovers with a usable runtime after unchanged plan/apply; anything else is Failed, including a recovery that replaces the sandbox.
+   Pass when the container IDs match and the fresh request in step 4 succeeds after unchanged plan/apply. The SDK integration test `restarted_sandbox_recovers_its_missing_runtime_without_replacing_the_sandbox` in `crates/nemoclaw-e2e/tests/integration/rust/fabric_deployment.rs` owns the persisted sandbox binding and runtime-only reconciliation assertions. This live check retains the actual supported stop/start, same-container recovery, and fresh native use that fixtures cannot establish.
    If OpenShell offers no supported stop or start, mark the check Failed with a missing-implementation finding; if the runner can't run them safely, mark it Not tested.
    Then run step 5 with `PHASE=after-stop-start`.
 8. **`recreate`:** with `PHASE=recreate` and `CASE=recreate`, run step 3, then preview and destroy the deployment through NemoClaw, keeping the state directory, bundle, and caller volumes:
@@ -183,7 +182,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
 - Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence.
 - Retained files prove neither discovery, registration, fresh execution, nor conversation resume. [skills](skills.md) tracks rediscovery of a generated skill separately; don't infer conversation resume from `retention`.
-- Each transition starts a new runtime or sandbox: an old `RUNTIME_ID` fails with `runtime_unavailable`, and old interface entry points or tokens are gone. Step 4 reads both again.
+- Step 4 reads the current runtime and interface entry points again after each transition. Do not infer that every token path changes: the SDK's `apply_reports_current_runtime_access_after_binding_changes` test covers runtime-scoped paths separately from adapter-specific kept-state tokens.
 - Stop only what the check names. `extension-runtime-restart` stops the Fabric runtime, not the sandbox; `stop-start` stops the sandbox, not the gateway, model service, or Docker daemon.
 - Don't substitute `docker stop`, `docker restart`, or killing the runtime's process for the supported controls; a killed runtime can leave interface markers behind.
 - An explicit `fabric-agent-ctl start`, or a runtime started by hand, is at most a separately recorded diagnostic. Never put its handle in state, and stop it before teardown.

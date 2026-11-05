@@ -8,6 +8,112 @@ use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::{fs, path::PathBuf};
 
+/// A sandbox that comes back running after a stop/start keeps its identity;
+/// only its missing Fabric runtime is reconciled by the compiled graph.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn restarted_sandbox_recovers_its_missing_runtime_without_replacing_the_sandbox() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    deployment.apply(&document, &cancel).await.unwrap();
+    let (sandbox_id, old_runtime, effects, deletes) = {
+        let mut state = fixture.state.lock().unwrap();
+        let sandbox = state.sandboxes.values_mut().next().unwrap();
+        sandbox.status.as_mut().unwrap().phase =
+            openshell_core::proto::SandboxPhase::Stopped as i32;
+        let sandbox_id = sandbox.metadata.as_ref().unwrap().id.clone();
+        let old_runtime = state
+            .fabric_runtimes
+            .iter()
+            .find(|(_, owner)| *owner == &sandbox_id)
+            .unwrap()
+            .0
+            .clone();
+        state.fabric_runtimes.remove(&old_runtime);
+        // The gateway now observes the same sandbox running again.
+        state
+            .sandboxes
+            .values_mut()
+            .next()
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap()
+            .phase = openshell_core::proto::SandboxPhase::Ready as i32;
+        (sandbox_id, old_runtime, state.effects, state.delete_calls)
+    };
+    let plan = deployment.plan(&document, &cancel).await.unwrap();
+    assert!(
+        plan.changes
+            .iter()
+            .any(|change| change.resource.starts_with("fabric_agent."))
+    );
+    assert!(
+        !plan
+            .changes
+            .iter()
+            .any(|change| change.resource.starts_with("openshell_sandbox."))
+    );
+    assert_eq!(
+        fixture.state.lock().unwrap().effects,
+        effects,
+        "planning must not change gateway objects"
+    );
+    let recovered = deployment.apply(&document, &cancel).await.unwrap();
+    assert_eq!(
+        recovered.changes, plan.changes,
+        "apply must perform the planned runtime-only reconciliation"
+    );
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.sandboxes.len(), 1);
+        assert_eq!(
+            state
+                .sandboxes
+                .values()
+                .next()
+                .unwrap()
+                .metadata
+                .as_ref()
+                .unwrap()
+                .id,
+            sandbox_id
+        );
+        assert_eq!(state.delete_calls, deletes);
+        assert_eq!(state.effects, effects);
+        assert!(!state.fabric_runtimes.contains_key(&old_runtime));
+        assert_eq!(
+            state
+                .fabric_runtimes
+                .values()
+                .filter(|owner| *owner == &sandbox_id)
+                .count(),
+            1
+        );
+        assert_eq!(state.fabric_starts[&sandbox_id], 2);
+    }
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(fixture.state.lock().unwrap().fabric_starts[&sandbox_id], 2);
+    deployment.destroy(&cancel).await.unwrap();
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn missing_runtime_declaration_stops_planning_without_recreation() {

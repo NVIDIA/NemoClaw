@@ -9,9 +9,10 @@
 
 use crate::scripted_tofu::{Scripted, placeholder_generations, plan_json};
 use nemoclaw_sdk::{
-    CancellationToken, InterfaceAccess, Outcome, SignIn, compile, config::Document,
+    CancellationToken, InterfaceAccess, Outcome, Progress, SignIn, compile, config::Document,
 };
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 /// Two sandboxes: OpenClaw with its dashboard, and Hermes with its API server
 /// and a disabled dashboard.
@@ -221,5 +222,85 @@ async fn a_deployment_without_interfaces_reports_none() {
             .unwrap()
             .get("interfaces")
             .is_none()
+    );
+}
+
+/// Runtime-scoped access follows a changed post-apply binding, while an
+/// adapter's kept-state token remains in its agent directory.
+#[tokio::test]
+async fn apply_reports_current_runtime_access_after_binding_changes() {
+    let mut value = serde_json::to_value(document()).unwrap();
+    let mut coder = value["spec"]["sandboxes"]["assistant"].clone();
+    coder["harness"] = json!({
+        "kind": "nvidia.fabric.langchain.deepagents-code",
+        "settings": {"interfaces": {"terminal": {}}}
+    });
+    value["spec"]["sandboxes"]["coder"] = coder;
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let scripted = Scripted::new();
+    let declared = compile::targets(&document, &placeholder_generations()).unwrap();
+    scripted.set("root.apply.plan", plan_json(&declared, "create"));
+    let old = agents_state(&[
+        ("assistant", "openclaw-old"),
+        ("reviewer", "hermes-old"),
+        ("coder", "code-old"),
+    ]);
+    scripted.set("root.state", &old);
+    let deployment = scripted.deployment(&scripted.path("unused-kubeconfig"));
+    let cancel = CancellationToken::new();
+    let before = deployment.apply(&document, &cancel).await.unwrap();
+    let access = |result: &nemoclaw_sdk::OperationResult, sandbox: &str| {
+        result
+            .interfaces
+            .iter()
+            .find(|access| access.sandbox == sandbox)
+            .unwrap()
+            .clone()
+    };
+    assert!(
+        access(&before, "assistant")
+            .token_path
+            .unwrap()
+            .contains("openclaw-old")
+    );
+    assert!(
+        access(&before, "coder")
+            .launcher
+            .unwrap()
+            .contains("code-old")
+    );
+
+    let declared = compile::targets(&document, &scripted.generations()).unwrap();
+    scripted.set("root.apply.plan", plan_json(&declared, "no-op"));
+    let state = scripted.path("control").join("root.state");
+    let replacement = agents_state(&[
+        ("assistant", "openclaw-new"),
+        ("reviewer", "hermes-new"),
+        ("coder", "code-new"),
+    ]);
+    let replacing = deployment.with_progress(Arc::new(move |event| {
+        if event == Progress::Applying {
+            std::fs::write(&state, &replacement).unwrap();
+        }
+    }));
+    let after = replacing.apply(&document, &cancel).await.unwrap();
+    assert_eq!(after.outcome, Outcome::Succeeded);
+    assert_eq!(
+        access(&after, "assistant").token_path.as_deref(),
+        Some(
+            "/sandbox/artifacts/.fabric/openclaw/runtimes/openclaw-new/interfaces/dashboard.token"
+        )
+    );
+    assert_eq!(
+        access(&after, "coder").launcher.as_deref(),
+        Some("/sandbox/artifacts/.fabric/deepagents-code/runtimes/code-new/interfaces/terminal")
+    );
+    assert_eq!(
+        access(&after, "reviewer").token_path,
+        access(&before, "reviewer").token_path
+    );
+    assert_eq!(
+        access(&after, "reviewer").token_path.as_deref(),
+        Some("/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token")
     );
 }
