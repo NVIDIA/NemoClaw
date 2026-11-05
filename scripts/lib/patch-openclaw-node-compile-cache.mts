@@ -111,6 +111,8 @@ export function patchOpenClawNodeCompileCache(dist: string, audit = false): void
 
 async function probeSandboxCompileCache(dist: string): Promise<void> {
   if (process.getuid?.() !== 998) throw new Error("Compile cache probe requires sandbox user");
+  // Native SQLite snapshots also create private siblings below this parent.
+  fs.accessSync(path.join(os.homedir(), ".cache"), fs.constants.W_OK | fs.constants.X_OK);
   patchOpenClawNodeCompileCache(dist, true);
   const root = path.dirname(dist);
   const { resolveOpenClawCompileCacheDirectory } = await import(
