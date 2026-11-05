@@ -280,6 +280,174 @@ describe.concurrent("CLI dispatch", () => {
     }
   });
 
+  it("sandbox inference get --json reads endpoint metadata from the owning gateway registry (#12403)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-inference-owner-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw", "gateways", "18080");
+    const openshellArgs = path.join(home, "openshell-args.txt");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          custom: {
+            name: "custom",
+            agent: "openclaw",
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            credentialEnv: "CUSTOM_API_KEY",
+            gatewayPort: 18_080,
+            gatewayName: "nemoclaw-18080",
+          },
+        },
+        defaultSandbox: "custom",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" > ${JSON.stringify(openshellArgs)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-18080" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      // Unset NEMOCLAW_GATEWAY_PORT must match the explicit owning port: the
+      // sandbox resolves through its owning gateway root, and the endpoint
+      // check must read that same root.
+      for (const gatewayPort of [undefined, "18080"]) {
+        const result = await runWithEnvAsync("custom inference get --json", {
+          HOME: home,
+          NEMOCLAW_GATEWAY_PORT: gatewayPort,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        });
+
+        expect(result.code, result.out).toBe(0);
+        expect(JSON.parse(result.out)).toEqual({
+          provider: "compatible-endpoint",
+          model: "custom/model",
+          endpointUrl: "https://inference.example.test/v1",
+        });
+        expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe(
+          "inference get -g nemoclaw-18080",
+        );
+      }
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("inference get --json reports a corrupt selected registry as registry-corrupt (#12403)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-corrupt-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(registryDir, "sandboxes.json"), "{not json", { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = await runWithEnvAsync("inference get --json", {
+        HOME: home,
+        NEMOCLAW_GATEWAY_PORT: undefined,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code, result.out).toBe(0);
+      expect(JSON.parse(result.out)).toMatchObject({
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointStatus: "registry-corrupt",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("inference get --json ignores a corrupt unrelated gateway registry when no sandbox is named (#12403)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-other-root-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const otherRoot = path.join(registryDir, "gateways", "19999");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(otherRoot, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            agent: "openclaw",
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            credentialEnv: "CUSTOM_API_KEY",
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(path.join(otherRoot, "sandboxes.json"), "{not json", { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = await runWithEnvAsync("inference get --json", {
+        HOME: home,
+        NEMOCLAW_GATEWAY_PORT: undefined,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code, result.out).toBe(0);
+      expect(JSON.parse(result.out)).toEqual({
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("list --json emits structured empty inventory", async () => {
     const r = await runAsync("list --json");
     expect(r.code).toBe(0);
