@@ -852,6 +852,44 @@ type ResumeFaultCase = [
 ];
 
 describe("blueprint configuration resume", () => {
+  it.each([
+    ["symlink", (directory: string, retained: string) => fs.symlinkSync(retained, directory), 0],
+    ["directory", (directory: string) => fs.mkdirSync(directory), 1],
+    ["file", (directory: string) => fs.writeFileSync(directory, "unrelated file"), 0],
+  ] as const)(
+    "refuses a %s replacing the run directory after receipt publication",
+    async (_replacement, replace, closedDescriptors) => {
+      const f = await interruptedRunFixture();
+      const rename = fs.renameSync;
+      const retained = path.join(f.home, "retained-run");
+      const sync = vi.spyOn(fs, "fsyncSync");
+      const close = vi.spyOn(fs, "closeSync");
+      let replaced = false;
+      try {
+        vi.spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+          rename(from, to);
+          rename(f.directory, retained);
+          replace(f.directory, retained);
+          replaced = true;
+          sync.mockClear();
+          close.mockClear();
+        });
+        await expect(f.resume()).rejects.toThrow();
+        expect(replaced).toBe(true);
+        expect(sync).not.toHaveBeenCalled();
+        expect(close).toHaveBeenCalledTimes(closedDescriptors);
+        expect(JSON.parse(fs.readFileSync(path.join(retained, "plan.json"), "utf8"))).toEqual({
+          ...f.plan,
+          native_inference: { ...f.plan.native_inference, configPublished: true },
+        });
+        expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+        expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(f.home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("completes a failed configuration and permits later reuse without recreating resources", async () => {
     const f = await interruptedRunFixture();
     try {

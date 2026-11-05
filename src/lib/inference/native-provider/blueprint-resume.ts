@@ -24,6 +24,8 @@ export async function resumeBlueprintNativeInferenceRun(
   deps?: Parameters<typeof publishBlueprintNativeConfiguration>[2],
 ): Promise<void> {
   if (!/^[a-zA-Z0-9_-]+$/u.test(input.runId)) throw new Error("Invalid blueprint recovery run ID.");
+  if (typeof fs.constants.O_NOFOLLOW !== "number" || typeof fs.constants.O_DIRECTORY !== "number")
+    throw new Error("Blueprint recovery requires no-follow directory descriptors.");
   const runs = path.join(os.homedir(), ".nemoclaw/state/runs");
   const directory = path.join(runs, input.runId);
   const metadata = fs.lstatSync(directory);
@@ -106,8 +108,14 @@ export async function resumeBlueprintNativeInferenceRun(
     requireSamePlan();
     fs.renameSync(pending, file);
     created = false;
-    const directoryFd = fs.openSync(directory, "r");
+    const directoryFd = fs.openSync(
+      directory,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+    );
     try {
+      const opened = fs.fstatSync(directoryFd);
+      if (!opened.isDirectory() || opened.dev !== metadata.dev || opened.ino !== metadata.ino)
+        throw new Error("Blueprint recovery run directory changed before it could be synced.");
       fs.fsyncSync(directoryFd);
     } finally {
       fs.closeSync(directoryFd);
