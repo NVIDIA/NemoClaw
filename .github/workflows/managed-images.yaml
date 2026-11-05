@@ -1767,7 +1767,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ env.PUBLICATION_COHORT }}
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -1836,7 +1836,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ env.PUBLICATION_COHORT }}
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1

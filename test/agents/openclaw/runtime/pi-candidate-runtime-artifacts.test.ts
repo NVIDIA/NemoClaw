@@ -95,6 +95,16 @@ describe("Pi candidate contract validation", () => {
     expect(publication.env?.PUBLICATION_COHORT).toBe(
       "${{ needs.publication-identity.outputs.cohort }}",
     );
+    const imageCohorts = [
+      "Build the Pi candidate managed image",
+      "Publish and validate the Pi candidate image by digest",
+    ].map((name) => {
+      const labels = String(step(candidate, name).with?.labels ?? "")
+        .replaceAll("${{ env.PUBLICATION_COHORT }}", "ghrun-12345-1")
+        .replaceAll("${{ github.run_id }}", "12345")
+        .replaceAll("${{ github.run_attempt }}", "2");
+      return labels.match(/^io\.nvidia\.nemoclaw\.managed-image\.cohort=(.+)$/mu)?.[1];
+    });
     const producer = step(candidate, "Record the exact Pi candidate contract");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-contract-"));
     try {
@@ -124,6 +134,7 @@ describe("Pi candidate contract validation", () => {
       );
       expect(contract.source.release).toBe("v0.0.141");
       expect(contract.source.cohort).toBe("ghrun-12345-1");
+      expect(imageCohorts).toEqual([contract.source.cohort, contract.source.cohort]);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
