@@ -45,8 +45,10 @@ function makeProvisioner(overrides: ProvisionerOverrides = {}) {
     const binDir = path.join(options.venvDir, "bin");
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(path.join(binDir, "model-router"), "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, "python"), "#!/bin/sh\n", { mode: 0o755 });
     return path.join(binDir, "python");
   });
+  const runCapture = vi.fn(() => "");
   const run = vi.fn((_command: string[], _options?: object) => ({ status: 0 }));
   const logs: string[] = [];
 
@@ -74,7 +76,7 @@ function makeProvisioner(overrides: ProvisionerOverrides = {}) {
     },
     {
       run,
-      runCapture: vi.fn(() => ""),
+      runCapture,
       prepareModelRouterVenv,
       packageVersion: () => "0.0.0-test",
       log: (message) => logs.push(message),
@@ -89,6 +91,8 @@ function makeProvisioner(overrides: ProvisionerOverrides = {}) {
     provisioner,
     prepareModelRouterVenv,
     run,
+    runCapture,
+    routerDir,
     logs,
     probeStorage,
     measureDirectorySize,
@@ -252,4 +256,62 @@ it("reinstalls dependencies when the configured pool changes (#14066)", () => {
   expect(run.mock.calls[1]?.[0]).toContain(path.join(root, "router") + "[prefill,proxy]");
   expect(prepareModelRouterVenv).toHaveBeenCalledTimes(2);
   expect(provisioner.isManagedModelRouterCurrent()).toBe(true);
+});
+
+describe("managed rules interpreter (#14066)", () => {
+  it("installs and reuses the managed Python interpreter", () => {
+    const { provisioner, venvDir, prepareModelRouterVenv } = makeProvisioner();
+    const python = path.join(venvDir, "bin", "python");
+    expect(provisioner.ensureModelRouterPython()).toBe(python);
+    expect(provisioner.ensureModelRouterPython()).toBe(python);
+    expect(prepareModelRouterVenv).toHaveBeenCalledTimes(1);
+  });
+
+  it("repairs a current managed install whose Python was removed", () => {
+    const { provisioner, venvDir, prepareModelRouterVenv } = makeProvisioner();
+    const python = provisioner.ensureModelRouterPython();
+    fs.unlinkSync(python);
+    expect(provisioner.ensureModelRouterPython()).toBe(path.join(venvDir, "bin", "python"));
+    expect(prepareModelRouterVenv).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves host command fallback but refuses it as a managed interpreter", () => {
+    const { root, routerDir, provisioner, runCapture, prepareModelRouterVenv } = makeProvisioner();
+    fs.rmSync(routerDir, { recursive: true });
+    const hostCommand = path.join(root, "host-bin", "model-router");
+    fs.mkdirSync(path.dirname(hostCommand));
+    fs.writeFileSync(hostCommand, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(path.dirname(hostCommand), "python"), "#!/bin/sh\n", {
+      mode: 0o755,
+    });
+    runCapture.mockReturnValue(hostCommand);
+    expect(provisioner.ensureModelRouterCommand()).toBe(hostCommand);
+    expect(() => provisioner.ensureModelRouterPython()).toThrow(
+      "Model Router source is not initialized",
+    );
+    expect(prepareModelRouterVenv).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { kind: "missing", preparePython: (_python: string) => {} },
+    {
+      kind: "directory",
+      preparePython: (python: string) => {
+        fs.mkdirSync(python);
+      },
+    },
+  ])("rejects installation with a $kind Python interpreter", ({ preparePython }) => {
+    const { provisioner, prepareModelRouterVenv } = makeProvisioner();
+    prepareModelRouterVenv.mockImplementation(({ venvDir }) => {
+      const bin = path.join(venvDir, "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      fs.writeFileSync(path.join(bin, "model-router"), "#!/bin/sh\n", { mode: 0o755 });
+      const python = path.join(bin, "python");
+      preparePython(python);
+      return python;
+    });
+    expect(() => provisioner.ensureModelRouterPython()).toThrow(
+      /executable Python.+Repair the managed environment/,
+    );
+  });
 });

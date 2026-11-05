@@ -75,6 +75,7 @@ export type ModelRouterCommandDeps = {
 
 export type ModelRouterCommandProvisioner = {
   ensureModelRouterCommand(): string;
+  ensureModelRouterPython(): string;
   isManagedModelRouterCurrent(): boolean;
 };
 
@@ -89,7 +90,7 @@ function modelRouterFingerprintPath(venvDir: string): string {
 function isExecutableFile(filePath: string): boolean {
   try {
     fs.accessSync(filePath, fs.constants.X_OK);
-    return true;
+    return fs.statSync(filePath).isFile();
   } catch {
     return false;
   }
@@ -291,7 +292,7 @@ export function createModelRouterCommandProvisioner(
     );
   };
 
-  const installModelRouterCommand = (): string => {
+  const installModelRouterCommand = (requirePython = false): string => {
     initializeModelRouterSubmodule();
     if (!isModelRouterPackageReady(paths.routerDir)) {
       throw new Error(
@@ -330,6 +331,12 @@ export function createModelRouterCommandProvisioner(
     if (!isExecutableFile(routerCommand)) {
       throw new Error("Model Router install did not produce the model-router command.");
     }
+    if (requirePython && !isExecutableFile(path.join(paths.venvDir, "bin", "python"))) {
+      throw new Error(
+        `Model Router installation did not produce an executable Python at ${path.join(paths.venvDir, "bin", "python")}. ` +
+          "Repair the managed environment, then run `nemoclaw onboard --resume`.",
+      );
+    }
     const effectiveFingerprint = sourceFingerprint ?? `install:${deps.packageVersion()}`;
     writeModelRouterInstalledFingerprint(effectiveFingerprint, paths.venvDir);
     return routerCommand;
@@ -342,10 +349,16 @@ export function createModelRouterCommandProvisioner(
     return result.trim() || null;
   };
 
-  const ensureModelRouterCommand = (): string => {
+  const ensureModelRouterCommand = (requirePython = false): string => {
     const managedCommand = modelRouterCommandPath(paths.venvDir);
+    const hasRequiredPython = () =>
+      !requirePython || isExecutableFile(path.join(paths.venvDir, "bin", "python"));
 
-    if (isModelRouterPackageReady(paths.routerDir) && isManagedModelRouterCurrent()) {
+    if (
+      isModelRouterPackageReady(paths.routerDir) &&
+      isManagedModelRouterCurrent() &&
+      hasRequiredPython()
+    ) {
       return managedCommand;
     }
 
@@ -354,13 +367,21 @@ export function createModelRouterCommandProvisioner(
     }
 
     if (isModelRouterPackageReady(paths.routerDir)) {
-      if (isManagedModelRouterCurrent()) return managedCommand;
-      return installModelRouterCommand();
+      if (isManagedModelRouterCurrent() && hasRequiredPython()) return managedCommand;
+      return installModelRouterCommand(requirePython);
     }
 
-    if (isExecutableFile(managedCommand)) return managedCommand;
+    if (isExecutableFile(managedCommand) && hasRequiredPython()) return managedCommand;
+    if (requirePython) return installModelRouterCommand(true);
     return resolveHostCommandPath() || installModelRouterCommand();
   };
 
-  return { ensureModelRouterCommand, isManagedModelRouterCurrent };
+  return {
+    ensureModelRouterCommand: () => ensureModelRouterCommand(),
+    ensureModelRouterPython: () => {
+      ensureModelRouterCommand(true);
+      return path.join(paths.venvDir, "bin", "python");
+    },
+    isManagedModelRouterCurrent,
+  };
 }

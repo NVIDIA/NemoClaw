@@ -1192,6 +1192,7 @@ it("retains model-specific causes when the final health observation times out (#
         homeDir: "/test/home",
         ensureModelRouterCommand: () => "/test/bin/model-router",
         mkdirSync: () => {},
+        ensureModelRouterPython: () => "/test/managed/bin/python",
         readPoolConfig: () => "routing:\n  method: rules\n",
         runProxyConfig: () => ({ status: 0 }),
         spawnProxy: () => ({ pid: 12345, onError: () => {}, onExit: () => {}, unref: () => {} }),
@@ -1241,4 +1242,76 @@ it("retains model-specific causes when the final health observation times out (#
     },
   );
   assert.deepEqual(terminated, [12345]);
+});
+
+it.each(["rules", "prefill"])(
+  "selects the %s interpreter for configuration and proxy startup (#14066)",
+  async (method) => {
+    const ensureCommand = vi.fn(() => "/host/bin/model-router");
+    const ensurePython = vi.fn(() => "/managed/bin/python");
+    const launches: Array<{ command: string; args: string[] }> = [];
+    const pid = await startModelRouter(
+      { port: 45699 },
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: ensureCommand,
+        ensureModelRouterPython: ensurePython,
+        mkdirSync: () => {},
+        readPoolConfig: () => `routing:\n  method: ${method}\n`,
+        runProxyConfig: (command, args) => {
+          launches.push({ command, args });
+          return { status: 0 };
+        },
+        spawnProxy: (command, args) => {
+          launches.push({ command, args });
+          return { pid: 12345, onError: () => {}, onExit: () => {}, unref: () => {} };
+        },
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        getProviderKey: () => "",
+        isRouterResponsive: async () => false,
+        isProcessAlive: () => true,
+        openRouterLog: () => null,
+        closeRouterLog: () => {},
+        readRouterLogTail: () => "",
+        now: () => 0,
+        sleep: async () => {},
+        getRouterHealthSnapshot: async () => healthSnapshot(true, ROUTER_HEALTHY_BODY),
+      },
+    );
+    assert.equal(pid, 12345);
+    assert.equal(launches.length, 2);
+    const command = method === "rules" ? "/managed/bin/python" : "/host/bin/model-router";
+    const entry = method === "rules" ? ["/test/repo/nemoclaw-blueprint/router/model-router"] : [];
+    assert.equal(launches[0].command, command);
+    assert.equal(launches[1].command, command);
+    assert.deepEqual(launches[0].args.slice(0, entry.length + 1), [...entry, "proxy-config"]);
+    assert.deepEqual(launches[1].args.slice(0, entry.length + 1), [...entry, "proxy"]);
+    assert.equal(ensurePython.mock.calls.length, method === "rules" ? 1 : 0);
+    assert.equal(ensureCommand.mock.calls.length, method === "rules" ? 0 : 1);
+  },
+);
+
+it("propagates managed Python provisioning failure before rules configuration (#14066)", async () => {
+  const configure = vi.fn();
+  await assert.rejects(
+    startModelRouter(
+      {},
+      {
+        rootDir: "/test/repo",
+        homeDir: "/test/home",
+        ensureModelRouterCommand: () => {
+          throw new Error("host command must remain unused");
+        },
+        ensureModelRouterPython: () => {
+          throw new Error("managed Python unavailable");
+        },
+        readPoolConfig: () => "routing:\n  method: rules\n",
+        runProxyConfig: configure,
+      },
+    ),
+    /managed Python unavailable/,
+  );
+  assert.equal(configure.mock.calls.length, 0);
 });

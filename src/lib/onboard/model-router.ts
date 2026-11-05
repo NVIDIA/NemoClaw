@@ -106,6 +106,7 @@ export type StartModelRouterDeps = {
   rootDir: string;
   homeDir: string;
   ensureModelRouterCommand: () => string;
+  ensureModelRouterPython: () => string;
   mkdirSync: (directory: string) => void;
   runProxyConfig: (
     command: string,
@@ -197,6 +198,10 @@ function ensureModelRouterCommand(): string {
   return createProductionModelRouterCommandProvisioner().ensureModelRouterCommand();
 }
 
+function ensureModelRouterPython(): string {
+  return createProductionModelRouterCommandProvisioner().ensureModelRouterPython();
+}
+
 /**
  * Start the model-router proxy and wait for it to become healthy.
  * Follows the same pattern as Ollama startup (spawn detached, poll health).
@@ -207,6 +212,7 @@ function createStartModelRouterDeps(): StartModelRouterDeps {
     rootDir: ROOT,
     homeDir: os.homedir(),
     ensureModelRouterCommand,
+    ensureModelRouterPython,
     mkdirSync: (directory) => fs.mkdirSync(directory, { recursive: true }),
     runProxyConfig: (command, args, options) => spawnSync(command, args, options),
     spawnProxy: (command, args, options) => {
@@ -319,13 +325,15 @@ export async function startModelRouter(
   overrides: Partial<StartModelRouterDeps> = {},
 ): Promise<number> {
   const deps: StartModelRouterDeps = { ...createStartModelRouterDeps(), ...overrides };
-  const routerCommand = deps.ensureModelRouterCommand();
   const port = routerCfg.port || 4000;
   const blueprintDir = path.join(deps.rootDir, "nemoclaw-blueprint");
   const poolConfigPath = path.join(
     blueprintDir,
     routerCfg.pool_config_path || "router/pool-config.yaml",
   );
+  const rulesPolicy = usesRulesPolicy(deps.readPoolConfig(poolConfigPath));
+  const command = rulesPolicy ? deps.ensureModelRouterPython() : deps.ensureModelRouterCommand();
+  const entry = rulesPolicy ? [path.join(blueprintDir, "router", "model-router")] : [];
   const stateDir = path.join(nemoclawStateRoot(deps.homeDir, GATEWAY_PORT), "state");
   const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
@@ -333,9 +341,6 @@ export async function startModelRouter(
   deps.mkdirSync(stateDir);
   rejectSymlinksOnPath(stateDir);
 
-  const rulesPolicy = usesRulesPolicy(deps.readPoolConfig(poolConfigPath));
-  const command = rulesPolicy ? path.join(path.dirname(routerCommand), "python") : routerCommand;
-  const entry = rulesPolicy ? [path.join(blueprintDir, "router", "model-router")] : [];
   const proxyConfigResult = deps.runProxyConfig(
     command,
     [...entry, "proxy-config", "--config", poolConfigPath, "--output", litellmConfigPath],
