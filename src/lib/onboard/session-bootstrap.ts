@@ -32,7 +32,6 @@ import type {
   CheckpointPortableRuntimeAuthority,
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
-import type { SandboxHostMount } from "../state/registry/types";
 import type { SandboxEntry } from "../state/registry/types";
 import {
   DEFAULT_TOOL_DISCLOSURE,
@@ -69,21 +68,6 @@ export {
 } from "./host-mount";
 export { requireReadOnlyHostMountRuntimeSupport };
 
-/** Session inputs for the requested host mounts and dashboard origins (#13177). */
-export function requestedSandboxAccessInput(opts: {
-  readonly hostMounts?: readonly SandboxHostMount[];
-  readonly dashboardOrigins?: readonly string[];
-}): Pick<OnboardSessionBootstrapInput, "requestedHostMounts" | "requestedDashboardOrigins"> {
-  return { requestedHostMounts: opts.hostMounts, requestedDashboardOrigins: opts.dashboardOrigins };
-}
-
-/** Sandbox inputs from the session; resume replays the recorded dashboard origins. */
-export function sessionSandboxAccess(
-  hostMounts: readonly SandboxHostMount[],
-  session: Session | null,
-): { hostMounts: readonly SandboxHostMount[]; dashboardOrigins?: string[] } {
-  return { hostMounts, dashboardOrigins: session?.metadata.dashboardOrigins };
-}
 export {
   isOnboardResumeIntentRaceError,
   OnboardResumeIntentError,

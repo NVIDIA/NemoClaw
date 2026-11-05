@@ -769,8 +769,7 @@ const {
   prompt,
   getNavigationChoice,
   exitOnboardFromPrompt,
-  validateNvidiaApiKeyValue: (value: string, envName: string) =>
-    validateNvidiaApiKeyValue(value, envName),
+  validateNvidiaApiKeyValue,
   compactText,
   redact,
   runOpenshell,
@@ -976,8 +975,7 @@ function installOpenshell(): OpenShellInstallResult {
 const { areRequiredDockerDriverBinariesPresent, ensureOpenshellForOnboard } =
   openshellInstallFlow.createOnboardOpenShellInstallBindings({
     getInstallDeps: getOpenShellInstallDeps,
-    afterSuccessfulInstall: (persistTrustedGatewayOwner) =>
-      adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner),
+    afterSuccessfulInstall: adoptPackagedGatewayOwnerAfterTrustedInstall,
   });
 
 function getOpenShellInstallDeps(
@@ -2652,7 +2650,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             portableRuntimeAuthority: lockedRuntime.portableRuntimeContext?.authority ?? null,
             agentFlag: opts.agent || null,
             envAgent: process.env.NEMOCLAW_AGENT || null,
-            ...onboardSessionBootstrap.requestedSandboxAccessInput(opts),
+            requestedHostMounts: opts.hostMounts,
+            requestedDashboardOrigins: opts.dashboardOrigins,
             ...stationSessionInput,
           },
           {
@@ -3005,7 +3004,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          ...onboardSessionBootstrap.sessionSandboxAccess(effectiveHostMounts, session),
+          hostMounts: effectiveHostMounts,
+          dashboardOrigins: session?.metadata.dashboardOrigins,
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
           controlUiPort: _preflightDashboardPort,

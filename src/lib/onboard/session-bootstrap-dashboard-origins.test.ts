@@ -6,11 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
 import { createSession, normalizeSession, type Session } from "../state/onboard-session";
 import { getResumeConfigConflicts } from "./resume-config";
-import {
-  type OnboardSessionBootstrapDeps,
-  prepareOnboardSession,
-  sessionSandboxAccess,
-} from "./session-bootstrap";
+import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
 
 const ORIGIN = "https://launchpad.example.test:8443";
 
@@ -80,7 +76,7 @@ describe("onboard resume keeps dashboard origins (#13177)", () => {
       createDeps(await interruptedSessionWithOrigins()),
     );
 
-    expect(sessionSandboxAccess([], resumed.session).dashboardOrigins).toEqual([ORIGIN]);
+    expect(resumed.session?.metadata.dashboardOrigins).toEqual([ORIGIN]);
   });
 
   it("refuses a different origin list on resume", async () => {
@@ -112,6 +108,6 @@ describe("onboard resume keeps dashboard origins (#13177)", () => {
       createDeps(await interruptedSessionWithOrigins()),
     );
 
-    expect(sessionSandboxAccess([], fresh.session).dashboardOrigins).toBeUndefined();
+    expect(fresh.session?.metadata.dashboardOrigins).toBeUndefined();
   });
 });
