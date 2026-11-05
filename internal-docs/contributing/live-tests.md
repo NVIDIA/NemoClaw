@@ -97,7 +97,7 @@ The workflows destroy each deployment in a separate step after success, failure,
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
 CI / Bundle runs the hosted cases from Linux AMD64's test archive, bundle, and live images whenever it runs the live suites, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
 
-To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the [HCL case action](../../.github/actions/hcl-case/action.yml) does, and run from `crates/nemoclaw-e2e`:
+To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \

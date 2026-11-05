@@ -70,7 +70,11 @@ jobs:
       # Windows runs its tests longest after its slower bundle build, so its
       # integration tests use a third partition to keep that path closer to
       # the other platforms.
-      integration-shards: "[1, 2, 3]"
+      partitions: >-
+        [{"layer": "contract", "shard": 1, "shards": 1},
+        {"layer": "integration", "shard": 1, "shards": 3},
+        {"layer": "integration", "shard": 2, "shards": 3},
+        {"layer": "integration", "shard": 3, "shards": 3}]
   # The v1 ruleset requires one check per platform. Each covers the platform's
   # four test layers, Unit, Contract, Integration, and E2E, which the run page
   # groups under the platform. Each platform's jobs start after its own build,
