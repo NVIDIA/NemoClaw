@@ -201,14 +201,14 @@ fn runtime_images_build_only_for_the_host_with_their_supervisor() {
     let Some(targets) = plan(other, &["runtimes"]) else {
         return;
     };
-    assert_eq!(
-        names(&targets),
-        BTreeSet::from(["ollama", "supervisor", "vllm"])
-    );
+    // Live / HCL builds a case's runtime images from this list.
+    let mut expected = BTreeSet::from(nemoclaw_build::images::RUNTIMES);
+    expected.insert("supervisor");
+    assert_eq!(names(&targets), expected);
     for (name, target) in &targets {
         assert_eq!(platforms(target), [host_platform()], "{name}");
     }
-    for name in ["vllm", "ollama"] {
+    for name in nemoclaw_build::images::RUNTIMES {
         assert_eq!(targets[name]["contexts"]["supervisor"], "target:supervisor");
         let output = &targets[name]["output"][0];
         assert_eq!(output["rewrite-timestamp"], "true", "{name}: {output}");

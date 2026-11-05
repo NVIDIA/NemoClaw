@@ -232,6 +232,9 @@ enum ImageAction {
         #[arg(required = true)]
         images: Vec<String>,
     },
+    /// Print each live HCL case's model runtime images as JSON: the Bake
+    /// targets to build before the case runs, read from its document.
+    Runtimes,
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
         /// A local image, by tag or digest, or with --registry an image in a
@@ -677,6 +680,13 @@ async fn main() -> Result<()> {
         return match action {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
+            }
+            ImageAction::Runtimes => {
+                nemoclaw_build::hcl_cases::runtimes(root).and_then(|runtimes| {
+                    let runtimes = serde_json::to_string(&runtimes).map_err(|e| e.to_string())?;
+                    println!("{runtimes}");
+                    Ok(())
+                })
             }
             ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");

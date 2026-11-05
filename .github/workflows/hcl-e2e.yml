@@ -39,6 +39,8 @@ jobs:
     # Like Live / Brev, build against the older glibc so every lane runner can run the executables.
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    outputs:
+      runtimes: ${{ steps.runtimes.outputs.runtimes }}
     env:
       TEST_PLATFORM: linux_amd64
     steps:
@@ -62,6 +64,10 @@ jobs:
           docker save nc-fabric:openclaw nc-fabric:hermes -o candidate/agents.tar
           # Tar keeps the executable bits that artifact transfer drops.
           tar -cf "$RUNNER_TEMP/candidate.tar" candidate
+      # The model runtime images each case's services run, which its job builds.
+      - name: List each case's runtime images
+        id: runtimes
+        run: echo "runtimes=$(cargo images runtimes)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.CANDIDATE }}
@@ -98,12 +104,14 @@ jobs:
           name: ${{ env.CANDIDATE }}
           path: ${{ runner.temp }}
       - name: Load the images and bind the case to them
+        env:
+          RUNTIMES: ${{ join(fromJSON(needs.build.outputs.runtimes)[matrix.case], ' ') }}
         run: |
           tar -xf "$RUNNER_TEMP/candidate.tar"
           docker load -i candidate/agents.tar
-          # A case builds the model runtime image it serves.
-          if [[ $NEMOCLAW_HCL_CASE == *vllm* ]]; then docker buildx bake vllm; fi
-          if [[ $NEMOCLAW_HCL_CASE == *ollama* ]]; then docker buildx bake ollama; fi
+          # A case builds the model runtime images its services run.
+          read -ra runtimes <<< "$RUNTIMES"
+          if (( ${#runtimes[@]} )); then docker buildx bake "${runtimes[@]}"; fi
           id() { docker image inspect --format '{{.Id}}' "$1" 2>/dev/null; }
           # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
           sed -i -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
