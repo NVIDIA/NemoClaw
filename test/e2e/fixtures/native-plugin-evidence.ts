@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
+
 import { isObjectRecord } from "../../../src/lib/core/json-types.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import {
@@ -8,6 +10,9 @@ import {
   parseOpenClawJsonDocuments,
   projectOpenClawAgentCompletion,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import type { SandboxClient } from "./clients/sandbox.ts";
+import { captureNativePluginFailureReadiness } from "./native-plugin-failure-diagnostics.ts";
+import { pollUntil } from "./polling.ts";
 
 export type NativePluginVersion = "v1" | "v2";
 export const NATIVE_PLUGIN_ID = "nemoclaw-e2e-tool";
@@ -146,4 +151,58 @@ export function nativeToolCallOutcome(
   return calls.size > 0 && [...calls.values()].every((call) => call.started && call.finished)
     ? "succeeded"
     : "pending";
+}
+
+export interface NativePluginInvocationOptions {
+  sandboxName: string;
+  version: NativePluginVersion;
+  artifactName: string;
+  env: NodeJS.ProcessEnv;
+  turnTimeoutMs: number;
+  audit: { attempts: number; delayMs: number; timeoutMs: number };
+}
+
+/** Exercise the plugin through normal agent admission and read host-owned execution records. */
+export async function nativePluginAgentInvocationOutcome(
+  sandbox: Pick<SandboxClient, "exec" | "execShell">,
+  options: NativePluginInvocationOptions,
+): Promise<"pending" | "succeeded" | "failed"> {
+  const { sandboxName, artifactName, env } = options;
+  const toolName = nativeToolName(options.version);
+  const turn = await sandbox.exec(
+    sandboxName,
+    [
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--thinking",
+      "off",
+      "--session-id",
+      `e2e-plugin-${randomUUID()}`,
+      "-m",
+      `Run the local ${toolName} tool once with no arguments.`,
+    ],
+    { artifactName, env, timeoutMs: options.turnTimeoutMs },
+  );
+  await captureNativePluginFailureReadiness(sandbox, turn, sandboxName, artifactName, env);
+  if (turn.exitCode !== 0) return "failed";
+  const runId = completedAgentRunId(turn.stdout);
+  // Audit persistence is asynchronous. Poll only the read-only page, never replay the agent turn.
+  const audit = await pollUntil({
+    artifactPrefix: `${artifactName}-audit`,
+    attempts: options.audit.attempts,
+    delayMs: options.audit.delayMs,
+    probe: async (_attempt, auditArtifact) => {
+      const page = await sandbox.exec(
+        sandboxName,
+        ["openclaw", "audit", "--run", runId, "--kind", "tool_action", "--limit", "100", "--json"],
+        { artifactName: auditArtifact, env, timeoutMs: options.audit.timeoutMs },
+      );
+      return page.exitCode === 0 ? nativeToolCallOutcome(page.stdout, runId, toolName) : "failed";
+    },
+    accept: (outcome) => outcome !== "pending",
+  });
+  return audit.value;
 }

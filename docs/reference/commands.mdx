@@ -689,7 +689,22 @@ Completed onboarding sessions are not resumable. Use `--resume` only for resumab
 
 An active same-name replacement is separate from ordinary onboarding-step resume. If onboarding printed `Journaled replacement` before it stopped, rerun the original onboarding command with the same target settings. The replacement can continue without an explicit `--resume` flag. Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the identity checks and failure conditions.
 
-Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
+Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive.
+
+<AgentOnly variant="openclaw,hermes">
+
+For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+Deep Agents named recreation restores saved native preferences, including model and endpoint settings in `config.toml`.
+A conflicting requested selection can fail validation before registry publication.
+To change the provider or model, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+
+</AgentOnly>
+
+Use `$$nemoclaw <sandbox-name> rebuild` to recreate a registered sandbox from its recorded metadata without changing those selections.
 
 Before reserving an inference route, onboarding can release a foreign-session route-only reservation while it holds the onboarding lock.
 For an already published sandbox on the gateway selected in the current session's checkpoint, it can transfer a foreign pending reservation to the new session while retaining the sandbox data.
@@ -1086,7 +1101,22 @@ It does not run OpenShell's mutable-name deletion command because the name may n
 Follow the [retained-sandbox recovery procedure](#inspect-retained-sandbox-recovery) to reconcile this cancellation.
 A fresh run with a different explicit name can continue while the cancelled sandbox name remains blocked.
 
-If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection. In interactive mode, the wizard asks for confirmation before delete and recreate. In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs. For managed Deep Agents Code sandboxes, NemoClaw also recreates when the live `dcode identity` selection is unreadable; other agent paths continue to reuse by default when their stored selection cannot be read. Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
+If you rerun onboarding with the same sandbox name, a different provider or model can trigger recreation.
+In interactive mode, the wizard asks for confirmation before deletion and recreation.
+In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs.
+For managed Deep Agents Code sandboxes, NemoClaw also recreates when the live `dcode identity` selection is unreadable.
+Other agent paths continue to reuse by default when their stored selection cannot be read.
+Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
+
+<AgentOnly variant="deepagents">
+
+Recreation restores saved `config.toml` preferences before validating the requested selection.
+It does not guarantee that the restored provider, model, and endpoint match that selection.
+A mismatch leaves the replacement unverified and stops registry publication.
+Follow the printed recovery instructions and retain the backup.
+For a different selection, use [the new-name workflow](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+
+</AgentOnly>
 
 Before deleting an existing sandbox during recreation, NemoClaw transfers the complete OpenShell native home/workspace into the replacement. The transfer includes unknown files, agent configuration, history, hooks, plugins, packages, cron data, and child-agent state without consulting an agent-specific file inventory. OpenShell credential storage remains outside the transferred workspace. NemoClaw aborts recreation if the complete transfer cannot be captured or restored. If pre-delete backup fails and the source identity remains unchanged, the existing sandbox remains registered and available. If the error identifies credential-bearing content, connect to that sandbox, remove or relocate the content, then retry onboarding. The behaviour matches `$$nemoclaw <name> rebuild --force`. Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the transfer and start the destination with a fresh workspace.
 
@@ -1666,7 +1696,11 @@ For Hermes, the command validates the complete candidate configuration with the 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, `config set` is unavailable because managed startup (or an explicit custom image build) materializes the `dcode` configuration as image-owned state. Run `$$nemoclaw onboard --agent dcode --name <sandbox-name> --fresh` when you need to change it. Use `$$nemoclaw <name> config get` to read the current values.
+For Deep Agents sandboxes, `config set` is unavailable.
+Managed startup creates the initial `dcode` configuration, but native preference saves and native-home restoration preserve its model and endpoint settings.
+Managed route and upstream provider metadata remain in protected files outside the native home.
+To change the provider or model without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+Use `$$nemoclaw <name> config get` to read the current values.
 
 </AgentOnly>
 
@@ -3916,7 +3950,7 @@ The command is also available in sandbox-first form as `$$nemoclaw <name> infere
 
 By default, the command syncs the default registered sandbox.
 
-During onboarding, NVIDIA Endpoints, the five fixed hosted providers, and new hosted compatible selections outside the Personal tier use sandbox-attached providers without changing the shared route. Qualified new local selections also receive native attachments during onboarding. At runtime, `inference set` can attach a custom native provider when the sandbox already records a valid native attachment; a retained shared-route sandbox stays on the shared route. Hermes also supports native local switches through `inference set`. Deep Agents Code requires the onboarding recreation workflow to change its provider or model. The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and Pi local routes.
+During onboarding, NVIDIA Endpoints, the five fixed hosted providers, and new hosted compatible selections outside the Personal tier use sandbox-attached providers without changing the shared route. Qualified new local selections also receive native attachments during onboarding. At runtime, `inference set` can attach a custom native provider when the sandbox already records a valid native attachment; a retained shared-route sandbox stays on the shared route. Hermes also supports native local switches through `inference set`. For Deep Agents Code provider or model changes, follow [Validate a Different Deep Agents Selection](/user-guide/deepagents/inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection). The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy and other custom shared routes, and Pi local routes.
 Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
 When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
 Those sandboxes use the new live route until `connect`, onboarding, or another `inference set` command re-points it.
@@ -4017,7 +4051,13 @@ $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, run `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` when you need to change the provider or model. The managed `dcode` configuration is written under `/sandbox/.deepagents` during onboarding, so the recreate path keeps the OpenShell route and the sandbox config aligned. Use `$$nemoclaw inference get` and `$$nemoclaw <name> status` to inspect the current route.
+Deep Agents has no runtime `inference set` path.
+Named recreation with `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` restores the saved `/sandbox/.deepagents/config.toml`.
+Saved model and endpoint preferences can conflict with a requested provider or model.
+In that case, validation stops before registry publication and leaves the replacement sandbox with an unverified route.
+Keep the backup and follow the printed recovery instructions; do not rebuild without verified registry metadata.
+To validate a different selection without restoring existing preferences, follow [Validate a Different Deep Agents Selection](../inference/manage-inference/switch-providers#validate-a-different-deep-agents-selection).
+Use `$$nemoclaw <name> status` to inspect the selected sandbox's route.
 
 </AgentOnly>
 
