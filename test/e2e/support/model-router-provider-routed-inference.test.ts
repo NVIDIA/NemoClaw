@@ -171,7 +171,7 @@ importlib.metadata.version = version
       expect(calls[0].args.join(" ")).not.toContain("nvapi-synthetic-probe");
       expect(calls[0].options).toEqual({
         artifactName: "router-provider-failure-diagnostics",
-        env,
+        env: { ...env, NPM_CONFIG_PREFIX: path.join(directory, ".npm-global") },
         redactionValues: ["nvapi-synthetic-probe"],
         captureLimitBytes: 8_192,
         timeoutMs: 75_000,

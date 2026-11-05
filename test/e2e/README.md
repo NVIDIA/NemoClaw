@@ -1005,6 +1005,10 @@ Each entry owns these target properties:
 - Target-specific environment variables.
 - Full-run qualification membership.
 
+For host commands with `HOME`, `HostCliClient` defaults `NPM_CONFIG_PREFIX` to `$HOME/.npm-global`.
+An explicit `NPM_CONFIG_PREFIX` or `npm_config_prefix` takes precedence.
+The fixture preserves `PATH`; installer ownership and permission checks still apply.
+
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
 `hermes-swap` provisions swap for the remaining measured Hermes execution lanes.

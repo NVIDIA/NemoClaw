@@ -4,6 +4,7 @@
 import { isAbsolute } from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import { hostCommandEnvironment } from "../environment-profiles.ts";
 import {
   assertStockManagedImageReceipt,
   shouldAssertStockManagedImageReceipt,
@@ -108,6 +109,9 @@ export class HostCliClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     const merged: ShellProbeRunOptions = { ...options };
+    if (merged.env) {
+      merged.env = hostCommandEnvironment(merged.env);
+    }
     if (this.cwd && !merged.cwd) {
       merged.cwd = this.cwd;
     }
