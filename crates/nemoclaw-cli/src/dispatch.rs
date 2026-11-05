@@ -21,6 +21,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
     cli: Cli,
     mut stdin: R,
     cancel: &CancellationToken,
+    force_stop: &CancellationToken,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
 ) -> Result<CommandResult, Box<dyn std::error::Error>> {
     let Cli {
@@ -37,7 +38,7 @@ pub(crate) async fn run<R: AsyncRead + Unpin>(
         let saved = nemoclaw_onboarding::author(source, output, true, cancel).await?;
         return Ok(CommandResult::Authored(saved.then(|| output.clone())));
     }
-    let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), progress)?;
+    let mut deployment = deployment(&state_dir, bundle_dir.as_deref(), force_stop, progress)?;
     let result = match command {
         Command::Plan { destroy: true, .. } => deployment.plan_destroy(cancel).await?,
         Command::Plan {
@@ -130,6 +131,7 @@ mod tests {
                     cli,
                     ForbiddenInput,
                     &CancellationToken::new(),
+                    &CancellationToken::new(),
                     Arc::new(|_| {})
                 )
                 .await
@@ -149,6 +151,7 @@ mod tests {
             let error = run(
                 cli,
                 &b"apiKey: secret-sentinel"[..],
+                &CancellationToken::new(),
                 &CancellationToken::new(),
                 Arc::new(|_| {}),
             )

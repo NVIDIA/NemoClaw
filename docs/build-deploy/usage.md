@@ -354,6 +354,8 @@ Once a plan has succeeded, the endpoint is bound: free the port instead.
 There is no lost-state adoption, migration, pruning, or purge command.
 
 After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
+Interrupt once and let the resource operations in progress finish: an interrupt stops OpenTofu from starting new ones, and the state then records what it created.
+A second interrupt stops OpenTofu at once and can leave a resource that the state does not record.
 For records with per-resource recovery evidence, plan, apply, and destroy compare pending creations with saved OpenTofu bindings.
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent start keeps its sandbox binding.
