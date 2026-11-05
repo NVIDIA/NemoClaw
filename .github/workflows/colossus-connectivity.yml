@@ -1,0 +1,151 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: E2E / SSH connectivity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/colossus-connectivity.yml
+      - tools/ci/colossus-connectivity-workflow.rs
+
+permissions: {}
+
+concurrency:
+  group: colossus-connectivity-${{ github.event_name }}-${{ github.event.pull_request.number || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test authorization and output boundaries
+        shell: bash
+        run: |
+          rustfmt --edition 2024 --check tools/ci/colossus-connectivity-workflow.rs
+          rustc --edition=2024 -D warnings --test tools/ci/colossus-connectivity-workflow.rs -o "$RUNNER_TEMP/connectivity-tests"
+          "$RUNNER_TEMP/connectivity-tests"
+
+  authorize:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Authorize maintainers
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          for checked_actor in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            if [[ ! "$checked_actor" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
+              echo 'Authorization failed.'
+              exit 1
+            fi
+            if ! role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${checked_actor}/permission" --jq .role_name 2>/dev/null)"; then
+              echo 'Authorization failed.'
+              exit 1
+            fi
+            case "$role" in
+              maintain | admin) ;;
+              *) echo 'Authorization failed.'; exit 1 ;;
+            esac
+          done
+
+  probe:
+    needs: authorize
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
+    runs-on:
+      group: nv-cpu-general
+    environment: colossus-connectivity
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      # A failed-job rerun can reuse the first job's result with a different actor.
+      - name: Authorize maintainers
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          for checked_actor in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            if [[ ! "$checked_actor" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
+              echo 'Authorization failed.'
+              exit 1
+            fi
+            if ! role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${checked_actor}/permission" --jq .role_name 2>/dev/null)"; then
+              echo 'Authorization failed.'
+              exit 1
+            fi
+            case "$role" in
+              maintain | admin) ;;
+              *) echo 'Authorization failed.'; exit 1 ;;
+            esac
+          done
+      - name: Verify SSH connectivity
+        env:
+          PROBE_HOST: ${{ secrets.COLOSSUS_SSH_HOST }}
+          PROBE_USER: ${{ secrets.COLOSSUS_SSH_USER }}
+          PROBE_KNOWN_HOSTS: ${{ secrets.COLOSSUS_SSH_KNOWN_HOSTS }}
+          PROBE_PRIVATE_KEY: ${{ secrets.COLOSSUS_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          probe_dir=''
+          finish() {
+            status=$?
+            trap - EXIT
+            if [[ -n "$probe_dir" ]] && ! rm -rf -- "$probe_dir" >/dev/null 2>&1; then
+              status=1
+            fi
+            outcome=failed
+            if [[ "$status" == 0 ]]; then outcome=passed; fi
+            printf 'SSH connectivity: %s\n' "$outcome"
+            if [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+              printf 'SSH connectivity: %s\nTested commit: %s\n' "$outcome" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit "$status"
+          }
+          trap finish EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          trap 'exit 129' HUP
+          [[ -n "$PROBE_HOST" && -n "$PROBE_USER" && -n "$PROBE_KNOWN_HOSTS" && -n "$PROBE_PRIVATE_KEY" ]]
+          [[ ${#PROBE_HOST} -le 253 && "$PROBE_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]
+          [[ ${#PROBE_USER} -le 64 && "$PROBE_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          umask 077
+          probe_dir="$(mktemp -d "${RUNNER_TEMP}/ssh-probe.XXXXXX" 2>/dev/null)"
+          printf '%s\n' "$PROBE_PRIVATE_KEY" 2>/dev/null > "$probe_dir/key"
+          printf '%s\n' "$PROBE_KNOWN_HOSTS" 2>/dev/null > "$probe_dir/known_hosts"
+          unset PROBE_PRIVATE_KEY PROBE_KNOWN_HOSTS
+          ssh-keygen -y -P '' -f "$probe_dir/key" >/dev/null 2>&1
+          ssh-keygen -l -f "$probe_dir/known_hosts" >/dev/null 2>&1
+          timeout --signal=TERM --kill-after=5s 30s ssh -F /dev/null -T \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no \
+            -o HostKeyAlgorithms=ssh-ed25519 -o VerifyHostKeyDNS=no \
+            -o GlobalKnownHostsFile=/dev/null -o "UserKnownHostsFile=$probe_dir/known_hosts" \
+            -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+            -o ForwardAgent=no -o ForwardX11=no -o ClearAllForwardings=yes \
+            -o PermitLocalCommand=no -o ProxyCommand=none -o ProxyJump=none \
+            -o LogLevel=QUIET -i "$probe_dir/key" \
+            -l "$PROBE_USER" "$PROBE_HOST" /usr/bin/true \
+            </dev/null >/dev/null 2>&1
