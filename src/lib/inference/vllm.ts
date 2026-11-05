@@ -1657,8 +1657,8 @@ function printManagedStorageWarning({
   }
   console.error("  Useful diagnostics:");
   if (includeImage) {
-    console.error("    docker system df");
-    console.error("    docker info --format '{{.DockerRootDir}}'");
+    console.error("    docker --context default system df");
+    console.error("    docker --context default info --format '{{.DockerRootDir}}'");
   }
   console.error('    df -h "$HOME/.cache/huggingface"');
 }

@@ -371,9 +371,10 @@ The explicit watched `docker pull` still runs against that immutable digest.
 After an image pull, NemoClaw checks the model-cache estimate again before `hf download`.
 The model-download helper and the long-lived vLLM container use `--pull=never`, so an implicit pull cannot select another image.
 
-NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
-It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
-When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI behavior and uses `DOCKER_HOST`.
+Managed single-host vLLM uses the host's default Docker daemon for image inspection, storage checks, downloads, launch, and cleanup.
+It ignores ambient Docker selectors, including `DOCKER_HOST`, `DOCKER_CONTEXT`, and `DOCKER_CONFIG`.
+Use `docker --context default system df` and `docker --context default info --format '{{.DockerRootDir}}'` to inspect that daemon when investigating a storage warning.
+NemoClaw recognizes `/var/run/docker.sock` and `/run/docker.sock` as local default Docker socket paths for storage inspection.
 Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
 
 When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
