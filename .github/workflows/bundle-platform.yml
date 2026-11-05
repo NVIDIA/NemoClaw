@@ -46,346 +46,60 @@ on:
 permissions:
   contents: read
   packages: read
-defaults:
-  run:
-    shell: bash
-env:
-  TEST_PLATFORM: ${{ inputs.platform }}
-  CARGO_INCREMENTAL: "0"
-# Each job's name starts with its test layer: Unit, Contract, Integration, or
-# E2E. Unit build and test, and Build bundle, run in parallel on separate
-# runners; the contract, integration, and live jobs start when both have
-# uploaded their artifacts. Artifact names carry the run attempt, and consumers
-# read them from the producers' outputs, so rerunning a failed shard reuses an
-# earlier attempt's artifacts. The caller's Test / PLATFORM check requires every
-# job here that runs; a job the plan does not select is skipped.
+# A platform's four test layers, each its own workflow, so the run page groups
+# each platform's jobs by layer: Unit, then Contract, Integration, and, on
+# Linux, E2E, which start when the unit layer has uploaded the test archive and
+# bundle. The caller's Test / PLATFORM check requires every job here that runs;
+# a layer the plan does not select is skipped.
 jobs:
-  build:
-    name: Unit build and test
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
-    outputs:
-      artifact: ${{ steps.identity.outputs.artifact }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-        with:
-          platform: ${{ inputs.platform }}
-      - name: Check formatting
-        run: cargo ci fmt
-      - name: Lint Rust
-        run: cargo ci clippy
-      - name: Clear cached build timings
-        id: timings
-        run: rm -rf target/cargo-timings
-      - name: Build test executables
-        run: cargo ci build
-      - name: Upload workspace build timings
-        if: always() && steps.timings.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: build-workspace-${{ inputs.platform }}-${{ github.run_attempt }}
-          path: target/cargo-timings/*.html
-          if-no-files-found: ignore
-          retention-days: 14
-      - name: Run tests
-        run: cargo ci test
-      - name: Upload test timings
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-${{ inputs.platform }}-${{ github.run_attempt }}
-          path: target/nextest/ci/test.xml
-          if-no-files-found: ignore
-          retention-days: 14
-      - name: Check generated configuration schema and reference
-        run: cargo ci schema
-      - name: Archive lifecycle executables and inputs
-        if: inputs.lifecycle || inputs.e2e
-        run: cargo ci archive
-      - name: Identify lifecycle artifact
-        if: inputs.lifecycle || inputs.e2e
-        id: identity
-        run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - name: Upload lifecycle inputs
-        if: inputs.lifecycle || inputs.e2e
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: |
-            .build/ci/lifecycle.tar.zst
-            .build/ci/lifecycle-inputs.tar
-          include-hidden-files: true
-          compression-level: 1
-          retention-days: 1
-          if-no-files-found: error
-
-  bundle:
-    name: Build bundle
-    if: inputs.bundle || inputs.lifecycle || inputs.e2e
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
-    outputs:
-      artifact: ${{ steps.identity.outputs.artifact }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # A separate cache: the bundle's release dependencies and the debug build
-      # tool that assembles it, which the test job's cache does not hold together.
-      - uses: ./.github/actions/setup-rust
-        with:
-          platform: ${{ inputs.platform }}
-          cache-prefix: native-bundle-v3
-      - name: Clear cached build timings
-        id: timings
-        run: rm -rf target/cargo-timings
-      - name: Build and verify bundle
-        run: cargo ci bundle
-      - name: Upload release bundle build timings
-        if: always() && steps.timings.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: build-bundle-${{ inputs.platform }}-${{ github.run_attempt }}
-          path: target/cargo-timings/*.html
-          if-no-files-found: ignore
-          retention-days: 14
-      # Tar preserves the executable permissions that artifact transfer drops.
-      - name: Pack bundle
-        run: |
-          mkdir -p .build/ci
-          tar -cf .build/ci/bundle.tar "dist/${TEST_PLATFORM}"
-      - name: Identify bundle artifact
-        id: identity
-        run: echo "artifact=bundle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - name: Upload bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: .build/ci/bundle.tar
-          include-hidden-files: true
-          compression-level: 1
-          retention-days: 1
-          if-no-files-found: error
+  unit:
+    name: Unit
+    uses: ./.github/workflows/layer-unit.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      bundle: ${{ inputs.bundle || inputs.lifecycle || inputs.e2e }}
+      archive: ${{ inputs.lifecycle || inputs.e2e }}
 
   contract:
-    name: Contract tests ${{ matrix.shard }} of ${{ strategy.job-total }}
-    # The bundle job runs whenever contract and integration tests do.
-    if: inputs.lifecycle && needs.bundle.result == 'success'
-    needs: [build, bundle]
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(inputs.contract-shards) }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: .build/ci
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.bundle.outputs.artifact }}
-          path: .build/ci
-      - name: Extract test inputs and bundle
-        run: |
-          tar -xf .build/ci/lifecycle-inputs.tar
-          tar -xf .build/ci/bundle.tar
-      # Slices deal the platform's sorted tests round-robin, so slow tests that
-      # sort next to each other split evenly. A slice depends on the selected
-      # test list: adding a test moves later tests to other partitions.
-      - name: Execute contract partition without compiling
-        env:
-          SHARD: ${{ matrix.shard }}
-          SHARDS: ${{ strategy.job-total }}
-        run: >-
-          .build/ci/nemoclaw-build ci contract
-          --partition "slice:${SHARD}/${SHARDS}"
-          --archive-file .build/ci/lifecycle.tar.zst
-      - name: Upload contract timings
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: contract-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: target/nextest/contract/contract.xml
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # Each partition reports and enforces its own budget; this job reports the
-  # platform's whole contract suite in its summary, from the partitions'
-  # uploaded timings, including failed partitions'. A test binary's tests span
-  # partitions, so this job enforces the binary budgets: on Linux, a binary
-  # over its budget fails the Contract check.
-  contract-timing:
-    name: Contract timing report
-    needs: [build, contract]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.contract.result != 'skipped' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
-    steps:
-      # For .config/test-budgets.yaml.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # The build tool comes from the test inputs; this job compiles nothing.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: .build/ci
-      # Every attempt's timings; the report reads each shard's latest attempt.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: contract-${{ inputs.platform }}-*
-          path: .build/ci/timings
-      - name: Report the whole contract suite
-        env:
-          SHARDS: ${{ inputs.contract-shards }}
-        run: |
-          tool=.build/ci/nemoclaw-build
-          if [ "$RUNNER_OS" = Windows ]; then tool="$tool.exe"; fi
-          tar -xf .build/ci/lifecycle-inputs.tar "$tool"
-          "$tool" suite-timing contract .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
+    name: Contract
+    needs: [unit]
+    if: inputs.lifecycle
+    uses: ./.github/workflows/layer-tests.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      layer: contract
+      shards: ${{ inputs.contract-shards }}
+      tests: ${{ needs.unit.outputs.tests }}
+      bundle: ${{ needs.unit.outputs.bundle }}
 
   integration:
-    name: Integration tests ${{ matrix.shard }} of ${{ strategy.job-total }}
-    # The bundle job runs whenever contract and integration tests do.
-    if: inputs.lifecycle && needs.bundle.result == 'success'
-    needs: [build, bundle]
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(inputs.integration-shards) }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: .build/ci
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.bundle.outputs.artifact }}
-          path: .build/ci
-      - name: Extract test inputs and bundle
-        run: |
-          tar -xf .build/ci/lifecycle-inputs.tar
-          tar -xf .build/ci/bundle.tar
-      # Slices deal the platform's sorted tests round-robin, so slow tests that
-      # sort next to each other split evenly. A slice depends on the selected
-      # test list: adding a test moves later tests to other partitions.
-      - name: Execute integration partition without compiling
-        env:
-          SHARD: ${{ matrix.shard }}
-          SHARDS: ${{ strategy.job-total }}
-          # The tofu test integration scenarios record each result and a failed
-          # scenario's redacted evidence here.
-          NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration
-        run: >-
-          .build/ci/nemoclaw-build ci integration
-          --partition "slice:${SHARD}/${SHARDS}"
-          --archive-file .build/ci/lifecycle.tar.zst
-      - name: Upload integration timings
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: integration-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: target/nextest/integration/integration.xml
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 14
-      - name: Summarize integration scenarios
-        if: always()
-        env:
-          RESULTS: ${{ runner.temp }}/hcl-integration/results.tsv
-        run: |
-          if [ -f "$RESULTS" ]; then
-            {
-              echo '| Integration scenario | Result |'
-              echo '|---|---|'
-              awk -F '\t' '{ printf "| `%s` | %s |\n", $1, $2 }' "$RESULTS"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-      # Fixture credentials are redacted; the evidence holds only fixture data.
-      - name: Upload failed integration scenarios' evidence
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hcl-integration-evidence-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/hcl-integration
-          if-no-files-found: ignore
-          retention-days: 7
+    name: Integration
+    needs: [unit]
+    if: inputs.lifecycle
+    uses: ./.github/workflows/layer-tests.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      layer: integration
+      shards: ${{ inputs.integration-shards }}
+      tests: ${{ needs.unit.outputs.tests }}
+      bundle: ${{ needs.unit.outputs.bundle }}
 
-  # Each partition reports and enforces its own budget; this job reports the
-  # platform's whole integration suite in its summary, from the partitions'
-  # uploaded timings, including failed partitions'. A test binary's tests span
-  # partitions, so this job enforces the binary budgets: on Linux, a binary
-  # over its budget fails the Integration check.
-  integration-timing:
-    name: Integration timing report
-    needs: [build, integration]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.integration.result != 'skipped' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
-    steps:
-      # For .config/test-budgets.yaml.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # The build tool comes from the test inputs; this job compiles nothing.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: .build/ci
-      # Every attempt's timings; the report reads each shard's latest attempt.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: integration-${{ inputs.platform }}-*
-          path: .build/ci/timings
-      - name: Report the whole integration suite
-        env:
-          SHARDS: ${{ inputs.integration-shards }}
-        run: |
-          tool=.build/ci/nemoclaw-build
-          if [ "$RUNNER_OS" = Windows ]; then tool="$tool.exe"; fi
-          tar -xf .build/ci/lifecycle-inputs.tar "$tool"
-          "$tool" suite-timing integration .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
-
-  # The Docker and Kubernetes live suites, from this platform's test archive and
-  # bundle.
+  # The Docker and Kubernetes live suites and the HCL E2E cases.
   e2e:
     name: E2E
-    needs: [build, bundle]
-    if: ${{ !cancelled() && inputs.e2e && needs.build.result == 'success' && needs.bundle.result == 'success' }}
+    needs: [unit]
+    if: inputs.e2e
     uses: ./.github/workflows/e2e-platform.yml
     with:
       runner: ${{ inputs.runner }}
       platform: ${{ inputs.platform }}
-      tests: ${{ needs.build.outputs.artifact }}
-      bundle: ${{ needs.bundle.outputs.artifact }}
+      tests: ${{ needs.unit.outputs.tests }}
+      bundle: ${{ needs.unit.outputs.bundle }}
       live-images-commit: ${{ inputs.live-images-commit }}
       hcl: ${{ inputs.hcl }}
+      gpu: ${{ inputs.hcl-gpu }}
     # The HCL cases read NVIDIA_API_KEY.
-    secrets: inherit
-
-  # The HCL E2E cases on the NVIDIA GPU runner, which refuses pull request
-  # jobs. Live / HCL builds them a candidate against an older glibc, which the
-  # runner can run.
-  gpu:
-    name: E2E GPU
-    if: inputs.hcl-gpu
-    uses: ./.github/workflows/hcl-e2e.yml
-    with:
-      hosted: false
-      gpu: true
-    # The Ollama case reads NVIDIA_API_KEY.
     secrets: inherit

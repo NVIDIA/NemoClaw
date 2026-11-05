@@ -211,7 +211,7 @@ Budgets are measured from each step's JUnit report, so compilation, image builds
 Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIONS` is set; macOS, Windows, and local runs report them without failing.
 
 - The `test` step, each contract and integration partition, and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
-- Each platform's `Contract timing report` and `Integration timing report` jobs check the binary budgets, because a binary's tests run in several partitions.
+- Each platform's `Contract / Timing report` and `Integration / Timing report` jobs check the binary budgets, because a binary's tests run in several partitions.
   `cargo ci --full`, `cargo ci contract`, and `cargo ci integration` run each whole suite in one step and report them there too.
 - Nextest stops a test on every platform: each profile reports a test as slow at its per-test limit and stops it at a multiple of the limit, three times for the `test` step and twice for the others.
   An override in the binary's step profile does the same for each budgeted binary with that binary's limit.
@@ -266,7 +266,7 @@ After each test step, `cargo ci` prints where the time went and, in GitHub Actio
 - the step's budget, whether this run enforces it, and each total or test over it.
 
 A contract or integration partition reports only its own tests.
-Each platform's `Contract timing report` and `Integration timing report` jobs report the whole suite from the partitions' JUnit reports: each partition's latest attempt, naming any partition without a report, with the slowest partition's time as the suite's wall time.
+Each platform's `Contract / Timing report` and `Integration / Timing report` jobs report the whole suite from the partitions' JUnit reports: each partition's latest attempt, naming any partition without a report, with the slowest partition's time as the suite's wall time.
 It also shows each budgeted binary's test count, summed time, and slowest test against its budget, with its tests from every partition.
 To produce the same report locally, download the `STEP-PLATFORM-SHARD-ATTEMPT` artifacts of the `contract` or `integration` step into subdirectories of one directory and run:
 
@@ -289,7 +289,7 @@ Documentation previews publish only for PRs targeting `v1`.
 
 | Workflow | Checks |
 |---|---|
-| CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; each platform's jobs start with their test layer, such as `linux_amd64 / Contract tests 1 of 1` or `linux_amd64 / E2E / E2E Docker tests` |
+| CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; the run page groups each platform's jobs by test layer, such as `linux_amd64 / Contract / Tests 1 of 1` or `linux_amd64 / E2E / Docker tests` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
@@ -314,12 +314,11 @@ Two tests in `nemoclaw-build`'s `workflows` module check what a workflow run wou
 
 ### Jobs of One Platform
 
-Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, whose job names start with their test layer:
+Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners, which calls one workflow for each test layer, so the run page groups the platform's jobs by layer:
 
-1. `Unit build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables.
-2. When the plan selects a bundle, `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
-3. When selected and the build and bundle jobs finish, `Contract tests N of M` and `Integration tests N of M` run their layers in partitions, and `Contract timing report` and `Integration timing report` then report each whole suite and check the binary budgets.
-4. On Linux, when the plan selects the live suites, the [E2E platform workflow](../../.github/workflows/e2e-platform.yml) runs `E2E build images` with `cargo ci live-images`, and `E2E Docker tests` and `E2E Kubernetes (kind) tests`, from the platform's archive and bundle. Linux AMD64 also runs `E2E HCL CASE` for the HCL cases that use NVIDIA hosted inference, from the same artifacts, and `E2E GPU` for those on the NVIDIA GPU runner; see [live suites](#live-suites).
+1. `Unit / Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, and `schema`; it runs `archive` only when contract, integration, or live jobs need the executables. When the plan selects a bundle, `Unit / Build bundle` runs `cargo ci bundle` on a separate runner at the same time. [The unit layer](../../.github/workflows/layer-unit.yml) uploads both.
+2. When selected and the unit layer finishes, [the contract and integration layers](../../.github/workflows/layer-tests.yml) run in partitions, `Contract / Tests N of M` and `Integration / Tests N of M`; each layer's `Timing report` then reports the whole suite and checks the binary budgets.
+3. On Linux, when the plan selects the live suites, [the E2E layer](../../.github/workflows/e2e-platform.yml) runs `E2E / Build images` with `cargo ci live-images`, then `E2E / Docker tests` and `E2E / Kubernetes (kind) tests`, from the unit layer's archive and bundle. Linux AMD64 also runs `E2E / HCL CASE` for the HCL cases that use NVIDIA hosted inference, from the same artifacts, and `E2E / GPU build` and `E2E / GPU CASE` for those on the NVIDIA GPU runner; see [live suites](#live-suites).
 
 When a pull request changes no image input since a `v1` commit that pushed the live images, the plan names that commit instead, and the live jobs pull its images; a fork's pull request, which cannot read the package, builds them.
 
@@ -374,7 +373,7 @@ Use `Fixture::engine` for a fake engine so that the test runs on every platform;
 
 ### Live Suites
 
-`E2E Docker tests` and `E2E Kubernetes (kind) tests` run on the Linux platforms only, from that platform's archive, bundle, and live images, after enabling Docker's containerd image store on the runner.
+`E2E / Docker tests` and `E2E / Kubernetes (kind) tests` run on the Linux platforms only, from that platform's archive, bundle, and live images, after enabling Docker's containerd image store on the runner.
 They run whenever the shared validation plan selects them: on every `v1` push and manual run, and on a pull request whose changes reach the live build.
 On a pull request, the plan compares the merge commit with its first parent, the PR base.
 A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
@@ -382,9 +381,10 @@ A file inside a crate counts when that crate is in the live build: the packages 
 After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
 
 The [HCL E2E cases](live-tests.md#hcl-e2e-scenarios) that need a model run on NVIDIA hosted inference or the NVIDIA GPU runner.
-Whenever the plan selects the live suites, Linux AMD64 runs the hosted cases as `linux_amd64 / E2E / E2E HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
-On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts.
-Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run. Dispatch it to run the hosted or GPU cases alone against that build.
+Whenever the plan selects the live suites, Linux AMD64 runs the hosted cases as `linux_amd64 / E2E / HCL CASE`, from the same test archive, bundle, and live images as the live suites, except on a fork's pull request, which cannot use the inference secret.
+On `v1` pushes and manual runs, it also runs the GPU cases as `linux_amd64 / E2E / GPU CASE`; NVIDIA's GPU runners refuse jobs that a pull request starts.
+They run a candidate that `E2E / GPU build` builds on Ubuntu 22.04, with an older glibc, rather than the platform's artifacts, until the GPU runner is known to run executables built on Ubuntu 24.04.
+[Live / HCL](../../.github/workflows/hcl-e2e.yml) builds the same candidate; dispatch it to run the hosted or GPU cases alone.
 
 A selected live suite that fails fails its platform's `Test / PLATFORM` check.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).

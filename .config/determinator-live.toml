@@ -22,6 +22,7 @@ globs = [
     ".github/actions/**",
     # The live jobs run in CI / Bundle on v1 pushes.
     ".github/workflows/bundle-platform.yml",
+    ".github/workflows/layer-unit.yml",
     ".github/workflows/e2e-platform.yml",
     ".github/workflows/hcl-e2e.yml",
     ".github/workflows/rust.yml",

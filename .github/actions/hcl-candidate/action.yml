@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Build the HCL E2E candidate
+description: Build the Linux AMD64 bundle, e2e test executable, and OpenClaw and Hermes images, and upload them as one artifact.
+inputs:
+  artifact:
+    description: The artifact's name.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-rust
+      with:
+        platform: linux_amd64
+        cache-prefix: hcl-deps-v1
+    - uses: ./.github/actions/containerd-store
+    - name: Build the bundle, test executable, and agent images
+      shell: bash
+      run: |
+        cargo ci bundle
+        executable=$(cargo test --locked -p nemoclaw-e2e --test e2e --no-run --message-format=json |
+          jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' | tail -1)
+        mkdir candidate
+        cp "$executable" candidate/e2e
+        cp -a dist/linux_amd64 candidate/bundle
+        cargo images build --platform linux/amd64 openclaw hermes
+        docker save nc-fabric:openclaw nc-fabric:hermes -o candidate/agents.tar
+        # Tar keeps the executable bits that artifact transfer drops.
+        tar -cf "$RUNNER_TEMP/candidate.tar" candidate
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/candidate.tar
+        retention-days: 1
+        if-no-files-found: error

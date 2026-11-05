@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# A platform's contract or integration layer: its tests in partitions, each on
+# its own runner, from the unit layer's test archive and bundle, then a report
+# of the whole suite. Neither job compiles anything.
+name: Bundled test layer
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      layer:
+        description: The cargo ci step and nextest profile, contract or integration.
+        type: string
+        required: true
+      shards:
+        description: JSON list of shard numbers; its length is the partition count.
+        type: string
+        required: true
+      tests:
+        description: The unit layer's test archive artifact.
+        type: string
+        required: true
+      bundle:
+        description: The unit layer's bundle artifact.
+        type: string
+        required: true
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  TEST_PLATFORM: ${{ inputs.platform }}
+  CARGO_INCREMENTAL: "0"
+jobs:
+  tests:
+    name: Tests ${{ matrix.shard }} of ${{ strategy.job-total }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.tests }}
+          path: .build/ci
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.bundle }}
+          path: .build/ci
+      - name: Extract test inputs and bundle
+        run: |
+          tar -xf .build/ci/lifecycle-inputs.tar
+          tar -xf .build/ci/bundle.tar
+      # Slices deal the platform's sorted tests round-robin, so slow tests that
+      # sort next to each other split evenly. A slice depends on the selected
+      # test list: adding a test moves later tests to other partitions.
+      - name: Execute the partition without compiling
+        env:
+          LAYER: ${{ inputs.layer }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ strategy.job-total }}
+          # The tofu test integration scenarios record each result and a failed
+          # scenario's redacted evidence here.
+          NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration
+        run: >-
+          .build/ci/nemoclaw-build ci "$LAYER"
+          --partition "slice:${SHARD}/${SHARDS}"
+          --archive-file .build/ci/lifecycle.tar.zst
+      - name: Upload timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.layer }}-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: target/nextest/${{ inputs.layer }}/${{ inputs.layer }}.xml
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Summarize integration scenarios
+        if: always() && inputs.layer == 'integration'
+        env:
+          RESULTS: ${{ runner.temp }}/hcl-integration/results.tsv
+        run: |
+          if [ -f "$RESULTS" ]; then
+            {
+              echo '| Integration scenario | Result |'
+              echo '|---|---|'
+              awk -F '\t' '{ printf "| `%s` | %s |\n", $1, $2 }' "$RESULTS"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Fixture credentials are redacted; the evidence holds only fixture data.
+      - name: Upload failed integration scenarios' evidence
+        if: failure() && inputs.layer == 'integration'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcl-integration-evidence-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hcl-integration
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Each partition reports and enforces its own budget; this job reports the
+  # platform's whole suite in its summary, from the partitions' uploaded
+  # timings, including failed partitions'. A test binary's tests span
+  # partitions, so this job enforces the binary budgets: on Linux, a binary over
+  # its budget fails the platform's Test check.
+  timing:
+    name: Timing report
+    needs: [tests]
+    # Reports failed partitions too; there is nothing to report when none ran.
+    if: ${{ !cancelled() && needs.tests.result != 'skipped' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      # For .config/test-budgets.yaml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The build tool comes from the test inputs; this job compiles nothing.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.tests }}
+          path: .build/ci
+      # Every attempt's timings; the report reads each shard's latest attempt.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ inputs.layer }}-${{ inputs.platform }}-*
+          path: .build/ci/timings
+      - name: Report the whole suite
+        env:
+          LAYER: ${{ inputs.layer }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          tool=.build/ci/nemoclaw-build
+          if [ "$RUNNER_OS" = Windows ]; then tool="$tool.exe"; fi
+          tar -xf .build/ci/lifecycle-inputs.tar "$tool"
+          "$tool" suite-timing "$LAYER" .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
