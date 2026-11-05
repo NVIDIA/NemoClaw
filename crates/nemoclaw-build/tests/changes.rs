@@ -106,11 +106,14 @@ fn fixture_files() -> Vec<(String, String)> {
         ("image/fabric/Dockerfile", "FROM scratch\n".into()),
         ("ruff.toml", "\n".into()),
         ("image/vllm/Dockerfile", "FROM scratch\n".into()),
+        ("image/ollama/Dockerfile", "FROM scratch\n".into()),
+        ("image/supervisor/Dockerfile", "FROM scratch\n".into()),
         // Live HCL cases: a scenario with a case document of the same name, the
         // module every scenario shares, and a document no live scenario runs.
+        // Only docker-one runs a model runtime image.
         (
             "crates/nemoclaw-e2e/cases/docker-one.yaml",
-            "kind: NemoClawConfig\n".into(),
+            "kind: NemoClawConfig\nspec:\n  services:\n    model:\n      kind: vllm\n".into(),
         ),
         (
             "crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-one.tftest.hcl",
@@ -1231,7 +1234,7 @@ fn shared_live_inputs_select_every_case() {
         "crates/nemoclaw-sdk/src/lib.rs",
         "crates/nemoclaw-e2e/tests/e2e/hcl/main.tf",
         "crates/nemoclaw-e2e/cases/integration-only.yaml",
-        "image/vllm/Dockerfile",
+        "image/fabric/Dockerfile",
         "versions.json",
     ] {
         succeed(repo.0.path(), "git", &["reset", "-q", "--hard", &base]);
@@ -1239,6 +1242,42 @@ fn shared_live_inputs_select_every_case() {
         let (selected, selection) = repo.selected(&base, &[]);
         assert_eq!(selected, EVERY_CASE, "{path}: {selection}");
     }
+}
+
+#[test]
+fn runtime_image_inputs_select_only_the_cases_that_run_the_image() {
+    let repo = Repo::new();
+    let base = repo.base();
+    for (path, expected) in [
+        ("image/vllm/Dockerfile", &["docker-one"][..]),
+        ("image/supervisor/Dockerfile", &["docker-one"]),
+        ("image/ollama/Dockerfile", &[]),
+    ] {
+        succeed(repo.0.path(), "git", &["reset", "-q", "--hard", &base]);
+        repo.commit(&[(path, Some("# changed\n"))]);
+        let (selected, selection) = repo.selected(&base, &[]);
+        assert_eq!(selected, expected, "{path}: {selection}");
+    }
+}
+
+#[test]
+fn ci_lists_the_runtime_images_each_live_case_runs() {
+    let repo = Repo::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["images", "runtimes"])
+        .current_dir(repo.0.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let runtimes: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        runtimes,
+        serde_json::json!({"docker-one": ["vllm"], "kind-two": []})
+    );
 }
 
 #[test]

@@ -166,7 +166,8 @@ pub struct CaseSelection {
 
 /// Select the live HCL cases that the changes since the merge base of `base`
 /// and `HEAD` affect. A case's own document and scenario select only that
-/// case; any other input of the live suites selects every case.
+/// case, and the files that only runtime images read select the cases that
+/// run those images; any other input of the live suites selects every case.
 /// `requested` cases, such as maintainer-reviewed recommendations, are added
 /// and never remove a selection. An analysis failure selects every case.
 pub fn cases(root: &Path, base: &str, requested: &[String]) -> Result<CaseSelection> {
@@ -259,6 +260,42 @@ fn case_files(id: &str) -> [String; 2] {
     ]
 }
 
+/// Each live HCL case's runtime images, as Bake targets, read from its
+/// document at `HEAD`.
+pub fn case_runtimes(root: &Path) -> Result<BTreeMap<String, BTreeSet<&'static str>>> {
+    runtimes_of(root, &live_cases(root)?)
+}
+
+fn runtimes_of(
+    root: &Path,
+    ids: &BTreeSet<String>,
+) -> Result<BTreeMap<String, BTreeSet<&'static str>>> {
+    ids.iter()
+        .map(|id| {
+            let [document, _] = case_files(id);
+            let document = git(root, &["show", &format!("HEAD:{document}")])?;
+            let document = String::from_utf8(document)
+                .map_err(|_| format!("the {id} case document is not UTF-8"))?;
+            let targets = crate::images::runtime_targets(&document)
+                .map_err(|error| format!("the {id} case: {error}"))?;
+            Ok((id.clone(), targets))
+        })
+        .collect()
+}
+
+/// The directories that only the `targets` runtime images read: each image's
+/// own and, for any image, the supervisor's.
+fn runtime_directories<'a>(targets: impl IntoIterator<Item = &'a &'static str>) -> Vec<String> {
+    let mut directories: Vec<String> = targets
+        .into_iter()
+        .map(|target| format!("image/{target}"))
+        .collect();
+    if !directories.is_empty() {
+        directories.push(crate::images::RUNTIME_SUPERVISOR.to_owned());
+    }
+    directories
+}
+
 fn select_cases(
     root: &Path,
     base: &str,
@@ -277,7 +314,13 @@ fn select_cases(
         .iter()
         .flat_map(|id| case_files(id).map(|file| (file, id.as_str())))
         .collect();
-    let ignored: Vec<String> = owners.keys().cloned().collect();
+    let runtimes = runtimes_of(root, ids)?;
+    let mut ignored: Vec<String> = owners.keys().cloned().collect();
+    ignored.extend(
+        runtime_directories(&crate::images::RUNTIMES)
+            .into_iter()
+            .map(|directory| format!("{directory}/**")),
+    );
     analyze(root, &fork, false, |fork, paths, old, new| {
         let shared = decide_build(root, Workflow::Live, &ignored, fork, paths, old, new)?;
         Ok(ids
@@ -286,6 +329,12 @@ fn select_cases(
                 let own = paths
                     .into_iter()
                     .find(|path| owners.get(path.as_str()) == Some(&id.as_str()));
+                let directories = runtime_directories(&runtimes[id]);
+                let runtime = paths.into_iter().find(|path| {
+                    directories
+                        .iter()
+                        .any(|directory| path.starts_with(directory))
+                });
                 let decision = if shared.run {
                     Decision {
                         run: true,
@@ -296,11 +345,16 @@ fn select_cases(
                         run: true,
                         reason: format!("{path} changed"),
                     }
+                } else if let Some(path) = runtime {
+                    Decision {
+                        run: true,
+                        reason: format!("{path} changed, an input of a runtime image this case runs"),
+                    }
                 } else {
                     Decision {
                         run: false,
                         reason: format!(
-                            "neither the live build nor this case's files changed since {fork}"
+                            "neither the live build nor this case's files or runtime images changed since {fork}"
                         ),
                     }
                 };
