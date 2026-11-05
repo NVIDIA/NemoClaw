@@ -19,20 +19,14 @@ pub enum Error {
     DockerModelUpdateRefused { service: String },
     #[error("gateway is incompatible with this configuration: {0}")]
     GatewayIncompatible(String),
-    /// The gateway's Helm release exists without a binding, and this
-    /// deployment's install record names it: an apply that installed it
-    /// failed or stopped. Destroy removes it.
+    /// The gateway's Helm release exists without a binding. The atomic
+    /// install removes a release that fails, so this is a release that an
+    /// apply stopped at once while Helm installed it, or another owner's.
+    /// NemoClaw can't tell them apart, so it leaves the release.
     #[error(
-        "the gateway's Helm release {release} in namespace {namespace} is left from an apply that failed or stopped while Helm installed it, and the state does not record it; run destroy with the same state directory to remove it, then apply; resources retained"
+        "the gateway's Helm release {release} in namespace {namespace} exists, but the state does not record it, so NemoClaw leaves it; an apply stopped at once while Helm installed it can leave it; if it is this deployment's, remove it with `helm uninstall {release} --namespace {namespace}` and rerun; resources retained"
     )]
-    LeftoverRelease { release: String, namespace: String },
-    /// The gateway's Helm release exists without a binding, and no install
-    /// record of this deployment names it, so NemoClaw can't establish that
-    /// the release is its own.
-    #[error(
-        "the gateway's Helm release {release} in namespace {namespace} exists, but neither the state nor an install record of this deployment names it, so NemoClaw leaves it; if it is this deployment's, remove it with Helm and rerun; resources retained"
-    )]
-    UnclaimedRelease { release: String, namespace: String },
+    UnboundRelease { release: String, namespace: String },
     #[error(
         "sandbox unavailable: {phase}, reason {reason}, exit code {exit_code}{guidance}; resources retained",
         guidance = sandbox_startup_guidance(.reason)

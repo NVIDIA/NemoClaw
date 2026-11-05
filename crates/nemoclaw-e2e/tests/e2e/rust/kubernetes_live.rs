@@ -5,10 +5,14 @@
 //! with Agent Sandbox, its explicit kubeconfig/context, and a verified bundle.
 
 use k8s_openapi::api::{
+    admissionregistration::v1::{ValidatingAdmissionPolicy, ValidatingAdmissionPolicyBinding},
     apps::v1::StatefulSet,
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
 };
-use kube::{Api, api::ListParams};
+use kube::{
+    Api,
+    api::{DeleteParams, ListParams, PostParams},
+};
 use nemoclaw_sdk::{
     ObservationError,
     bundle::Bundle,
@@ -289,6 +293,96 @@ async fn retained(
     })
 }
 
+/// An admission policy that refuses every StatefulSet in one namespace, so a
+/// gateway install fails after Helm has stored its release. The policy is
+/// cluster-scoped and named for the test's namespace; `remove` deletes it.
+struct DenyGateway {
+    client: kube::Client,
+    name: String,
+}
+
+impl DenyGateway {
+    /// The refusal's message: one word, so that OpenTofu's line wrapping
+    /// can't split it.
+    const MESSAGE: &str = "nemoclaw-live-test-refuses-statefulsets";
+
+    async fn start(client: &kube::Client, namespace: &str) -> Self {
+        let name = format!("{namespace}-deny-gateway");
+        let policy: ValidatingAdmissionPolicy = serde_json::from_value(json!({
+            "metadata": {"name": name},
+            "spec": {
+                "failurePolicy": "Fail",
+                "matchConstraints": {"resourceRules": [{
+                    "apiGroups": ["apps"], "apiVersions": ["v1"],
+                    "operations": ["CREATE"], "resources": ["statefulsets"],
+                }]},
+                "validations": [{"expression": "false", "message": Self::MESSAGE}],
+            },
+        }))
+        .unwrap();
+        let binding: ValidatingAdmissionPolicyBinding = serde_json::from_value(json!({
+            "metadata": {"name": name},
+            "spec": {
+                "policyName": name, "validationActions": ["Deny"],
+                "matchResources": {"namespaceSelector": {"matchLabels": {
+                    "kubernetes.io/metadata.name": namespace,
+                }}},
+            },
+        }))
+        .unwrap();
+        Api::<ValidatingAdmissionPolicy>::all(client.clone())
+            .create(&PostParams::default(), &policy)
+            .await
+            .unwrap();
+        Api::<ValidatingAdmissionPolicyBinding>::all(client.clone())
+            .create(&PostParams::default(), &binding)
+            .await
+            .unwrap();
+        // The API server enforces a new policy once it has loaded it: wait
+        // until it refuses a dry-run StatefulSet.
+        let probe: StatefulSet = serde_json::from_value(json!({
+            "metadata": {"name": "admission-probe"},
+            "spec": {
+                "serviceName": "admission-probe",
+                "selector": {"matchLabels": {"probe": "admission"}},
+                "template": {
+                    "metadata": {"labels": {"probe": "admission"}},
+                    "spec": {"containers": [{"name": "probe", "image": "probe"}]},
+                },
+            },
+        }))
+        .unwrap();
+        let sets = Api::<StatefulSet>::namespaced(client.clone(), namespace);
+        let dry_run = PostParams {
+            dry_run: true,
+            ..Default::default()
+        };
+        for _ in 0..60 {
+            if let Err(error) = sets.create(&dry_run, &probe).await
+                && error.to_string().contains(Self::MESSAGE)
+            {
+                return Self {
+                    client: client.clone(),
+                    name,
+                };
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        panic!("the admission policy did not take effect within 60 s");
+    }
+
+    async fn remove(self) {
+        Api::<ValidatingAdmissionPolicyBinding>::all(self.client.clone())
+            .delete(&self.name, &DeleteParams::default())
+            .await
+            .unwrap();
+        Api::<ValidatingAdmissionPolicy>::all(self.client.clone())
+            .delete(&self.name, &DeleteParams::default())
+            .await
+            .unwrap();
+    }
+}
+
 async fn release_count(client: &kube::Client, namespace: &str, release: &str) -> usize {
     Api::<Secret>::namespaced(client.clone(), namespace)
         .list(&ListParams::default().labels(&format!("owner=helm,name={release}")))
@@ -371,11 +465,12 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
 }
 
 /// What the kind-openshift-agents HCL E2E scenario cannot show about the
-/// development gateway: that it refuses a token signed by another key, and
-/// that removing and reinstalling it keeps the namespace, encryption key, and
-/// PVCs with their UIDs. It runs the compiled runtime and teardown graphs with
-/// an empty `PATH`, so no host Helm executable can stand in for the bundled
-/// provider.
+/// development gateway: that it refuses a token signed by another key, that a
+/// reinstall that fails after Helm stored the release leaves no release and
+/// carries Helm's reason, and that removing and reinstalling it keeps the
+/// namespace, encryption key, and PVCs with their UIDs. It runs the compiled
+/// runtime and teardown graphs with an empty `PATH`, so no host Helm executable
+/// can stand in for the bundled provider.
 #[tokio::test]
 #[ignore = "needs an owned cluster with Agent Sandbox and a verified bundle; see live-tests.md"]
 async fn the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_storage() {
@@ -537,7 +632,40 @@ async fn the_gateway_refuses_a_foreign_token_and_reinstalls_on_its_retained_stor
         if cycle == 0 {
             tofu.graph(&graph);
             tofu.success(&["init", "-input=false", "-no-color"]).await;
+            // The admission policy refuses the gateway's StatefulSet after Helm
+            // stored the release: the atomic install removes the release, and
+            // the state binds none (#14155).
+            let deny = DenyGateway::start(&operations.client, &namespace).await;
             tofu.plan(&actions(workloads, "create")).await;
+            let failed = tofu
+                .run(&["apply", "-input=false", "-no-color", "operation.tfplan"])
+                .await;
+            deny.remove().await;
+            assert!(!failed.status.success(), "the refused install must fail");
+            assert!(
+                String::from_utf8_lossy(&failed.stderr).contains(DenyGateway::MESSAGE),
+                "the failed install's error carries Helm's reason; output suppressed"
+            );
+            assert_eq!(
+                release_count(&operations.client, &namespace, &spec.name).await,
+                0,
+                "the failed install left a Helm release record"
+            );
+            assert_eq!(
+                tofu.addresses().await,
+                all[..2]
+                    .iter()
+                    .map(|address| (*address).to_owned())
+                    .collect(),
+                "the failed install bound the release"
+            );
+            assert!(
+                kept == retained(&operations.client, &namespace, &spec.name)
+                    .await
+                    .unwrap(),
+                "the failed install's removal keeps retained storage and encryption key"
+            );
+            tofu.plan(&actions(&all[2..], "create")).await;
             tofu.apply().await;
             tofu.plan(&BTreeMap::new()).await;
             assert!(

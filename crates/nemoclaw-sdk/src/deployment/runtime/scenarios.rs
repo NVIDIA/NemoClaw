@@ -108,16 +108,6 @@ impl Deployment {
         store.save(&record)
     }
 
-    /// Record the install of the saved configuration's gateway release, as an
-    /// apply does before it installs the release.
-    pub fn scenario_record_helm_install(&self) -> Result<(), Error> {
-        let (_, store) = self.open()?;
-        let record = store
-            .load()?
-            .ok_or(Error::Conflict("a scenario needs a saved configuration"))?;
-        super::helm_install::save_install(&store, &record.document, &record.generations)
-    }
-
     /// Run OpenTofu `commands` in the deployment's state, initialized for the
     /// saved configuration, with destroy's environment.
     pub async fn scenario_runtime_tofu(

@@ -58,18 +58,16 @@ impl Deployment {
         result.retained.extend(compiled.retained.iter().cloned());
         if record.destroyed() {
             if !preview {
-                // A destroy that failed to forget its installs finishes here.
-                super::helm_install::clear_installs(&store)?;
                 result.outcome = Outcome::Destroyed;
             }
             return Ok(result);
         }
         // Observe and validate the complete saved plan before the first delete.
-        let (mut changes, mut planned, leftover) = self
+        let (changes, planned) = self
             .plan_teardown(&bundle, &store, &record, &bindings, &compiled, cancel)
             .await?;
+        result.changes = changes;
         if preview {
-            result.changes = leftover.into_iter().chain(changes).collect();
             return Ok(result);
         }
         // The teardown plan now accounts for every saved identity, so destroy
@@ -77,23 +75,6 @@ impl Deployment {
         record.begin_destroy();
         store.save(&record)?;
         (self.progress)(Progress::Destroying);
-        if let Some(leftover) = leftover {
-            self.remove_leftover_release(&bundle, &store, &record, cancel)
-                .await?;
-            // Removing authentication requires the release's absence, which
-            // only a new plan observes.
-            let (replanned, still_planned, remaining) = self
-                .plan_teardown(&bundle, &store, &record, &bindings, &compiled, cancel)
-                .await?;
-            if remaining.is_some() {
-                return Err(Error::Conflict(
-                    "the gateway's leftover Helm release remains after its removal; rerun destroy",
-                ));
-            }
-            changes = std::iter::once(leftover).chain(replanned).collect();
-            planned = still_planned;
-        }
-        result.changes = changes;
         if planned {
             if runtime {
                 self.checkpoint_helm_binding(&bundle, &store, &record, cancel)
@@ -128,14 +109,12 @@ impl Deployment {
         }
         record.finish_destroy();
         store.save(&record)?;
-        super::helm_install::clear_installs(&store)?;
         result.outcome = Outcome::Destroyed;
         Ok(result)
     }
 
     /// Plan teardown from the bindings already read from state; nothing has
-    /// changed that state since. Also returns the removal of a gateway release
-    /// that the plan observed and the state does not bind.
+    /// changed that state since.
     async fn plan_teardown(
         &self,
         bundle: &Bundle,
@@ -144,14 +123,14 @@ impl Deployment {
         bindings: &BTreeMap<String, StateBinding>,
         compiled: &compile::CompiledTeardown,
         cancel: &CancellationToken,
-    ) -> Result<(Vec<Change>, bool, Option<Change>), Error> {
+    ) -> Result<(Vec<Change>, bool), Error> {
         if bindings.is_empty() {
             if record.succeeded() || record.destroying() {
                 return Err(Error::Conflict(
                     "established state is missing; destroy cannot infer unbound resources",
                 ));
             }
-            return Ok((Vec::new(), false, None));
+            return Ok((Vec::new(), false));
         }
         let expected = with_observations(
             &teardown_expected(record, bindings)?,
@@ -168,9 +147,12 @@ impl Deployment {
                 cancel,
             )
             .await?;
-        let changes = check_destroy_plan(&plan, &expected, bindings, &compiled.retained)?;
-        let leftover = self.leftover_release(store, &plan, record, bindings)?;
-        Ok((changes, true, leftover))
+        // Removing authentication waits for the gateway release to go.
+        super::helm_install::check_unbound(&plan, bindings, &record.document, &record.generations)?;
+        Ok((
+            check_destroy_plan(&plan, &expected, bindings, &compiled.retained)?,
+            true,
+        ))
     }
 }
 
@@ -349,7 +331,7 @@ mod tests {
             &BTreeSet::new(),
         )
         .unwrap();
-        let (changes, planned, leftover) = deployment
+        let (changes, planned) = deployment
             .plan_teardown(
                 &bundle,
                 &store,
@@ -362,7 +344,6 @@ mod tests {
             .unwrap();
         assert!(changes.is_empty());
         assert!(!planned);
-        assert!(leftover.is_none());
         assert!(!store.directory.join("main.tf.json").exists());
     }
 

@@ -304,7 +304,7 @@ impl Deployment {
             &with_observations(&expected, &compile::observations(&compiled.graph)),
             &bindings,
         )?;
-        runtime::check_install(&store, &plan, &bindings, &document, &record.generations)?;
+        runtime::check_install(&plan, &bindings, &document, &record.generations)?;
         // Only OpenShell and Fabric creations can lose their identity with a
         // lost reply; OpenTofu saves every other resource's ID.
         let objects = allowed(&compiled.objects);
@@ -354,7 +354,6 @@ impl Deployment {
             }
             return Ok(result);
         }
-        runtime::record_install(&store, &plan, &document, &record.generations)?;
         let earlier = record.pending_creation_addresses();
         record.begin_apply(&document, creations);
         store.save(&record)?;

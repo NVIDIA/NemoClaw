@@ -463,23 +463,14 @@ Check the recreated runtime with one [request](agents.md#run-one-deep-agents-or-
 
 This procedure applies to managed Kubernetes and OpenShift deployments.
 
-An apply that fails or stops while Helm installs the gateway release, for example when Helm's 600-second wait times out, can leave the release's record in the cluster without a binding in the state: the pinned Helm provider returns the failure without the release's state.
-Helm refuses to install that name again, so plan and apply stop before changing anything and name the release.
+NemoClaw installs the gateway release atomically: when the install fails or Helm's 600-second wait times out, Helm uninstalls the release before the apply returns, and the apply's error carries Helm's reason.
+The namespace, credential key, and the gateway's volume claims stay.
+Helm removes the gateway's pods with the release, so to see why the gateway didn't become ready, read its pods' events and logs while the apply waits.
+Correct the cause, such as a missing default StorageClass or an unreachable OIDC issuer, then apply again.
 
-Before an apply installs the release, NemoClaw records the install in `helm-install.json` in the state directory, and keeps the record until destroy finishes.
-When the record names the release, correct the cause of the failure, such as a missing default StorageClass, then remove the release with destroy and apply again:
-
-```sh
-nemoclaw plan --destroy --state-dir .local/deployment
-nemoclaw destroy --state-dir .local/deployment
-nemoclaw apply --state-dir .local/deployment deployment.yaml
-```
-
-The preview lists the release's removal and why.
-Destroy removes the release through the Helm provider, in a separate OpenTofu configuration under the state directory that it deletes afterward, and then removes the rest of the runtime as usual; storage stays.
-If destroy fails or is interrupted after it starts, resume destroy with the same state.
-
-Without a record that names the release, for example after an apply by an earlier NemoClaw version, plan, apply, and destroy leave the release and name it.
+After a first interrupt, the apply waits for the install to finish or for Helm to uninstall it.
+A second interrupt, a crash, or a killed process can stop the install before then, which leaves the release `pending-install` in the cluster without a binding in the state.
+Helm refuses to install that name again, and NemoClaw can't tell the release from another owner's, so plan, apply, and destroy stop before changing anything, name the release, and leave it.
 If the release is this deployment's, remove it with Helm and rerun the operation:
 
 ```sh

@@ -24,6 +24,7 @@ The gateway test, `kubernetes_live::the_gateway_refuses_a_foreign_token_and_rein
 It runs the compiled runtime and teardown graphs through the bundled OpenTofu with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
 It requires authenticated `GetGatewayInfo` with the development token and refusal of a token signed by another key.
 It removes and reinstalls the gateway, requiring the namespace, encryption key, and PVCs to keep their UIDs, then deletes its namespace; with kind's `Delete` reclaim policy, that also removes the volumes.
+Before the first reinstall, it installs the gateway while a `ValidatingAdmissionPolicy` that it creates refuses StatefulSets in its namespace: the failed install must carry the refusal, leave no release record or binding, and keep the retained storage.
 It creates no agent sandbox.
 To run it alone, use an owned disposable kind cluster with Agent Sandbox and a cluster administrator's kubeconfig that holds its credentials, because OpenTofu runs with an empty `PATH`:
 
