@@ -69,11 +69,11 @@ Never print the auth volume's key, relabel retained volumes, or attach them to a
 |---|---|
 | Matching server is running | Verify its authenticated `/models` response, then use Existing Endpoint below |
 | Matching container is stopped | Establish the stop reason and available memory; resume only with authorization and its owner's supported lifecycle procedure |
-| Compute was destroyed but matching cache, credentials, YAML, state and bundle remain | Follow [deployment recovery](../../../../docs/usage.md#updates-and-recovery) with the original identity and bundle; preview the whole plan before apply, since it may recreate an agent and gateway as well as inference |
+| Compute was destroyed but matching cache, credentials, YAML, state and bundle remain | Follow [deployment recovery](../../../../docs/build-deploy/usage.md#updates-and-recovery) with the original identity and bundle; preview the whole plan before apply, since it may recreate an agent and gateway as well as inference |
 | Cache exists but recovery inputs are missing | Report retained data separately from a recoverable deployment; there is no lost-state adoption workflow for credentials or gateway storage |
 | No matching server or reusable cache is established | Ask which inference source to provision before downloading a model |
 
-For managed vLLM, follow [stopped-runtime diagnosis](../../../../docs/models.md#diagnose-and-recover-a-stopped-runtime).
+For managed vLLM, follow [stopped-runtime diagnosis](../../../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
 A retained `ready` status is historical; recheck current health and authenticated model identity after recovery.
 Do not blindly restart after memory protection or enable an automatic restart loop that defeats it.
 
@@ -106,25 +106,29 @@ echo "$ENDPOINT $MODEL" > "$EVIDENCE/inference.txt"
 If no vLLM runs, follow the retained-inference discovery above before declaring the precondition missing or proposing a download.
 If `MODEL` is empty, diagnose readiness or authentication; do not proceed with an unverified endpoint.
 That server, its network, and its key belong to another deployment: read them, never change them.
-Edit the YAML: delete `spec.services`, and replace `spec.inferenceProviders` and the route's model:
+Edit the YAML by hand, writing out the values of `$ENDPOINT` and `$MODEL`:
+
+1. Delete the whole `spec.services` block.
+2. Replace `spec.inferenceProviders` with:
+   ```yaml
+     inferenceProviders:
+       vllm:
+         provider: openai
+         api: openai-completions
+         endpoint: REPLACE_WITH_ENDPOINT
+         credential:
+           env: VLLM_KEY
+   ```
+3. In the sandbox's route, set `providerRef: vllm` and `overrides.model: REPLACE_WITH_MODEL`.
+
+Then check the edits:
 
 ```sh
-python3 - "$RUN_DIR/deployment.yaml" "$ENDPOINT" "$MODEL" <<'PY'
-import sys, yaml
-path, endpoint, model = sys.argv[1:]
-doc = yaml.safe_load(open(path))
-doc["spec"].pop("services", None)
-doc["spec"]["inferenceProviders"] = {"vllm": {
-    "provider": "openai", "api": "openai-completions",
-    "endpoint": endpoint, "credential": {"env": "VLLM_KEY"}}}
-route = doc["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]
-route["providerRef"] = "vllm"
-route["overrides"]["model"] = model
-yaml.safe_dump(doc, open(path, "w"), sort_keys=False)
-PY
+grep -c '^  services:' "$RUN_DIR/deployment.yaml"
+grep -cE "endpoint: $ENDPOINT\$|providerRef: vllm\$|model: $MODEL\$" "$RUN_DIR/deployment.yaml"
 ```
 
-The snippet uses PyYAML, which this host has; it drops the file's comments.
+Result: `0`, then `3`.
 
 ### Managed Service
 

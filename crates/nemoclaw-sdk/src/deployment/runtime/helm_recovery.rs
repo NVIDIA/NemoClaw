@@ -11,7 +11,7 @@ const CHECKPOINT: &str = "helm-recovery.json";
 
 // The pinned Helm provider can forget a release on a failed existence lookup.
 // Preserve its binding across teardown, as required by Ownership and Recovery
-// in docs/design/scope.md. OpenTofu still owns the state format and edits.
+// in internal-docs/design/scope.md. OpenTofu still owns the state format and edits.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Checkpoint {

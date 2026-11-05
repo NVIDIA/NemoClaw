@@ -13,7 +13,11 @@ This skill drives one Fabric-managed agent the way its user does: through its na
 It checks desired-state assertions: each check records whether the agent does what a user of that agent expects through NemoClaw, not what the selected revision happens to support.
 It reuses [verify-yaml-deployment](../verify-yaml-deployment/SKILL.md) for the run's identity, build, inference, base YAML, plan and apply, doctor, credential scan, and cleanup, and owns only the Fabric-boundary additions.
 It owns one deployment per run and never touches another.
-The [live tests](../../../docs/contributing/live-tests.md) stay the gate; when a check must hold on every change, add a test at the layer the `write-tests` skill picks.
+
+The [live tests](../../../internal-docs/contributing/live-tests.md) stay the gate; when a check must hold on every change, add a test at the layer the `write-tests` skill picks.
+Use existing automated tests for configuration mapping and provider planning rules; do not repeat those assertions as skill checks.
+The feature files retain native discovery, registration, fresh use, and physical lifecycle evidence that those tests cannot prove.
+Keep the configuration and identity needed to drive a run as prerequisites, not separate proof of native behavior.
 
 ## Scope
 
@@ -37,7 +41,7 @@ A pair that isn't listed has no completed run: say so with the result.
 |---|---|
 | [../verify-yaml-deployment/targets/dgx-spark.md](../verify-yaml-deployment/targets/dgx-spark.md) | `dgx-spark` |
 
-Read the matching [verify-yaml-deployment agent file](../verify-yaml-deployment/agents/) and the target file before launching: they set the base YAML and the variables this file uses.
+Read the matching [verify-yaml-deployment agent file](../verify-yaml-deployment/agents) and the target file before launching: they set the base YAML and the variables this file uses.
 
 Ask the user before every run: each run uses the Spark's GPU through its inference source, and some sources need credentials or a paid service.
 Also ask before a run that downloads a model, uses sudo, or installs a plugin package from the network.
@@ -77,7 +81,7 @@ Run [Write the YAML](../verify-yaml-deployment/SKILL.md#write-the-yaml), all fiv
 
 Add what the checks need to the base YAML, then save it:
 
-1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, with `read_only: false` on both mounts; OpenShell defaults them to read-only. Follow [caller-owned volumes](../../../docs/state.md) for admission and filesystem access.
+1. **Volumes.** Mount `$WORKSPACE_VOLUME` at `/sandbox/workspace` and `$ARTIFACTS_VOLUME` at `/sandbox/artifacts`, with `read_only: false` on both mounts; OpenShell defaults them to read-only. Follow [caller-owned volumes](../../../docs/build-deploy/state.md) for admission and filesystem access.
 2. **Skills.** Keep the supplied skill under `/sandbox/workspace/skills/capability-probe`. Check the selected adapter's path validation before setting `skills.paths`: OpenClaw at Fabric `e5b5ebf2b81cc3c6325301ea419ebf2453dab12e` requires individual skill directories containing `SKILL.md`, so use `[/sandbox/workspace/skills/capability-probe]`, not the parent directory. Record this per-item configuration separately from native discovery; do not claim directory scanning or automatic discovery of generated skills from it.
 3. **Capabilities.** Choose the run-scoped extension names first: run step 2 of [mounted-extensions](features/mounted-extensions.md), and note the generated plugin's ID, `fb-plugin-$UID8`, as step 4 of [plugins](features/plugins.md) derives it.
    Then enable each capability the feature files check: the native TUI and, where in scope, the Web UI; a harmless bundled plugin; the mounted native tool and plugin locations under `/sandbox/workspace/extensions`, with any per-item enablement; and a tool allow-list from which Config change can remove only the shell-launch tool.
