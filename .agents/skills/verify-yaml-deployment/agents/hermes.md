@@ -45,5 +45,5 @@ Result: `["api","dashboard"]`.
 
 ## Known Gaps
 
-- **Dashboard without sign-in.** Anyone who reaches its forward can use it, including browser chat without approvals ([docs/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
+- **Dashboard without sign-in.** Anyone who reaches its forward can use it, including browser chat without approvals ([docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
 - **Interface failures stay silent.** A Hermes interface process that exits leaves the agent running and plan unchanged until the next runtime start.

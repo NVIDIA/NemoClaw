@@ -6,7 +6,7 @@
 # Replace the UID, image placeholders, SSH alias, addresses, and model settings for your hosts.
 # Requires local Docker/OpenShell, a compatible remote NVIDIA GPU, and an existing proxy.
 # Apply provisions resources and checks readiness without inference.
-# See docs/configuration-references.md#combine-supported-features for alternatives and limits.
+# See docs/build-deploy/configuration-references.md#combine-supported-features for alternatives and limits.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

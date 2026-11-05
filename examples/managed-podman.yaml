@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
-# Local rootless Linux; see docs/usage.md for API and networking prerequisites.
+# Local rootless Linux; see docs/build-deploy/usage.md for API and networking prerequisites.
 # Set the API socket and use an image digest from that Podman image store.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
