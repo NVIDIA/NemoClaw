@@ -26,9 +26,13 @@ const REFERENCE_ADAPTER: &str = "org.nemoclaw.dummy";
 const QUALIFY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The model runtime images, by Bake target. A managed service whose `kind`
-/// names one runs the image that target builds. Live / HCL builds a case's
-/// runtime images from this list.
+/// names one runs the image that target builds from `image/<target>/` and the
+/// supervisor in [`RUNTIME_SUPERVISOR`]. CI builds a live HCL case's runtime
+/// images from this list, and `changes cases` uses it to select the cases
+/// whose runtime images a change affects.
 pub const RUNTIMES: [&str; 2] = ["ollama", "vllm"];
+/// The directory of the supervisor that every runtime image includes.
+pub const RUNTIME_SUPERVISOR: &str = "image/supervisor";
 
 /// The runtime images, as Bake targets, that a NemoClaw document's managed
 /// services run.

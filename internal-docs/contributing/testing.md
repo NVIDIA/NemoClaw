@@ -386,6 +386,21 @@ Whenever the plan selects the live suites, Linux AMD64 runs the hosted cases as 
 On `v1` pushes and manual runs, it also calls [Live / HCL](../../.github/workflows/hcl-e2e.yml) as `linux_amd64 / E2E GPU` for the GPU cases; NVIDIA's GPU runners refuse jobs that a pull request starts.
 Live / HCL builds its own bundle, test executable, and agent images on Ubuntu 22.04, whose older glibc the GPU runner can run, and each case's job builds the model runtime images that `cargo images runtimes` lists for it from the case's services. Dispatch it to run the hosted or GPU cases alone against that build.
 
+To see which live HCL cases a pull request affects, such as before dispatching the GPU cases, run from a clean checkout of its commit:
+
+```sh
+cargo run --locked -p nemoclaw-build --no-default-features -- changes cases --base origin/v1
+```
+
+The JSON names the commit analyzed, the selected case IDs, and each case's reason.
+A live case is a scenario in `crates/nemoclaw-e2e/tests/e2e/hcl/tests/` with a case document of the same name in `crates/nemoclaw-e2e/cases/`.
+The command compares the checkout's `HEAD` with its merge base with `--base`, so changes the base made since don't count.
+A case's own document and scenario select only that case.
+A model runtime image's directory, `image/vllm/` or `image/ollama/`, selects the cases whose documents declare a service of that `kind`, and `image/supervisor/` selects every case that runs either.
+Any other change that selects the live suites selects every case, and a failed analysis selects every case.
+Add `--add CASE` for each reviewed recommendation; it adds the case and removes none.
+The command selects cases only; it runs nothing.
+
 A selected live suite that fails fails its platform's `Test / PLATFORM` check.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
