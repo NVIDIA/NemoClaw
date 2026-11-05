@@ -522,7 +522,7 @@ export function managedActivationOpenClawPluginScript(home = "/sandbox"): string
     // This fixture uses synthetic credentials. Retain native bootstrap errors
     // across restart without replacing an existing native dotenv file.
     `(umask 077; printf 'OPENCLAW_DEBUG=1\\n' > "$source_dir/bootstrap.env")`,
-    `mv -nT -- "$source_dir/bootstrap.env" ${dotenv}`,
+    `mv --update=none -T -- "$source_dir/bootstrap.env" ${dotenv}`,
     `HOME=${shellQuote(home)} openclaw plugins install --force --accept-capabilities "$source_dir"`,
   ].join("\n");
 }
