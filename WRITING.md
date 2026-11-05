@@ -30,7 +30,7 @@ For credential-handling procedures, explain storage, access, lifetime, and remov
 Distinguish an observed result from an inference or untested claim.
 A reachable endpoint does not establish successful inference; one successful request does not establish general compatibility.
 Passing tests do not establish product support or authorize actions on a user's resources.
-The [design decision](docs/design/scope.md) defines the accepted scope.
+The [design decision](internal-docs/design/scope.md) defines the accepted scope.
 
 ## Review the Assigned Change
 
@@ -41,4 +41,4 @@ Group repeated findings and separate writing preferences from errors affecting b
 Only those consequential errors should block on writing grounds.
 An audit alone does not authorize unrelated edits.
 
-[Contribute documentation](docs/contributing/documentation.md) covers page ownership, procedures, and validation.
+[Contribute documentation](internal-docs/contributing/documentation.md) covers page ownership, procedures, and validation.

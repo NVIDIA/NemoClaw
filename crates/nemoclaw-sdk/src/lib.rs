@@ -54,7 +54,7 @@ mod process;
 pub use tokio_util::sync::CancellationToken;
 mod deployment;
 pub use deployment::{
-    Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
+    AgentRuntime, Change, Deployment, DeploymentConnection, DiscoveryObservation, DiscoveryReport,
     DiscoveryScope, DiscoveryTarget, InterfaceAccess, OperationResult, Outcome, PlanObservation,
     Progress, ReportedObservation, ResourceInventoryEntry, ResourceSource, SignIn, StepOutcome,
 };
