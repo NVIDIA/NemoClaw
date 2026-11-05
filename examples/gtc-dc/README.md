@@ -34,7 +34,7 @@ KV and SSM cache dtypes use runtime defaults; model output accuracy and tool cal
 ## Prepare the Target Host
 
 Ubuntu 24.04 is the assumed Linux environment, including the WSL2 distribution.
-Use [the build prerequisites](../../docs/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
+Use [the build prerequisites](../../docs/build-deploy/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
 Each target requires exactly one visible NVIDIA GPU; these configurations provide neither CPU offloading nor multi-GPU serving.
 
 | Target | Hardware requirement | Memory accounting |
@@ -52,7 +52,7 @@ The 88 GiB budget and 28 GiB reserve require at least 116 GiB total memory obser
 A WSL2 memory limit that passes these checks leaves at most 12 GiB of the 128 GB configuration for firmware, Windows, and other applications.
 Whether memory observed inside WSL2 accounts for GPU allocations made through the Windows driver is untested; measure both inside WSL2 and in Windows while the model loads.
 Model loading and GPU access through WSL2 still require validation on the selected machine.
-See [hardware admission and memory checks](../../docs/models.md#choose-a-hardware-profile) and [platform limits](../../docs/limits.md#platforms-models-and-placement).
+See [hardware admission and memory checks](../../docs/agents-inference/models.md#choose-a-hardware-profile) and [platform limits](../../docs/resources/limits.md#platforms-models-and-placement).
 
 On the Station, DGX Spark, or inside the RTX Spark's ARM64 WSL2 distribution, run from the repository root:
 
@@ -88,7 +88,7 @@ dist/linux_arm64/bin/nemoclaw plan --state-dir .local/gtc-dc/state .local/gtc-dc
 For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` file instead and run the same Linux ARM64 command inside WSL2.
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
-Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
+Follow [the deployment workflow](../../docs/build-deploy/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/agents-inference/inference.md#verify-the-result) separately.
 
 ## AMD64 Kubernetes with NVIDIA Cloud Inference
 
@@ -105,25 +105,25 @@ The profile requires live validation.
 | `hermes` | `nvidia.fabric.hermes` | `NEMOCLAW_HERMES_IMAGE_METADATA` |
 
 Both agents select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrate.api.nvidia.com/v1` through the OpenAI completions API.
-Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security.md#credentials-and-authentication) describes its storage and removal.
+Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security/security.md#credentials-and-authentication) describes its storage and removal.
 Model requests can incur cloud inference charges.
 Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
 Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
 Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS.
 
-Follow the [Kubernetes prerequisites and image preparation](../../docs/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/kubernetes.md#use-an-existing-gateway).
+Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/build-deploy/kubernetes.md#use-an-existing-gateway).
 Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.
 Set `GATEWAY_TOKEN` and the `GATEWAY_CA`, `GATEWAY_CERT`, and `GATEWAY_KEY` TLS file references for the existing gateway.
 
 For YAML, assign a fresh deployment UID and replace the gateway endpoint and both image digests before planning.
-Follow the [deployment workflow](../../docs/usage.md) for apply and retained teardown.
+Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and retained teardown.
 
 For HCL, copy `hosted-nvidia.tf` alone into a private working directory and set `gateway_endpoint`, a fresh `workspace`, and both `images` references.
 Pin the two NVIDIA providers to the matching native bundle's manifest version and install them from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
 Run the bundle's `libexec/tofu` to initialize, validate, plan, and apply that directory.
 The HCL protects its workspace with `prevent_destroy`; full workspace deletion requires removing that protection and setting `destroy=true`.
 Choose one authoring path per deployment, with its own workspace and state; applying both configurations does not adopt the other path's resources.
-Verify an [agent response](../../docs/inference.md#verify-the-result) from each sandbox separately.
+Verify an [agent response](../../docs/agents-inference/inference.md#verify-the-result) from each sandbox separately.
 
 ## Sources and Adaptation
 

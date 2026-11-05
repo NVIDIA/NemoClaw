@@ -37,7 +37,7 @@ Give each adversary the scope, the intent, the versions, and this brief:
 > For a design or specification, run a prototype, probe the current tree, or run the pinned upstream component.
 > Try at least these: stop it at each step and run it again; give the same state two writers; take the person's next action after each failure.
 > Keep reproductions in your own worktree.
-> Create only live resources you own, as [live tests](../../../docs/contributing/live-tests.md) describe, and remove them when you finish.
+> Create only live resources you own, as [live tests](../../../internal-docs/contributing/live-tests.md) describe, and remove them when you finish.
 > Ask before runs that need credentials, paid services, or GPUs.
 > Don't push, open pull requests, or comment on issues.
 > Report each finding with a title, the exact command, the output it printed, and the output the intent requires.
@@ -52,7 +52,7 @@ If an adversary produces nothing, continue with the rest and say so.
   Keep a finding when the output shows the failure and the failure breaks the intent; drop the rest.
 - Merge findings that share a root cause.
   Keep every verified finding, not one adversary's list.
-- Apply the [upstream boundaries](../../../docs/design/scope.md#upstream-boundaries) to each finding and name the component that owns it.
+- Apply the [upstream boundaries](../../../internal-docs/design/scope.md#upstream-boundaries) to each finding and name the component that owns it.
 
 ## Report
 

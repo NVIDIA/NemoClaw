@@ -3,7 +3,7 @@
 
 # OpenClaw Dashboard
 
-The author declares the Control UI under `harness.settings.interfaces.dashboard`, as [docs/interfaces.md](../../../../docs/interfaces.md#reach-an-agent-interface) documents.
+The author declares the Control UI under `harness.settings.interfaces.dashboard`, as [docs/interfaces.md](../../../../docs/agents-inference/interfaces.md#reach-an-agent-interface) documents.
 Apply then prints how to forward it, the command that reads its sign-in token, and the sign-in URL; with a service exposure on the same port, it also lists the URL the gateway serves it at.
 A browser at the forwarded loopback address signs in with the token and chats with the agent.
 The adapter accepts only loopback browser origins ([NVIDIA/NeMo-Fabric#573](https://github.com/NVIDIA/NeMo-Fabric/pull/573)), so a browser at the exposure's URL can't sign in; the exposure is checked with curl only.

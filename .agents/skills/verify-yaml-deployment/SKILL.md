@@ -11,13 +11,13 @@ disable-model-invocation: true
 
 This skill drives the `nemoclaw` CLI the way a configuration author does: start from a repository example, edit it into one YAML file, plan, apply, talk to the agent, export, reapply, and destroy.
 It owns one deployment per run and never touches another.
-The [live tests](../../../docs/contributing/live-tests.md) stay the gate; when a journey must hold on every change, add a test at the layer the `write-tests` skill picks.
+The [live tests](../../../internal-docs/contributing/live-tests.md) stay the gate; when a journey must hold on every change, add a test at the layer the `write-tests` skill picks.
 
 ## Scope
 
 - **Gateway:** a managed Docker gateway on the host running the skill. Kubernetes, OpenShift, Podman, and external gateways launch, inspect, and clean up differently; they need their own skill.
-- **Agent:** one sandbox with one Fabric agent, chosen from [agents/](agents/).
-- **Target:** one host type, chosen from [targets/](targets/), which names the example to start from and the inference source.
+- **Agent:** one sandbox with one Fabric agent, chosen from [agents/](agents).
+- **Target:** one host type, chosen from [targets/](targets), which names the example to start from and the inference source.
 
 Each agent file lists the agent–target pairs proven live, with the revision and date.
 A pair that isn't listed is unproven: say so with the result.
@@ -85,7 +85,7 @@ IMAGE=$(docker image inspect "nc-fabric:$AGENT" --format '{{index .RepoDigests 0
 echo "$IMAGE" > "$EVIDENCE/image.txt"
 ```
 
-Copy the bundle so a later `cargo ci bundle` can't change it mid-run, as [Spark and Fabric](../../../docs/contributing/live-tests.md#spark-and-fabric) advises.
+Copy the bundle so a later `cargo ci bundle` can't change it mid-run, as [Spark and Fabric](../../../internal-docs/contributing/live-tests.md#spark-and-fabric) advises.
 `ls dist` must print one platform; remove stale platform directories first.
 The agent file names any other image it needs.
 
@@ -198,11 +198,11 @@ grep -q 'No resource changes planned.' "$EVIDENCE/destroy-check.txt" && echo DES
 ```
 
 Continue only after `DESTROYED` prints.
-When destroy fails, keep the state directory and the bundle: they are the only record of what to remove. Fix the cause and destroy again; [Updates and Recovery](../../../docs/usage.md#updates-and-recovery) covers interrupted operations.
+When destroy fails, keep the state directory and the bundle: they are the only record of what to remove. Fix the cause and destroy again; [Updates and Recovery](../../../docs/build-deploy/usage.md#updates-and-recovery) covers interrupted operations.
 Run destroy and the removal below in one sequence, never concurrently: removing the state or bundle mid-destroy fails it and strands the deployment.
 
 Destroy retains the gateway's storage and, for a managed model service, its model data.
-Remove what this run created with [Remove Retained Resources](../../../docs/usage.md#remove-retained-resources), selecting by this run's UID only:
+Remove what this run created with [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources), selecting by this run's UID only:
 
 ```sh
 owner_label="label=nemoclaw.nvidia.com/uid=$UID_"
@@ -223,7 +223,7 @@ docker network ls --quiet --filter "$owner_label" | xargs -r docker network rm
 docker ps --all --format '{{.Names}}' | grep -c "^openshell-$WORKSPACE--" || true
 ```
 
-Both counts must be 0; otherwise keep the state directory and the bundle, as [Remove Retained Resources](../../../docs/usage.md#remove-retained-resources) requires.
+Both counts must be 0; otherwise keep the state directory and the bundle, as [Remove Retained Resources](../../../docs/build-deploy/usage.md#remove-retained-resources) requires.
 Then remove them and check that the evidence still lists:
 
 ```sh

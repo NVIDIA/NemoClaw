@@ -69,11 +69,11 @@ Never print the auth volume's key, relabel retained volumes, or attach them to a
 |---|---|
 | Matching server is running | Verify its authenticated `/models` response, then use Existing Endpoint below |
 | Matching container is stopped | Establish the stop reason and available memory; resume only with authorization and its owner's supported lifecycle procedure |
-| Compute was destroyed but matching cache, credentials, YAML, state and bundle remain | Follow [deployment recovery](../../../../docs/usage.md#updates-and-recovery) with the original identity and bundle; preview the whole plan before apply, since it may recreate an agent and gateway as well as inference |
+| Compute was destroyed but matching cache, credentials, YAML, state and bundle remain | Follow [deployment recovery](../../../../docs/build-deploy/usage.md#updates-and-recovery) with the original identity and bundle; preview the whole plan before apply, since it may recreate an agent and gateway as well as inference |
 | Cache exists but recovery inputs are missing | Report retained data separately from a recoverable deployment; there is no lost-state adoption workflow for credentials or gateway storage |
 | No matching server or reusable cache is established | Ask which inference source to provision before downloading a model |
 
-For managed vLLM, follow [stopped-runtime diagnosis](../../../../docs/models.md#diagnose-and-recover-a-stopped-runtime).
+For managed vLLM, follow [stopped-runtime diagnosis](../../../../docs/agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
 A retained `ready` status is historical; recheck current health and authenticated model identity after recovery.
 Do not blindly restart after memory protection or enable an automatic restart loop that defeats it.
 

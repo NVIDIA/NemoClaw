@@ -46,8 +46,9 @@ impl Secrets for Values {
 }
 
 fn required(name: &str) -> String {
-    std::env::var(name)
-        .unwrap_or_else(|_| panic!("{name} is required; see docs/contributing/live-tests.md"))
+    std::env::var(name).unwrap_or_else(|_| {
+        panic!("{name} is required; see internal-docs/contributing/live-tests.md")
+    })
 }
 
 /// State, generated credentials and plans stay in a private directory, including

@@ -49,5 +49,5 @@ The first request after apply can take about 30 seconds.
 
 ## Known Gaps
 
-- **The agent can sign in to itself.** The agent's own tools can read the token file and reach the port ([docs/interfaces.md](../../../../docs/interfaces.md#who-can-use-an-interface)).
+- **The agent can sign in to itself.** The agent's own tools can read the token file and reach the port ([docs/interfaces.md](../../../../docs/agents-inference/interfaces.md#who-can-use-an-interface)).
 - **Origins.** The adapter accepts only loopback browser origins ([NVIDIA/NeMo-Fabric#573](https://github.com/NVIDIA/NeMo-Fabric/pull/573)), so a browser can sign in through the forward but not at the exposure's URL.

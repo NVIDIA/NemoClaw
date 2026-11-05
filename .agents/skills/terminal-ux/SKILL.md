@@ -11,7 +11,7 @@ description: Design or review NemoClaw CLI output, including progress, errors, a
 Output should answer three questions: what will change, what is happening, and what state remains?
 Rendering consumes facts from the SDK; it doesn't orchestrate, probe, or parse logs.
 
-Start from the [CLI contract](../../../docs/reference/cli.md), the [responsibility boundaries](../../../docs/design/scope.md), and the current renderer in `crates/nemoclaw-cli`.
+Start from the [CLI contract](../../../docs/references/cli.md), the [responsibility boundaries](../../../internal-docs/design/scope.md), and the current renderer in `crates/nemoclaw-cli`.
 Progress renders in a Ratatui inline viewport on terminals, as plain text when redirected, and as JSON for automation.
 
 ## Rules
