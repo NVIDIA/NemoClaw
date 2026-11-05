@@ -141,6 +141,11 @@ describe("dashboard-remote-bind target ownership (#13177)", () => {
     "src/lib/onboard/managed-startup/profile-builder.ts",
     "src/lib/actions/sandbox/rebuild-gpu-opt-out.ts",
     "src/lib/onboard/workload/clone.ts",
+    "src/lib/state/gateway-registry.ts",
+    "src/lib/state/registry-normalization.ts",
+    "src/lib/state/registry.ts",
+    "src/lib/onboard/sandbox-registration.ts",
+    "src/lib/onboard/sandbox-create/orchestration.ts",
   ])("selects the live dashboard-origin owner when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "dashboard-remote-bind",
@@ -187,6 +192,13 @@ it("selects dashboard-remote-bind when its host-network probe helper changes", (
       changedFiles: ["test/e2e/live/dashboard-remote-bind-env.ts"],
     },
   );
+  expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+    "dashboard-remote-bind",
+  );
+});
+
+it("plans dashboard-remote-bind when dashboard-origin registry validation changes", () => {
+  const plan = buildE2eWorkflowPlan({}, { changedFiles: ["src/lib/state/gateway-registry.ts"] });
   expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
     "dashboard-remote-bind",
   );

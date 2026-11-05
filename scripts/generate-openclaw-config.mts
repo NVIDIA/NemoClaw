@@ -158,27 +158,11 @@ function unique<T>(values: Iterable<T>): T[] {
   return [...new Set(values)];
 }
 
-/**
- * Read extra dashboard browser origins (#13177) with the same parser that
- * onboarding and the managed startup profile use. A rejected entry is named by
- * position: the parser's message can echo the value, which may hold user
- * information.
- */
+/** Keep the environment-variable context on the shared parser's value-safe errors. */
 function readDashboardOriginsEnv(env: Env): string[] {
-  const entries = (env[DASHBOARD_ORIGINS_ENV] ?? "").split(",");
-  for (const [index, entry] of entries.entries()) {
-    try {
-      parseDashboardOrigins([entry]);
-    } catch {
-      throw new Error(
-        `${DASHBOARD_ORIGINS_ENV} entry ${String(index + 1)} must be a bare https origin, or http on loopback.`,
-      );
-    }
-  }
   try {
-    return parseDashboardOrigins(entries);
+    return parseDashboardOrigins([env[DASHBOARD_ORIGINS_ENV] ?? ""]);
   } catch (error) {
-    // Every entry parsed, so only the origin-count limit remains.
     throw new Error(
       `${DASHBOARD_ORIGINS_ENV}: ${error instanceof Error ? error.message : String(error)}`,
     );

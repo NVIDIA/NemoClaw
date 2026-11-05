@@ -756,8 +756,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/actions/sandbox/rebuild-env-isolation.ts",
       "src/lib/actions/sandbox/agents/managed-workload-rebuild-profile.ts",
       // Origin flag and resume handling, startup-profile schema, and rebuild/clone replay.
-      // Shared registry and onboarding-flow files only pass the list through; they stay out
-      // so unrelated onboarding changes do not select this dashboard target.
       "src/lib/onboard/command.ts",
       "src/lib/onboard/command-support.ts",
       "src/lib/onboard/session-bootstrap.ts",
@@ -767,6 +765,12 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/managed-startup/profile-builder.ts",
       "src/lib/actions/sandbox/rebuild-gpu-opt-out.ts",
       "src/lib/onboard/workload/clone.ts",
+      // Registry validation and state writes own the recorded dashboard-origin list.
+      "src/lib/state/gateway-registry.ts",
+      "src/lib/state/registry-normalization.ts",
+      "src/lib/state/registry.ts",
+      "src/lib/onboard/sandbox-registration.ts",
+      "src/lib/onboard/sandbox-create/orchestration.ts",
       "src/lib/agent/hermes-api-forward.ts",
       "src/lib/onboard/agent-dashboard-forward.ts",
       "src/lib/onboard/dashboard.ts",

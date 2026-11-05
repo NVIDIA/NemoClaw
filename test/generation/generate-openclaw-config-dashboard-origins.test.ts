@@ -122,7 +122,7 @@ describe("generate-openclaw-config.mts: NEMOCLAW_DASHBOARD_ORIGINS (#13177)", ()
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).toMatch(/NEMOCLAW_DASHBOARD_ORIGINS entry 2/);
+    expect(message).toMatch(/NEMOCLAW_DASHBOARD_ORIGINS: Dashboard origin 2/);
     expect(message).not.toMatch(/admin|s3cret/);
   });
 
@@ -133,7 +133,7 @@ describe("generate-openclaw-config.mts: NEMOCLAW_DASHBOARD_ORIGINS (#13177)", ()
     expect(() => parseDashboardOrigins([origin])).toThrow();
     expectBuildConfigError(
       { CHAT_UI_URL: "http://127.0.0.1:18789", NEMOCLAW_DASHBOARD_ORIGINS: origin },
-      /NEMOCLAW_DASHBOARD_ORIGINS entry 1/,
+      /NEMOCLAW_DASHBOARD_ORIGINS: Dashboard origin 1/,
     );
   });
 
