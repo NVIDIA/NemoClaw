@@ -738,8 +738,6 @@ const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
 const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
-const { getTransportRecoveryMessage } = validationRecovery;
-
 // Validation functions — delegated to src/lib/validation.ts
 const {
   classifyValidationFailure,
@@ -781,7 +779,7 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   prompt,
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string | null) =>
     validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
-  getTransportRecoveryMessage: (failure: any) => getTransportRecoveryMessage(failure),
+  getTransportRecoveryMessage: validationRecovery.getTransportRecoveryMessage,
   exitOnboardFromPrompt,
 });
 
@@ -975,7 +973,8 @@ function installOpenshell(): OpenShellInstallResult {
 const { areRequiredDockerDriverBinariesPresent, ensureOpenshellForOnboard } =
   openshellInstallFlow.createOnboardOpenShellInstallBindings({
     getInstallDeps: getOpenShellInstallDeps,
-    afterSuccessfulInstall: adoptPackagedGatewayOwnerAfterTrustedInstall,
+    afterSuccessfulInstall: (persistTrustedGatewayOwner) =>
+      adoptPackagedGatewayOwnerAfterTrustedInstall(persistTrustedGatewayOwner),
   });
 
 function getOpenShellInstallDeps(
