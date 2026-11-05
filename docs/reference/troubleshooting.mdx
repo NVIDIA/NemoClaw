@@ -2173,9 +2173,9 @@ $$nemoclaw onboard
 
 For shared inference routes that send this setting to OpenShell, the rounded value must be from `1` through `3600` seconds.
 Unset, empty, nonnumeric, nonfinite, and negative values use the 180-second default.
-When resumed onboarding must configure or refresh such a route, rebuild rejects an out-of-range value before backup or source-sandbox deletion.
+For these shared-route providers, rebuild rejects an out-of-range value before backup or source-sandbox deletion, even when the existing route could be reused.
 Choose a value within that range or unset the variable before retrying rebuild.
-Rebuilds that reuse an existing route or do not send this timeout retain their existing behavior.
+Native-provider paths and providers that never send this route timeout retain their behavior.
 
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy. If Ollama times out during a cold model load, NemoClaw retries once with a 300-second probe budget before failing. If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 

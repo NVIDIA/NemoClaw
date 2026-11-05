@@ -32,7 +32,6 @@ type RebuildOnboardModule = {
     nonInteractive?: boolean,
   ) => Promise<unknown>;
   hydrateCredentialEnv: (name: string) => string | null;
-  isInferenceRouteReady: (gatewayName: string, provider: string, model: string) => boolean;
   onboard: (options: RebuildRecreateOnboardOpts) => Promise<void>;
   preflightAuthoritativeRebuildTarget: (
     options: RebuildAuthoritativePreflightOptions,
@@ -89,9 +88,6 @@ export const rebuildOnboardDependencies = {
   },
   hydrateCredentialEnv(name: string): string | null {
     return loadOnboardModule().hydrateCredentialEnv(name);
-  },
-  isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean {
-    return loadOnboardModule().isInferenceRouteReady(gatewayName, provider, model);
   },
   onboard(options: RebuildRecreateOnboardOpts): Promise<void> {
     return loadOnboardModule().onboard(options);

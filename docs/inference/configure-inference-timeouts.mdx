@@ -31,8 +31,8 @@ The readiness timeout does not govern inference requests or provider validation.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
 Unset or empty values also use the defaults.
 Shared inference routes that send `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` to OpenShell require a rounded value from `1` through `3600` seconds.
-When resumed onboarding must configure or refresh such a route, rebuild rejects an out-of-range value before backup or source-sandbox deletion.
-Rebuilds that reuse an existing route or do not send this timeout retain their existing behavior.
+For these shared-route providers, rebuild rejects an out-of-range value before backup or source-sandbox deletion, even when the existing route could be reused.
+Native-provider paths and providers that never send this route timeout retain their behavior.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
 A valid value overrides the internal budget for the current recovery phase.
 An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway health, 90 seconds for Hermes gateway health, and 120 seconds for post-recovery OpenShell readiness when the recovery path does not supply another budget.

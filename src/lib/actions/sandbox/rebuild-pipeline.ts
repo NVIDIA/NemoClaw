@@ -43,7 +43,6 @@ import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   withRebuildHostFence,
-  withRebuildRouteMutationLocks,
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
@@ -167,13 +166,11 @@ export async function rebuildSandbox(
           ];
           const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
           try {
-            await withRebuildRouteMutationLocks(registry.load().sandboxes[sandboxName], () =>
-              rebuildSandboxUnlocked(
-                sandboxName,
-                normalizedOptions,
-                opts,
-                removedImmutabilityMigration.stateRecord !== null,
-              ),
+            await rebuildSandboxUnlocked(
+              sandboxName,
+              normalizedOptions,
+              opts,
+              removedImmutabilityMigration.stateRecord !== null,
             );
           } finally {
             restoreOpenShellEnv();
