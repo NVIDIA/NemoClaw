@@ -184,7 +184,13 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
         "create_namespace": false,
         "take_ownership": false,
         "upgrade_install": false,
-        "atomic": false,
+        // When the install fails or times out, Helm uninstalls the release
+        // before the provider returns, so a failed apply leaves no release
+        // that the state does not bind (#14155). The uninstall removes only
+        // the chart's objects; retained storage is outside them. When an
+        // upgrade fails, Helm rolls the release back, which removes what the
+        // upgrade created, so cleanup_on_fail adds nothing.
+        "atomic": true,
         "cleanup_on_fail": false,
         "wait": true,
         "wait_for_jobs": true,

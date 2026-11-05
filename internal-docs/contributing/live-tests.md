@@ -25,7 +25,9 @@ It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, e
 The `kind-kubernetes-development` scenario deploys one agent with the defaults: the `kubernetes` runtime profile and the `development` authentication profile, whose tokens the SDK issues.
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
 The agent must answer from its recorded runtime with the stub's reply, and destroy must keep only the gateway's storage.
-A second apply must then reuse that storage, refreshing rather than creating it again, so the namespace, encryption key, and claims kept their identity, and the agent must answer again.
+Next, a `ValidatingAdmissionPolicy` that the `hcl_live::admission` probe creates refuses StatefulSets in the deployment's namespace, so an apply fails after Helm stored the gateway release.
+That apply must fail with the refusal, and once the probe removes the policy, no record of the release may remain and the state must not bind it (#14155).
+Another apply must then reuse that storage, refreshing rather than creating it again, so the namespace, encryption key, and claims kept their identity, and the agent must answer again.
 The runner deletes the cluster with the redeployed deployment.
 That a gateway trusts only the deployment's own issuer is a [contract check](integration-tests.md#openshell-provider-contract) of the rendered chart.
 

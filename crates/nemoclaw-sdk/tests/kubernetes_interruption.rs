@@ -18,8 +18,8 @@
 #![cfg(unix)]
 
 use crate::scripted_tofu::{
-    Events, Scripted, destroy_plan_json, destroying, kubernetes_document, placeholder_generations,
-    plan_json, planning, state_json,
+    Events, Scripted, destroy_plan_json, destroying, kubernetes_document, leftover_plan_json,
+    placeholder_generations, plan_json, planning, state_json,
 };
 use nemoclaw_sdk::{
     CancellationToken, Deployment, Error, OperationResult, Outcome, Progress,
@@ -318,6 +318,100 @@ async fn cancelling_before_the_plan_saves_no_record_and_a_revised_document_is_ac
         "a revised document is accepted",
     );
     assert_applies(&scripted, 1, "the revised document");
+}
+
+/// A first apply starts OpenTofu's apply with a state file in place, created
+/// once and before the plan that the apply uses.
+///
+/// OpenTofu 1.12.9 keeps an interrupted apply's progress only in a state
+/// directory that already has a state file: without one, the snapshot it saves
+/// when interrupted holds only the last resource it updated (#14155). The script
+/// stands in for OpenTofu, so this checks that the SDK creates the file first,
+/// not what OpenTofu then saves; a file created after the plan would make the
+/// saved plan stale.
+///
+/// Catches an SDK that plans and applies in a directory without a state file.
+#[tokio::test]
+async fn a_first_apply_starts_opentofu_with_a_state_file() {
+    let scripted = fresh();
+    scripted.set("root.apply", "ok");
+    let deployment = scripted.deployment(&missing(&scripted));
+    assert_not_refused(
+        deployment.apply(&original(), &uncancelled()).await,
+        "the first apply",
+    );
+    assert!(
+        scripted.written("root.state-at-apply").is_some(),
+        "OpenTofu began the first apply without a state file"
+    );
+    assert_not_refused(
+        deployment.apply(&original(), &uncancelled()).await,
+        "the second apply",
+    );
+    let commands = scripted.commands();
+    assert_eq!(count(&commands, "root refresh"), 1, "{commands:?}");
+    let position = |wanted: &str| commands.iter().position(|command| command == wanted);
+    assert!(
+        position("root refresh") < position("root plan"),
+        "the state file was created after the first plan: {commands:?}"
+    );
+}
+
+/// A deployment whose first apply bound storage and authentication and then
+/// stopped at once while Helm installed the gateway release, so the release is
+/// a record in the cluster that the state does not bind: the next plan
+/// refreshes authentication, which observes the record.
+async fn stopped_during_the_helm_install(scripted: &Scripted) -> Deployment {
+    scripted.set("root.apply", "fail");
+    let deployment = scripted.deployment(&missing(scripted));
+    assert!(
+        matches!(
+            deployment.apply(&original(), &uncancelled()).await,
+            Err(Error::Execution { .. })
+        ),
+        "the first apply must fail in OpenTofu"
+    );
+    let generations = scripted.generations();
+    let targets: Vec<Target> = compile::runtime_targets(&original(), &generations)
+        .unwrap()
+        .into_iter()
+        .chain(compile::targets(&original(), &generations).unwrap())
+        .filter(|target| !target.address.starts_with("data."))
+        .collect();
+    let bound: Vec<Target> = targets
+        .iter()
+        .filter(|target| matches!(target.kind.as_str(), STORAGE_KIND | AUTH_KIND))
+        .cloned()
+        .collect();
+    let addresses: Vec<&str> = bound.iter().map(|target| target.address.as_str()).collect();
+    scripted.set("root.state", state_json(&bound));
+    scripted.set("root.apply.plan", leftover_plan_json(&targets, &addresses));
+    deployment
+}
+
+/// After an apply stopped at once while Helm installed the gateway release,
+/// plan and apply stop before OpenTofu applies anything, name the release, and
+/// leave it: NemoClaw can't tell it from another owner's release.
+///
+/// Catches an apply that plans a second install, which Helm refuses with
+/// "cannot re-use a name that is still in use" after the apply has started.
+#[tokio::test]
+async fn plan_and_apply_after_a_stopped_helm_install_name_the_unbound_release() {
+    let scripted = fresh();
+    let deployment = stopped_during_the_helm_install(&scripted).await;
+    let applies = count(&scripted.commands(), "root apply");
+    let planned = deployment.plan(&original(), &uncancelled()).await;
+    let applied = deployment.apply(&original(), &uncancelled()).await;
+    for (operation, result) in [("plan", planned), ("apply", applied)] {
+        match result {
+            Err(Error::UnboundRelease { release, namespace }) => {
+                assert_eq!(namespace, "agents", "{operation}");
+                assert!(release.ends_with("-gateway"), "{operation}: {release}");
+            }
+            other => panic!("{operation}: expected the unbound release, got {other:?}"),
+        }
+    }
+    assert_applies(&scripted, applies, "after the stopped install");
 }
 
 /// OpenTofu has started creating the storage resource.

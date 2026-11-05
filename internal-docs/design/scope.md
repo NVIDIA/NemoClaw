@@ -70,6 +70,11 @@ NemoClaw keeps these by decision, as its own promises:
 - No model-specific recipe images: preparation tools and runtime patches belong to the recipe's authors and to vLLM, and NemoClaw keeps only the generic [recipe contract](../../docs/agents-inference/recipes.md) ([#13472](https://github.com/NVIDIA/NemoClaw/issues/13472)).
 - Agent image assembly, for now: NemoClaw builds and publishes the images that hold Fabric and each harness's native agent, so it installs and pins those agents in the [agent Dockerfile](../../image/fabric/Dockerfile). Image building moves to the Fabric repository later; Fabric owns each adapter's behavior and its tests.
 
+NemoClaw works around these upstream gaps until the components it pins close them:
+
+- OpenTofu 1.12.9 keeps an interrupted apply's progress only in a state directory that already holds a state file; without one, the snapshot it saves when stopped lists only the last resource it updated. The SDK has OpenTofu create the file with a refresh-only apply of an empty configuration before an apply's first plan ([#14155](https://github.com/NVIDIA/NemoClaw/issues/14155); upstream [opentofu/opentofu#4809](https://github.com/opentofu/opentofu/issues/4809), removal tracked in [#14227](https://github.com/NVIDIA/NemoClaw/issues/14227)).
+- The Helm provider 3.3.0 returns a failed install's error without the release's state, so OpenTofu binds nothing while Helm keeps the release's record and refuses its name. The SDK installs the gateway release atomically, so Helm removes a release whose install fails or times out. A hard stop during the install can still leave the release; plan, apply, and destroy name a release that the cluster records and the state does not bind, and leave it ([#14155](https://github.com/NVIDIA/NemoClaw/issues/14155); upstream [hashicorp/terraform-provider-helm#1886](https://github.com/hashicorp/terraform-provider-helm/issues/1886), removal tracked in [#14227](https://github.com/NVIDIA/NemoClaw/issues/14227)).
+
 ## Ownership and Recovery
 
 - Validate configuration strictly; retain intent, digests, secret references, and durable data bindings.
