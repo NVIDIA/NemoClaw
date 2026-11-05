@@ -14,6 +14,7 @@ function governsAdmission(path: string, sdk: boolean): boolean {
     [
       "tools/e2e/base-image-publication.mts",
       "tools/e2e/protected-openshell-workspace.mts",
+      "tools/e2e/protected-openshell-projection.mts",
       "scripts/checks/extract-installer-pins.mts",
       "scripts/checks/openshell-trust-data.mts",
       "scripts/check-installer-hash.sh",

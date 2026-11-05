@@ -132,6 +132,36 @@ describe("candidate upgrade admission", () => {
     );
   });
 
+  it.each([
+    { admission: "installer", path: sourcePath, history: "changes" as const, branch: "candidate" },
+    {
+      admission: "installer",
+      path: sourcePath,
+      history: "policy" as const,
+      branch: "trusted base",
+    },
+    { admission: "SDK", path: "package.json", history: "changes" as const, branch: "candidate" },
+    { admission: "SDK", path: "package.json", history: "policy" as const, branch: "trusted base" },
+  ])(
+    "invalidates $admission approval when the $branch changes projection policy",
+    async ({ path, history }) => {
+      const f = retainedReviewFixture();
+      f.routes.set(`/repos/NVIDIA/NemoClaw/contents/${path}?ref=${identity.candidateSha}`, {
+        ...f.blob,
+        path,
+      });
+      await expect(
+        readApprovedCandidateUpgrade(identity, [path], f.request),
+      ).resolves.toMatchObject({
+        reviewId: 50,
+      });
+      f[history].files = [{ filename: "tools/e2e/protected-openshell-projection.mts" }];
+      await expect(readApprovedCandidateUpgrade(identity, [path], f.request)).rejects.toThrow(
+        /PR approval covering/,
+      );
+    },
+  );
+
   it("includes the previous name when a sensitive input is renamed", async () => {
     const f = retainedReviewFixture();
     Object.assign(f.changes.files[0]!, { previous_filename: sourcePath });
