@@ -553,7 +553,8 @@ fn sandboxes_pass_driver_configuration_through() {
     );
 
     let mounts = serde_json::json!({"docker": {"mounts": [
-        {"type": "volume", "source": "skills", "target": "/sandbox/skills"}
+        {"type": "volume", "source": "caller-workspace", "target": "/sandbox/workspace", "read_only": false},
+        {"type": "volume", "source": "caller-artifacts", "target": "/sandbox/artifacts", "read_only": false}
     ]}});
     value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
     let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
