@@ -3228,12 +3228,12 @@ fix_npm_permissions() {
   # shellcheck disable=SC2016
   local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    if [[ -f "$rc" ]] && ! grep -q ".npm-global" "$rc"; then
+    if [[ -f "$rc" ]] && [[ "$(tail -n 1 "$rc")" != "$path_line" ]]; then
       printf '\n# Added by NemoClaw installer\n%s\n' "$path_line" >>"$rc"
     fi
   done
 
-  if [[ ":$PATH:" != *":$HOME/.npm-global/bin:"* ]]; then
+  if [[ "$PATH" != "$HOME/.npm-global/bin" && "$PATH" != "$HOME/.npm-global/bin:"* ]]; then
     export PATH="$HOME/.npm-global/bin:$PATH"
   fi
   ok "npm configured for user-local installs (~/.npm-global)"
