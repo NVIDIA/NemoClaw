@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Register manual dispatch on the default branch. Execution belongs to v1.
+# Register manual dispatch on the default branch.
 name: E2E / SSH connectivity
 
 on:
