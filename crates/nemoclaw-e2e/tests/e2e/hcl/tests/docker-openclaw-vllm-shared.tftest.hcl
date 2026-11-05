@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# An OpenClaw agent and a Hermes agent sharing one managed vLLM model with
+# Two OpenClaw agents sharing one managed vLLM model with
 # bearer authentication on an NVIDIA GPU: apply, a reply from each agent, an
 # unchanged plan, and destroy that keeps the gateway's storage, the model's
 # volume, and the service credential. Live / HCL runs it.
