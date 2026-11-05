@@ -702,8 +702,7 @@ FROM scratch AS openclaw-patch-payload
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/lib/patch-openclaw-container-restart.mts scripts/lib/patch-openclaw-agent-message-input.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
-COPY scripts/lib/patch-openclaw-worker-proxy.mts /usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts
-COPY scripts/lib/patch-openclaw-node-compile-cache.mts /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts
+COPY scripts/lib/patch-openclaw-worker-proxy.mts scripts/lib/patch-openclaw-node-compile-cache.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-worker-device-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-worker-device-approval.mts
 COPY scripts/lib/openclaw-device-patch-payloads.mts /usr/local/lib/nemoclaw/openclaw-device-patch-payloads.mts
 COPY scripts/lib/openclaw-mcp-retry-payloads.mts scripts/lib/patch-openclaw-worker-mcp-reliability.mts /usr/local/lib/nemoclaw/
@@ -1634,16 +1633,17 @@ RUN set -eu \
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
     && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
-    && chmod 644 /sandbox/.bashrc /sandbox/.profile
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile \
+    && if [ "$OPENCLAW_VERSION" = "2026.10.5" ]; then \
+        install -d -o sandbox -g sandbox -m 0700 /sandbox/.cache/nemoclaw-node-compile-cache; \
+        runuser -u sandbox -- env -u NODE_COMPILE_CACHE -u NODE_DISABLE_COMPILE_CACHE HOME=/sandbox OPENSHELL_SANDBOX=1 \
+        node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts --probe /usr/local/lib/node_modules/openclaw/dist; \
+    fi
 USER sandbox
 
-# Exercise cache activation as the runtime user, rather than accepting root's writable cache.
-# Generate token-free gateway config; defer the runtime proxy until build-time plugin commands complete.
-RUN if [ "$OPENCLAW_VERSION" = "2026.10.5" ]; then \
-        env -u NODE_COMPILE_CACHE -u NODE_DISABLE_COMPILE_CACHE HOME=/sandbox OPENSHELL_SANDBOX=1 \
-        node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts --probe /usr/local/lib/node_modules/openclaw/dist; \
-    fi \
-    && NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+# Generate token-free gateway config at build time; the entrypoint supplies the token.
+# Defer the runtime managed proxy until build-time plugin commands complete.
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
     node /scripts/generate-openclaw-config.mts
 
 # Validate both tool-search modes against the installed OpenClaw schema and fail on drift.
