@@ -24,6 +24,7 @@ import { sleepSeconds } from "../core/wait";
 import { isWsl as detectWsl } from "../platform";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
+import { buildModelListProbeCommand, isOpenAiModelListResponse } from "./serving/model-inventory";
 import {
   classifyNvidiaFirmwareProducts,
   hasDgxStationGb300PciGpu,
@@ -1223,37 +1224,35 @@ export function waitForNimHealth(
   console.log(`  Waiting for NIM health on port ${hostPort} (timeout: ${timeout}s)...`);
 
   while ((Date.now() - start) / 1000 < timeout) {
+    let listed = false;
     try {
       const result = runCaptureImpl(
-        [
-          "curl",
-          ...buildValidatedCurlCommandArgs([
-            "-sf",
-            "--connect-timeout",
-            "5",
-            "--max-time",
-            "5",
-            `http://127.0.0.1:${hostPort}/v1/models`,
-          ]),
-        ],
+        buildModelListProbeCommand(
+          ["--connect-timeout", "5", "--max-time", "5"],
+          `http://127.0.0.1:${hostPort}/v1/models`,
+        ),
         { ignoreError: true },
       );
-      if (result) {
-        console.log("  NIM is healthy.");
-        return true;
-      }
+      listed = isOpenAiModelListResponse(result);
     } catch {
       /* ignored */
     }
     // Short-circuit if the container has already exited — typically NGC auth
     // failure or OOM during model load. Without this, the wizard polls the
     // full timeout (default 1200s) against a dead container. See #3333.
+    // Check it before reporting healthy so another server on the port cannot
+    // stand in for an exited NIM container.
     if (container) {
       const state = inspectContainerState("{{.State.Status}}", container, {
         ignoreError: true,
         timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
       });
-      if (state && state !== "running" && state !== "created" && state !== "restarting") {
+      if (!state) {
+        console.error(`  Cannot inspect NIM container ${container}; aborting health wait.`);
+        return false;
+      }
+      listed = listed && state === "running";
+      if (state !== "running" && state !== "created" && state !== "restarting") {
         console.error(`  NIM container ${container} is ${state}; aborting health wait.`);
         const tail = readContainerLogs(container, { tail: 30 });
         if (tail) {
@@ -1264,6 +1263,12 @@ export function waitForNimHealth(
         }
         return false;
       }
+    }
+    if (listed) {
+      console.log("  NIM is healthy.");
+      return true;
+    }
+    if (container) {
       const tail = readContainerLogs(container, { tail: 30 });
       if (hasNimMemoryCapacityWarning(tail)) {
         console.error(
@@ -1341,20 +1346,13 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
       const health = runCapture(
-        [
-          "curl",
-          ...buildValidatedCurlCommandArgs([
-            "-sf",
-            "--connect-timeout",
-            "5",
-            "--max-time",
-            "5",
-            `http://127.0.0.1:${resolvedHostPort}/v1/models`,
-          ]),
-        ],
+        buildModelListProbeCommand(
+          ["--connect-timeout", "5", "--max-time", "5"],
+          `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+        ),
         { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );
-      healthy = !!health;
+      healthy = isOpenAiModelListResponse(health);
     }
     return { running: state === "running", healthy, container: name, state };
   } catch {

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
+import { testTimeout } from "../../helpers/timeouts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -136,6 +137,17 @@ describe("Hermes Discord rebuild evidence", () => {
       expect.any(String),
     ]);
     expect(exec.mock.calls[1]![1]).toContain("-z");
+  });
+
+  it("reserves the damaged rebuild budget and workflow cleanup time", async () => {
+    const { command, exec } = await runPhase();
+    const target = catalogueTarget("hermes-inference-switch");
+    vi.stubEnv("NEMOCLAW_TEST_TIMEOUT", target.environment.NEMOCLAW_TEST_TIMEOUT ?? "");
+    const timeout = testTimeout(45 * 60_000);
+    const damagedCommands = [...command.mock.calls.slice(3), ...exec.mock.calls.slice(2)];
+    const damagedTimeout = damagedCommands.reduce((total, call) => total + call[2]!.timeoutMs!, 0);
+    expect(timeout).toBeGreaterThanOrEqual(45 * 60_000 + damagedTimeout);
+    expect(target.timeoutMinutes * 60_000 - timeout).toBeGreaterThanOrEqual(10 * 60_000);
   });
 
   it.each(["discord", "rebuild", "status"])("stops when %s fails", async (failedCommand) => {
