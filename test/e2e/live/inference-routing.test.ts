@@ -14,7 +14,7 @@ import {
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { BEARERLESS_VLLM_READINESS_SCRIPT } from "../fixtures/bearerless-vllm-readiness.ts";
+import { BEARERLESS_VLLM_READINESS_SCRIPT } from "../support/bearerless-vllm-readiness.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";

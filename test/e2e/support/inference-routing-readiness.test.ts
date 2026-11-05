@@ -3,7 +3,7 @@
 
 import { compileFunction } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
-import { BEARERLESS_VLLM_READINESS_SCRIPT } from "../fixtures/bearerless-vllm-readiness.ts";
+import { BEARERLESS_VLLM_READINESS_SCRIPT } from "./bearerless-vllm-readiness.ts";
 
 afterEach(() => vi.restoreAllMocks());
 

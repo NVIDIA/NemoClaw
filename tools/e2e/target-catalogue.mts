@@ -1078,6 +1078,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: false,
     cloudflared: true,
     owningPaths: [
+      "test/e2e/support/bearerless-vllm-readiness.ts",
       "tools/e2e/onboard-timeout-contract.mts",
       "src/lib/inference/local.ts",
       "src/lib/inference/serving/vllm-host-local-lifecycle.ts",

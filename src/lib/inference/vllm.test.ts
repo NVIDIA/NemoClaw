@@ -143,15 +143,12 @@ describe("shared vLLM install setup", () => {
     expect(mocks.probeHostStorage().capacity.availableBytes).toBe(1_000_000_000_000n);
 
     mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "first-row"]);
-    expect(mocks.dockerCapture(["container"])).toBe("");
     expect(mocks.dockerCapture(["container"])).toBe("first-row");
-    expect(mocks.dockerCapture(["container"])).toBe("");
     expect(() => mocks.dockerCapture(["container"])).toThrow(
-      "No ambient Docker ownership response remains",
+      "No local Docker ownership response remains",
     );
 
     mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "second-row"]);
-    expect(mocks.dockerCapture(["container"])).toBe("");
     expect(mocks.dockerCapture(["container"])).toBe("second-row");
     mocks.dockerCapture.mockReset();
   });
@@ -1098,23 +1095,10 @@ describe("installVllm model resolution", () => {
       ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
       ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
     ];
-    const canonicalOwnershipOptions = dockerAdapterOptions.filter(
-      (options) => options.env?.DOCKER_CONTEXT === "default",
-    );
-    expect(canonicalOwnershipOptions).toHaveLength(2);
-    const ambientDockerOptions = dockerAdapterOptions.filter(
-      (options) => options.env?.DOCKER_CONTEXT !== "default",
-    );
-    expect(ambientDockerOptions.length).toBeGreaterThan(0);
-    ambientDockerOptions.forEach((options) => {
-      expect(options).toEqual(
-        expect.objectContaining({
-          env: expect.objectContaining({
-            DOCKER_CONTEXT: "local-test-context",
-          }),
-        }),
-      );
-    });
+    expect(dockerAdapterOptions.length).toBeGreaterThan(0);
+    expect([
+      ...new Set(dockerAdapterOptions.map((options) => options.env?.DOCKER_CONTEXT)),
+    ]).toEqual(["default"]);
   });
 
   it("pins authenticated host-local installs to the physical default daemon (#8379)", async () => {

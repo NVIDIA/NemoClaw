@@ -671,6 +671,14 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it("focuses readiness helper changes on inference routing", () => {
+    const file = "test/e2e/support/bearerless-vllm-readiness.ts";
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
+    expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["inference-routing"]);
+    expect(plan.matrix).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
   it.each<[string, string[]]>([
     ["test/e2e/fixtures/native-local-chat.ts", ["gpu-double-onboard", "gpu-e2e"]],
     [
