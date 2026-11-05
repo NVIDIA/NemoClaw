@@ -68,7 +68,7 @@ describe("protected OpenShell workspace", () => {
     [
       "stale",
       ({ approval }) => {
-        approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: approve ${identity.candidateSha} ${identity.baseSha}`;
+        approval.approvals[0]!.commit_id = identity.candidateSha;
       },
       /approval|decision/i,
     ],
@@ -95,6 +95,58 @@ describe("protected OpenShell workspace", () => {
     expect(git(value.input.trustedRoot, "status", "--porcelain")).toBe("");
   });
 
+  it.each(
+    ["candidate", "base"].flatMap((side) =>
+      [
+        "scripts/audit-reviewed-npm-graph.mts",
+        "scripts/lib/reviewed-npm-archive.mts",
+        "scripts/lib/reviewed-npm-audit.mts",
+        "scripts/lib/repository-input-path.mts",
+        "ci/reviewed-npm-audit.json",
+      ].map((path) => [side, path] as const),
+    ),
+  )("rejects %s changes to SDK projection policy %s before mutation", async (side, filename) => {
+    const { input, approval, request } = approvedFixture();
+    const original = request.getMockImplementation()!;
+    const reviewedSha = "d".repeat(40);
+    const oldBase = "e".repeat(40);
+    const baseSha = input.admission.baseSha;
+    approval.approvals[0]!.commit_id = reviewedSha;
+    const comparisons = new Map<string, unknown>([
+      [
+        `/repos/NVIDIA/NemoClaw/compare/${reviewedSha}...${input.candidateSha}?per_page=1`,
+        {
+          status: "ahead",
+          base_commit: { sha: reviewedSha },
+          merge_base_commit: { sha: reviewedSha },
+          files: side === "candidate" ? [{ filename }] : [],
+        },
+      ],
+      [
+        `/repos/NVIDIA/NemoClaw/compare/${baseSha}...${reviewedSha}?per_page=1`,
+        {
+          status: "diverged",
+          base_commit: { sha: baseSha },
+          merge_base_commit: { sha: oldBase },
+        },
+      ],
+      [
+        `/repos/NVIDIA/NemoClaw/compare/${oldBase}...${baseSha}?per_page=1`,
+        {
+          status: "ahead",
+          base_commit: { sha: oldBase },
+          merge_base_commit: { sha: oldBase },
+          files: side === "base" ? [{ filename }] : [],
+        },
+      ],
+    ]);
+    request.mockImplementation(async (path) => comparisons.get(path) ?? original(path));
+    await expect(manageProtectedOpenShellWorkspace("prepare", input)).rejects.toThrow(
+      /PR approval covering/,
+    );
+    expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+
   it("rejects an unapproved feature gate template before mutation", async () => {
     const { input, approval } = approvedFixture();
     fs.appendFileSync(
@@ -104,7 +156,7 @@ describe("protected OpenShell workspace", () => {
     git(input.candidateRoot, "add", ".");
     git(input.candidateRoot, "commit", "--quiet", "-m", "unapproved feature");
     input.candidateSha = git(input.candidateRoot, "rev-parse", "HEAD");
-    approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: approve ${input.candidateSha} ${identity.baseSha}`;
+    approval.approvals[0]!.commit_id = input.candidateSha;
     await expect(manageProtectedOpenShellWorkspace("prepare", input)).rejects.toThrow(
       /feature gate operational template/,
     );
@@ -115,12 +167,12 @@ describe("protected OpenShell workspace", () => {
     const { input, approval } = approvedFixture();
     await manageProtectedOpenShellWorkspace("prepare", input);
     const before = git(input.trustedRoot, "diff", "--no-ext-diff");
-    approval.approvals[0]!.body = `NemoClaw-Upgrade-E2E: revoke ${input.candidateSha} ${identity.baseSha}`;
+    approval.approvals[0]!.state = "DISMISSED";
     await expect(manageProtectedOpenShellWorkspace("verify", input)).rejects.toThrow(
-      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+      "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy",
     );
     await expect(manageProtectedOpenShellWorkspace("restore", input)).rejects.toThrow(
-      "Candidate upgrade needs an independent maintainer's current commit-bound E2E approval",
+      "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy",
     );
     expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
   });
