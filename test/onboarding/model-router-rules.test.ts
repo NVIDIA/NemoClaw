@@ -88,6 +88,7 @@ async def app(scope, receive, send):
     data = json.loads(event["body"])
     await asyncio.sleep(0.01 if data.get("stream") else 0)
     deployment = await strategy.async_get_available_deployment("nvidia-routed", data["messages"], request_kwargs=data)
+    scope["selected_deployment"] = deployment["model_name"]
     await send({"type": "http.response.start", "status": 200, "headers": []})
     await send({"type": "http.response.body", "body": event["body"], "more_body": False})
 async def request(data):
@@ -95,8 +96,9 @@ async def request(data):
     events = []
     async def receive(): return {"type": "http.request", "body": original}
     async def send(event): events.append(event)
-    await RulesMiddleware(app)({"type": "http", "path": "/v1/chat/completions"}, receive, send)
-    return {"status": events[0]["status"], "headers": {k.decode(): v.decode() for k,v in events[0]["headers"]}, "unchanged": events[1]["body"] == original}
+    scope = {"type": "http", "path": "/v1/chat/completions"}
+    await RulesMiddleware(app)(scope, receive, send)
+    return {"deployment": scope["selected_deployment"], "status": events[0]["status"], "headers": {k.decode(): v.decode() for k,v in events[0]["headers"]}, "unchanged": events[1]["body"] == original}
 async def main():
     print(json.dumps(await asyncio.gather(*[request(data) for data in json.load(sys.stdin)])))
 asyncio.run(main())
@@ -113,6 +115,7 @@ asyncio.run(main())
       ),
     ).toEqual([
       {
+        deployment: lightning,
         status: 200,
         unchanged: true,
         headers: {
@@ -122,6 +125,7 @@ asyncio.run(main())
         },
       },
       {
+        deployment: superVL,
         status: 200,
         unchanged: true,
         headers: {
@@ -131,6 +135,7 @@ asyncio.run(main())
         },
       },
       {
+        deployment: superVL,
         status: 200,
         unchanged: true,
         headers: {
@@ -227,13 +232,49 @@ describe("Model Router pool schema (#14066)", () => {
       }),
     ).toBe(true);
   });
-  it("retains scoring requirements for a prefill pool", async () => {
+  const scoringRouting = {
+    method: "prefill",
+    checkpoint: "fixture-checkpoint",
+    tolerance: 0.1,
+    encoder: "fixture-encoder",
+    encoder_backend: "fixture-backend",
+  };
+  const scoringModel = { ...model, cost_per_m_input_tokens: 1, cost_per_m_output_tokens: 2 };
+  it("accepts a complete prefill pool", async () => {
     const { compileConfigSchema } = await import("../../scripts/validate-configs.mts");
     expect(
       compileConfigSchema("schemas/router-pool-config.schema.json")({
-        routing: { method: "prefill" },
-        models: [model],
+        routing: scoringRouting,
+        models: [scoringModel],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
+  it.each(["checkpoint", "tolerance", "encoder", "encoder_backend"])(
+    "requires prefill routing field %s independently of model costs",
+    async (field) => {
+      const { compileConfigSchema } = await import("../../scripts/validate-configs.mts");
+      const routing: Partial<typeof scoringRouting> = { ...scoringRouting };
+      delete routing[field as keyof typeof routing];
+      expect(
+        compileConfigSchema("schemas/router-pool-config.schema.json")({
+          routing,
+          models: [scoringModel],
+        }),
+      ).toBe(false);
+    },
+  );
+  it.each(["cost_per_m_input_tokens", "cost_per_m_output_tokens"])(
+    "requires prefill model field %s independently of routing fields",
+    async (field) => {
+      const { compileConfigSchema } = await import("../../scripts/validate-configs.mts");
+      const incomplete: Partial<typeof scoringModel> = { ...scoringModel };
+      delete incomplete[field as keyof typeof incomplete];
+      expect(
+        compileConfigSchema("schemas/router-pool-config.schema.json")({
+          routing: scoringRouting,
+          models: [incomplete],
+        }),
+      ).toBe(false);
+    },
+  );
 });

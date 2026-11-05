@@ -1004,3 +1004,105 @@ describe("Hermes native attachment registration", () => {
     );
   });
 });
+
+describe("pending Model Router native attachment registration (#14066)", () => {
+  const { nativeLocalIdentity } = requireDist(
+    "../inference/native-local/contract.ts",
+  ) as typeof import("../inference/native-local/contract");
+  const { retainedNativeLocalProviderAttachment } = requireDist(
+    "../state/registry/route-reservation.ts",
+  ) as typeof import("../state/registry/route-reservation");
+  const binding = {
+    provider: "nvidia-router" as const,
+    agent: "openclaw" as const,
+    endpointUrl: "http://host.openshell.internal:4000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated" as const,
+    gatewayName: "nemoclaw",
+    sandboxName: "demo",
+  };
+  const attachment = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "router-provider",
+  };
+  const pending = {
+    name: binding.sandboxName,
+    gatewayName: binding.gatewayName,
+    pendingRouteReservation: true as const,
+    provider: binding.provider,
+    model: "nvidia-routed",
+    endpointUrl: binding.endpointUrl,
+    credentialEnv: binding.credentialEnv,
+    nativeLocalProviderAttachment: attachment,
+  };
+  const selected = {
+    provider: binding.provider,
+    endpointUrl: binding.endpointUrl,
+    gatewayName: binding.gatewayName,
+  };
+
+  it("preserves the selected provider through registration and post-publication retirement", async () => {
+    const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+    const { retireUnselectedNativeLocalProviders } = requireDist(
+      "../inference/native-local/selection.ts",
+    ) as typeof import("../inference/native-local/selection");
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue(pending);
+    try {
+      const base = createdRegistryEntryInput();
+      const registerSandbox = vi.fn();
+      const registered = registerCreatedSandbox({
+        ...base,
+        inferenceSelection: { ...base.inferenceSelection, ...selected, model: "nvidia-routed" },
+        registerSandbox,
+      });
+      expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(registered);
+      expect(registered.nativeLocalProviderAttachment).toEqual(attachment);
+      const adapter = {} as Parameters<typeof retireUnselectedNativeLocalProviders>[0]["adapter"];
+      const clearAuthority = vi.fn();
+      await expect(
+        retireUnselectedNativeLocalProviders({
+          adapter,
+          sandboxName: binding.sandboxName,
+          gatewayName: binding.gatewayName,
+          selected: registered.nativeLocalProviderAttachment,
+          listAuthorities: () => [attachment],
+          clearAuthority,
+        }),
+      ).resolves.toBeUndefined();
+      expect(clearAuthority).not.toHaveBeenCalled();
+    } finally {
+      getSandbox.mockRestore();
+    }
+  });
+
+  it.each([
+    [
+      "invalid receipt",
+      { ...pending, nativeLocalProviderAttachment: { ...attachment, providerId: "" } },
+    ],
+    ["another sandbox", { ...pending, name: "other" }],
+    ["another gateway", { ...pending, gatewayName: "other" }],
+    ["another endpoint", { ...pending, endpointUrl: "http://host.openshell.internal:4100/v1" }],
+    ["an unpublished non-reservation", { ...pending, pendingRouteReservation: undefined }],
+    ["another published agent", { ...pending, agent: "hermes" as const }],
+  ])("does not borrow OpenClaw eligibility from %s", (_reason, entry) => {
+    expect(retainedNativeLocalProviderAttachment(entry, selected)).toBeUndefined();
+  });
+  it.each([
+    { ...selected, provider: "nvidia-prod" },
+    { ...selected, gatewayName: "other" },
+    { ...selected, endpointUrl: "http://host.openshell.internal:4100/v1" },
+  ])("does not retain a router attachment after selecting %j", (selection) => {
+    expect(retainedNativeLocalProviderAttachment(pending, selection)).toBeUndefined();
+  });
+  it("keeps the existing published OpenClaw route eligible", () => {
+    expect(
+      retainedNativeLocalProviderAttachment(
+        { ...pending, agent: "openclaw", pendingRouteReservation: undefined },
+        selected,
+      ),
+    ).toEqual(attachment);
+  });
+});

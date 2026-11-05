@@ -406,11 +406,24 @@ export function retainedNativeLocalProviderAttachment(
     gatewayName: string;
   },
 ): SandboxEntry["nativeLocalProviderAttachment"] {
+  // Fresh reservations deliberately carry route authority without a published agent.
+  // Only their validated router attachment can supply the missing OpenClaw binding.
+  const pendingAttachment =
+    existing?.pendingRouteReservation === true && existing.agent === undefined
+      ? normalizeNativeLocalProviderAttachment(existing.nativeLocalProviderAttachment)
+      : undefined;
+  const pendingRouterAgent =
+    pendingAttachment?.provider === "nvidia-router" &&
+    pendingAttachment.sandboxName === existing?.name &&
+    pendingAttachment.gatewayName === existing?.gatewayName &&
+    pendingAttachment.endpointUrl === existing?.endpointUrl
+      ? pendingAttachment.agent
+      : undefined;
   return existing &&
     !(selection.provider === "vllm-local" && existing.nimContainer) &&
     (usesNativeLocalInference(selection.provider, selection.endpointUrl) ||
       usesNativeLocalInferenceForAgent(
-        existing.agent,
+        existing.agent ?? pendingRouterAgent,
         selection.provider,
         selection.endpointUrl,
       )) &&

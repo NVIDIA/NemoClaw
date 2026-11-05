@@ -650,8 +650,11 @@ export async function stopModelRouterForDestroyedSandbox(
         if (destroyedSessionId !== null) {
           deps.compareAndSwapSession(
             (current) =>
-              current.sessionId === destroyedSessionId && current.sandboxName === sandbox.name,
+              current.sessionId === destroyedSessionId &&
+              current.sandboxName === sandbox.name &&
+              current.cancellationRecovery?.sandboxName !== sandbox.name,
             (current) => {
+              // Retained recovery clears its name and authority together in its own resolver.
               current.sandboxName = null;
               return current;
             },

@@ -179,11 +179,17 @@ export function createModelRouterCommandProvisioner(
 ): ModelRouterCommandProvisioner {
   const relativeRouterDir = path.relative(paths.rootDir, paths.routerDir).split(path.sep).join("/");
 
+  const poolConfigPath =
+    paths.poolConfigPath ?? path.join(paths.rootDir, "nemoclaw-blueprint/router/pool-config.yaml");
+
   const getSourceFingerprint = (): string | null => {
     const policyHash = crypto.createHash("sha256");
     let hasPolicy = false;
     for (const name of ["pool-config.yaml", "rules.py", "model-router"]) {
-      const file = path.join(paths.rootDir, "nemoclaw-blueprint", "router", name);
+      const file =
+        name === "pool-config.yaml"
+          ? poolConfigPath
+          : path.join(paths.rootDir, "nemoclaw-blueprint", "router", name);
       if (fs.existsSync(file)) {
         policyHash.update(name).update(fs.readFileSync(file));
         hasPolicy = true;
@@ -309,13 +315,7 @@ export function createModelRouterCommandProvisioner(
 
     let extras = "prefill,proxy";
     try {
-      const pool = require("yaml").parse(
-        fs.readFileSync(
-          paths.poolConfigPath ??
-            path.join(paths.rootDir, "nemoclaw-blueprint/router/pool-config.yaml"),
-          "utf8",
-        ),
-      );
+      const pool = require("yaml").parse(fs.readFileSync(poolConfigPath, "utf8"));
       if (pool?.routing?.method === "rules") extras = "proxy";
     } catch {
       // A custom source-only installation retains the existing toolkit extras.

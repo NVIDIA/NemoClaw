@@ -418,3 +418,68 @@ describe("retained sandbox recovery state", () => {
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
   });
 });
+
+it("finishes retained recovery after stopping its last Model Router (#14066)", async () => {
+  const recovery = await import("./onboard-session");
+  const { stopModelRouterForDestroyedSandbox } =
+    await import("../actions/sandbox/destroy-preflight");
+  const endpointUrl = "http://host.openshell.internal:4100/v1";
+  recovery.saveSession(
+    recovery.createSession({
+      sandboxName: "retained-sb",
+      provider: "nvidia-router",
+      model: "nvidia-routed",
+      endpointUrl,
+      routerPid: 4242,
+      routerPort: 4100,
+      routerCredentialHash: "synthetic-hash",
+    }),
+  );
+  recovery.markRetainedSandboxRecovery("retained-sb", "Registration failed.", "b".repeat(64), {
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "generation-1",
+    ...recoveryAuthority,
+  });
+  const [recorded] = recovery.listRetainedSandboxRecoveryRecords();
+  const stopProcess = vi.fn(async () => undefined);
+  const warn = vi.fn();
+  await stopModelRouterForDestroyedSandbox(
+    {
+      name: "retained-sb",
+      provider: "nvidia-router",
+      endpointUrl,
+    },
+    {
+      acquireOnboardLock: recovery.acquireOnboardLock,
+      compareAndSwapSession: recovery.compareAndSwapSession,
+      expectedSession: recovery.loadSession(),
+      loadSession: recovery.loadSession,
+      releaseOnboardLock: recovery.releaseOnboardLock,
+      withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
+      listHostRegistryEntries: () => [],
+      ownsPort: () => true,
+      stopProcess,
+      log: vi.fn(),
+      warn,
+    },
+  );
+  expect(stopProcess).toHaveBeenCalledExactlyOnceWith(4242, 4100);
+  expect(warn).not.toHaveBeenCalled();
+  expect(recovery.loadSession()).toMatchObject({
+    sandboxName: "retained-sb",
+    routerPid: null,
+    routerPort: null,
+    routerCredentialHash: null,
+    cancellationRecovery: { sandboxName: "retained-sb" },
+  });
+  expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
+  expect(recovery.resolveRetainedSandboxRecovery(recorded!)).toBe(true);
+  expect(recovery.loadSession()).toMatchObject({
+    sandboxName: null,
+    cancellationRecovery: null,
+    status: "failed",
+    resumable: false,
+  });
+  expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([]);
+});

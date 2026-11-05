@@ -31,6 +31,7 @@ type ProvisionerOverrides = {
   venvSizeBytes?: bigint;
   defaultVenvDir?: string;
   relativeVenvDir?: string;
+  poolConfigPath?: string;
 };
 
 function makeProvisioner(overrides: ProvisionerOverrides = {}) {
@@ -67,6 +68,7 @@ function makeProvisioner(overrides: ProvisionerOverrides = {}) {
     {
       rootDir: root,
       routerDir,
+      poolConfigPath: overrides.poolConfigPath,
       venvDir,
       defaultVenvDir: overrides.defaultVenvDir ?? venvDir,
     },
@@ -229,4 +231,25 @@ describe("rules policy provisioning (#14066)", () => {
     fs.writeFileSync(path.join(router, "rules.py"), "policy = 2\n");
     expect(provisioner.isManagedModelRouterCurrent()).toBe(false);
   });
+});
+
+it("reinstalls dependencies when the configured pool changes (#14066)", () => {
+  const customPoolPath = path.join(makeTempRoot(), "pool-config.yaml");
+  fs.writeFileSync(customPoolPath, "routing:\n  method: rules\n");
+  const { root, provisioner, run, prepareModelRouterVenv } = makeProvisioner({
+    poolConfigPath: customPoolPath,
+  });
+  const defaultPool = path.join(root, "nemoclaw-blueprint/router/pool-config.yaml");
+  fs.mkdirSync(path.dirname(defaultPool), { recursive: true });
+  fs.writeFileSync(defaultPool, "routing:\n  method: prefill\n");
+  provisioner.ensureModelRouterCommand();
+  expect(run.mock.calls[0]?.[0]).toContain(path.join(root, "router") + "[proxy]");
+  expect(provisioner.isManagedModelRouterCurrent()).toBe(true);
+
+  fs.writeFileSync(customPoolPath, "routing:\n  method: prefill\n");
+  expect(provisioner.isManagedModelRouterCurrent()).toBe(false);
+  provisioner.ensureModelRouterCommand();
+  expect(run.mock.calls[1]?.[0]).toContain(path.join(root, "router") + "[prefill,proxy]");
+  expect(prepareModelRouterVenv).toHaveBeenCalledTimes(2);
+  expect(provisioner.isManagedModelRouterCurrent()).toBe(true);
 });
