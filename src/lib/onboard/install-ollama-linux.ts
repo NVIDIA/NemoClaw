@@ -66,8 +66,12 @@ export function ollamaInstallerDownloadFailureMessage(
     .map((line) => line.trim())
     .filter((line) => /^curl: \(\d+\)/u.test(line))
     .at(-1);
-  const curlDetail = curlError
-    ? redactFullWithUrls(curlError)
+  // Malformed proxy values can contain credentials without a URL scheme.
+  // Keep the failure category and omit the entire unparseable value.
+  const safeCurlError =
+    curlError?.match(/^curl: \(\d+\) Unsupported proxy syntax/u)?.[0] ?? curlError;
+  const curlDetail = safeCurlError
+    ? redactFullWithUrls(safeCurlError)
         .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ")
         .slice(0, 240)
     : "";

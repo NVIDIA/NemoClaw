@@ -530,6 +530,27 @@ describe("installOllamaOnLinux (system)", () => {
     expect(detail?.split("curl reported:")[1]?.trim().length).toBeLessThanOrEqual(240);
   });
 
+  it.each([
+    "alice:FAKE_PROXY_CREDENTIAL_47@proxy.example:invalid",
+    "http://alice:FAKE_PROXY_CREDENTIAL_47@proxy.example:invalid",
+    "alice:FAKE_PROXY_'CREDENTIAL_47@proxy.example:invalid",
+    "alice:FAKE_PROXY_\u2028CREDENTIAL_47@proxy.example:invalid",
+    "alice:FAKE_PROXY_\u009bCREDENTIAL_47@proxy.example:invalid",
+    "alice:FAKE_PROXY_\nCREDENTIAL_47@proxy.example:invalid",
+  ])("omits malformed proxy values from curl diagnostics (%#)", (proxy) => {
+    const message = ollamaInstallerDownloadFailureMessage(
+      5,
+      `curl: (5) Unsupported proxy syntax in '${proxy}': Port number was not a decimal number between 0 and 65535`,
+    );
+
+    expect(message).toContain("curl reported:     curl: (5) Unsupported proxy syntax");
+    expect(message).not.toContain("alice");
+    expect(message).not.toContain("FAKE_PROXY_");
+    expect(message).not.toContain("CREDENTIAL_47");
+    expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
+    expect(message).toContain("export HTTPS_PROXY to a working proxy");
+  });
+
   it("removes terminal and bidirectional controls from redacted curl errors", () => {
     const controls =
       "\u0085\u009b\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
