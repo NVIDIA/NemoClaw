@@ -77,7 +77,7 @@ fn verify_initializer(
     Ok(())
 }
 /// What to do when retained gateway storage carries another state directory's
-/// or deployment's labels; see Remove Retained Resources in docs/usage.md.
+/// or deployment's labels; see Remove Retained Resources in docs/build-deploy/usage.md.
 const FOREIGN_STORAGE: &str = "belongs to another state directory or deployment; apply with the state directory that created it, or remove the retained resources and apply with a new metadata.uid";
 /// Names the retained object in a label mismatch.
 fn foreign(object: String) -> impl FnOnce(Error) -> Error {

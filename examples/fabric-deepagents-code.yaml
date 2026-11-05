@@ -6,7 +6,7 @@
 # runs LangChain's dcode in the sandbox. approval_mode is required: auto lets
 # dcode's classifier review gated actions, yolo allows them all. With
 # interfaces.terminal, the adapter writes a launcher for dcode's terminal UI.
-# See docs/interfaces.md.
+# See docs/agents-inference/interfaces.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
