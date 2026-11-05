@@ -255,6 +255,10 @@ function dockerfilePatchCommand(dist: string): string {
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
     .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-plugin-source-root.mts",
+      shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-plugin-source-root.mts")),
+    )
+    .replaceAll(
       "/usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts",
       shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-node-compile-cache.mts")),
     )

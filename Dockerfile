@@ -702,7 +702,7 @@ FROM scratch AS openclaw-patch-payload
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/lib/patch-openclaw-container-restart.mts scripts/lib/patch-openclaw-agent-message-input.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
-COPY scripts/lib/patch-openclaw-worker-proxy.mts scripts/lib/patch-openclaw-node-compile-cache.mts /usr/local/lib/nemoclaw/
+COPY scripts/lib/patch-openclaw-worker-proxy.mts scripts/lib/patch-openclaw-node-compile-cache.mts scripts/lib/patch-openclaw-plugin-source-root.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/patch-openclaw-worker-device-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-worker-device-approval.mts
 COPY scripts/lib/openclaw-device-patch-payloads.mts /usr/local/lib/nemoclaw/openclaw-device-patch-payloads.mts
 COPY scripts/lib/openclaw-mcp-retry-payloads.mts scripts/lib/patch-openclaw-worker-mcp-reliability.mts /usr/local/lib/nemoclaw/
@@ -1109,7 +1109,7 @@ RUN set -eu; \
     }; \
     # The worker has separately verified minified copies of these modules. \
     node /usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts "$OC_DIST"; \
-    if [ "$OC_VERSION" = "2026.10.5" ]; then node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts "$OC_DIST"; fi; \
+    if [ "$OC_VERSION" = "2026.10.5" ]; then node /usr/local/lib/nemoclaw/patch-openclaw-node-compile-cache.mts "$OC_DIST"; node /usr/local/lib/nemoclaw/patch-openclaw-plugin-source-root.mts "$OC_DIST"; fi; \
     # --- Patch 1: rewrite fetch-guard export --- \
     fg_export="$(grep -RIlE --include='*.js' --include='*.mjs' --exclude='worker.mjs' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST" || true)"; \
     if [ -n "$fg_export" ]; then \
@@ -1641,8 +1641,7 @@ RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
     fi
 USER sandbox
 
-# Generate token-free gateway config at build time; the entrypoint supplies the token.
-# Defer the runtime managed proxy until build-time plugin commands complete.
+# Generate token-free config; entrypoint supplies auth. Defer the managed proxy.
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
     node /scripts/generate-openclaw-config.mts
 

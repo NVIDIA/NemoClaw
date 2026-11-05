@@ -422,6 +422,7 @@ function stageOptimizedSandboxBuildContext(
   );
   for (const name of [
     "patch-openclaw-node-compile-cache.mts",
+    "patch-openclaw-plugin-source-root.mts",
     "patch-openclaw-worker-archive.py",
     "patch-openclaw-worker-device-approval.mts",
     "openclaw-device-patch-payloads.mts",
