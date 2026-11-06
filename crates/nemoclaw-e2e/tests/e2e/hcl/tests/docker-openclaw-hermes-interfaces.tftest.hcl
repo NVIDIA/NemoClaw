@@ -9,8 +9,10 @@
 # with its session token. The stub refuses requests without the run's key,
 # so the reply also shows NemoClaw sent the configured key. In each sandbox,
 # the agent's user can write and read a file in the agent's workspace, and
-# the key is not in the environment a command sees. Destroy keeps only the
-# gateway's storage. cargo ci live-docker runs it.
+# the key is not in the environment a command sees. In claw, python3 reaches
+# the stub at a path only the document grants, and OpenShell refuses its
+# connection to the managed gateway, which no grant names. Destroy keeps only
+# the gateway's storage. cargo ci live-docker runs it.
 
 run "model" {
   module {
@@ -111,6 +113,14 @@ run "interfaces" {
 # registration's key in a NEMOCLAW_INFERENCE_MODEL_..._KEY variable
 # (crates/nemoclaw-openshell/src/profile.rs); the environment must have that
 # variable but not the key itself.
+#
+# Each sandbox's managed inference grant gives the image's executables,
+# python3 among them, the model's /v1/** paths. Only claw's document also
+# grants python3 the stub's /health; the stub refuses requests without the
+# key, so its 401 shows that python3 reached it. The managed gateway listens
+# at the gateway network's second address (crates/nemoclaw-sdk/src/config/mod.rs),
+# which the sandbox's OpenShell proxy can reach but no grant names; OpenShell
+# refuses the connection with EACCES.
 run "commands" {
   module {
     source = "./command"
@@ -140,6 +150,28 @@ run "commands" {
         command  = ["env"]
         contains = "NEMOCLAW_INFERENCE_MODEL_"
         excludes = var.model_key
+      }
+      claw_granted_endpoint = {
+        sandbox = "claw"
+        command = ["python3", "-c", <<-EOT
+          import errno, sys, urllib.error, urllib.request
+          try: print(urllib.request.urlopen(sys.argv[1], timeout=10).status)
+          except urllib.error.HTTPError as error: print(error.status)
+          except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
+        EOT
+        , "${trimsuffix(yamldecode(file(jsondecode(var.context).config)).spec.inferenceProviders.model.endpoint, "/v1")}/health"]
+        contains = "401\n"
+      }
+      claw_undeclared_host = {
+        sandbox = "claw"
+        command = ["python3", "-c", <<-EOT
+          import errno, sys, urllib.error, urllib.request
+          try: print(urllib.request.urlopen(sys.argv[1], timeout=10).status)
+          except urllib.error.HTTPError as error: print(error.status)
+          except urllib.error.URLError as error: print(errno.errorcode.get(error.reason.errno, error.reason))
+        EOT
+        , "http://${cidrhost(yamldecode(file(jsondecode(var.context).config)).spec.gateway.networkCIDR, 2)}${regex(":[0-9]+$", run.apply.result.connection.gatewayEndpoint)}/"]
+        contains = "EACCES\n"
       }
     }
   }
