@@ -1077,12 +1077,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   }
 
   const target = resolveAgentConfig(sandboxName);
-  const unsupportedAgent = configSetUnsupportedAgentMessage(
-    target,
-    sandboxName,
-    configKey,
-    shellQuote,
-  );
+  const unsupportedAgent = configSetUnsupportedAgentMessage(target, configKey, shellQuote);
   if (unsupportedAgent) configFail(unsupportedAgent);
   // Read current config
   console.log(`  Reading ${target.agentName} config...`);
