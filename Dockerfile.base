@@ -113,10 +113,10 @@ ENV AWS_EC2_METADATA_DISABLED=true
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Trixie has not published fixes for the reviewed libevent, libexpat, jq, or Vim
-# advisories. Install fixed Expat packages from the 20260811T082421Z snapshot
-# and fixed libevent, jq, and Vim packages from the 20260703T143212Z,
-# 20260724T000000Z, and 20260727T143429Z snapshots, respectively, with
-# architecture-specific hashes, until Trixie carries them.
+# advisories. Install fixed Expat from the 20260811T082421Z Debian Snapshot
+# archive and fixed libevent, jq, and Vim from the official Debian pool.
+# Exact versions and architecture-specific hashes bind the reviewed bytes
+# until Trixie carries the fixes.
 # The checksum and runtime probes put the validating command last in each pipe.
 # The runtime Vim probe verifies the package that this layer installs.
 # hadolint ignore=DL3001,DL4006
@@ -176,10 +176,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     esac \
     && perl_version_before="$(dpkg-query -W -f='${Version}' perl)" \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
-    && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
-    && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
-    && libevent_snapshot_url="https://snapshot.debian.org/archive/debian/20260703T143212Z/pool/main" \
-    && vim_snapshot_url="https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main" \
+    && debian_pool_url="https://deb.debian.org/debian/pool/main" \
+    && expat_snapshot_url="https://snapshot-cloudflare.debian.org/archive/debian/20260811T082421Z/pool/main" \
     && vim_common_sha256="c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3" \
     && mkdir -p "$security_deb_dir" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
@@ -189,27 +187,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libevent-core-2.1-7t64.deb" \
-        "$libevent_snapshot_url/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${arch}.deb" \
+        "$debian_pool_url/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libonig5.deb" \
-        "$snapshot_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
+        "$debian_pool_url/libo/libonig/libonig5_6.9.9-1+b1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libjq1.deb" \
-        "$snapshot_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/libjq1_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/jq.deb" \
-        "$snapshot_url/j/jq/jq_1.8.2-1_${arch}.deb" \
+        "$debian_pool_url/j/jq/jq_1.8.2-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-common.deb" \
-        "$vim_snapshot_url/v/vim/vim-common_9.2.0858-1_all.deb" \
+        "$debian_pool_url/v/vim/vim-common_9.2.0858-1_all.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/vim-tiny.deb" \
-        "$vim_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
+        "$debian_pool_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
         "$libevent_core_sha256" "$security_deb_dir/libevent-core-2.1-7t64.deb" \

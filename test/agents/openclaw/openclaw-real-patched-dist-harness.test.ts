@@ -455,6 +455,10 @@ describe("OpenClaw real patched-dist materialization guard", () => {
       path.join(import.meta.dirname, "fixtures/gateway-proxy-signal-handlers-10.5.js.txt"),
       path.join(dist, "cli/run-main.js"),
     );
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "fixtures/gateway-state-snapshot-admission-10.5.js.txt"),
+      path.join(dist, "openclaw-state-db-readonly-fixture.mjs"),
+    );
     fs.writeFileSync(
       path.join(dist, "lifecycle-fixture.js"),
       `async function runSafeGatewayRestart(opts, target) {
