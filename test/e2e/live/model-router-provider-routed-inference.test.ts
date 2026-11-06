@@ -19,6 +19,7 @@ import { requirePublicNvidiaInferenceKey } from "../fixtures/inference-adapter.t
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildProviderRoutedEnv,
+  modelRouterAgentCommand,
   registerRouterDiagnostics,
   routerSelectionsSince,
   ROUTER_LIGHTNING,
@@ -131,27 +132,16 @@ test(
       const id = randomUUID();
       const turn = await sandbox.exec(
         SANDBOX_NAME,
-        [
-          "openclaw",
-          "gateway",
-          "call",
-          "agent",
-          "--json",
-          "--expect-final",
-          "--timeout",
-          "180000",
-          "--params",
-          JSON.stringify({
-            agentId: "main",
-            sessionKey: `agent:main:router-${id}`,
-            idempotencyKey: id,
-            model: "nvidia-routed",
-            provider: "inference",
-            message: "Reply with a short greeting.",
-            thinking: "off",
-            cleanupBundleMcpOnRunEnd: true,
-          }),
-        ],
+        modelRouterAgentCommand({
+          agentId: "main",
+          sessionKey: `agent:main:router-${id}`,
+          idempotencyKey: id,
+          model: "nvidia-routed",
+          provider: "inference",
+          message: "Reply with a short greeting.",
+          thinking: "off",
+          cleanupBundleMcpOnRunEnd: true,
+        }),
         {
           artifactName: "router-agent-text",
           env: sandboxAccessEnv(),
@@ -210,27 +200,16 @@ test(
       const id = randomUUID();
       const turn = await sandbox.exec(
         SANDBOX_NAME,
-        [
-          "openclaw",
-          "gateway",
-          "call",
-          "agent",
-          "--json",
-          "--expect-final",
-          "--timeout",
-          "180000",
-          "--params",
-          JSON.stringify({
-            agentId: "main",
-            sessionKey: `agent:main:router-${id}`,
-            idempotencyKey: id,
-            model: ROUTER_SUPER_VL,
-            provider: "inference",
-            message: "Reply with a short greeting.",
-            thinking: "off",
-            cleanupBundleMcpOnRunEnd: true,
-          }),
-        ],
+        modelRouterAgentCommand({
+          agentId: "main",
+          sessionKey: `agent:main:router-${id}`,
+          idempotencyKey: id,
+          model: ROUTER_SUPER_VL,
+          provider: "inference",
+          message: "Reply with a short greeting.",
+          thinking: "off",
+          cleanupBundleMcpOnRunEnd: true,
+        }),
         {
           artifactName: "router-agent-explicit",
           env: sandboxAccessEnv(),
@@ -252,30 +231,19 @@ test(
       const id = randomUUID();
       const turn = await sandbox.exec(
         SANDBOX_NAME,
-        [
-          "openclaw",
-          "gateway",
-          "call",
-          "agent",
-          "--json",
-          "--expect-final",
-          "--timeout",
-          "180000",
-          "--params",
-          JSON.stringify({
-            agentId: "main",
-            sessionKey: `agent:main:router-${id}`,
-            idempotencyKey: id,
-            model: "nvidia-routed",
-            provider: "inference",
-            message: "Describe the attached image in one sentence.",
-            thinking: "off",
-            cleanupBundleMcpOnRunEnd: true,
-            attachments: [
-              { type: "file", mimeType: "image/png", fileName: "pixel.png", content: redImage },
-            ],
-          }),
-        ],
+        modelRouterAgentCommand({
+          agentId: "main",
+          sessionKey: `agent:main:router-${id}`,
+          idempotencyKey: id,
+          model: "nvidia-routed",
+          provider: "inference",
+          message: "Describe the attached image in one sentence.",
+          thinking: "off",
+          cleanupBundleMcpOnRunEnd: true,
+          attachments: [
+            { type: "file", mimeType: "image/png", fileName: "pixel.png", content: redImage },
+          ],
+        }),
         {
           artifactName: "router-agent-image",
           env: sandboxAccessEnv(),

@@ -7,6 +7,7 @@ import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { buildTrustedProxyEnvSourceShell } from "../../../src/lib/actions/sandbox/trusted-proxy-env.ts";
 
 export function summarizeRouterLog(text: string) {
   // Export only fixed booleans and counts. Never retain log lines or captured text.
@@ -121,3 +122,43 @@ export function routerSelectionsSince(logPath: string, offset: number) {
     fs.closeSync(fd);
   }
 }
+
+/** Host-owned turns need authenticated admin admission for provider/model overrides. */
+export function modelRouterAgentCommand(params: Record<string, unknown>): string[] {
+  return [
+    "bash",
+    "-lc",
+    `set -eu
+${buildTrustedProxyEnvSourceShell()}
+: "\${OPENCLAW_GATEWAY_TOKEN:?The OpenClaw gateway token is required.}"
+exec node --input-type=module --eval "$1" "$2" "\${OPENCLAW_BIN:-$(command -v openclaw)}"
+`,
+    "model-router-agent",
+    MODEL_ROUTER_AGENT_PROGRAM,
+    Buffer.from(JSON.stringify(params)).toString("base64"),
+  ];
+}
+
+const MODEL_ROUTER_AGENT_PROGRAM = String.raw`
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+const token = process.env.OPENCLAW_GATEWAY_TOKEN;
+const rawPort = process.env.OPENCLAW_GATEWAY_PORT || process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
+const url = new URL("ws://127.0.0.1:" + Number(rawPort));
+const require = createRequire(realpathSync(process.argv[2]));
+const { callGatewayFromCli } = await import(pathToFileURL(require.resolve("openclaw/plugin-sdk/gateway-runtime")));
+const result = await callGatewayFromCli("agent", {
+  url: url.href,
+  token,
+  timeout: "180000",
+  expectFinal: true,
+  json: true,
+}, JSON.parse(Buffer.from(process.argv[1], "base64").toString("utf8")), {
+  clientName: "gateway-client",
+  mode: "backend",
+  scopes: ["operator.admin"],
+  progress: false,
+});
+process.stdout.write(JSON.stringify(result) + "\n");
+`;

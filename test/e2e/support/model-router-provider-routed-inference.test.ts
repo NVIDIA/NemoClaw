@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ import { HostCliClient, type CommandRunner } from "../fixtures/clients/index.ts"
 import type { ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import {
   buildProviderRoutedEnv,
+  modelRouterAgentCommand,
   retainRouterDiagnostics,
   registerRouterDiagnostics,
   routerSelectionsSince,
@@ -251,4 +253,98 @@ it("retains only supported router selections from the current interval (#14066)"
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+describe("Model Router native agent admission", () => {
+  async function runAgentProgram(
+    params: Record<string, unknown>,
+    overrides: Record<string, string> = {},
+  ) {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "router-agent-"));
+    try {
+      const runtime = path.join(directory, "node_modules/openclaw");
+      await fs.mkdir(runtime, { recursive: true });
+      await fs.writeFile(
+        path.join(runtime, "package.json"),
+        JSON.stringify({ exports: { "./plugin-sdk/gateway-runtime": "./gateway-runtime.mjs" } }),
+      );
+      await fs.writeFile(
+        path.join(runtime, "gateway-runtime.mjs"),
+        `export async function callGatewayFromCli(method, options, params, caller) {
+          if (process.env.REJECT_AGENT === "1") throw new Error("Agent admission denied.");
+          const { token, ...connection } = options;
+          return { method, connection, authenticated: Boolean(token), params, caller };
+        }`,
+      );
+      const binary = path.join(runtime, "openclaw.mjs");
+      await fs.writeFile(binary, "");
+      const command = modelRouterAgentCommand(params);
+      return spawnSync(command[0]!, command.slice(1), {
+        encoding: "utf8",
+        env: {
+          HOME: directory,
+          PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+          OPENCLAW_BIN: binary,
+          OPENCLAW_GATEWAY_TOKEN: "synthetic-gateway-token",
+          ...overrides,
+        },
+        timeout: 10_000,
+      });
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    { model: "nvidia-routed", message: "Reply with a greeting." },
+    { model: "nvidia/nemotron-3.5-super-vl-120b-a12b", message: "Reply with a greeting." },
+    {
+      model: "nvidia-routed",
+      attachments: [{ mimeType: "image/png", content: "synthetic-image" }],
+    },
+  ])("forwards the native agent turn through authenticated backend admission: %j", async (turn) => {
+    const params = { agentId: "main", provider: "inference", ...turn };
+    const result = await runAgentProgram(params);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      method: "agent",
+      authenticated: true,
+      connection: {
+        url: "ws://127.0.0.1:18789/",
+        timeout: "180000",
+        expectFinal: true,
+        json: true,
+      },
+      params,
+      caller: {
+        clientName: "gateway-client",
+        mode: "backend",
+        scopes: ["operator.admin"],
+        progress: false,
+      },
+    });
+    expect(result.stdout + result.stderr).not.toContain("synthetic-gateway-token");
+  });
+
+  it("rejects a missing gateway credential before loading the SDK", async () => {
+    const result = await runAgentProgram({}, { OPENCLAW_GATEWAY_TOKEN: "" });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("The OpenClaw gateway token is required.");
+  });
+
+  it.each(["65536", "not-a-port", "ws://untrusted.example"])(
+    "rejects an invalid gateway port %j",
+    async (port) => {
+      const result = await runAgentProgram({}, { OPENCLAW_GATEWAY_PORT: port });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Invalid URL");
+    },
+  );
+
+  it("propagates gateway admission failure", async () => {
+    const result = await runAgentProgram({}, { REJECT_AGENT: "1" });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Agent admission denied.");
+    expect(result.stdout).toBe("");
+  });
 });

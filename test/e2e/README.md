@@ -1254,6 +1254,8 @@ It does not replace the workflow job result or the strict `Release qualification
 
 The `model-router-provider-routed-inference` target qualifies the native attached OpenClaw path.
 It checks text selection, explicit SuperVL selection, image routing, streaming, tool calls, credential isolation, and terminal cleanup.
+The three agent turns use the loopback OpenClaw SDK with the disposable sandbox’s gateway token and backend admin scope.
+The token stays in the child process environment; device pairing policy remains unchanged.
 Deterministic rules and denial cases belong to `test/onboarding/model-router-rules.test.ts`.
 The native target replaces the obsolete `inference.local` completion oracle.
 The target writes `router-diagnostics.json` before sandbox cleanup.
