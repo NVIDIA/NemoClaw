@@ -19,7 +19,7 @@ endpoint=''; query='.'; post=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jq) query="$2"; shift ;;
-    --method) if [ "$2" = POST ]; then post=true; fi; shift ;;
+    --method) if [ "$2" = POST ]; then post=true; elif [ "$2" != GET ]; then printf "%s\n" "$2" >> "$FIXTURE/edits"; exit 45; fi; shift ;;
     -f) if [[ "$2" = body=* ]]; then printf '%s' "${2#body=}" > "$FIXTURE/posted-body"; fi; shift ;;
     repos/*) endpoint="$1" ;;
   esac
@@ -59,7 +59,7 @@ case "$endpoint" in
       exit 1
     fi
     if [[ "$endpoint" = */aaaaaaaa*/check-runs* ]]; then
-      printf '{"check_runs":[{"id":101,"name":"Unit | <script> @someone","app":{"id":1,"slug":"github-actions"},"started_at":"2026-01-01T00:01:10Z","completed_at":"2026-01-01T00:02:00Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/11/job/101"}]}\n'
+      printf '{"check_runs":[{"id":101,"name":"Unit | <script> @someone","app":{"id":1,"slug":"github-actions"},"started_at":"2026-01-01T00:01:10Z","completed_at":"2026-01-01T00:02:00Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/11/job/101"}]}\n' | jq --arg scenario "$SCENARIO" 'if ($scenario | startswith("truncated")) then .check_runs[0].name = ("x" * 70000) else . end'
       printf '{"check_runs":[{"id":90,"name":"Prior branch","app":{"id":1,"slug":"github-actions"},"started_at":"2025-12-31T23:01:10Z","completed_at":"2025-12-31T23:02:00Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/9/job/90"}]}\n'
       printf '{"check_runs":[{"id":91,"name":"Unrelated branch","app":{"id":1,"slug":"github-actions"},"started_at":"2026-01-01T00:01:20Z","completed_at":"2026-01-01T00:02:10Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/8/job/91"}]}\n'
     else
@@ -90,9 +90,17 @@ case "$endpoint" in
     printf '[{"id":103,"context":"Legacy gate","state":"success","created_at":"2026-01-01T00:06:00Z","updated_at":"2026-01-01T00:06:00Z"}]\n' ;;
   repos/example/repo/issues/1/comments*)
     printf '[{"user":{"login":"outsider"},"body":"<!-- nemoclaw-merge-report:v1 -->"}]\n'
-    if [ "$SCENARIO" = existing ]; then
-      printf '[{"user":{"login":"github-actions[bot]"},"body":"<!-- nemoclaw-merge-report:v1 -->"}]\n'
-    else printf '[]\n'; fi ;;
+    case "$SCENARIO" in
+      existing|truncated_existing)
+        jq -n --rawfile body "$FIXTURE/existing-body" '[{user:{login:"github-actions[bot]"},body:$body}]' ;;
+      existing_wrong|truncated_mismatch)
+        jq -n --rawfile body "$FIXTURE/existing-body" '[{user:{login:"github-actions[bot]"},body:($body | split("+209 / -10") | join("+999 / -10"))}]' ;;
+      existing_marker_only)
+        printf '[{"user":{"login":"github-actions[bot]"},"body":"<!-- nemoclaw-merge-report:v1 -->"}]\n' ;;
+      existing_duplicate)
+        jq -n --rawfile body "$FIXTURE/existing-body" '[{user:{login:"github-actions[bot]"},body:$body}] | . + .' ;;
+      *) printf '[]\n' ;;
+    esac ;;
   repos/example/repo/issues/comments/123)
     if [ "$SCENARIO" = readback_failure ]; then exit 44; fi
     if [ "$SCENARIO" = readback_mismatch ]; then
@@ -129,9 +137,28 @@ for SCENARIO in valid null_review; do
   if grep -Fq 'repos/example/repo/commits//' "$FIXTURE/requests"; then exit 1; fi
   rm "$FIXTURE/writes"
 done
+SCENARIO=valid "$FIXTURE/reporter" example/repo 1 > "$FIXTURE/existing-body"
 SCENARIO=existing "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/existing-report"
 test ! -e "$FIXTURE/writes"
-grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/existing-report"
+cmp "$FIXTURE/existing-body" "$FIXTURE/existing-report"
+for SCENARIO in existing_marker_only existing_wrong existing_duplicate; do
+  if SCENARIO="$SCENARIO" "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/retained-report" 2> "$FIXTURE/existing-error"; then exit 1; fi
+  test ! -e "$FIXTURE/writes"
+  grep -Fq 'Existing merge report did not match the expected single report; stop and investigate, do not retry' "$FIXTURE/existing-error"
+done
+SCENARIO=truncated "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/full-report"
+test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
+test "$(wc -c < "$FIXTURE/full-report" | tr -d ' ')" -gt 60000
+test "$(wc -c < "$FIXTURE/posted-body" | tr -d ' ')" -lt 60000
+grep -Fq 'Timing rows truncated' "$FIXTURE/posted-body"
+cp "$FIXTURE/posted-body" "$FIXTURE/existing-body"
+rm "$FIXTURE/writes"
+SCENARIO=truncated_existing "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/long-existing-report"
+test ! -e "$FIXTURE/writes"
+cmp "$FIXTURE/full-report" "$FIXTURE/long-existing-report"
+if SCENARIO=truncated_mismatch "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/retained-report" 2> "$FIXTURE/existing-error"; then exit 1; fi
+test ! -e "$FIXTURE/writes"
+grep -Fq 'Existing merge report did not match the expected single report; stop and investigate, do not retry' "$FIXTURE/existing-error"
 for SCENARIO in missing_history missing_history_422 missing_status; do
   export SCENARIO
   "$FIXTURE/reporter" example/repo 1 > "$FIXTURE/history-preview"
@@ -164,6 +191,7 @@ for SCENARIO in readback_failure readback_mismatch; do
     grep -Fq 'Posted report did not match readback; stop and investigate, do not retry' "$FIXTURE/readback-error"
   fi
 done
+test ! -e "$FIXTURE/edits"
 "##;
     let output = Command::new("bash")
         .args(["-c", script])
@@ -237,7 +265,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         repos/*) endpoint="$1" ;;
         --jq) query="$2"; filtered=true; shift ;;
         --slurp) slurp=true ;;
-        --method) test "$2" != POST || post=true; shift ;;
+        --method) if [ "$2" = POST ]; then post=true; elif [ "$2" != GET ]; then printf "%s\n" "$2" >> "$FIXTURE/edits"; exit 45; fi; shift ;;
         -f) body="${2#body=}"; shift ;;
       esac
       shift
@@ -371,7 +399,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
 end
 
 def assert_no_code_or_publication(result)
-  %w[compilations executions posts].each do |effect|
+  %w[compilations executions posts edits].each do |effect|
     raise "Rejected scenario reached #{effect}: #{result[:root]}" if File.exist?("#{result[:root]}/#{effect}")
   end
   raise 'Rejected scenario changed comments' unless File.read("#{result[:root]}/comments.json") == result[:original_comments]
@@ -392,6 +420,21 @@ raise 'Failed attempt claimed qualification' if File.exist?("#{first[:artifact]}
 first_artifact = Dir["#{first[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] }
 published = JSON.parse(File.read("#{first[:root]}/comments.json"))
 raise 'Failed readback did not follow POST' unless File.read("#{first[:root]}/posts") == "POST\n"
+mismatch_root = "#{ARGV[0]}/recovery-mismatch"
+FileUtils.cp_r(first[:root], mismatch_root)
+wrong = JSON.parse(File.read("#{mismatch_root}/comments.json"))
+wrong.find { |comment| comment['id'] == 123 }['body'].sub!('+209 / -10', '+999 / -10')
+File.write("#{mismatch_root}/comments.json", JSON.generate(wrong))
+mismatch = exercise(workflow, mismatch_root, 'recovery', parent, head, reporter: reporter_source, retrying: true)
+raise 'Recovery accepted incorrect existing report' unless mismatch[:failed]
+raise 'Integrity failure was not diagnosed' unless File.read("#{mismatch[:root]}/errors").include?('Existing merge report did not match the expected single report; stop and investigate, do not retry')
+raise 'Integrity failure published another comment' unless File.read("#{mismatch[:root]}/posts") == "POST\n"
+raise 'Integrity failure edited existing comments' unless JSON.parse(File.read("#{mismatch[:root]}/comments.json")) == wrong
+raise 'Integrity failure attempted to edit a comment' if File.exist?("#{mismatch[:root]}/edits")
+raise 'Integrity failure claimed qualification' if File.exist?("#{mismatch[:root]}/temp/merge-outcomes-receipt.json") || File.exist?("#{mismatch[:artifact]}/merge-outcomes-receipt.json")
+raise 'Integrity failure lost generated report' unless File.read("#{mismatch[:artifact]}/merge-outcomes.md") == first_report
+raise 'Integrity failure lost summary' unless File.read("#{mismatch[:root]}/summary").include?(first_report)
+raise 'Integrity failure changed the first artifact' unless Dir["#{mismatch[:root]}/artifacts/merge-outcomes-1/*"].to_h { |path| [File.basename(path), File.binread(path)] } == first_artifact
 recovered = exercise(workflow, first[:root], 'recovery', parent, head, reporter: reporter_source, retrying: true)
 raise File.read("#{recovered[:root]}/errors") if recovered[:failed]
 raise 'Recovery published another comment' unless File.read("#{recovered[:root]}/posts") == "POST\n"

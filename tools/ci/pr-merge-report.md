@@ -103,7 +103,9 @@ run and report, then inspect the bot comment. If readback content differs from
 the posted report, stop and investigate. Do not retry integrity failures or
 access denials. Retry transient API failures only under the repository's
 [bounded retry policy](../../.agents/skills/_shared/pr-follow-up.md#bounded-retry-policy).
-An allowed retry regenerates the report; an existing bot report prevents another
-POST. If the failed attempt retained an artifact, verify it is unchanged after
+An allowed retry regenerates the report. For an existing bot report, recovery
+requires exactly one copy matching the intended published body, including
+truncation. A mismatch or duplicate stops recovery without posting or editing.
+If the failed attempt retained an artifact, verify it is unchanged after
 a permitted rerun. Verify that the recovered attempt's artifact contains its
 report and receipt.

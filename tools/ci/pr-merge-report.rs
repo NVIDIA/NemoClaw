@@ -292,14 +292,20 @@ impl Api {
         Ok(row)
     }
 
-    fn existing(&self) -> Result<bool> {
+    fn existing(&self, expected: &str) -> Result<bool> {
         let rows = self.rows(
             &format!("issues/{}/comments?per_page=100", self.number),
             r#".[] | select(.user.login == "github-actions[bot]") | [.body] | @tsv"#,
         )?;
-        Ok(rows
+        let reports: Vec<_> = rows
             .iter()
-            .any(|row| row.first().is_some_and(|body| body.contains(MARKER))))
+            .filter_map(|row| row.first().filter(|body| body.contains(MARKER)))
+            .collect();
+        match reports.as_slice() {
+            [] => Ok(false),
+            [body] if body.as_str() == expected => Ok(true),
+            _ => Err("Existing merge report did not match the expected single report; stop and investigate, do not retry".into()),
+        }
     }
 
     fn collect(&self, pr: &[String]) -> Result<Report> {
@@ -496,10 +502,10 @@ impl Api {
         {
             return Err("PR identity changed during collection".into());
         }
-        if self.existing()? {
+        let body = comment_body(body);
+        if self.existing(&body)? {
             return Ok(());
         }
-        let body = comment_body(body);
         let output = Command::new("gh")
             .args([
                 "api",
