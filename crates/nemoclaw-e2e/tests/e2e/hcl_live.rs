@@ -97,24 +97,8 @@ async fn probe() {
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
     // A managed Kubernetes gateway is reached through a port-forward that the
     // connection holds, as the SDK's providers reach it.
-    let (_forward, client) = match document
-        .spec
-        .gateway
-        .as_managed()
-        .and_then(|gateway| gateway.kubernetes.as_deref())
-    {
-        Some(kubernetes) => {
-            let target = nemoclaw_sdk::kubernetes::ClusterTarget {
-                kubeconfig: var(&kubernetes.kubeconfig.as_ref().unwrap().env)
-                    .unwrap()
-                    .into(),
-                context: kubernetes.context.clone().unwrap(),
-            };
-            let operations = nemoclaw_sdk::kubernetes::operations::Operations {
-                client: nemoclaw_sdk::kubernetes::connect(&target).await.unwrap(),
-                state: state.join("kubernetes"),
-                openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
-            };
+    let (_forward, client) = match kubernetes_operations(&document, &state).await {
+        Some(operations) => {
             let (forward, client) = kubernetes_gateway(&operations, &recorded).await;
             (Some(forward), client)
         }
@@ -249,30 +233,69 @@ fn sandbox_exec(sandbox: &str, command: &[&str]) -> Command {
     exec
 }
 
-/// Run one command in a sandbox with `openshell sandbox exec`. The published
-/// report holds its exit status and whether its output, standard output and
-/// error together, contains the expected text and none of the forbidden
-/// text; the output stays in the private work directory.
-#[test]
+/// Run one command in a sandbox with `openshell sandbox exec`, or on a managed
+/// Kubernetes gateway with the gateway's exec, through the port-forward that
+/// `probe` uses. The published report holds its exit status and whether its
+/// output contains the expected text and none of the forbidden text: standard
+/// output and error together from the CLI, standard output alone from the
+/// gateway's exec, which keeps no standard error. The output stays in the
+/// private work directory.
+#[tokio::test]
 #[ignore = "run by tests/e2e/hcl/command for one target"]
-fn command() {
+async fn command() {
     let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
     let sandbox = input("SANDBOX");
     let command: Vec<String> = serde_json::from_str(&input("COMMAND")).unwrap();
-    let command: Vec<&str> = command.iter().map(String::as_str).collect();
-    let output = sandbox_exec(&sandbox, &command).output().unwrap();
-    let mut text = output.stdout;
-    text.extend_from_slice(&output.stderr);
+    let state = PathBuf::from(input("STATE"));
+    let document = Document::parse(fs::File::open(input("CONFIG")).unwrap()).unwrap();
+    let (exit_code, text) = match kubernetes_operations(&document, &state).await {
+        Some(operations) => {
+            let binding = sandbox_binding(&state, &sandbox);
+            let (_forward, client) = kubernetes_gateway(&operations, &binding).await;
+            let (code, output) = client
+                .exec_bound(&binding, command, Default::default(), 60)
+                .await
+                .unwrap();
+            (Some(code), output)
+        }
+        None => {
+            let command: Vec<&str> = command.iter().map(String::as_str).collect();
+            let output = sandbox_exec(&sandbox, &command).output().unwrap();
+            let mut text = output.stdout;
+            text.extend_from_slice(&output.stderr);
+            (output.status.code(), text)
+        }
+    };
     let text = String::from_utf8_lossy(&text);
     let (contains, excludes) = (input("CONTAINS"), input("EXCLUDES"));
     let matched = text.contains(&contains) && (excludes.is_empty() || !text.contains(&excludes));
     fs::write(input("OUTPUT"), text.as_bytes()).unwrap();
     fs::write(
         input("REPORT"),
-        json!({"sandbox": sandbox, "exit_code": output.status.code(), "matched": matched})
-            .to_string(),
+        json!({"sandbox": sandbox, "exit_code": exit_code, "matched": matched}).to_string(),
     )
     .unwrap();
+}
+
+/// The SDK's operations on the cluster of `document`'s managed Kubernetes
+/// gateway, keeping their state under the deployment's `state`, or `None` for
+/// another gateway.
+async fn kubernetes_operations(
+    document: &Document,
+    state: &std::path::Path,
+) -> Option<nemoclaw_sdk::kubernetes::operations::Operations> {
+    let kubernetes = document.spec.gateway.as_managed()?.kubernetes.as_deref()?;
+    let target = nemoclaw_sdk::kubernetes::ClusterTarget {
+        kubeconfig: var(&kubernetes.kubeconfig.as_ref().unwrap().env)
+            .unwrap()
+            .into(),
+        context: kubernetes.context.clone().unwrap(),
+    };
+    Some(nemoclaw_sdk::kubernetes::operations::Operations {
+        client: nemoclaw_sdk::kubernetes::connect(&target).await.unwrap(),
+        state: state.join("kubernetes"),
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
+    })
 }
 
 /// Open a terminal UI in a sandbox with `openshell sandbox exec --tty` in a

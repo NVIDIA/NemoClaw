@@ -174,3 +174,8 @@ resource "helm_release" "model" {
   timeout    = 180
   values     = [yamlencode(merge(local.values, { part = "workloads" }))]
 }
+
+output "document" {
+  description = "The case's document, for later run blocks that address what it names."
+  value       = local.document
+}
