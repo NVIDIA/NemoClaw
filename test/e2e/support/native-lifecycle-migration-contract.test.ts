@@ -194,14 +194,22 @@ describe("OpenShell stop/start sandbox cleanup", () => {
       },
     };
     const exec = vi.fn(
-      async (_name: string, args: string[], _options: { env?: NodeJS.ProcessEnv }) =>
-        execResults[args.slice(0, 2).join(" ")] ?? {
-          ...success,
-          stdout: args[2] === "echo alive" ? "alive" : args[2].includes("/health") ? "ready" : "",
-        },
+      async (
+        _name: string,
+        args: string[],
+        execOptions: { artifactName?: string; env?: NodeJS.ProcessEnv },
+      ) =>
+        execOptions.artifactName === "cold-recovery-native-health"
+          ? { ...success, stdout: "200" }
+          : (execResults[args.slice(0, 2).join(" ")] ?? {
+              ...success,
+              stdout:
+                args[2] === "echo alive" ? "alive" : args[2].includes("/health") ? "ready" : "",
+            }),
     );
     const commandResults: Record<string, () => Promise<typeof success>> = {
       "install-sh-sandbox-survival": async () => (await options.install?.()) ?? success,
+      "cold-recovery-forwarded-health": async () => ({ ...success, stdout: "200" }),
       "openclaw-explicit-admin-approval": async () => ({
         ...success,
         exitCode: options.approvalFails ? 1 : 0,
@@ -230,11 +238,22 @@ describe("OpenShell stop/start sandbox cleanup", () => {
         waitForSandboxReadyAfterGatewayRestart,
       },
       progress: { phase: vi.fn() },
-      runtimeProvider: { requireAvailable: vi.fn() },
+      runtimeProvider: {
+        id: "docker",
+        requireAvailable: vi.fn(),
+        resolveSandboxResourceHandle: vi.fn(async () => "a".repeat(64)),
+      },
       sandbox: {
         cleanupSandbox,
         list,
-        openshell: vi.fn(async () => success),
+        openshell: vi.fn(async (args: string[]) =>
+          args.join(" ") === "sandbox list -g nemoclaw -o json"
+            ? {
+                ...success,
+                stdout: JSON.stringify([{ id: "sandbox-id-1", name: "e2e-survival-cleanup" }]),
+              }
+            : success,
+        ),
         exec,
       },
       secrets: { required: () => "test-hosted-key" },

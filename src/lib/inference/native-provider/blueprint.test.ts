@@ -22,6 +22,18 @@ import {
   type BlueprintNativeReceipt,
 } from "./blueprint";
 
+function readPlanSnapshot(file: string) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    return {
+      contents: fs.readFileSync(fd, "utf8"),
+      mode: fs.fstatSync(fd).mode & 0o777,
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function fixture(
   overrides: {
     credential?: string;
@@ -895,17 +907,12 @@ describe("blueprint configuration resume", () => {
     try {
       expect(() => findBlueprintNativeReceipt(f.input)).toThrow("incomplete");
       await f.resume();
-      const completedFd = fs.openSync(f.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        const completed = JSON.parse(fs.readFileSync(completedFd, "utf8"));
-        expect(completed).toEqual({
-          ...f.plan,
-          native_inference: { ...f.plan.native_inference, configPublished: true },
-        });
-        expect(fs.fstatSync(completedFd).mode & 0o777).toBe(0o600);
-      } finally {
-        fs.closeSync(completedFd);
-      }
+      const completed = readPlanSnapshot(f.file);
+      expect(JSON.parse(completed.contents)).toEqual({
+        ...f.plan,
+        native_inference: { ...f.plan.native_inference, configPublished: true },
+      });
+      expect(completed.mode).toBe(0o600);
       expect(f.deps.writeConfig).toHaveBeenCalledWith(
         f.input.sandboxName,
         expect.arrayContaining([
@@ -923,12 +930,7 @@ describe("blueprint configuration resume", () => {
       expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
       expect(f.adapter.detachProvider).not.toHaveBeenCalled();
       expect(f.input.createSandbox).not.toHaveBeenCalled();
-      const finalFd = fs.openSync(f.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        expect(fs.readFileSync(finalFd, "utf8")).not.toContain("test-host-secret");
-      } finally {
-        fs.closeSync(finalFd);
-      }
+      expect(readPlanSnapshot(f.file).contents).not.toContain("test-host-secret");
     } finally {
       fs.rmSync(f.home, { recursive: true, force: true });
     }

@@ -301,7 +301,7 @@ test(
     progress.phase("recover a cold sandbox through the public CLI");
     const beforeRecovery = await sandbox.openshell(
       ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
-      { artifactName: "cold-recovery-source-sandbox", env: sandboxAccessEnv(), timeoutMs: 10_000 },
+      { artifactName: "cold-recovery-source-sandbox", env: sandboxEnv, timeoutMs: 10_000 },
     );
     assertExitZero(beforeRecovery, "record the cold-recovery source sandbox");
     const sourceRows = (
@@ -360,7 +360,7 @@ test(
     ];
     const nativeHealth = await sandbox.exec(SANDBOX_NAME, ["curl", ...healthArgs], {
       artifactName: "cold-recovery-native-health",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
     });
     assertExitZero(nativeHealth, "probe native OpenClaw immediately after recover");
@@ -377,7 +377,7 @@ test(
       ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
       {
         artifactName: "cold-recovery-retained-sandbox",
-        env: sandboxAccessEnv(),
+        env: sandboxEnv,
         timeoutMs: 10_000,
       },
     );
