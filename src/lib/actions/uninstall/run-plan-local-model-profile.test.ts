@@ -126,6 +126,109 @@ function writeScopedGatewayState(home: string): void {
 }
 
 describe("uninstall local model profile cleanup", () => {
+  it.each([
+    { outcome: "removed", removes: true, inventoryStatus: 0, exitCode: 0 },
+    { outcome: "still present", removes: false, inventoryStatus: 0, exitCode: 1 },
+    { outcome: "inventory unavailable", removes: true, inventoryStatus: 1, exitCode: 1 },
+  ])(
+    "verifies bearerless vLLM on its default daemon: $outcome",
+    async ({ removes, inventoryStatus, exitCode }) => {
+      const containerId = "d".repeat(64);
+      const otherId = "e".repeat(64);
+      const local = new Map([["nemoclaw-vllm", containerId]]);
+      const ambient = new Map([
+        ["nemoclaw-vllm", otherId],
+        ["operator-server", "foreign"],
+      ]);
+      const env = {
+        HOME: "/tmp/nemoclaw-uninstall-vllm-daemons",
+        DOCKER_CONTEXT: "other-local",
+        DOCKER_HOST: "unix:///other/docker.sock",
+        DOCKER_CONFIG: "/other/config",
+        DOCKER_TLS_VERIFY: "1",
+        DOCKER_CERT_PATH: "/other/certs",
+        DOCKER_API_VERSION: "1.44",
+      };
+      const errors: string[] = [];
+      const runDocker = vi.fn<NonNullable<UninstallRunDeps["runDocker"]>>((args, options) => {
+        const isDefault = options?.env?.DOCKER_CONTEXT === "default";
+        const inventory = isDefault ? local : ambient;
+        const handlers = new Map([
+          [
+            JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS),
+            () => ok(`${inventory.get("nemoclaw-vllm")} ${String(isDefault)}\n`),
+          ],
+          [
+            JSON.stringify(["rm", "-f", containerId]),
+            () => {
+              removes && inventory.delete("nemoclaw-vllm");
+              return ok();
+            },
+          ],
+          [
+            JSON.stringify(RESERVED_INFERENCE_NAMES_ARGS),
+            () => ({
+              status: isDefault ? inventoryStatus : 0,
+              stdout: [...inventory.keys()].join("\n"),
+              stderr: "",
+            }),
+          ],
+        ]);
+        return handlers.get(JSON.stringify(args))?.() ?? ok();
+      });
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: (command) => command === "openshell" || command === "docker",
+          env,
+          existsSync: () => false,
+          error: (message) => errors.push(message),
+          isTty: false,
+          log: () => {},
+          run: vi.fn(okWithKnownGatewayList),
+          runDocker,
+        },
+      );
+      expect(result.exitCode).toBe(exitCode);
+      expect(local.has("nemoclaw-vllm")).toBe(!removes);
+      expect([...ambient]).toEqual([
+        ["nemoclaw-vllm", otherId],
+        ["operator-server", "foreign"],
+      ]);
+      expect(runDocker).toHaveBeenCalledWith(
+        ["rm", "-f", containerId],
+        expect.objectContaining({ env: expect.objectContaining({ DOCKER_CONTEXT: "default" }) }),
+      );
+      const localCalls = runDocker.mock.calls.filter(
+        ([, options]) => options?.env?.DOCKER_CONTEXT === "default",
+      );
+      expect(localCalls.map(([args]) => args)).toEqual([
+        ORPHANED_VLLM_INSPECT_ARGS,
+        ["rm", "-f", containerId],
+        RESERVED_INFERENCE_NAMES_ARGS,
+      ]);
+      expect(
+        localCalls.map(([, options]) =>
+          Object.keys(options?.env ?? {}).filter((name) => name.startsWith("DOCKER_")),
+        ),
+      ).toEqual([["DOCKER_CONTEXT"], ["DOCKER_CONTEXT"], ["DOCKER_CONTEXT"]]);
+      expect(
+        runDocker.mock.calls.filter(
+          ([args, options]) =>
+            JSON.stringify(args) === JSON.stringify(RESERVED_INFERENCE_NAMES_ARGS) &&
+            options?.env?.DOCKER_HOST === env.DOCKER_HOST,
+        ),
+      ).toHaveLength(exitCode === 0 ? 1 : 0);
+      expect(
+        errors.some((message) =>
+          /remains after ownership-aware cleanup|could not inventory reserved managed inference/u.test(
+            message,
+          ),
+        ),
+      ).toBe(exitCode !== 0);
+    },
+  );
+
   it("removes an orphaned host-local vLLM container only when its managed label is present (#8981)", async () => {
     const containerId = "a".repeat(64);
     const runDocker = dockerResults(

@@ -1077,7 +1077,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: false,
     cloudflared: true,
-    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+    owningPaths: [
+      "test/e2e/support/bearerless-vllm-readiness.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+      "src/lib/inference/local.ts",
+      "src/lib/inference/serving/vllm-host-local-lifecycle.ts",
+      "src/lib/inference/serving/vllm-host-local-network.ts",
+      "src/lib/inference/vllm-docker-env.ts",
+    ],
   }),
   managedRuntimeTarget("inference-routing-openclaw-native", {
     testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
