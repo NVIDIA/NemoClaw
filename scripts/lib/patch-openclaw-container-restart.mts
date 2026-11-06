@@ -161,6 +161,39 @@ export function patchGatewayProxyShutdown(source: string, version = "2026.9.5"):
   return source.replace(original, () => original.replace(target, () => replacement));
 }
 
+// Container recreation changes the PID namespace. A terminated owner's fresh
+// heartbeat must remain authoritative until native admission classifies it as
+// stale. Use the caller's existing admission budget; never reclaim the lock here.
+export function patchGatewaySnapshotAdmission(source: string): string {
+  const marker = "/* nemoclaw: wait for native namespace admission */";
+  const replacements = [
+    [
+      "import { m as StateDatabaseAdmissionPendingError }",
+      "import { b as GatewayLockNamespaceError, m as StateDatabaseAdmissionPendingError }",
+    ],
+    [
+      "shouldRetry: (error) => error instanceof StateDatabaseAdmissionPendingError && error.databasePath === pathname,",
+      `${marker}\n\t\t\t\tshouldRetry: (error) => error instanceof StateDatabaseAdmissionPendingError && error.databasePath === pathname || process.env.OPENSHELL_SANDBOX === "1" && error instanceof GatewayLockNamespaceError,`,
+    ],
+  ] as const;
+  const patched = source.includes(marker);
+  if (source.split("async function withOpenClawStateDatabaseReadSnapshot(").length !== 2)
+    throw new Error("Expected one native state snapshot admission function");
+  if (
+    replacements.some(([before, after]) => source.split(patched ? after : before).length !== 2) ||
+    (patched &&
+      (source.split(marker).length !== 2 ||
+        replacements.some(([before]) => source.includes(before))))
+  )
+    throw new Error("Unrecognized or incomplete OpenClaw state snapshot admission patch");
+  return patched
+    ? source
+    : replacements.reduce<string>(
+        (text, [before, after]) => text.replace(before, () => after),
+        source,
+      );
+}
+
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   if (!VERSIONS.includes(metadata.version)) {
@@ -174,12 +207,30 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
       fs.readFileSync(file, "utf8").includes("async function runSafeGatewayRestart("),
     );
   if (safeRestartFiles.length !== 1) throw new Error("Expected one native safe restart module");
+  const snapshotFiles =
+    metadata.version === "2026.10.5"
+      ? fs
+          .readdirSync(distDir)
+          .filter(
+            (name) =>
+              /^openclaw-state-db-readonly-.*\.mjs$/u.test(name) &&
+              fs
+                .readFileSync(path.join(distDir, name), "utf8")
+                .includes("async function withOpenClawStateDatabaseReadSnapshot("),
+          )
+      : [];
+  if (metadata.version === "2026.10.5" && snapshotFiles.length !== 1)
+    throw new Error("Expected one native state snapshot admission module");
   const patches = [
     {
       target: path.join(distDir, "cli", "gateway-lifecycle.runtime.js"),
       patch: (source: string) => patchContainerRestart(source, metadata.version),
     },
     { target: safeRestartFiles[0]!, patch: patchHostSafeRestart },
+    ...snapshotFiles.map((name) => ({
+      target: path.join(distDir, name),
+      patch: patchGatewaySnapshotAdmission,
+    })),
     ...(metadata.version !== "2026.9.2"
       ? [
           {

@@ -476,6 +476,10 @@ describe.each(["2026.9.5", "2026.10.5"])(
           path.join(dist, "lifecycle-fixture.mjs"),
           'async function runSafeGatewayRestart(opts) {\n\tconst result = await callGatewayCli({\n\t\tmethod: "gateway.restart.request",\n\t\tparams,\n\t});\n}',
         );
+        fs.copyFileSync(
+          new URL("./fixtures/gateway-state-snapshot-admission-10.5.js.txt", import.meta.url),
+          path.join(dist, "openclaw-state-db-readonly-fixture.mjs"),
+        );
         const signalsPath = path.join(dist, "cli/run-main.js");
         fs.writeFileSync(signalsPath, "native drift");
         expect(() => patchOpenClawContainerRestart(dist)).toThrow("Expected one");
