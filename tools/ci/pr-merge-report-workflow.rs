@@ -61,7 +61,8 @@ case "$endpoint" in
       printf '[{"user":{"login":"github-actions[bot]"},"body":"<!-- nemoclaw-merge-report:v1 -->"}]\n'
     else printf '[]\n'; fi ;;
   repos/example/repo/issues/comments/123)
-    jq -n --rawfile body "$FIXTURE/posted-body" '{body:$body}' ;;
+    if [ "$SCENARIO" = readback ]; then jq -n '{body:"edited"}'
+    else jq -n --rawfile body "$FIXTURE/posted-body" '{body:$body}'; fi ;;
   *) printf 'Unexpected endpoint: %s\n' "$endpoint" >&2; exit 43 ;;
 esac | jq -r "$query"
 MOCK
@@ -92,6 +93,19 @@ for SCENARIO in api_failure unmerged; do
   fi
   test ! -e "$FIXTURE/writes"
 done
+workflow=.github/workflows/pr-merge-report.yml
+awk '/name: Post one merge report/{f=1} f&&/run: \|/{r=1;next} r&&/^      - /{exit} r{sub(/^          /,"");print}' "$workflow" > "$FIXTURE/publish.sh"
+test -s "$FIXTURE/publish.sh"
+mkdir "$FIXTURE/runner"
+cp "$FIXTURE/reporter" "$FIXTURE/runner/merge-report"
+if SCENARIO=readback RUNNER_TEMP="$FIXTURE/runner" GITHUB_STEP_SUMMARY="$FIXTURE/summary" \
+  GITHUB_REPOSITORY=example/repo PR_NUMBER=1 bash --noprofile --norc -eo pipefail "$FIXTURE/publish.sh" 2> "$FIXTURE/publish-error"; then
+  exit 1
+fi
+grep -Fq 'did not match readback' "$FIXTURE/publish-error"
+grep -Fq '<summary>Merge outcomes</summary>' "$FIXTURE/summary"
+cmp "$FIXTURE/summary" "$FIXTURE/runner/merge-outcomes.md"
+awk '/actions\/upload-artifact/{f=1;next} f&&/if:/{print;exit}' "$workflow" | grep -Fq "always() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure')"
 "##;
     let output = Command::new("bash")
         .args(["-c", script])

@@ -72,15 +72,16 @@ jobs:
         if: steps.installed.outputs.available == 'true'
         run: rustc --edition=2024 -D warnings tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/merge-report"
       - name: Post one merge report
+        id: publish
         if: steps.installed.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post > "$RUNNER_TEMP/merge-outcomes.md"
-          cat "$RUNNER_TEMP/merge-outcomes.md" >> "$GITHUB_STEP_SUMMARY"
+          # Keep the report even when posting or readback fails: a truncated comment points here.
+          "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post | tee "$RUNNER_TEMP/merge-outcomes.md" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: steps.installed.outputs.available == 'true'
+        if: always() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure')
         with:
           name: merge-outcomes
           path: ${{ runner.temp }}/merge-outcomes.md
