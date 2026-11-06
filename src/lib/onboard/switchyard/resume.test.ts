@@ -54,23 +54,25 @@ async function interruptedOnboarding() {
     environment: env,
     providerAdapter: fixture.input.adapter,
     hydrateCredentialEnv: fixture.input.readCredential,
-    updateSandbox: (name, route) => {
+    updateSandbox: (name: string, route: Parameters<SetupInferenceDeps["updateSandbox"]>[1]) => {
       entry = { name, ...route, pendingRouteReservation: true };
       return true;
     },
     getSandbox: () => entry,
     getGatewayName: () => "nemoclaw",
     isRoutedInferenceProvider: () => false,
-    withSandboxMutationLock: async (_name, operation) => operation(),
-    withGatewayRouteMutationLock: async (_name, operation) => operation(),
+    withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+      operation(),
+    withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+      operation(),
     inferenceRouteMutator: { setInferenceRoute: vi.fn() },
     localInference: {
       loadPendingOllamaModelCleanup: () => [],
       loadPersistedOllamaHost: () => null,
     },
-    withOllamaModelOwnershipLock: (operation) => operation(),
+    withOllamaModelOwnershipLock: <T>(operation: () => T) => operation(),
     log: vi.fn(),
-  } as SetupInferenceDeps);
+  } as unknown as SetupInferenceDeps);
   const { deps, calls } = inferenceDeps({
     setupInference: setup,
     setupNim: async () => ({

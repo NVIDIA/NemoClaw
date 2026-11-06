@@ -384,7 +384,7 @@ describe("Switchyard provider bindings", () => {
     {
       failure: "completed reservation",
       mutate: (_input, recorded) => {
-        recorded.pendingRouteReservation = false;
+        delete recorded.pendingRouteReservation;
       },
     },
     {
