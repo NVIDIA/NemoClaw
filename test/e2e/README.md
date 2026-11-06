@@ -414,6 +414,41 @@ their own review. Historical upgrade fixtures keep their historical versions.
 Pi retains its separate candidate contract and qualification receipts below;
 selecting a shipped-agent catalog does not qualify Pi.
 
+### Hermes NVIDIA Stripped-State Recovery
+
+The native NVIDIA branch of `live/hermes-inference-switch.test.ts` owns the real registered rebuild boundary for #14094.
+Its catalogue entry provides a 75-minute test budget and an 85-minute workflow budget.
+The extra test time covers the second rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
+It keeps the healthy Discord-state rebuild, then tests a separate damaged-state rebuild in the same disposable sandbox.
+The missing coverage dimension is recovery when all three managed NVIDIA credential fields already contain `[STRIPPED_BY_MIGRATION]`.
+
+`fixtures/hermes-nvidia-recovery.ts` seeds only those three fields through the sandbox owner's mutable config.
+It checks the route, regular-file ownership, links, and size, compares file metadata around the write, and reopens the config to verify the exact damaged input.
+These snapshot checks detect observed changes; they do not exclude concurrent writers.
+It does not alter config permissions, guard hashes, supervisor state, or credential stores.
+The public rebuild must recover three agreeing issued references, retain the noncredential config fingerprint and a test-owned user-state file, preserve Discord settings, report healthy NVIDIA inference, and return `PROBE_OK` from a real Hermes request.
+Neither rebuild sets `NVIDIA_INFERENCE_API_KEY` or `DISCORD_BOT_TOKEN`.
+The test-only enrollment transport receives the synthetic token through `NEMOCLAW_E2E_DISCORD_TOKEN`.
+The synthetic Discord enrollment transport does not establish real Discord delivery.
+Existing terminal cleanup still owns the disposable resources; the fixture adds no mutation retry or backup deletion.
+
+Source caller tests and the integration tests in `test/agents/hermes/hermes-nvidia-restore-validation.test.ts` and `hermes-restart-config-seal-write-lock.test.ts` own recovery eligibility and transaction refusal.
+`support/hermes-nvidia-recovery.test.ts` executes the fixture against local files and owns its mutation, refusal, and diagnostic-output contracts.
+`support/hermes-discord-rebuild-contract.test.ts` owns evidence sequencing and rejection.
+These deterministic tests do not qualify the installed guard.
+
+The live assertion count decreases by two. The Discord-state reader must exit successfully before its exact settings comparison; support tests reject valid output followed by a failed read after either rebuild. Each removed check has a separate disposition:
+
+| Removed check | Retained owner or reason |
+| --- | --- |
+| Repeated native-turn exit, PONG, and model checks | `runHermesPongWithRetry` already rejects these failures. `support/hermes-inference-switch-command-shape.test.ts` tests that rejection; live authenticated-request evidence remains. |
+| Diagnostic config-export exit | The diagnostic export is removed because it has no separate product outcome. Live config integrity and inference checks remain. |
+| Proxy fixture's OpenShell metadata readback | Support tests own fixture arguments. Live route readback and Hermes CLI inference prove the resulting NemoClaw route; mock-backed runs also retain authenticated request evidence. The Anthropic metadata check remains. |
+| Repeated recovery-probe output shape | The fixture tests own constant diagnostic fields and fingerprint format. Live seed/verify command success and the cross-rebuild fingerprint comparison remain. No checks move into the Python probe. |
+
+Live evidence must identify the exact CLI revision and matching immutable managed-image digest through the candidate image authority above.
+If fixture seeding, rebuild preflight, or installed readiness refuses the damaged state, stop and retain the failure evidence; do not update guard anchors or bypass readiness.
+
 ### Candidate OpenShell release admission
 
 An upgrade PR can carry `ci/openshell-upgrade-trust.json` instead of requiring a
@@ -2284,6 +2319,9 @@ The live target refuses to replace a pre-existing sandbox or `nemoclaw-vllm` con
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
 The standard E2E artifacts retain bounded command output.
+After onboarding, both physical-host cases request vLLM health on loopback and the private OpenShell bridge.
+Each case also checks connection refusal on every discovered unintended IPv4 and IPv6 address.
+Spark and Station retain their own probe targets and request results.
 
 Run the target from a clean candidate checkout on the Spark host:
 
@@ -2291,7 +2329,10 @@ Run the target from a clean candidate checkout on the Spark host:
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
-A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
+A passing Spark target establishes that option 2 selects the fixed vLLM preset and recipe.
+The managed container carries catalog provenance and the catalog-derived serve command.
+Health requests succeed on loopback and the private OpenShell bridge; connections to every other discovered host address are refused.
+The target also requires a chat response through `inference.local` and an HTTP `403` response for unrelated sandbox egress.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
@@ -2723,6 +2764,20 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 ## DGX Station Express
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Nemotron 3.5 Super VL weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+After installation, this target requires vLLM health requests to succeed on loopback and the private OpenShell gateway and refuse every other assigned IPv4/IPv6 host address.
+The existing controller retains the inspected bindings, probe targets and per-request results for the candidate revision.
+Source tests own port and authentication permutations; these runtime requests prove Docker and host network enforcement.
+
+## Bearerless vLLM Provider Validation
+
+The `inference-routing` target runs TC-INF-09 compatible-endpoint routing on Docker and Podman.
+Its Docker-only bearerless companion validates the production provider against private bindings on port 18080 with distinct default/OpenShell gateways.
+Podman skips only that companion.
+Artifacts retain inspected bindings, the probe command, validation result, container requests and ID-based cleanup.
+Readiness retries cover only refused or reset connections during the fixture's idempotent startup GET.
+The check permits at most six attempts within ten seconds, with a one-second delay, and records each failure.
+HTTP, timeout and TLS errors stop the check without retrying. Provider validation runs once after readiness succeeds.
+Source tests own authentication, ownership and port permutations.
 
 ## DCode Native Local Inference
 
