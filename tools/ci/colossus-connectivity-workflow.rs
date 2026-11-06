@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Run shell boundaries with synthetic inputs, fake permission responses, and no network.
+//! Run shell boundaries with synthetic inputs and no network.
 use std::{
     fs,
     process::Command,
@@ -46,9 +46,14 @@ fn publishes_only_outcome_and_commit_and_removes_credentials() {
     for (scenario, outcome) in [
         ("success", "passed"),
         ("ssh_failure", "failed (ssh)"),
+        ("dns_failure", "failed (dns)"),
+        ("tcp_failure", "failed (tcp)"),
+        ("host_key_failure", "failed (host-key)"),
+        ("authentication_failure", "failed (authentication)"),
         ("remote_failure", "failed (remote-command)"),
         ("timeout", "failed (timeout)"),
         ("interrupted", "failed (interrupted)"),
+        ("main_interrupted", "failed (interrupted)"),
         ("missing_key", "failed (inputs)"),
         ("missing_host", "failed (inputs)"),
         ("missing_user", "failed (inputs)"),
@@ -70,15 +75,30 @@ fn publishes_only_outcome_and_commit_and_removes_credentials() {
         let shim = r#"#!/bin/bash
 set -eu
 case "${0##*/}" in
+getent)
+  printf 'synthetic-private-key target.example.invalid\n' >&2
+  [[ "$scenario" != dns_failure ]] ;;
 ssh-keygen)
   if [[ "$scenario" == invalid_key && "$1" == -y ]] || [[ "$scenario" == invalid_known_hosts && "$1" == -l ]]; then
     echo synthetic-private-key >&2; exit 1
   fi ;;
 timeout)
+  if [[ "$3" == 5s ]]; then
+    [[ "$1" == --signal=TERM && "$2" == --kill-after=1s ]] || exit 82
+    [[ "$4" == bash && "$5" == -c && "$6" == 'exec 3<>"/dev/tcp/$1/22"' && "$7" == _ && "$8" == target.example.invalid ]] || exit 82
+    [[ "$scenario" != tcp_failure ]]
+    exit
+  fi
+  if [[ "$3" == 10s ]]; then
+    [[ "$1" == --signal=TERM && "$2" == --kill-after=1s && "$4" == getent && "$5" == ahosts && "$6" == target.example.invalid ]] || exit 82
+    shift 3
+    exec "$@"
+  fi
   [[ "$1" == --signal=TERM && "$2" == --kill-after=5s && "$3" == 30s ]] || exit 82
   shift 3
   [[ "$scenario" != timeout ]] || exit 124
   if [[ "$scenario" == interrupted ]]; then kill -TERM "$PPID"; exit 143; fi
+  if [[ "$scenario" == main_interrupted ]]; then kill -TERM "$PROBE_SHELL_PID"; exit 143; fi
   exec "$@" ;;
 ssh)
   : > "${0%/*}/ssh-invoked"
@@ -89,17 +109,23 @@ ssh)
   [[ -z "${PROBE_PRIVATE_KEY+x}" && -z "${PROBE_KNOWN_HOSTS+x}" ]] || exit 81
   printf 'synthetic-private-key target.example.invalid\n'
   printf 'synthetic-known-hosts synthetic-user\n' >&2
-  case "$scenario" in success) exit 0 ;; remote_failure) exit 1 ;; *) exit 255 ;; esac ;;
+  case "$scenario" in
+    success) exit 0 ;;
+    remote_failure) exit 1 ;;
+    host_key_failure) echo 'Host key verification failed. synthetic-private-key' >&2; exit 255 ;;
+    authentication_failure) echo 'synthetic-user: Permission denied (publickey).' >&2; exit 255 ;;
+    *) exit 255 ;;
+  esac ;;
 esac
 "#;
-        for command in ["ssh", "ssh-keygen", "timeout"] {
+        for command in ["ssh", "ssh-keygen", "timeout", "getent"] {
             use std::os::unix::fs::PermissionsExt;
             let path = bin.join(command);
             fs::write(&path, shim).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let output = Command::new("bash")
-            .args(["-c", script])
+            .args(["-c", &format!("export PROBE_SHELL_PID=$$;\n{script}")])
             .env(
                 "PATH",
                 format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
@@ -150,13 +176,19 @@ esac
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary_text = fs::read_to_string(&summary).unwrap();
         let allowed = scenario == "success";
-        if scenario.starts_with("missing_") || scenario.starts_with("invalid_") {
+        if scenario.starts_with("missing_")
+            || scenario.starts_with("invalid_")
+            || matches!(scenario, "dns_failure" | "tcp_failure")
+        {
             assert!(
                 !bin.join("ssh-invoked").exists(),
                 "SSH invoked with rejected inputs in {scenario}"
             );
         }
         assert_eq!(output.status.success(), allowed, "{scenario}: {stderr}");
+        if scenario == "main_interrupted" {
+            assert_eq!(output.status.code(), Some(143), "main-shell TERM status");
+        }
         assert_eq!(stdout.trim(), format!("SSH connectivity: {outcome}"));
         assert!(
             stderr.is_empty(),
