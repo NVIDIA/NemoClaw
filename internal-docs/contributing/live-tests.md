@@ -69,6 +69,7 @@ Run blocks call these modules:
 |---|---|
 | `tests/e2e/hcl/cli` | Runs one bundled `nemoclaw` command, `plan`, `apply`, or `destroy`, and reports its exit status, error, and JSON result. |
 | `tests/e2e/hcl/verifier` | Invokes agents through `hcl_live::probe` and reports targets without a reply, without an expected one-word answer, or from an unexpected runtime. |
+| `tests/e2e/hcl/command` | Runs one fixed command per target in a named sandbox through `hcl_live::command`, with the pinned OpenShell CLI's `openshell sandbox exec`, and reports targets whose command exits nonzero, or whose output lacks the expected text or contains the forbidden text. Reports hold only the exit status and whether the output matched; the output stays in the run's private `work` directory. |
 
 | Case | Runner | Checks |
 |---|---|---|
@@ -80,7 +81,7 @@ Run blocks call these modules:
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
-| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key ([Agent Interfaces](#agent-interfaces)). |
+| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
@@ -222,6 +223,7 @@ Apply must report each interface's port, sign-in, and token file.
 The `tests/e2e/hcl/interface` module then runs `hcl_live::interface` once per request: it reads the reported token with `openshell sandbox exec`, forwards the port with `openshell forward service`, and sends one request with the token as a Bearer credential.
 OpenClaw's Control UI page must load and its configuration endpoint must accept the token; Hermes's API server must list its models and answer a chat completion with the stub's reply, which also shows that NemoClaw sent the configured key; Hermes's dashboard page must load with its session token.
 Reports hold status codes; tokens and response bodies stay in the run's private `work` directory.
+Then the `tests/e2e/hcl/command` module runs two commands in each sandbox: one writes a marker file in `/sandbox/workspace`, the workspace that the SDK's Fabric configuration sets, and reads it back as the agent image's user, UID 10001; the other lists the environment, which must include the variable that the sandbox reads the model registration's key from, `NEMOCLAW_INFERENCE_MODEL_..._KEY`, but not the run's model key.
 The stub's reply does not establish inference; `docker-openclaw-nvidia` covers hosted inference.
 
 The Deep Agents Code terminal and Hermes's browser chat need a pseudo-terminal, and are not checked live.

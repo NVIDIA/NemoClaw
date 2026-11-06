@@ -7,8 +7,10 @@
 # configuration, Hermes's API server lists its models and answers a chat
 # completion with the stub model's reply, and Hermes's dashboard page loads
 # with its session token. The stub refuses requests without the run's key,
-# so the reply also shows NemoClaw sent the configured key. Destroy keeps
-# only the gateway's storage. cargo ci live-docker runs it.
+# so the reply also shows NemoClaw sent the configured key. In each sandbox,
+# the agent's user can write and read a file in the agent's workspace, and
+# the key is not in the environment a command sees. Destroy keeps only the
+# gateway's storage. cargo ci live-docker runs it.
 
 run "model" {
   module {
@@ -93,6 +95,51 @@ run "interfaces" {
         token_path = null
         path       = "/"
         contains   = "__HERMES_SESSION_TOKEN__"
+      }
+    }
+  }
+
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+# The SDK's Fabric configuration (crates/nemoclaw-sdk/src/fabric_config.rs)
+# makes /sandbox/workspace each agent's workspace, and the agent image runs
+# agents as UID 10001 (image/fabric/runtime.json). A sandbox sees the model
+# registration's key in a NEMOCLAW_INFERENCE_MODEL_..._KEY variable
+# (crates/nemoclaw-openshell/src/profile.rs); the environment must have that
+# variable but not the key itself.
+run "commands" {
+  module {
+    source = "./command"
+  }
+
+  variables {
+    connection = run.apply.result.connection
+    targets = {
+      claw_workspace = {
+        sandbox  = "claw"
+        command  = ["sh", "-c", "echo nemoclaw-live-test > /sandbox/workspace/nemoclaw-live-test && cat /sandbox/workspace/nemoclaw-live-test && id -u"]
+        contains = "nemoclaw-live-test\n10001\n"
+      }
+      claw_environment = {
+        sandbox  = "claw"
+        command  = ["env"]
+        contains = "NEMOCLAW_INFERENCE_MODEL_"
+        excludes = var.model_key
+      }
+      hermes_workspace = {
+        sandbox  = "hermes"
+        command  = ["sh", "-c", "echo nemoclaw-live-test > /sandbox/workspace/nemoclaw-live-test && cat /sandbox/workspace/nemoclaw-live-test && id -u"]
+        contains = "nemoclaw-live-test\n10001\n"
+      }
+      hermes_environment = {
+        sandbox  = "hermes"
+        command  = ["env"]
+        contains = "NEMOCLAW_INFERENCE_MODEL_"
+        excludes = var.model_key
       }
     }
   }
