@@ -7,6 +7,10 @@ import path from "node:path";
 
 import type { AgentDefinition } from "../../../agent/definition-types";
 
+import type { loadAgent } from "../../../agent/defs";
+
+type DefsModule = { loadAgent: typeof loadAgent };
+
 /** Copy an agent's manifest into an owner-only temp directory and re-point the definition. */
 function copyHermesManifestAgent(source: AgentDefinition): AgentDefinition {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-manifest-"));
@@ -17,6 +21,29 @@ function copyHermesManifestAgent(source: AgentDefinition): AgentDefinition {
 }
 
 const privateCopies = new Map<string, { agent: AgentDefinition; directory: string }>();
+
+/**
+ * Factory for mocking loadAgent in Hermes test files.
+ *
+ * Returns a function that resolves "hermes" through the owner-only manifest copy,
+ * while passing other agents through unchanged. The hoisted vi.mock() call in
+ * each test file delegates to this factory. Example:
+ *
+ * ```ts
+ * vi.mock("../../agent/defs", async (importOriginal) => {
+ *   const original = await importOriginal<typeof import("../../agent/defs")>();
+ *   return { ...original, loadAgent: privateHermesLoadAgentMock(original) };
+ * });
+ * ```
+ */
+export function privateHermesLoadAgentMock(
+  original: DefsModule,
+): DefsModule["loadAgent"] {
+  return (name: string, env?: NodeJS.ProcessEnv) =>
+    name === "hermes"
+      ? privateHermesManifestAgent(original.loadAgent(name, env))
+      : original.loadAgent(name, env);
+}
 
 /**
  * Return an owner-only copy of a source agent's manifest and a cloned agent

@@ -15,21 +15,16 @@ import {
   assertCurrentHermesPortableStartupContract,
   resolveHermesPortableStartupContract,
 } from "./hermes-portable-contract";
-import { cleanupPrivateHermesManifestAgent } from "./__test-helpers__/hermes-manifest-agent";
+import {
+  cleanupPrivateHermesManifestAgent,
+  privateHermesLoadAgentMock,
+} from "./__test-helpers__/hermes-manifest-agent";
 
-// Resolve the Hermes agent from an owner-only manifest copy so startup-contract
-// reads do not depend on the checkout's group-level file modes. The manifest
-// bytes are unchanged, so digests and reviewed-version checks still apply.
 vi.mock("../../agent/defs", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../agent/defs")>();
-  const { privateHermesManifestAgent } = await import("./__test-helpers__/hermes-manifest-agent");
   return {
     ...original,
-    /** Resolve Hermes through the owner-only manifest copy; pass others through. */
-    loadAgent: (name: string, env?: NodeJS.ProcessEnv) =>
-      name === "hermes"
-        ? privateHermesManifestAgent(original.loadAgent(name, env))
-        : original.loadAgent(name, env),
+    loadAgent: privateHermesLoadAgentMock(original),
   };
 });
 

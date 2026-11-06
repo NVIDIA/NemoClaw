@@ -22,22 +22,11 @@ import {
   LABELS,
 } from "./hermes-portable-lifecycle.test-fixture";
 import { openshellMutationCalls } from "./hermes-portable-lifecycle.test-fixtures";
-import { cleanupPrivateHermesManifestAgent } from "./__test-helpers__/hermes-manifest-agent";
+import { cleanupPrivateHermesManifestAgent, privateHermesLoadAgentMock } from "./__test-helpers__/hermes-manifest-agent";
 
-// Recovery re-reads the current Hermes manifest, so resolve it from an
-// owner-only copy instead of the checkout's group-writable modes. The manifest
-// bytes are unchanged, so digests and reviewed-version checks still apply.
 vi.mock("../../agent/defs", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../agent/defs")>();
-  const { privateHermesManifestAgent } = await import("./__test-helpers__/hermes-manifest-agent");
-  return {
-    ...original,
-    /** Resolve Hermes through the owner-only manifest copy; pass others through. */
-    loadAgent: (name: string, env?: NodeJS.ProcessEnv) =>
-      name === "hermes"
-        ? privateHermesManifestAgent(original.loadAgent(name, env))
-        : original.loadAgent(name, env),
-  };
+  return { ...original, loadAgent: privateHermesLoadAgentMock(original) };
 });
 
 afterAll(() => {

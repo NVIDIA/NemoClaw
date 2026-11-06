@@ -287,6 +287,20 @@ export const VALID_ALLOW_TOOL_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
 export const VALID_IDENTITY_RE = /^sha256:[a-f0-9]{64}$/;
 
 /**
+ * Validate an allow-tool selector and throw on invalid input.
+ * Called by MCP command parsers; allows direct callers to reuse validation.
+ */
+export function assertValidAllowToolSelector(tool: string): string {
+  if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+    throw new McpBridgeError(
+      `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+      2,
+    );
+  }
+  return tool;
+}
+
+/**
  * parseMcpAddArgs.
  */
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
@@ -348,25 +362,11 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     if (token === "--allow-tool") {
-      const tool = argv[++i] ?? "";
-      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-        throw new McpBridgeError(
-          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-          2,
-        );
-      }
-      allowTools.push(tool);
+      allowTools.push(assertValidAllowToolSelector(argv[++i] ?? ""));
       continue;
     }
     if (token?.startsWith("--allow-tool=")) {
-      const tool = token.slice("--allow-tool=".length);
-      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-        throw new McpBridgeError(
-          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-          2,
-        );
-      }
-      allowTools.push(tool);
+      allowTools.push(assertValidAllowToolSelector(token.slice("--allow-tool=".length)));
       continue;
     }
     if (token?.startsWith("--url=")) {
@@ -532,25 +532,11 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
       continue;
     }
     if (token === "--allow-tool") {
-      const tool = argv[++i] ?? "";
-      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-        throw new McpBridgeError(
-          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-          2,
-        );
-      }
-      allowTools.push(tool);
+      allowTools.push(assertValidAllowToolSelector(argv[++i] ?? ""));
       continue;
     }
     if (token?.startsWith("--allow-tool=")) {
-      const tool = token.slice("--allow-tool=".length);
-      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-        throw new McpBridgeError(
-          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-          2,
-        );
-      }
-      allowTools.push(tool);
+      allowTools.push(assertValidAllowToolSelector(token.slice("--allow-tool=".length)));
       continue;
     }
     if (token === "--clear-deny-tools") {
@@ -617,16 +603,7 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
         2,
       );
     }
-    const normalizedAllowTools = [...new Set(allowTools)].sort();
-    for (const tool of normalizedAllowTools) {
-      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-        throw new McpBridgeError(
-          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-          2,
-        );
-      }
-    }
-    return { server, allowTools: normalizedAllowTools };
+    return { server, allowTools: [...new Set(allowTools)].sort() };
   }
   if (denyTools.length > 0 && clearDenyTools) {
     throw new McpBridgeError(

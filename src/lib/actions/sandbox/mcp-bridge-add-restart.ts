@@ -84,6 +84,7 @@ import {
   assertAuthenticatedBridgeEntry,
   assertAuthenticatedCredentialReference,
   assertMcpCredentialBoundaryRuntimeVersion,
+  assertValidAllowToolSelector,
   buildMcpBridgeProviderName,
   normalizeMcpDenyTools,
   normalizeMcpServerUrl,
@@ -92,7 +93,6 @@ import {
   uniqueEnvNames,
   validateMcpServerName,
   validateSandboxName,
-  VALID_ALLOW_TOOL_RE,
 } from "./mcp-bridge-validation";
 import {
   verifyMcpServerIdentity,
@@ -247,9 +247,6 @@ async function recoverCommittedPolicyTarget(
       requestedEntry.providerName ?? "",
       requestedEntry.denyTools,
       requestedEntry.allowTools,
-      requestedEntry.serverIdentity,
-      requestedEntry.transport,
-      requestedEntry.requireOAuth,
     ),
     undefined,
     runtimeSelection,
@@ -263,9 +260,6 @@ async function recoverCommittedPolicyTarget(
       currentTarget,
       requestedEntry.denyTools,
       requestedEntry.allowTools,
-      requestedEntry.serverIdentity,
-      requestedEntry.transport,
-      requestedEntry.requireOAuth,
     ),
     undefined,
     runtimeSelection,
@@ -499,9 +493,6 @@ async function inspectMcpAddRecovery(
     entry.providerName ?? "",
     entry.denyTools,
     entry.allowTools,
-    entry.serverIdentity,
-    entry.transport,
-    entry.requireOAuth,
   );
   const boundPolicyState = await policies.getPresetContentGatewayState(
     sandboxName,
@@ -525,9 +516,6 @@ async function inspectMcpAddRecovery(
         target,
         entry.denyTools,
         entry.allowTools,
-        entry.serverIdentity,
-        entry.transport,
-        entry.requireOAuth,
       ),
       undefined,
       providerRuntimeSelection,
@@ -985,15 +973,7 @@ async function addMcpBridgeUnlocked(
         2,
       );
     }
-    const deduplicated = [...new Set(options.allowTools)].sort();
-    for (const tool of deduplicated) {
-      if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-        throw new McpBridgeError(
-          `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-          2,
-        );
-      }
-    }
+    const deduplicated = [...new Set(options.allowTools.map(assertValidAllowToolSelector))].sort();
     if (denyTools.length > 0) {
       throw new McpBridgeError(
         "Cannot specify both --deny-tool and --allow-tool. Choose one mode: explicit denials or explicit allowlist (deny-by-default).",
@@ -1437,15 +1417,7 @@ async function updateMcpBridgeAllowToolsUnlocked(
 ): Promise<void> {
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
-  const normalizedAllowTools = [...new Set(allowTools)].sort();
-  for (const tool of normalizedAllowTools) {
-    if (!VALID_ALLOW_TOOL_RE.test(tool)) {
-      throw new McpBridgeError(
-        `Invalid --allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
-        2,
-      );
-    }
-  }
+  const normalizedAllowTools = [...new Set(allowTools.map(assertValidAllowToolSelector))].sort();
   const sandbox = getSandboxOrThrow(sandboxName);
   const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
