@@ -30,7 +30,7 @@ resource "openshell_gateway_storage" "docker" {
   generation     = "0123456789abcdef0123456789abcdef"
   compute_driver = "docker"
   engine         = var.engine
-  image          = "ghcr.io/nvidia/openshell/gateway@sha256:f0b36dba21d282c52e498c25289658cfd6cd4f343b0069fde5609e25b002cdea"
+  image          = "ghcr.io/nvidia/openshell/gateway@sha256:9b94165a3dbcf6d454b822e5b21f371f168c44155c8fa1d6dd55ba091a041d1f"
   network_cidr   = "172.30.110.0/24"
 }
 
