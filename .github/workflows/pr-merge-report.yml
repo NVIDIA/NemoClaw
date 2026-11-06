@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: PR merge outcomes
+on:
+  pull_request:
+    paths:
+      - tools/ci/pr-merge-report*.rs
+      - .github/workflows/pr-merge-report.yml
+  pull_request_target:
+    branches: [main, v1]
+    types: [closed]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: merge-outcomes-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the reporter without GitHub access
+        run: |
+          rustfmt --edition 2024 --check tools/ci/pr-merge-report*.rs
+          rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/report-tests"
+          "$RUNNER_TEMP/report-tests"
+          rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o "$RUNNER_TEMP/adapter-tests"
+          "$RUNNER_TEMP/adapter-tests"
+  report:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: write
+    steps:
+      # Only squash merges are enabled. Resolve their parent without checking
+      # out PR code, including when a PR changes the reporter itself.
+      - name: Resolve the commit before the merge
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY" --jq '.allow_squash_merge and (.allow_merge_commit | not) and (.allow_rebase_merge | not)' | grep -qx true
+          parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA" --jq 'if (.parents | length) == 1 then .parents[0].sha else error("Expected a squash merge") end')"
+          [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
+          printf 'sha=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.base.outputs.sha }}
+          persist-credentials: false
+      - name: Check whether this base has the reporter
+        id: installed
+        run: |
+          if [ -f tools/ci/pr-merge-report.rs ]; then
+            printf 'available=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'Reporter installation: reports start with the next merged PR.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Compile the trusted reporter
+        if: steps.installed.outputs.available == 'true'
+        run: rustc --edition=2024 -D warnings tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/merge-report"
+      - name: Post one merge report
+        if: steps.installed.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post > "$RUNNER_TEMP/merge-outcomes.md"
+          cat "$RUNNER_TEMP/merge-outcomes.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.installed.outputs.available == 'true'
+        with:
+          name: merge-outcomes
+          path: ${{ runner.temp }}/merge-outcomes.md
+          retention-days: 90
