@@ -747,13 +747,14 @@ fn routes_set_the_harness_provider_and_sampling() {
     let tuned = text.replace(
         "                maxTokens: 8192\n",
         "                maxTokens: 8192\n                harnessProvider: custom\n                temperature: 0.2\n                topP: 0.9\n",
-    );
+    ).replace("example-reasoning-model", "example-reasoning-model:Q4_K_M");
     assert_ne!(tuned, text);
     let tuned = nemoclaw_sdk::config::Document::parse(tuned.as_bytes()).unwrap();
     let model =
         &nemoclaw_sdk::fabric_config::for_sandbox(&tuned, tuned.sandbox("assistant").unwrap())
             .unwrap()["models"]["default"];
     assert_eq!(model["provider"], "custom", "{model}");
+    assert_eq!(model["model"], "example-reasoning-model:Q4_K_M", "{model}");
     assert_eq!(model["temperature"], 0.2, "{model}");
     assert_eq!(model["top_p"], 0.9, "{model}");
     assert_eq!(model["max_tokens"], 8192, "{model}");
