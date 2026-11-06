@@ -380,10 +380,10 @@ describe("rebuildSandbox flow: target image", () => {
     }
   });
 
-  it("does not abort a routed (nvidia-router) target with a non-matching session (#5735)", async () => {
+  it("rebuilds a Hermes router with a non-matching session (#5735)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      sandboxEntry: { provider: "nvidia-router", model: "router-model" },
+      sandboxEntry: { agent: "hermes", provider: "nvidia-router", model: "router-model" },
       sessionSandboxName: "some-other-sandbox",
     });
     harness.session.routerPid = 4242;

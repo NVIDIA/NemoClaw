@@ -5,6 +5,21 @@ import { retryUntilAsync } from "../core/retry";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
 import { getLocalProviderLabel } from "../inference/local";
+import {
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  qualifiedNativeLocalEndpointUrl,
+} from "../inference/native-local/agent-config";
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../inference/native-local/attachment";
+import {
+  gatewayReachableCompatibleEndpointUrl,
+  usesNativeLocalInferenceForAgent,
+  isPersistedPiSharedLocalInferenceRoute,
+} from "../inference/native-local/eligibility";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   DOCKER_GPU_PATCH_NETWORK_ENV,
@@ -31,11 +46,7 @@ const DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS = 10;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS = 3;
 const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
 
-// The OpenShell inference route OpenClaw's LLM client actually uses inside the
-// sandbox. It is served by the OpenShell L7 proxy/router and routes to the
-// configured provider backend — the same hostname the agent talks to (see
-// verify-deployment.ts:verifyInferenceRoute). Probing it from the sandbox
-// runtime exercises the exact path the agent uses, not a host-only shortcut.
+// Retained shared selections still use the OpenShell inference router.
 const SANDBOX_RUNTIME_INFERENCE_ENDPOINT = "https://inference.local/v1/models";
 
 type DockerGpuLocalInferenceConfig = {
@@ -172,11 +183,63 @@ export type DockerGpuSandboxInferenceVerification =
       recovery: string[];
     };
 
-/** The runtime inference route to probe for a provider (local providers only). */
+export type GpuSandboxInferenceRoute =
+  | { kind: "shared"; gatewayName?: string }
+  | { kind: "native-local"; gatewayName: string; attachment: NativeLocalProviderAttachment };
+
+/** Resolve the probe from the same verified reservation used for registration. */
+export function resolveGpuSandboxInferenceRoute(
+  sandboxName: string,
+  gatewayName: string,
+  agentName: string,
+  provider: string | null | undefined,
+  reservation: QualifiedSandboxInferenceRouteReservation,
+): GpuSandboxInferenceRoute {
+  const { authority, entry } = reservation;
+  if (
+    authority.sandboxName !== sandboxName ||
+    authority.gatewayName !== gatewayName ||
+    authority.selection.provider !== provider
+  ) {
+    throw new Error("GPU inference route differs from its verified create reservation.");
+  }
+  const selection = authority.selection;
+  const localNim = provider === "vllm-local" && Boolean(selection.nimContainer);
+  const nativeExpected =
+    usesNativeLocalInferenceForAgent(agentName, provider, selection.endpointUrl, localNim) &&
+    !isPersistedPiSharedLocalInferenceRoute(entry, selection);
+  if (localNim || (!nativeExpected && entry.nativeLocalProviderAttachment === undefined)) {
+    return { kind: "shared", gatewayName };
+  }
+  const attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  const selectedEndpoint = gatewayReachableCompatibleEndpointUrl(
+    provider ?? "",
+    selection.endpointUrl,
+  );
+  const selected = selectedEndpoint && qualifiedNativeLocalEndpointUrl(selectedEndpoint);
+  if (
+    !attachment ||
+    attachment.sandboxName !== sandboxName ||
+    attachment.gatewayName !== gatewayName ||
+    attachment.provider !== provider ||
+    (attachment.agent ?? "langchain-deepagents-code") !== agentName ||
+    attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
+    selected !== attachment.endpointUrl
+  ) {
+    throw new Error("GPU inference native local provider attachment is missing or invalid.");
+  }
+  return { kind: "native-local", gatewayName, attachment };
+}
+
+/** The selected runtime route, never a host-only shortcut. */
 export function getSandboxRuntimeInferenceEndpoint(
   provider: string | null | undefined,
+  route: GpuSandboxInferenceRoute,
 ): string | null {
-  return isLocalInferenceProvider(provider) ? SANDBOX_RUNTIME_INFERENCE_ENDPOINT : null;
+  if (!isLocalInferenceProvider(provider)) return null;
+  return route.kind === "native-local"
+    ? `${route.attachment.endpointUrl}/models`
+    : SANDBOX_RUNTIME_INFERENCE_ENDPOINT;
 }
 
 type RuntimeProbeOutcome =
@@ -192,31 +255,34 @@ type RuntimeProbeOutcome =
  * recreated container, whose main namespace is the host's under `--network
  * host` and therefore masked the #4509 failure.
  *
- * A single script proves the exec path works (it emits a sentinel), reports a
- * genuinely missing `curl` separately from an exec failure, and otherwise hits
- * `inference.local` exactly as OpenClaw does (through the sandbox proxy). This
- * mirrors verify-deployment.ts:verifyInferenceRoute: any HTTP status means the
- * route resolves and responds; `000` means DNS failure or connection refused —
- * the reopened-#4509 symptom.
+ * Require a successful models request through the selected route. Native routes
+ * use the supervisor-issued scoped handle, not a raw credential or shared fallback.
  */
 async function probeSandboxRuntimeInference(
   sandboxName: string,
   endpoint: string,
+  nativeLocal: boolean,
   deps: {
     execInSandbox: NonNullable<DockerGpuSandboxInferenceVerifyDeps["execInSandbox"]>;
     sleep: NonNullable<DockerGpuSandboxInferenceVerifyDeps["sleep"]>;
   },
 ): Promise<RuntimeProbeOutcome> {
-  // Single-quote the endpoint (POSIX-escaping any embedded quotes) so it can
-  // never break out of the curl argument. It is a constant today, but the
-  // signature accepts any string — keep the shell construction injection-safe.
+  // Keep the qualified endpoint in one shell argument.
   const safeEndpoint = `'${endpoint.replace(/'/g, "'\\''")}'`;
-  const script =
+  const probeScript =
     `if ! command -v curl >/dev/null 2>&1; then echo NO_CURL; exit 0; fi; ` +
-    `code=$(curl -so /dev/null -w '%{http_code}' ` +
+    (nativeLocal ? `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; ` : "") +
+    `code=$(curl -q -so /dev/null -w '%{http_code}' ` +
+    (nativeLocal ? ' -H "$AUTH_HEADER" ' : "") +
     `--connect-timeout ${DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS} ` +
-    `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null || echo 000); ` +
+    `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null)` +
+    (nativeLocal ? ` || exit $?; ` : ` || code=000; `) +
     `echo "HTTP_$code"`;
+  // An exit status alone cannot distinguish a native probe failure from exec
+  // rejection. Emit a fixed marker only after the sandbox runs the probe.
+  const script = nativeLocal
+    ? `( ${probeScript} ) || { status=$?; echo NATIVE_INFERENCE_PROBE_FAILED; exit "$status"; }`
+    : probeScript;
   const probe = async (): Promise<RuntimeProbeOutcome> => {
     const result = await deps.execInSandbox(sandboxName, script);
     if (result === null) {
@@ -227,8 +293,20 @@ async function probeSandboxRuntimeInference(
     }
 
     const out = (result.stdout || "").trim();
+    if (nativeLocal && result.status !== 0 && out === "NATIVE_INFERENCE_PROBE_FAILED") {
+      return {
+        kind: "unreachable",
+        detail: "native inference probe failed (scoped credential or endpoint transport error)",
+      };
+    }
+    if (result.status !== 0) {
+      return {
+        kind: "exec-failed",
+        detail: "sandbox inference probe failed (credential or transport error)",
+      };
+    }
     if (out === "NO_CURL") return { kind: "no-curl" };
-    const match = out.match(/HTTP_(\d{3})/);
+    const match = out.match(/^HTTP_(\d{3})$/);
     if (match) {
       const httpCode = match[1];
       // This gate is the #4509 runtime proof, so only a 2xx — the model list
@@ -251,13 +329,14 @@ async function probeSandboxRuntimeInference(
     // path itself is broken (e.g. sandbox in Error, exec denied). Treat as
     // an exec failure, NOT a missing-curl soft-skip, so we never declare
     // success without actually exercising the runtime (#4509 review).
-    const noise = (out || result.stderr || "").slice(0, 160);
     return {
       kind: "exec-failed",
-      detail: `unexpected sandbox exec output: ${noise}`,
+      detail: "unexpected sandbox inference probe output (omitted)",
     };
   };
 
+  // No new retry policy for native credentials or attachment failures.
+  if (nativeLocal) return probe();
   return retryUntilAsync(probe, {
     accept: (result) => result.kind === "ok" || result.kind === "no-curl",
     retryDelaysMs: Array.from(
@@ -289,6 +368,7 @@ export async function verifyDockerGpuSandboxLocalInference(
   provider: string | null | undefined,
   options: DockerGpuLocalInferenceOptions & {
     sandboxName: string;
+    resolveInferenceRoute: () => GpuSandboxInferenceRoute;
     deps?: DockerGpuSandboxInferenceVerifyDeps;
   },
 ): Promise<DockerGpuSandboxInferenceVerification> {
@@ -298,7 +378,8 @@ export async function verifyDockerGpuSandboxLocalInference(
   if (!isLocalInferenceProvider(provider)) {
     return { status: "skipped", reason: "not-local-provider" };
   }
-  const endpoint = getSandboxRuntimeInferenceEndpoint(provider);
+  const route = options.resolveInferenceRoute();
+  const endpoint = getSandboxRuntimeInferenceEndpoint(provider, route);
   if (!endpoint) {
     return { status: "skipped", reason: "no-runtime-endpoint" };
   }
@@ -308,7 +389,12 @@ export async function verifyDockerGpuSandboxLocalInference(
     deps.execInSandbox ??
     (async (sandboxName: string, script: string) => {
       if (!deps.commandExecutor) return null;
-      return await executeSandboxCommandForVerification(sandboxName, script, deps.commandExecutor);
+      return await executeSandboxCommandForVerification(
+        sandboxName,
+        script,
+        deps.commandExecutor,
+        route.gatewayName,
+      );
     });
   const sleep =
     deps.sleep ??
@@ -316,10 +402,15 @@ export async function verifyDockerGpuSandboxLocalInference(
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, milliseconds));
     });
 
-  const outcome = await probeSandboxRuntimeInference(options.sandboxName, endpoint, {
-    execInSandbox,
-    sleep,
-  });
+  const outcome = await probeSandboxRuntimeInference(
+    options.sandboxName,
+    endpoint,
+    route.kind === "native-local",
+    {
+      execInSandbox,
+      sleep,
+    },
+  );
 
   if (outcome.kind === "ok") {
     return { status: "ok", provider, endpoint, httpCode: outcome.httpCode };
@@ -341,15 +432,21 @@ export async function verifyDockerGpuSandboxLocalInference(
           "Confirm the sandbox is running and reachable:  openshell sandbox list",
           "Re-run onboarding; the sandbox runtime exec path did not respond.",
         ]
-      : [
-          "Ensure Ollama/vLLM is running and the OpenShell inference route is configured.",
-          "Check the sandbox can reach inference.local (proxy/router up):",
-          `  openshell sandbox exec -n ${options.sandboxName} -- curl -sS ${endpoint}`,
-          "If a host firewall (e.g. UFW) blocks the Docker bridge, allow it so the sandbox",
-          "  can reach the gateway/proxy, then re-run onboarding.",
-          "Do not force NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host for local inference — the host",
-          "  loopback is not reachable from the sandbox's isolated network namespace.",
-        ];
+      : route.kind === "native-local"
+        ? [
+            "Check the selected local backend and its recorded native provider attachment.",
+            "Re-run onboarding after restoring native endpoint access and scoped credentials.",
+            "Do not configure shared inference as a fallback for this native route.",
+          ]
+        : [
+            "Ensure Ollama/vLLM is running and the OpenShell inference route is configured.",
+            "Check the sandbox can reach inference.local (proxy/router up):",
+            `  openshell sandbox exec -n ${options.sandboxName} -- curl -sS ${endpoint}`,
+            "If a host firewall (e.g. UFW) blocks the Docker bridge, allow it so the sandbox",
+            "  can reach the gateway/proxy, then re-run onboarding.",
+            "Do not force NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host for local inference — the host",
+            "  loopback is not reachable from the sandbox's isolated network namespace.",
+          ];
   return {
     status: "failed",
     kind: outcome.kind === "exec-failed" ? "exec" : "unreachable",
@@ -385,6 +482,7 @@ export function printDockerGpuSandboxInferenceVerificationFailure(
 
 export type GpuSandboxAfterReadyOptions = {
   sandboxName: string;
+  resolveInferenceRoute: () => GpuSandboxInferenceRoute;
   dockerDriverGateway: boolean;
   selectedRoute: SelectedDockerGpuRoute;
   verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
@@ -452,7 +550,7 @@ export async function verifyGpuSandboxAfterReady(
 
 export async function verifyGpuSandboxAccessAfterReady(
   config: DockerGpuLocalInferenceConfig,
-  options: GpuSandboxAfterReadyOptions,
+  options: Omit<GpuSandboxAfterReadyOptions, "resolveInferenceRoute">,
 ): Promise<SandboxGpuProofResult> {
   try {
     // Capture the CUDA-usability proof result and write it back onto the shared
@@ -493,6 +591,7 @@ export async function verifyGpuSandboxLocalInferenceAfterReady(
   if (options.selectedRoute !== "compatibility") return;
   const verification = await verifyDockerGpuSandboxLocalInference(config, provider, {
     sandboxName: options.sandboxName,
+    resolveInferenceRoute: options.resolveInferenceRoute,
     dockerDriverGateway: options.dockerDriverGateway,
     selectedRoute: options.selectedRoute,
     env: options.env,

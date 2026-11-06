@@ -90,6 +90,16 @@ describe("runOpenshellInstall progress streaming (#4431)", () => {
     expect(options.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN).toBeUndefined();
   });
 
+  it("invokes install-openshell.sh directly", () => {
+    spawnSyncMock.mockReturnValue({ status: 0 });
+
+    runOpenshellInstall(makeDeps());
+
+    const [command, args] = spawnSyncMock.mock.calls[0];
+    expect(command).toBe("bash");
+    expect(args).toEqual([path.join("/fake/scripts", "install-openshell.sh")]);
+  });
+
   it("returns a not-installed result without throwing on non-zero exit", () => {
     spawnSyncMock.mockReturnValue({ status: 1 });
     const result = runOpenshellInstall(makeDeps());

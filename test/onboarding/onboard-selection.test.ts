@@ -53,13 +53,11 @@ import {
 import { createValidationRecoveryPromptHelpers } from "../../src/lib/onboard/validation-recovery-prompt.js";
 import { detectWindowsHostOllama } from "../../src/lib/onboard/windows-host-ollama.js";
 import { getTransportRecoveryMessage } from "../../src/lib/validation-recovery.js";
-import {
-  createOnboardProcessWorkspace,
-  type OnboardProcessWorkspace,
-} from "../helpers/onboard-child-process-harness.js";
+import type { OnboardProcessWorkspace } from "../helpers/onboard-child-process-harness.js";
 import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 import { testTimeout } from "../helpers/timeouts";
 import {
+  createOnboardSelectionWorkspace,
   createWindowsHostOllamaRunCapture,
   requirePresent,
   requireSelectedProviderResolution,
@@ -104,7 +102,7 @@ const TEST_REMOTE_PROVIDER_CONFIG = {
 };
 
 function onboardProcessWorkspace(prefix: string): OnboardProcessWorkspace {
-  const workspace = createOnboardProcessWorkspace(prefix);
+  const workspace = createOnboardSelectionWorkspace(prefix);
   onTestFinished(() => workspace.remove());
   return workspace;
 }
@@ -682,7 +680,7 @@ type CredentialBackPayload = {
 let credentialBackBatchResults: Map<string, CredentialBackPayload> | undefined;
 
 function runCredentialBackScenarioBatch(): Map<string, CredentialBackPayload> {
-  const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-credential-back-batch-");
+  const workspace = createOnboardSelectionWorkspace("nemoclaw-onboard-credential-back-batch-");
   const { root: tmpDir } = workspace;
   const fakeBin = workspace.binDir;
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));

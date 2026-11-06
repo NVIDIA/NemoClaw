@@ -18,6 +18,10 @@ import {
   createHostProcessWorkspace,
   trailingJsonPayload,
 } from "../helpers/host-process-harness.js";
+import {
+  createOnboardProcessWorkspace,
+  type OnboardProcessWorkspace,
+} from "../helpers/onboard-child-process-harness.js";
 import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 
 const PROVIDER_CREDENTIAL_ENV_KEYS = new Set([
@@ -38,6 +42,19 @@ const PROVIDER_CREDENTIAL_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
 ]);
+
+export function createOnboardSelectionWorkspace(prefix: string): OnboardProcessWorkspace {
+  const workspace = createOnboardProcessWorkspace(prefix);
+  workspace.writeCommand("docker", [
+    {
+      args: ["container", "inspect", "nemoclaw-vllm"],
+      stderr: "Error: No such object: nemoclaw-vllm\n",
+      exitCode: 1,
+      repeat: true,
+    },
+  ]);
+  return workspace;
+}
 
 export type OllamaPullScenario = {
   answers: readonly string[];

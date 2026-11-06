@@ -22,7 +22,7 @@ import {
 function defineCodebaseGrowthGuardrails(): void {
   let diff: GrowthGuardrailDiff;
 
-  // Four remote fetches, merge-base, and merge-tree can each use their 30-second limit.
+  // Preparation shares a 180-second budget; leave time for approval reads and file loading.
   beforeAll(async () => {
     diff = await loadGrowthGuardrailDiff();
   }, 240_000);

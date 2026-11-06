@@ -63,6 +63,7 @@ export interface RebuildDestroyPhaseInput {
   cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
+  onMcpRecoveryFailed?: () => void;
 }
 
 export type RebuildDestroyPhaseResult = McpRebuildPreparation & {
@@ -202,6 +203,20 @@ export async function runRebuildDestroyPhase(
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
   const { gatewayName } = deleteTarget;
+  const reattachMcp = async (
+    entries: McpRebuildPreparation["detachedProviderEntries"],
+    scrubbedAdapterEntries: McpRebuildPreparation["scrubbedAdapterEntries"],
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ): Promise<string | undefined> => {
+    const failure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      entries,
+      scrubbedAdapterEntries,
+      runtimeSelection,
+    );
+    if (failure != null) input.onMcpRecoveryFailed?.();
+    return failure;
+  };
 
   // Step 3: Delete sandbox without tearing down gateway or session.
   // sandboxDestroy() cleans up the gateway when it's the last sandbox and
@@ -261,8 +276,7 @@ export async function runRebuildDestroyPhase(
           };
         }
         if (validation.ok) return;
-        const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-          sandboxName,
+        const mcpRecoveryFailure = await reattachMcp(
           preparation.detachedProviderEntries,
           preparation.scrubbedAdapterEntries,
           preparation.runtimeSelection,
@@ -289,8 +303,7 @@ export async function runRebuildDestroyPhase(
     rebuildMcpRuntimeSelection &&
     rebuildMcpRuntimeSelection.gatewayName !== deleteTarget.gatewayName
   ) {
-    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-      sandboxName,
+    const mcpRecoveryFailure = await reattachMcp(
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
       rebuildMcpRuntimeSelection,
@@ -323,8 +336,7 @@ export async function runRebuildDestroyPhase(
       await mcpPreparation.revalidateBeforeDelete?.();
       mcpPreparation.assertDeleteEdgeUnchanged?.();
     } catch (error) {
-      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-        sandboxName,
+      const mcpRecoveryFailure = await reattachMcp(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
         rebuildMcpRuntimeSelection,
@@ -342,8 +354,7 @@ export async function runRebuildDestroyPhase(
   // MCP preparation can await external systems; re-read non-MCP routing state
   // at the synchronous delete edge so those checks and deletion use one target.
   if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
-    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-      sandboxName,
+    const mcpRecoveryFailure = await reattachMcp(
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
       rebuildMcpRuntimeSelection,
@@ -375,8 +386,7 @@ export async function runRebuildDestroyPhase(
       };
     }
     if (!validation.ok) {
-      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-        sandboxName,
+      const mcpRecoveryFailure = await reattachMcp(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
         rebuildMcpRuntimeSelection,
@@ -398,8 +408,7 @@ export async function runRebuildDestroyPhase(
   try {
     sourcePresence = recreateJournal.beginDelete();
   } catch (error) {
-    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-      sandboxName,
+    const mcpRecoveryFailure = await reattachMcp(
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
       rebuildMcpRuntimeSelection,
@@ -424,8 +433,7 @@ export async function runRebuildDestroyPhase(
       };
     }
     if (!preparation.ok) {
-      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-        sandboxName,
+      const mcpRecoveryFailure = await reattachMcp(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
         rebuildMcpRuntimeSelection,
@@ -461,8 +469,7 @@ export async function runRebuildDestroyPhase(
   let deletionConfirmed = alreadyGone;
   if (deleteResult?.kind === "failed") {
     if (deleteResult.error.kind === "command" && deleteResult.error.reason === "invalid_request") {
-      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-        sandboxName,
+      const mcpRecoveryFailure = await reattachMcp(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
         rebuildMcpRuntimeSelection,
@@ -507,8 +514,7 @@ export async function runRebuildDestroyPhase(
       console.error(
         `  Bounded exact post-delete verification confirms the original sandbox remains ${remainingSandbox.phase ?? "ready"}.`,
       );
-      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
-        sandboxName,
+      const mcpRecoveryFailure = await reattachMcp(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
         rebuildMcpRuntimeSelection,
