@@ -78,6 +78,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ordinaryOpenClawPairingIncompleteMessage(
       sandboxName: string,
       reason: Extract<OrdinaryOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
+      pairingField?: string,
     ): string;
     readRegistryAgent(sandboxName: string): string | null;
     settlePortablePairing(
@@ -428,7 +429,11 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   if (ordinaryOpenClawPairingRequired) {
     const pairing = await deps.settleOrdinaryOpenClawPairing(sandboxName);
     if (pairing.kind !== "settled") {
-      const message = deps.ordinaryOpenClawPairingIncompleteMessage(sandboxName, pairing.reason);
+      const message = deps.ordinaryOpenClawPairingIncompleteMessage(
+        sandboxName,
+        pairing.reason,
+        pairing.pairingField,
+      );
       deps.error(`  ${message}`);
       deps.reportDeploymentReadiness(false);
       const sessionUpdates = deps.toSessionUpdates({

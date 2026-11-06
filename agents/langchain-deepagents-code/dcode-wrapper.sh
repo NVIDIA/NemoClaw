@@ -46,10 +46,13 @@ readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
 readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
 readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0
+readonly MANAGED_DCODE_PROVIDER_ROUTE_FILE="/usr/local/share/nemoclaw/dcode-provider-route"
+readonly MANAGED_DCODE_UPSTREAM_PROVIDER_FILE="/usr/local/share/nemoclaw/dcode-upstream-provider"
+readonly MANAGED_DCODE_IDENTITY_OWNER_UID=0
 # Shared bound for canonical credential prefixes and OpenShell env identifiers.
 readonly CREDENTIAL_NAME_PREFIX_MAX_LENGTH=128
 
-managed_auto_approval_file_metadata() {
+managed_file_metadata() {
   local file="$1"
   local metadata
   if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
@@ -66,7 +69,7 @@ read_managed_auto_approval_mode() {
     printf '%s' 'disabled'
     return 0
   fi
-  metadata="$(managed_auto_approval_file_metadata "$file")" || {
+  metadata="$(managed_file_metadata "$file")" || {
     printf '%s' 'disabled'
     return 0
   }
@@ -776,6 +779,29 @@ toml_provider_metadata() {
   return 0
 }
 
+managed_provider_metadata() {
+  local field="$1" file metadata size
+  case "$field" in
+    route) file="$MANAGED_DCODE_PROVIDER_ROUTE_FILE" ;;
+    provider) file="$MANAGED_DCODE_UPSTREAM_PROVIDER_FILE" ;;
+  esac
+  # Use the generated comment only when an older image lacks the managed file.
+  # Managed files stay outside native-home restores.
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    toml_provider_metadata "$field"
+    return 0
+  fi
+  [ -f "$file" ] && [ ! -L "$file" ] && [ -r "$file" ] || return 0
+  metadata="$(managed_file_metadata "$file")" || return 0
+  case "$metadata" in
+    "${MANAGED_DCODE_IDENTITY_OWNER_UID}:444:"*) ;;
+    *) return 0 ;;
+  esac
+  size="${metadata##*:}"
+  [ "$size" -gt 0 ] && [ "$size" -le 257 ] || return 0
+  printf '%s' "$(<"$file")"
+}
+
 is_safe_dcode_agent_name() {
   local value="$1"
   local pattern='^[A-Za-z0-9_ -]+$'
@@ -805,7 +831,7 @@ terminal_safe_identity_value() {
   local value="$1"
   local fallback="${2:-}"
   local LC_ALL=C
-  if [ ${#value} -gt 256 ] || [[ "$value" =~ [[:cntrl:]] ]] || is_secret_shaped_value "$value"; then
+  if [ ${#value} -gt 256 ] || [[ "$value" =~ [^[:print:]] ]] || is_secret_shaped_value "$value"; then
     printf '%s' "$fallback"
   else
     printf '%s' "$value"
@@ -847,8 +873,8 @@ print_identity() {
   [ -n "$model" ] || model="$(terminal_safe_identity_value "$(toml_section_scalar models recent)")"
   endpoint="$(toml_section_scalar models.providers.openai base_url)"
   [ -n "$endpoint" ] || endpoint="$(toml_section_scalar models.providers.openrouter base_url)"
-  route="$(terminal_safe_identity_value "$(toml_provider_metadata route)")"
-  provider="$(terminal_safe_identity_value "$(toml_provider_metadata provider)")"
+  route="$(terminal_safe_identity_value "$(managed_provider_metadata route)")"
+  provider="$(terminal_safe_identity_value "$(managed_provider_metadata provider)")"
   case "$model" in
     openrouter:*) provider="openrouter" ;;
   esac

@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  ManagedVllmInspectionError,
+  UnsafeLegacyVllmBindingsError,
+} from "../../inference/serving/vllm-host-local-lifecycle";
 import type { VllmDeps } from "./types";
 import { setupVllmLocalInference } from "./vllm-local";
 
@@ -86,10 +90,29 @@ describe("vLLM local provider credential", () => {
     );
   });
 
-  it("fails closed without rendering credential-loader details", async () => {
-    const leaked = "d".repeat(64);
+  it.each([
+    {
+      state: "a credential-loader failure",
+      failure: new Error(`unsafe ${"d".repeat(64)}`),
+      message: "Managed vLLM authentication state is unsafe or unreadable.",
+    },
+    {
+      state: "unavailable container inspection",
+      failure: new ManagedVllmInspectionError(),
+      message:
+        "Managed vLLM container inspection failed. Verify access to Docker's default local daemon before retrying.",
+    },
+    {
+      state: "unsafe legacy bindings",
+      failure: new UnsafeLegacyVllmBindingsError(),
+      message:
+        "Follow 'Handle a Running vLLM Server' in the vLLM setup guide before recreating the owned `nemoclaw-vllm` container. Preserve the original model and port settings.",
+    },
+  ])("stops registration with a bounded diagnostic for $state", async ({ failure, message }) => {
     const error = vi.fn();
     const upsertProvider = vi.fn(async () => ({ ok: true }));
+    const run = vi.fn(() => ({ status: 0 }));
+    const validateLocalProvider = vi.fn(() => ({ ok: false, message: "provider unavailable" }));
 
     await expect(
       setupVllmLocalInference(
@@ -97,18 +120,20 @@ describe("vLLM local provider credential", () => {
         deps({
           error,
           upsertProvider,
+          run,
+          validateLocalProvider,
           getManagedVllmProviderBinding: () => {
-            throw new Error(`unsafe ${leaked}`);
+            throw failure;
           },
         }),
       ),
     ).rejects.toThrow("exit 1");
 
     expect(upsertProvider).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(
-      "  Managed vLLM authentication state is unsafe or unreadable.",
-    );
-    expect(error.mock.calls.flat().join("\n")).not.toContain(leaked);
+    expect(validateLocalProvider).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(error.mock.calls.flat().join("\n")).not.toContain("d".repeat(64));
   });
 });
 

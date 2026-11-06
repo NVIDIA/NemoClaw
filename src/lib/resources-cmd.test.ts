@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as docker from "./adapters/docker/exec";
 import {
   appendResourceFlags,
   getHardwareResources,
@@ -70,6 +71,24 @@ describe("resources-cmd", () => {
       memory: "4Gi",
     });
   });
+
+  it.each(["4Gi", "4096Mi", "4194304Ki", "4294967296"])(
+    "resolves a half-memory profile against %s of allocatable node memory",
+    (memory) => {
+      vi.spyOn(docker, "dockerSpawnSync").mockReturnValue({
+        status: 0,
+        stdout: JSON.stringify({ items: [{ status: { allocatable: { memory } } }] }),
+        stderr: "",
+        pid: 1,
+        output: [],
+        signal: null,
+      });
+
+      const hw = getHardwareResources();
+      expect(hw.memory.allocatableMB).toBe(4096);
+      expect(resolveProfile({ cpu: "1", memory: "50%" }, hw).memory).toBe("2048Mi");
+    },
+  );
 
   it("loads resource profiles from the blueprint", () => {
     const profiles = loadResourceProfiles();
