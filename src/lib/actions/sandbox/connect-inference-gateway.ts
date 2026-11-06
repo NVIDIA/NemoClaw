@@ -11,7 +11,10 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
-import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import {
+  LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS,
+  LOCAL_INFERENCE_TIMEOUT_SECS,
+} from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
 
@@ -29,7 +32,7 @@ export function connectInferenceRouteMutationRequest(
     route: { provider, model },
     verification: "skip",
     timeoutMs: CONNECT_ROUTE_MUTATION_TIMEOUT_MS,
-    ...(["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)
+    ...(LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider)
       ? { verificationTimeoutSeconds: LOCAL_INFERENCE_TIMEOUT_SECS }
       : {}),
   };

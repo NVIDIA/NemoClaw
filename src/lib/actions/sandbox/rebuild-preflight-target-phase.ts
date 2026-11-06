@@ -59,6 +59,7 @@ import {
   preflightRebuildTargetHostCredential,
   preflightRebuildTargetRuntime,
   prepareRebuildRecreateOptions,
+  rebuildInferenceRouteTimeoutError,
   prepareRebuildTargetConfig,
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
@@ -415,6 +416,11 @@ export async function prepareRebuildTargetPreflights(args: {
     const preparedImage = targetRuntimePreflight.preparedImage;
     let retainPreparedImage = false;
     try {
+      const timeoutError = rebuildInferenceRouteTimeoutError(targetConfig, sandboxEntry);
+      if (timeoutError) {
+        bail(timeoutError);
+        return null;
+      }
       const validatedRegistryUpdate = validatedRebuildRegistryUpdate(
         resumeConfig,
         durableConfig,
