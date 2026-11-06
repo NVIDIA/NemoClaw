@@ -50,6 +50,11 @@ rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o 
 /tmp/adapter-tests
 ```
 
+If GitHub confirms that a historical commit is unavailable, the reporter lists
+that revision as a history gap and collects the remaining revisions. It checks
+the commit endpoint before treating a check or status lookup as missing history.
+Access failures, other API failures and missing merged PR revisions stop reporting.
+
 These tests cannot prove GitHub event selection, effective token permissions or
 the real checkout action. The `report` job owns that live boundary. It runs on
 a merged `pull_request_target` closed event, verifies the trusted checkout,

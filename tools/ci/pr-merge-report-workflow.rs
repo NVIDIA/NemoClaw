@@ -44,6 +44,21 @@ case "$endpoint" in
   repos/example/repo/commits/*/check-runs*)
     if [ "$SCENARIO" = api_failure ]; then exit 42; fi
     if [[ "$endpoint" = */aaaaaaaa*/check-runs* ]]; then
+      case "$SCENARIO" in
+        missing_history|missing_access|missing_server|missing_malformed|existing_revision)
+          printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+        missing_history_422)
+          printf 'gh: No commit found for SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (HTTP 422)\n' >&2; exit 1 ;;
+        validation_error) printf 'gh: Validation Failed (HTTP 422)\n' >&2; exit 1 ;;
+        unauthorized) printf 'gh: Bad credentials (HTTP 401)\n' >&2; exit 1 ;;
+        forbidden) printf 'gh: Resource not accessible by integration (HTTP 403)\n' >&2; exit 1 ;;
+        server_error) printf 'gh: Server Error (HTTP 500)\n' >&2; exit 1 ;;
+      esac
+    elif [ "$SCENARIO" = missing_head ]; then
+      printf 'gh: No commit found for SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (HTTP 422)\n' >&2
+      exit 1
+    fi
+    if [[ "$endpoint" = */aaaaaaaa*/check-runs* ]]; then
       printf '{"check_runs":[{"id":101,"name":"Unit | <script> @someone","app":{"id":1,"slug":"github-actions"},"started_at":"2026-01-01T00:01:10Z","completed_at":"2026-01-01T00:02:00Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/11/job/101"}]}\n'
       printf '{"check_runs":[{"id":90,"name":"Prior branch","app":{"id":1,"slug":"github-actions"},"started_at":"2025-12-31T23:01:10Z","completed_at":"2025-12-31T23:02:00Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/9/job/90"}]}\n'
       printf '{"check_runs":[{"id":91,"name":"Unrelated branch","app":{"id":1,"slug":"github-actions"},"started_at":"2026-01-01T00:01:20Z","completed_at":"2026-01-01T00:02:10Z","conclusion":"failure","details_url":"https://github.com/example/repo/actions/runs/8/job/91"}]}\n'
@@ -57,7 +72,21 @@ case "$endpoint" in
     printf '{"id":8,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-01-01T00:01:15Z","workflow_id":9,"head_branch":"other-feature","pull_requests":[{"number":2}]}\n' ;;
   repos/example/repo/actions/runs/13|repos/example/repo/actions/runs/14)
     jq -n --argjson id "${endpoint##*/}" '{id:$id,head_repository:{id:100},head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",created_at:"2026-01-01T00:04:00Z",workflow_id:9,head_branch:"fork-feature",pull_requests:[]}' ;;
+  repos/example/repo/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    case "$SCENARIO" in
+      missing_history|missing_history_422|missing_status)
+        printf 'gh: No commit found for SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (HTTP 422)\n' >&2; exit 1 ;;
+      missing_access) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+      missing_server) printf 'gh: Server Error (HTTP 500)\n' >&2; exit 1 ;;
+      missing_malformed) printf '{invalid json'; exit 0 ;;
+      existing_revision) printf '{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n' ;;
+      *) exit 43 ;;
+    esac ;;
   repos/example/repo/commits/*/statuses*)
+    if [[ "$endpoint" = */aaaaaaaa*/statuses* ]] && [ "$SCENARIO" = missing_status ]; then
+      printf 'gh: No commit found for SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (HTTP 422)\n' >&2
+      exit 1
+    fi
     printf '[{"id":103,"context":"Legacy gate","state":"success","created_at":"2026-01-01T00:06:00Z","updated_at":"2026-01-01T00:06:00Z"}]\n' ;;
   repos/example/repo/issues/1/comments*)
     printf '[{"user":{"login":"outsider"},"body":"<!-- nemoclaw-merge-report:v1 -->"}]\n'
@@ -91,7 +120,19 @@ rm "$FIXTURE/writes"
 SCENARIO=existing "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/existing-report"
 test ! -e "$FIXTURE/writes"
 grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/existing-report"
-for SCENARIO in api_failure unmerged; do
+for SCENARIO in missing_history missing_history_422 missing_status; do
+  export SCENARIO
+  "$FIXTURE/reporter" example/repo 1 > "$FIXTURE/history-preview"
+  test ! -e "$FIXTURE/writes"
+  grep -Fq 'Historical check or status data unavailable for: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`.' "$FIXTURE/history-preview"
+  grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/history-preview"
+  grep -Fq '| success | 50 |' "$FIXTURE/history-preview"
+  "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/history-posted"
+  test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
+  cmp "$FIXTURE/history-preview" "$FIXTURE/posted-body"
+  rm "$FIXTURE/writes"
+done
+for SCENARIO in api_failure unmerged missing_head unauthorized forbidden server_error validation_error missing_access missing_server missing_malformed existing_revision; do
   export SCENARIO
   if "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/output" 2>&1; then
     cat "$FIXTURE/output" >&2
@@ -166,20 +207,25 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     {id: 10, user: {login: 'author'}, body: '<details><!-- agent-session-report:v1 -->opening</details>'},
     {id: 11, user: {login: 'outsider'}, body: '<!-- nemoclaw-merge-report:v1 -->'}
   ])) unless retrying
+  original_comments = File.read("#{root}/comments.json")
   File.write("#{root}/bin/gh", <<~'SH')
     #!/bin/bash
     set -euo pipefail
-    endpoint=''; query='.'; slurp=false; post=false; body=''
+    endpoint=''; query='.'; slurp=false; filtered=false; post=false; body=''
     while [ "$#" -gt 0 ]; do
       case "$1" in
         repos/*) endpoint="$1" ;;
-        --jq) query="$2"; shift ;;
+        --jq) query="$2"; filtered=true; shift ;;
         --slurp) slurp=true ;;
         --method) test "$2" != POST || post=true; shift ;;
         -f) body="${2#body=}"; shift ;;
       esac
       shift
     done
+    if $slurp && $filtered; then
+      printf '%s\n' 'the `--slurp` option is not supported with `--jq` or `--template`' >&2
+      exit 1
+    fi
     if $post; then
       printf 'POST\n' >> "$FIXTURE/posts"
       jq --arg body "$body" '. + [{id:123,user:{login:"github-actions[bot]"},body:$body}]' "$FIXTURE/comments.json" > "$FIXTURE/updated.json"
@@ -215,6 +261,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
   File.write("#{root}/bin/rustc", <<~'SH')
     #!/bin/bash
     set -euo pipefail
+    printf 'compile\n' >> "$FIXTURE/compilations"
     test -z "${GH_TOKEN:-}"
     if [ -n "$REAL_REPORTER" ]; then exec "$REAL_RUSTC" "$@"; fi
     cp "$4" "$6"
@@ -224,7 +271,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     #!/bin/bash
     set -euo pipefail
     case "$*" in
-      'diff --exit-code -- tools/ci/pr-merge-report.rs') exit 0 ;;
+      'diff --exit-code -- tools/ci/pr-merge-report.rs') cmp -s tools/ci/pr-merge-report.rs "$FIXTURE/checkout-source" ;;
       'rev-parse HEAD') cat "$FIXTURE/checkout" ;;
       'rev-parse HEAD:tools/ci/pr-merge-report.rs') printf 'cccccccccccccccccccccccccccccccccccccccc\n' ;;
       *) exit 44 ;;
@@ -252,7 +299,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
   trigger = (workflow['on'] || workflow[true]).fetch('pull_request_target')
   eligible = trigger.fetch('types').include?(action) && trigger.fetch('branches').include?('main')
   failed = false
-  return {failed: false, root: root} unless eligible && selected(job['if'], context, failed)
+  return {failed: false, root: root, original_comments: original_comments} unless eligible && selected(job['if'], context, failed)
   job.fetch('steps').each_with_index do |step, index|
     next unless selected(step['if'], context, failed)
     env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario,
@@ -267,10 +314,15 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
       repository = interpolate(step.fetch('with').fetch('repository'), context)
       raise 'Wrong checkout repository' unless repository == 'example/repo'
       File.write("#{root}/credentials", 'persisted') unless step.fetch('with')['persist-credentials'] == false
-      File.write("#{root}/checkout", ref)
+      # An incorrect revision can contain the same reporter bytes.
+      File.write("#{root}/checkout", scenario == 'wrong_checkout' ? head : ref)
       FileUtils.mkdir_p("#{root}/workspace/tools/ci")
       content = {parent => reporter || trusted, head => "#!/bin/bash\nprintf 'PR code' >> \"$FIXTURE/executions\"\nexit 90\n"}.fetch(ref)
+      File.write("#{root}/checkout-source", content)
       File.write("#{root}/workspace/tools/ci/pr-merge-report.rs", content) unless scenario == 'installation'
+      if scenario == 'modified_reporter'
+        File.open("#{root}/workspace/tools/ci/pr-merge-report.rs", 'a') { |file| file.puts('# changed after checkout') }
+      end
     when /\Aactions\/upload-artifact@/
       interpolate(step.fetch('with').fetch('path'), context).lines.map(&:strip).each do |path|
         FileUtils.cp(path, "#{root}/artifacts") if File.file?(path)
@@ -286,7 +338,14 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     outputs = File.exist?(env['GITHUB_OUTPUT']) ? File.readlines(env['GITHUB_OUTPUT']).map(&:strip).map { |line| line.split('=', 2) }.to_h : {}
     context['steps'][step['id']] = {'outputs' => outputs} if step['id']
   end
-  {failed: failed, root: root}
+  {failed: failed, root: root, original_comments: original_comments}
+end
+
+def assert_no_code_or_publication(result)
+  %w[compilations executions posts].each do |effect|
+    raise "Rejected scenario reached #{effect}: #{result[:root]}" if File.exist?("#{result[:root]}/#{effect}")
+  end
+  raise 'Rejected scenario changed comments' unless File.read("#{result[:root]}/comments.json") == result[:original_comments]
 end
 
 failure = exercise(workflow, "#{ARGV[0]}/readback", 'readback_failure', parent, head)
@@ -321,16 +380,19 @@ receipt = JSON.parse(File.read("#{valid[:root]}/artifacts/merge-outcomes-receipt
 raise 'Receipt is not revision-bound' unless receipt.values_at('workflow_revision', 'reporter_revision') == ['e' * 40, parent]
 raise 'Fork-modified reporter scenario was not covered' unless receipt['fork_modified_reporter']
 raise 'Opening report was absent' unless receipt['opening_report_count'] == 1
-%w[malformed multiple api_failure].each do |scenario|
+%w[malformed multiple api_failure wrong_checkout modified_reporter].each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
-  raise 'Invalid parent accepted' unless result[:failed] && !File.exist?("#{result[:root]}/executions")
+  raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]
+  assert_no_code_or_publication(result)
 end
 installation = exercise(workflow, "#{ARGV[0]}/installation", 'installation', parent, head)
-raise 'Installation attempted publication' if installation[:failed] || File.exist?("#{installation[:root]}/executions")
+raise 'Installation failed' if installation[:failed]
+assert_no_code_or_publication(installation)
 raise 'Installation behavior missing' unless File.read("#{installation[:root]}/summary").include?('reports start with the next merged PR')
 [[false, 'closed'], [true, 'opened']].each_with_index do |(merged, action), index|
   result = exercise(workflow, "#{ARGV[0]}/ineligible-#{index}", 'valid', parent, head, merged: merged, action: action)
-  raise 'Ineligible event published' if result[:failed] || File.exist?("#{result[:root]}/executions")
+  raise 'Ineligible event failed' if result[:failed]
+  assert_no_code_or_publication(result)
 end
 puts 'Trusted checkout, denied parents/events, installation, fixture receipt and publication recovery passed'
 "##;

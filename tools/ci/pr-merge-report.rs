@@ -23,6 +23,7 @@ struct Report {
     number: u64,
     head: String,
     revisions: BTreeMap<String, i64>,
+    unavailable: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -115,6 +116,19 @@ fn render(report: &Report) -> String {
     );
     text.push_str("A revision is a distinct checked head SHA. Repair rounds count a new revision when the preceding revision's latest completed check still failed before that revision was first observed. A retry on the same SHA is not a push. Review follow-ups count the first later observed revision for each changes-requested review, once per revision.\n\n");
     text.push_str("Limits: these are observed revision counts, not a complete push history. GitHub does not supply push timestamps here. Intermediate pushes without checks, removed history, deleted checks, and the original state of dismissed reviews may be missing. A new check's creation time is an upper bound on its push time. This report does not decide whether required checks were green or whether a push fixed a failure.\n\n");
+    if !report.unavailable.is_empty() {
+        let revisions: Vec<_> = report
+            .unavailable
+            .iter()
+            .map(|sha| format!("`{sha}`"))
+            .collect();
+        writeln!(
+            text,
+            "Historical check or status data unavailable for: {}.\n",
+            revisions.join(", ")
+        )
+        .unwrap();
+    }
     text.push_str("| Revision | Check | Result | Seconds |\n| --- | --- | --- | --- |\n");
     let mut checks: Vec<_> = report.checks.iter().collect();
     checks.sort_by_key(|c| (c.observed, &c.sha, c.started, c.id));
@@ -202,8 +216,8 @@ struct Api {
 }
 
 impl Api {
-    fn rows(&self, path: &str, query: &str) -> Result<Vec<Vec<String>>> {
-        let output = Command::new("gh")
+    fn read(&self, path: &str, query: &str) -> Result<std::process::Output> {
+        Command::new("gh")
             .args([
                 "api",
                 "--paginate",
@@ -212,7 +226,42 @@ impl Api {
                 query,
             ])
             .output()
-            .map_err(|e| format!("Cannot run gh: {e}"))?;
+            .map_err(|e| format!("Cannot run gh: {e}"))
+    }
+
+    fn rows(&self, path: &str, query: &str) -> Result<Vec<Vec<String>>> {
+        Self::parse_rows(path, self.read(path, query)?)
+    }
+
+    fn revision_rows(
+        &self,
+        sha: &str,
+        head: &str,
+        endpoint: &str,
+        query: &str,
+    ) -> Result<Option<Vec<Vec<String>>>> {
+        let path = format!("commits/{sha}/{endpoint}");
+        let output = self.read(&path, query)?;
+        let missing = format!("gh: No commit found for SHA: {sha} (HTTP 422)");
+        let error = String::from_utf8_lossy(&output.stderr);
+        if sha != head
+            && !output.status.success()
+            && (error.trim() == "gh: Not Found (HTTP 404)" || error.trim() == missing)
+        {
+            // A checks 404 can mean denied access. Only the commit endpoint's
+            // specific missing-SHA response confirms an unavailable revision.
+            let commit_path = format!("commits/{sha}");
+            let commit = self.read(&commit_path, ".sha")?;
+            if !commit.status.success() && String::from_utf8_lossy(&commit.stderr).trim() == missing
+            {
+                return Ok(None);
+            }
+            Self::parse_rows(&commit_path, commit)?;
+        }
+        Self::parse_rows(&path, output).map(Some)
+    }
+
+    fn parse_rows(path: &str, output: std::process::Output) -> Result<Vec<Vec<String>>> {
         if !output.status.success() {
             return Err(format!(
                 "GitHub read failed for {path}: {}",
@@ -326,10 +375,17 @@ impl Api {
             }
         }
         for sha in commits {
-            for row in self.rows(
-                &format!("commits/{sha}/check-runs?filter=all&per_page=100"),
+            let Some(checks) = self.revision_rows(
+                &sha,
+                &report.head,
+                "check-runs?filter=all&per_page=100",
                 CHECK_QUERY,
-            )? {
+            )?
+            else {
+                report.unavailable.insert(sha);
+                continue;
+            };
+            for row in checks {
                 fields(&row, 8)?;
                 let started = number(&row[4])?;
                 if started > merged || (started >= 0 && started < opened) {
@@ -380,19 +436,41 @@ impl Api {
                     source: run_id.map_or(CheckSource::App, CheckSource::Actions),
                 });
             }
-            for row in self.rows(&format!("commits/{sha}/statuses?per_page=100"), r#".[] | [.id,.context,.state,(.created_at|fromdateiso8601),(.updated_at|fromdateiso8601)] | @tsv"#)? {
+            let Some(statuses) = self.revision_rows(&sha, &report.head, "statuses?per_page=100", r#".[] | [.id,.context,.state,(.created_at|fromdateiso8601),(.updated_at|fromdateiso8601)] | @tsv"#)? else {
+                report.unavailable.insert(sha);
+                continue;
+            };
+            for row in statuses {
                 fields(&row, 5)?;
                 let observed = number(&row[3])?;
-                if observed < opened || observed > merged { continue; }
+                if observed < opened || observed > merged {
+                    continue;
+                }
                 let state = row[2].as_str();
                 let completed = number(&row[4])?;
                 report.observe(&sha, observed);
                 report.checks.push(Check {
-                    id: number(&row[0])?, name: row[1].clone(), sha: sha.clone(),
-                    key: format!("status:{}", row[1]), observed, started: -1,
-                    completed: if state == "pending" || completed > merged { -1 } else { completed },
-                    conclusion: if completed > merged { "unfinished at merge" } else { match state { "error" => "failure", _ => state } }.into(),
-                    source: CheckSource::Status
+                    id: number(&row[0])?,
+                    name: row[1].clone(),
+                    sha: sha.clone(),
+                    key: format!("status:{}", row[1]),
+                    observed,
+                    started: -1,
+                    completed: if state == "pending" || completed > merged {
+                        -1
+                    } else {
+                        completed
+                    },
+                    conclusion: if completed > merged {
+                        "unfinished at merge"
+                    } else {
+                        match state {
+                            "error" => "failure",
+                            _ => state,
+                        }
+                    }
+                    .into(),
+                    source: CheckSource::Status,
                 });
             }
         }
