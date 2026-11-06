@@ -32,12 +32,7 @@ import {
 export type { InstallOllamaLinuxMode } from "./install-ollama-linux-mode";
 export { decideInstallOllamaLinuxMode } from "./install-ollama-linux-mode";
 
-const {
-  redactFullWithUrls,
-  runCaptureEx,
-  runShell,
-  shellQuote,
-}: typeof import("../runner") = require("../runner");
+const { runCaptureEx, runShell, shellQuote }: typeof import("../runner") = require("../runner");
 const {
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
@@ -48,33 +43,26 @@ export const OFFICIAL_OLLAMA_INSTALLER_HOST = new URL(OFFICIAL_OLLAMA_INSTALLER_
 export const OFFICIAL_OLLAMA_INSTALLER_SHA256 =
   "25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f";
 const OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS = 190_000;
+const CURL_DOWNLOAD_FAILURES: Partial<Record<number, string>> = {
+  5: "Proxy name resolution or configuration failed.",
+  6: "Could not resolve the download host.",
+  7: "Could not connect to the server or proxy.",
+  22: "The server returned an HTTP error.",
+  28: "The download timed out.",
+  35: "The TLS connection failed.",
+  60: "TLS certificate verification failed.",
+};
 
 /**
  * Build a recovery-oriented failure message for an attempted download of the
  * pinned official Ollama installer. Names the URL and host that failed,
- * surfaces the underlying curl error, and tells the user which host to allow
+ * summarizes common curl failures, and tells the user which host to allow
  * (or which proxy to use) before rerunning onboarding.
  */
-export function ollamaInstallerDownloadFailureMessage(
-  exitCode: number | null,
-  stderr: string | undefined,
-): string {
-  // Captured stderr is raw: a user's curl configuration can add verbose
-  // proxy headers, so keep only curl's own failure line before displaying it.
-  const curlError = (stderr ?? "")
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => /^curl: \(\d+\)/u.test(line))
-    .at(-1);
-  // Malformed proxy values can contain credentials without a URL scheme.
-  // Keep the failure category and omit the entire unparseable value.
-  const safeCurlError =
-    curlError?.match(/^curl: \(\d+\) Unsupported proxy syntax/u)?.[0] ?? curlError;
-  const curlDetail = safeCurlError
-    ? redactFullWithUrls(safeCurlError)
-        .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu, " ")
-        .slice(0, 240)
-    : "";
+export function ollamaInstallerDownloadFailureMessage(exitCode: number | null): string {
+  // Even curl's failure line can contain credentials from proxy configuration.
+  // Display only known summaries, never host-provided stderr.
+  const curlDetail = exitCode === null ? undefined : CURL_DOWNLOAD_FAILURES[exitCode];
   const lines = [
     `  Ollama installer download failed after bounded retries (exit ${exitCode ?? "unknown"}).`,
     `  Could not download: ${OFFICIAL_OLLAMA_INSTALLER_URL}`,
@@ -239,7 +227,7 @@ function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
     if (fetchResult.exitCode !== 0) {
       failure = {
         exitCode: fetchResult.exitCode ?? 1,
-        message: ollamaInstallerDownloadFailureMessage(fetchResult.exitCode, fetchResult.stderr),
+        message: ollamaInstallerDownloadFailureMessage(fetchResult.exitCode),
       };
     } else {
       let actualSha256 = "";

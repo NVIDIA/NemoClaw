@@ -488,80 +488,92 @@ describe("installOllamaOnLinux (system)", () => {
     }
   });
 
-  it("names the failed URL, host, and curl error with a recovery hint", () => {
-    const message = ollamaInstallerDownloadFailureMessage(
-      7,
-      "curl: (7) Failed to connect to raw.githubusercontent.com port 443",
-    );
+  it.each([
+    {
+      exitCode: 5,
+      stderr:
+        "curl: (5) Having a SOCKS pre-proxy and proxy is not supported with 'alice:FAKE_PROXY_CREDENTIAL_47@proxy.example:8080'",
+    },
+    {
+      exitCode: 5,
+      stderr:
+        "curl: (5) Unsupported proxy syntax in 'alice:FAKE_PROXY_CREDENTIAL_47@proxy.example:invalid'",
+    },
+    {
+      exitCode: 7,
+      stderr:
+        "> Proxy-Authorization: Basic FAKE_PROXY_TOKEN\n" +
+        "curl: (7) Failed through https://alice:FAKE_PROXY_CREDENTIAL_47@proxy.example \u009b\u202e",
+    },
+    { exitCode: 99, stderr: "curl: (99) FAKE_PROXY_CREDENTIAL_47" },
+    { exitCode: null, stderr: "FAKE_PROXY_CREDENTIAL_47" },
+  ])("keeps host diagnostics out of installer download failures (%#)", ({ exitCode, stderr }) => {
+    const errorLog = vi.fn();
+    const runShellImpl = vi.fn();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    try {
+      expect(() =>
+        installOllamaOnLinux(
+          makeOpts({
+            modeOverride: "system",
+            runCaptureExImpl: vi.fn().mockReturnValue({
+              stdout: "",
+              stderr,
+              exitCode,
+              timedOut: false,
+            }),
+            runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+            runShellImpl,
+            errorLog,
+          }),
+        ),
+      ).toThrow(`process.exit(${exitCode ?? 1})`);
+      expect(runShellImpl).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledOnce();
+      const message = errorLog.mock.calls[0]?.[0] as string;
+      expect(message).not.toContain("FAKE_PROXY_");
+      expect(message).not.toContain("alice");
+      expect(message).not.toContain("Proxy-Authorization");
+      expect(message).not.toMatch(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u);
+      expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
+      expect(message).toContain("rerun nemoclaw onboard");
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("names the failed URL, host, and connection error with a recovery hint", () => {
+    const message = ollamaInstallerDownloadFailureMessage(7);
     expect(message).toContain("exit 7");
     expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
     expect(message).toContain("raw.githubusercontent.com (outbound HTTPS, port 443)");
-    // curl stderr is collapsed onto a single line and surfaced verbatim.
-    expect(message).toContain("Failed to connect to raw.githubusercontent.com port 443");
+    expect(message).toContain("Could not connect");
     expect(message).toContain("Allow outbound HTTPS to raw.githubusercontent.com");
     expect(message).toContain("export HTTPS_PROXY to a working proxy");
     expect(message).toContain(`curl -fsSI "${OFFICIAL_OLLAMA_INSTALLER_URL}"`);
     expect(message).toContain("rerun nemoclaw onboard");
   });
 
-  it("omits the curl detail when stderr is empty", () => {
-    const message = ollamaInstallerDownloadFailureMessage(null, "");
-    expect(message).toContain("exit unknown");
+  it.each([
+    [5, /proxy.*resolution or configuration/i],
+    [6, /resolve.*host/i],
+    [22, /HTTP error/],
+    [28, /timed out/],
+    [35, /TLS connection/],
+    [60, /certificate verification/],
+  ] as const)("explains the network failure for curl exit %i", (exitCode, cause) => {
+    const message = ollamaInstallerDownloadFailureMessage(exitCode);
+    expect(message).toMatch(cause);
+    expect(message).toContain(`exit ${exitCode}`);
+  });
+
+  it.each([null, 99])("keeps recovery guidance when curl exit %s has no summary", (exitCode) => {
+    const message = ollamaInstallerDownloadFailureMessage(exitCode);
+    expect(message).toContain(`exit ${exitCode ?? "unknown"}`);
     expect(message).not.toContain("curl reported:");
     expect(message).toContain("Allow outbound HTTPS");
-  });
-
-  it("redacts credential-bearing curl errors and ignores verbose proxy headers", () => {
-    const message = ollamaInstallerDownloadFailureMessage(
-      7,
-      "> Proxy-Authorization: Basic FAKE_PROXY_TOKEN\n" +
-        "* Connected through https://user:FAKE_PROXY_PASSWORD@proxy.example\n" +
-        "curl: (7) Failed to connect through https://user:FAKE_PROXY_PASSWORD@proxy.example",
-    );
-    expect(message).toContain("curl: (7) Failed to connect through");
-    expect(message).not.toContain("FAKE_PROXY_TOKEN");
-    expect(message).not.toContain("FAKE_PROXY_PASSWORD");
-    expect(message).not.toContain("Proxy-Authorization");
-  });
-
-  it("bounds a curl failure detail from the host environment", () => {
-    const message = ollamaInstallerDownloadFailureMessage(7, `curl: (7) ${"x".repeat(500)}`);
-    const detail = message.split("\n").find((line) => line.includes("curl reported:"));
-    expect(detail?.split("curl reported:")[1]?.trim().length).toBeLessThanOrEqual(240);
-  });
-
-  it.each([
-    "alice:FAKE_PROXY_CREDENTIAL_47@proxy.example:invalid",
-    "http://alice:FAKE_PROXY_CREDENTIAL_47@proxy.example:invalid",
-    "alice:FAKE_PROXY_'CREDENTIAL_47@proxy.example:invalid",
-    "alice:FAKE_PROXY_\u2028CREDENTIAL_47@proxy.example:invalid",
-    "alice:FAKE_PROXY_\u009bCREDENTIAL_47@proxy.example:invalid",
-    "alice:FAKE_PROXY_\nCREDENTIAL_47@proxy.example:invalid",
-  ])("omits malformed proxy values from curl diagnostics (%#)", (proxy) => {
-    const message = ollamaInstallerDownloadFailureMessage(
-      5,
-      `curl: (5) Unsupported proxy syntax in '${proxy}': Port number was not a decimal number between 0 and 65535`,
-    );
-
-    expect(message).toContain("curl reported:     curl: (5) Unsupported proxy syntax");
-    expect(message).not.toContain("alice");
-    expect(message).not.toContain("FAKE_PROXY_");
-    expect(message).not.toContain("CREDENTIAL_47");
-    expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
-    expect(message).toContain("export HTTPS_PROXY to a working proxy");
-  });
-
-  it("removes terminal and bidirectional controls from redacted curl errors", () => {
-    const controls =
-      "\u0085\u009b\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
-    const message = ollamaInstallerDownloadFailureMessage(
-      7,
-      `curl: (7) Failed through https://user:FAKE_PROXY_PASSWORD@proxy.example ${controls}`,
-    );
-
-    expect(message).toContain("curl reported:     curl: (7) Failed through");
-    expect(message).not.toContain("FAKE_PROXY_PASSWORD");
-    expect(message).not.toMatch(/[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u);
   });
 
   it("never executes a partially transferred installer (#9698)", () => {

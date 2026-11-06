@@ -617,7 +617,7 @@ That installer then downloads the release tarball from `ollama.com`.
 The user-local install downloads the tarball from `ollama.com` directly.
 Both tarball paths follow redirects through `github.com` and `release-assets.githubusercontent.com`.
 
-If the pinned installer download fails, onboarding reports `Ollama installer download failed after bounded retries (exit N)` with the URL, host, curl error, and recovery steps.
+If the pinned installer download fails, onboarding reports `Ollama installer download failed after bounded retries (exit N)` with the URL, host, a summary for common network errors, and recovery steps.
 Other Ollama download failures use the download command's error output.
 
 Check the exact endpoints onboarding uses for this host, not just the host roots (substitute the architecture and JetPack add-on for your board):
