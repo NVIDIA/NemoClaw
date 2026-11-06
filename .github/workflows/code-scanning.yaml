@@ -137,7 +137,8 @@ jobs:
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
-          # A partition cannot overwrite or clear another partition's SARIF.
+          # Retain each partition locally; publish only the complete report.
+          upload: false
           category: /language:javascript-typescript/partition:${{ matrix.partition }}
         id: analyze
       - name: Retain JavaScript query report for complete publication

@@ -179,9 +179,10 @@ describe("Complete CodeQL query partition qualification", () => {
       queries: "${{ env.QUERY_SUITE }}",
       config: "${{ matrix.config }}",
     });
-    expect(partitionStep(partitions, "Perform CodeQL analysis").with?.category).toBe(
-      "/language:javascript-typescript/partition:${{ matrix.partition }}",
-    );
+    expect(partitionStep(partitions, "Perform CodeQL analysis").with).toEqual({
+      upload: false,
+      category: "/language:javascript-typescript/partition:${{ matrix.partition }}",
+    });
     expect(partitionAggregate.needs).toEqual(["codeql-javascript", "codeql"]);
     expect(partitionAggregate.if).toBe("${{ always() }}");
     expect(
