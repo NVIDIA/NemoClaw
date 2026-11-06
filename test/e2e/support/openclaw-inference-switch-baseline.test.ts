@@ -207,15 +207,22 @@ it.each(
     const environment = options.env;
     expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
     expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe(
-      nativeCustom ? "baseline.trycloudflare.com" : "host.openshell.internal",
+      nativeCustom ? "baseline.trycloudflare.com" : "integrate.api.nvidia.com",
     );
+    expect(environment.NEMOCLAW_POLICY_TIER).toBe("balanced");
     expect(environment.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS).toBeUndefined();
-    expect(environment.NEMOCLAW_MODEL).toBe("openclaw-switch-baseline-model");
-    expect(environment.COMPATIBLE_API_KEY).toBe("openclaw-switch-baseline-credential");
-    expect(environment.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(environment.NEMOCLAW_MODEL).toBe(
+      nativeCustom ? "openclaw-switch-baseline-model" : "nvidia/nemotron-3.5-super-vl-120b-a12b",
+    );
+    expect(environment.COMPATIBLE_API_KEY).toBe(
+      nativeCustom ? "openclaw-switch-baseline-credential" : "nvapi-public-fixture-key",
+    );
+    expect(environment.NVIDIA_INFERENCE_API_KEY).toBe(
+      nativeCustom ? undefined : "nvapi-public-fixture-key",
+    );
     expect(environment.NVIDIA_API_KEY).toBeUndefined();
     expect(options.redactionValues.includes("nvapi-public-fixture-key")).toBe(!nativeCustom);
-    expect(options.redactionValues).toContain("openclaw-switch-baseline-credential");
+    expect(options.redactionValues).toContain(environment.COMPATIBLE_API_KEY);
   },
 );
 
