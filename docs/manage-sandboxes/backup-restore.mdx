@@ -51,7 +51,7 @@ This exception does not apply to configuration backups or other files.
 After restore, NemoClaw replaces these references with a current OpenShell provider-bound credential handle before restarting Hermes.
 
 <AgentOnly variant="hermes">
-Rebuild also repairs an already-stripped route when all three fields contain exactly `[STRIPPED_BY_MIGRATION]`.
+Rebuild also [repairs an already-stripped route](https://github.com/NVIDIA/NemoClaw/pull/14153) when all three fields contain exactly `[STRIPPED_BY_MIGRATION]`.
 Recovery requires a registered Hermes `nvidia-prod` route, matching endpoint and model metadata, and verified sandbox identity and provider binding.
 Partial damage, other providers, missing bindings, and ambiguous routes remain rejected.
 
