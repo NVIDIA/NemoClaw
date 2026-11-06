@@ -13,6 +13,7 @@
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
 import { runCapture } from "../runner";
+import { ollamaModelRefsMatch } from "./ollama/model-discovery";
 
 export type OllamaRuntimeRunCaptureFn = (
   cmd: readonly string[],
@@ -179,11 +180,13 @@ export function parseOllamaRuntimeModelStatus(
       return { probed: false, loaded: false, cpuOnly: false };
     }
     const models = parsed.models;
-    const target = normalizeOllamaModelName(model);
+    // Compare with Ollama's implicit `latest` tag semantics: a selected model of
+    // "qwen3" must match an /api/ps entry reported as "qwen3:latest", the same
+    // way onboarding's installed-model check already does.
     const loaded = models.find((entry: { name?: unknown; model?: unknown }) => {
       return (
-        normalizeOllamaModelName(entry?.name) === target ||
-        normalizeOllamaModelName(entry?.model) === target
+        ollamaModelRefsMatch(normalizeOllamaModelName(entry?.name), model) ||
+        ollamaModelRefsMatch(normalizeOllamaModelName(entry?.model), model)
       );
     });
     if (!loaded) return { probed: true, loaded: false, cpuOnly: false };
