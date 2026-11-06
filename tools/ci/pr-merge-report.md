@@ -52,8 +52,10 @@ rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o 
 
 After the commit endpoint confirms a missing historical revision, the report
 lists the history gap and retains available revisions. Reviews without commit
-attribution remain in the report without commit lookups. Access failures,
-other API failures and missing merged PR revisions stop reporting.
+attribution remain in the report without commit lookups or attributed follow-ups.
+Repair and review-follow-up counts require a forward step in the retained PR
+commit order. A retry on an older SHA does not increase either count. Access
+failures, other API failures and missing merged PR revisions stop reporting.
 
 These tests cannot prove GitHub event selection, effective token permissions or
 the real checkout action. The `report` job owns that live boundary. It runs on

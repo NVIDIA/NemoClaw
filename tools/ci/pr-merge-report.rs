@@ -23,6 +23,7 @@ struct Report {
     number: u64,
     head: String,
     revisions: BTreeMap<String, i64>,
+    commit_order: BTreeMap<String, usize>,
     unavailable: BTreeSet<String>,
 }
 
@@ -71,6 +72,9 @@ fn render(report: &Report) -> String {
     let repairs = revisions
         .windows(2)
         .filter(|pair| {
+            if !report.precedes(pair[0].0, pair[1].0) {
+                return false;
+            }
             let mut latest = BTreeMap::new();
             for check in report
                 .checks
@@ -100,7 +104,7 @@ fn render(report: &Report) -> String {
         .filter_map(|review| {
             revisions
                 .iter()
-                .find(|(sha, time)| *sha != review.sha && *time > review.submitted)
+                .find(|(sha, time)| report.precedes(&review.sha, sha) && *time > review.submitted)
                 .map(|(sha, _)| *sha)
         })
         .collect();
@@ -114,7 +118,7 @@ fn render(report: &Report) -> String {
         report.deletions,
         report.files
     );
-    text.push_str("A revision is a distinct checked head SHA. Repair rounds count a new revision when the preceding revision's latest completed check still failed before that revision was first observed. A retry on the same SHA is not a push. Review follow-ups count the first later observed revision for each changes-requested review, once per revision.\n\n");
+    text.push_str("A revision is a distinct checked head SHA. Round counts require a forward step in the retained PR commit order. Repair rounds count a later commit when the preceding observed revision's latest completed check still failed before that commit was first observed. Retries on the same or older SHAs do not increase round counts. Review follow-ups count the first later commit observed after each changes-requested review, once per revision. Missing review attribution or commit order cannot establish a follow-up.\n\n");
     text.push_str("Limits: these are observed revision counts, not a complete push history. GitHub does not supply push timestamps here. Intermediate pushes without checks, removed history, deleted checks, and the original state of dismissed reviews may be missing. A new check's creation time is an upper bound on its push time. This report does not decide whether required checks were green or whether a push fixed a failure.\n\n");
     if !report.unavailable.is_empty() {
         let revisions: Vec<_> = report
@@ -312,12 +316,17 @@ impl Api {
             ..Report::default()
         };
         let mut commits = BTreeSet::from([report.head.clone()]);
-        for row in self.rows(
-            &format!("pulls/{}/commits?per_page=100", self.number),
-            r#".[] | [.sha] | @tsv"#,
-        )? {
+        for (index, row) in self
+            .rows(
+                &format!("pulls/{}/commits?per_page=100", self.number),
+                r#".[] | [.sha] | @tsv"#,
+            )?
+            .into_iter()
+            .enumerate()
+        {
             fields(&row, 1)?;
             validate_sha(&row[0])?;
+            report.commit_order.insert(row[0].clone(), index);
             commits.insert(row[0].clone());
         }
         for row in self.rows(
@@ -522,6 +531,13 @@ impl Api {
 }
 
 impl Report {
+    fn precedes(&self, earlier: &str, later: &str) -> bool {
+        self.commit_order
+            .get(earlier)
+            .zip(self.commit_order.get(later))
+            .is_some_and(|(earlier, later)| earlier < later)
+    }
+
     fn observe(&mut self, sha: &str, time: i64) {
         self.revisions
             .entry(sha.into())
@@ -696,6 +712,12 @@ mod tests {
     #[test]
     fn retries_are_not_pushes_and_only_failures_known_before_the_next_revision_count() {
         let report = Report {
+            commit_order: BTreeMap::from([
+                ("a".into(), 0),
+                ("b".into(), 1),
+                ("c".into(), 2),
+                ("d".into(), 3),
+            ]),
             checks: vec![
                 check("a", 10, 20, "failure"),
                 check("a", 10, 25, "success"),
@@ -715,6 +737,34 @@ mod tests {
         assert!(text.contains("| Repair rounds | 1 (observed revisions after failed checks) |"));
         assert!(text.contains(
             "| Review rounds | 1 changes-requested reviews; 1 observed follow-up revisions |"
+        ));
+
+        let mut retry = Report {
+            commit_order: BTreeMap::from([("a".into(), 0), ("b".into(), 1)]),
+            checks: vec![check("b", 10, 20, "failure"), check("a", 40, 50, "success")],
+            reviews: vec![Review {
+                sha: "b".into(),
+                submitted: 30,
+                state: "CHANGES_REQUESTED".into(),
+                ..Review::default()
+            }],
+            ..Report::default()
+        };
+        let text = render(&retry);
+        assert!(text.contains("| Repair rounds | 0 (observed revisions after failed checks) |"));
+        assert!(text.contains(
+            "| Review rounds | 1 changes-requested reviews; 0 observed follow-up revisions |"
+        ));
+        for attribution in ["", "missing"] {
+            retry.reviews[0].sha = attribution.into();
+            assert!(render(&retry).contains(
+                "| Review rounds | 1 changes-requested reviews; 0 observed follow-up revisions |"
+            ));
+        }
+        retry.reviews[0].sha = "b".into();
+        retry.commit_order.remove("a");
+        assert!(render(&retry).contains(
+            "| Review rounds | 1 changes-requested reviews; 0 observed follow-up revisions |"
         ));
     }
 

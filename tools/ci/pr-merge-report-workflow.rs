@@ -111,7 +111,9 @@ for SCENARIO in valid null_review; do
   "$FIXTURE/reporter" example/repo 1 > "$FIXTURE/preview"
   grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/preview"
   grep -Fq '| Repair rounds | 1 (observed revisions after failed checks) |' "$FIXTURE/preview"
-  grep -Fq '| Review rounds | 1 changes-requested reviews; 1 observed follow-up revisions |' "$FIXTURE/preview"
+  followups=1
+  if [ "$SCENARIO" = null_review ]; then followups=0; fi
+  grep -Fq "| Review rounds | 1 changes-requested reviews; $followups observed follow-up revisions |" "$FIXTURE/preview"
   grep -Fq 'Unit &#124; &#60;script&#62; &#64;someone' "$FIXTURE/preview"
   grep -Fq '| success | 50 |' "$FIXTURE/preview"
   grep -Fq 'Legacy gate' "$FIXTURE/preview"
