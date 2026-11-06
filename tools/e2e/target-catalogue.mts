@@ -1321,6 +1321,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/inference/native-provider/network-policy.ts",
       "src/lib/inference/native-nvidia/index.ts",
       "managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
       "src/lib/actions/inference-set.ts",

@@ -46,6 +46,28 @@ import tomllib
 import nemo_relay
 from agent import relay_runtime
 
+capture = os.environ.get('NEMOCLAW_HERMES_CRASH_CAPTURE') == '1'
+if capture:
+    import resource
+    Path('/tmp/nemoclaw-hermes-crash').mkdir(mode=0o700)
+    assert resource.getrlimit(resource.RLIMIT_CORE) == (0, 268435456)
+    resource.setrlimit(resource.RLIMIT_CORE, (268435456, 268435456))
+    executable = os.readlink('/proc/self/exe')
+    print('NEMOCLAW_HERMES_CRASH_PROCESS=' + json.dumps({
+        'pid': os.getpid(), 'executable': executable,
+        'python_sha256': hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
+        'python_version': platform.python_version(),
+        'kernel': platform.release(), 'architecture': platform.machine(),
+        'hermes_version': version('hermes-agent'), 'relay_version': version('nemo-relay'),
+    }), flush=True)
+
+def capture_maps(stage):
+    if capture:
+        # Mapping metadata only: never read mapped memory, environment or locals.
+        print('NEMOCLAW_HERMES_MAPS_' + stage + '\n' + Path('/proc/self/maps').read_text(), flush=True)
+
+capture_maps('initial')
+
 RELAY_PLUGINS_SOURCE = base64.b64decode('${relayPluginsBase64}').decode('utf-8')
 RELAY_PLUGIN_STATE_SOURCE = base64.b64decode('${relayPluginStateBase64}').decode('utf-8')
 SWITCHYARD_DEPLOYMENT_SOURCE = base64.b64decode('${switchyardDeploymentBase64}').decode('utf-8')
@@ -118,6 +140,8 @@ expected_digest = {
     'aarch64': '07f7b9c8051dede541d7d0dfc73bf10a702c33bf8c93f1e222ee2e1d6b471897',
 }[platform.machine()]
 assert hashlib.sha256(library.read_bytes()).hexdigest() == expected_digest
+if capture:
+    print('NEMOCLAW_HERMES_SWITCHYARD_SHA256=' + expected_digest, flush=True)
 manifest = tomllib.loads((bundle / 'relay-plugin.toml').read_text())
 assert manifest['defaults']['enabled'] is False
 assert manifest['integrity']['sha256'] == 'sha256:' + expected_digest
@@ -225,6 +249,7 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
         assert len(efficient.calls) == 1
         assert efficient.calls[0]['model'] == 'fixture-efficient'
         assert state.read_bytes() == state_before
+        capture_maps('before_shutdown')
     finally:
         if runtime is not None:
             runtime.shutdown()
@@ -234,6 +259,7 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
             else:
                 os.environ[name] = value
     assert nemo_relay.plugin.report() is None
+    capture_maps('after_shutdown')
 # Record loader state without requiring immediate unmapping after shutdown.
 print('Switchyard library mapped after shutdown:', str(library) in Path('/proc/self/maps').read_text(),
       file=sys.stderr, flush=True)

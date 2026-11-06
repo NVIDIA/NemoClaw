@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import type { SandboxEntry } from "../state/registry";
+import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
 import * as providerRetirement from "./sandbox-create/provider-retirement";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
@@ -23,6 +24,7 @@ function createCompletionFixture(
     createIntent: null,
     resolvedCreateIntent: { policy: { options: {} } },
   },
+  localNim = false,
 ) {
   const order: string[] = [];
   const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => {
@@ -66,13 +68,30 @@ function createCompletionFixture(
     provider,
     model: "test-model",
     preferredInferenceApi: "openai-completions",
-    endpointUrl: "http://host.openshell.internal:11436/v1",
+    endpointUrl: "http://host.openshell.internal:11435/v1",
     endpointSource: "onboard" as const,
     credentialEnv: null,
     compatibleEndpointReasoning: null,
     compatibleEndpointReasoningEffort: null,
-    nimContainer: null,
+    nimContainer: localNim ? "nemoclaw-nim-owned" : null,
   };
+  const binding: NativeLocalBinding = {
+    provider: provider as NativeLocalBinding["provider"],
+    agent: "openclaw",
+    endpointUrl: selection.endpointUrl,
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+    gatewayName: boundary.gatewayName,
+    sandboxName: boundary.sandboxName,
+  };
+  const nativeLocalProviderAttachment = provider.endsWith("-local")
+    ? {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "provider-1",
+      }
+    : undefined;
   const verifiedCreate = {
     checkpoint: pendingSandboxCreateIdentityForBoundary(boundary),
     reservation: {
@@ -82,9 +101,28 @@ function createCompletionFixture(
         sessionId: "session-1",
         selection,
       },
-      entry: { name: "gpu-box" },
+      entry: {
+        name: boundary.sandboxName,
+        gatewayName: boundary.gatewayName,
+        gatewayPort: boundary.gatewayPort,
+        provider: selection.provider,
+        model: selection.model,
+        endpointUrl: selection.endpointUrl,
+        endpointSource: selection.endpointSource,
+        preferredInferenceApi: selection.preferredInferenceApi,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-1",
+        lifecycleGeneration: boundary.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+        pendingCreateIdentity: pendingSandboxCreateIdentityForBoundary(boundary),
+        nativeLocalProviderAttachment,
+      },
     },
   } as NonNullable<registration.CreatedSandboxRegistrationInput["verifiedCreate"]>;
+  const getVerifiedCreateRegistrationAuthority = vi.fn(
+    (): NonNullable<registration.CreatedSandboxRegistrationInput["verifiedCreate"]> =>
+      verifiedCreate,
+  );
   const completion = createOnboardCreatedSandboxCompletion(
     "gpu-box",
     null,
@@ -115,7 +153,7 @@ function createCompletionFixture(
       compatibilityPolicyPath: null,
       dashboardRemoteBindPrepared: false,
       getVerifiedCreateBoundary: () => boundary,
-      getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
+      getVerifiedCreateRegistrationAuthority,
       revalidateSandboxIdentity: vi.fn(),
       persistFinalHandoffAcknowledgement: acknowledge,
       persistFinalHandoffCommitStarted: vi.fn(),
@@ -189,6 +227,8 @@ function createCompletionFixture(
     );
   return {
     complete,
+    verifiedCreate,
+    getVerifiedCreateRegistrationAuthority,
     runBuffered,
     commitAfterReady,
     rollbackManagedStartupAfterCreateFailure,
@@ -201,17 +241,24 @@ function createCompletionFixture(
 
 describe("GPU inference verification in production finalization", () => {
   it.each(["ollama-local", "vllm-local"])(
-    "runs the sandbox inference probe before committing a %s GPU sandbox (#12217)",
+    "probes the native %s route before committing and registering the GPU sandbox (#14069)",
     async (provider) => {
       const fixture = createCompletionFixture("HTTP_200", provider);
       await fixture.complete();
 
       expect(fixture.runBuffered).toHaveBeenCalledExactlyOnceWith({
         sandboxName: "gpu-box",
-        target: { kind: "selected" },
-        command: ["sh", "-c", expect.stringContaining("https://inference.local/v1/models")],
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        command: [
+          "sh",
+          "-c",
+          expect.stringContaining("http://host.openshell.internal:11435/v1/models"),
+        ],
         timeoutMilliseconds: 15000,
       });
+      const script = fixture.runBuffered.mock.calls[0][0].command[2];
+      expect(script).toContain(' -H "$AUTH_HEADER"');
+      expect(script).not.toContain("inference.local");
       expect(fixture.order).toEqual(["probe", "commit", "acknowledge", "register"]);
       expect(fixture.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     },
@@ -225,7 +272,7 @@ describe("GPU inference verification in production finalization", () => {
         "GPU sandbox local inference reachability failed",
       );
 
-      expect(fixture.order).toEqual(["probe", "probe", "probe", "rollback"]);
+      expect(fixture.order).toEqual(["probe", "rollback"]);
       expect(fixture.commitAfterReady).not.toHaveBeenCalled();
       expect(fixture.acknowledge).not.toHaveBeenCalled();
       expect(fixture.register).not.toHaveBeenCalled();
@@ -236,6 +283,72 @@ describe("GPU inference verification in production finalization", () => {
       );
     },
   );
+
+  it("verifies the native route for Local NVIDIA NIM (#14069)", async () => {
+    const fixture = createCompletionFixture(
+      "HTTP_200",
+      "vllm-local",
+      "compatibility",
+      true,
+      undefined,
+      true,
+    );
+    await fixture.complete();
+    expect(fixture.runBuffered.mock.calls[0][0].command[2]).toContain(
+      "http://host.openshell.internal:11435/v1/models",
+    );
+    expect(fixture.order).toEqual(["probe", "commit", "acknowledge", "register"]);
+  });
+
+  it("rolls back a missing native attachment without probing or publishing (#14069)", async () => {
+    const fixture = createCompletionFixture("HTTP_200");
+    delete fixture.verifiedCreate.reservation.entry.nativeLocalProviderAttachment;
+    await expect(fixture.complete()).rejects.toThrow("native local provider attachment");
+    expect(fixture.order).toEqual(["rollback"]);
+  });
+
+  it.each([
+    ["gateway", { gatewayName: "other-gateway" }],
+    ["sandbox", { sandboxName: "other-sandbox" }],
+    ["provider", { provider: "vllm-local" as const }],
+    ["agent", { agent: "pi" as const }],
+    ["endpoint", { endpointUrl: "http://host.openshell.internal:11436/v1" }],
+    ["credential environment", { credentialEnv: "OTHER_TOKEN" }],
+  ])(
+    "rolls back an attachment for another %s without probing or publishing (#14069)",
+    async (_field, patch) => {
+      const fixture = createCompletionFixture("HTTP_200");
+      const attachment = {
+        ...fixture.verifiedCreate.reservation.entry.nativeLocalProviderAttachment!,
+        ...patch,
+      };
+      fixture.verifiedCreate.reservation.entry.nativeLocalProviderAttachment = {
+        ...attachment,
+        ...nativeLocalIdentity(attachment),
+      };
+      await expect(fixture.complete()).rejects.toThrow("native local provider attachment");
+      expect(fixture.order).toEqual(["rollback"]);
+    },
+  );
+
+  it("rolls back mismatched verified create authority before probing (#14069)", async () => {
+    const fixture = createCompletionFixture("HTTP_200");
+    fixture.getVerifiedCreateRegistrationAuthority.mockReturnValue({
+      ...fixture.verifiedCreate,
+      checkpoint: { ...fixture.verifiedCreate.checkpoint, gatewayName: "other-gateway" },
+    });
+    await expect(fixture.complete()).rejects.toThrow();
+    expect(fixture.order).toEqual(["rollback"]);
+  });
+
+  it("rolls back missing verified create authority before probing (#14069)", async () => {
+    const fixture = createCompletionFixture("HTTP_200");
+    fixture.getVerifiedCreateRegistrationAuthority.mockImplementation(() => {
+      throw new Error("Verified create authority is unavailable");
+    });
+    await expect(fixture.complete()).rejects.toThrow();
+    expect(fixture.order).toEqual(["rollback"]);
+  });
 
   it.each([
     ["cloud provider", "nvidia-prod", "compatibility", true],

@@ -757,7 +757,6 @@ test(
         : null;
     const useMockBaseline =
       SWITCH_REGISTERED ||
-      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startMockOpenClawBaselineProvider(progress)
@@ -809,9 +808,15 @@ test(
       ? mockBaselineInference(
           baselineTunnel ? `${baselineTunnel.origin}/v1` : baselineProvider.baseUrl,
         )
-      : requireHostedInferenceConfig({
-          required: (name) => publicApiKey ?? secrets.required(name),
-        });
+      : requireHostedInferenceConfig(
+          { required: (name) => publicApiKey ?? secrets.required(name) },
+          publicApiKey
+            ? {
+                NEMOCLAW_ENDPOINT_URL: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+                NEMOCLAW_MODEL: SWITCH_MODEL,
+              }
+            : process.env,
+        );
     const apiKey = baseline.apiKey;
     const redactionValues = [apiKey, publicApiKey, OPERATOR_SWITCH_API_KEY].filter(
       (value): value is string => typeof value === "string",
@@ -843,6 +848,7 @@ test(
       artifactName: "onboard-custom-image-openclaw-inference-switch",
       env: commandEnv(home, {
         ...baseline.env,
+        NEMOCLAW_POLICY_TIER: "balanced",
         NEMOCLAW_RECREATE_SANDBOX: "1",
       }),
       redactionValues,
@@ -878,7 +884,7 @@ test(
       await recordOpenClawConfig(sandbox, home, {
         inferenceApi: "openai-completions",
         artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
-        nativeCustomEndpoint: baselineTunnel ? baseline.endpointUrl : undefined,
+        nativeCustomEndpoint: baselineTunnel || publicApiKey ? baseline.endpointUrl : undefined,
       });
       await checkOpenClawGatewayInference(
         host,

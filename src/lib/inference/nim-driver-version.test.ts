@@ -15,7 +15,7 @@ describe("NVIDIA driver version detection", () => {
     expect(detectNvidiaDriverVersion({ runCaptureImpl })).toBe(expected);
     expect(runCaptureImpl).toHaveBeenCalledWith(
       ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
-      { ignoreError: true },
+      { ignoreError: true, timeout: 10_000, killSignal: "SIGKILL" },
     );
   });
 
