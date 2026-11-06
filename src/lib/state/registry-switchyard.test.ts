@@ -2,11 +2,196 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
 import { createHermesSwitchyardRoutingIntent } from "../hermes-switchyard-routing";
+import { cloneSandboxWorkloadReceipt } from "./registry/workload";
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import {
+  decodeManagedStartupProfile,
+  encodeManagedStartupProfile,
+  type ManagedStartupHermesConfig,
+} from "../onboard/managed-startup/profile";
+import { assertHermesSwitchyardRoutingReusable } from "../onboard/sandbox-reuse";
+import type { SandboxEntry } from "./registry";
+
+function legacyRoutedSandbox(
+  options: { judge?: { provider: "nvidia-prod"; model: string }; bindings?: unknown } = {},
+) {
+  const routing = createHermesSwitchyardRoutingIntent({
+    efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+    capable: { provider: "openai-api", model: "gpt-5" },
+    ...(options.judge ? { judge: options.judge } : {}),
+  });
+  const profile = managedStartupE2eProfile("hermes");
+  const encoded = encodeManagedStartupProfile({
+    ...profile,
+    agentConfig: {
+      ...(profile.agentConfig as ManagedStartupHermesConfig),
+      switchyardRouting: routing,
+      switchyardBindings: switchyardBindingFixture(routing),
+    },
+  });
+  const legacy = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+    agentConfig: ManagedStartupHermesConfig;
+  };
+  // JSON omits undefined bindings while retaining the encoder's canonical property order.
+  Reflect.set(legacy.agentConfig, "switchyardBindings", options.bindings);
+  const encodedProfile = Buffer.from(JSON.stringify(legacy)).toString("base64url");
+  return {
+    name: "legacy-routed",
+    agent: "hermes",
+    provider: routing.capable.provider,
+    model: routing.capable.model,
+    gatewayName: "test-gateway",
+    workload: {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"1".repeat(64)}`,
+      release: "v0.1.0",
+      sourceRevision: "2".repeat(40),
+      sourceCohort: "ghrun-1-1",
+      capabilityContractVersion: 1,
+      startupProfileContractVersion: 1,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      credentialProxyReplayRequired: true,
+      shared: true,
+    },
+  } satisfies SandboxEntry;
+}
+
+it("preserves pre-binding routed receipts across registry reads and unrelated writes (#13863)", async () => {
+  const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-switchyard-legacy-"));
+  vi.stubEnv("HOME", testHome);
+  vi.resetModules();
+  try {
+    const registry = await import("./registry");
+    const persistence = await import("./registry/persistence");
+    const legacy = legacyRoutedSandbox();
+    persistence.save({ defaultSandbox: null, sandboxes: {} });
+    await fs.writeFile(
+      registry.REGISTRY_FILE,
+      JSON.stringify({
+        defaultSandbox: "ordinary",
+        sandboxes: {
+          [legacy.name]: legacy,
+          ordinary: { name: "ordinary", agent: "openclaw", model: "original-model" },
+        },
+      }),
+    );
+    const before = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+    expect(registry.getSandbox(legacy.name)?.workload).toEqual(legacy.workload);
+    expect(registry.getSandbox("ordinary")?.model).toBe("original-model");
+    expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(before);
+    registry.updateSandbox("ordinary", { model: "updated-model" });
+    const stored = registry.getSandbox(legacy.name);
+    expect(stored?.workload).toEqual(legacy.workload);
+    expect(stored?.hermesSwitchyard).toBeUndefined();
+    expect(registry.getSandbox("ordinary")?.model).toBe("updated-model");
+    const workload = legacy.workload;
+    expect(() => decodeManagedStartupProfile(workload.encodedProfile)).toThrow();
+  } finally {
+    await fs.rm(testHome, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  }
+});
+
+it.each(
+  ["ready", "not_ready", "missing"].flatMap((sandboxState) =>
+    ["hermes", "openclaw"].map((agentName) => ({ sandboxState, agentName })),
+  ),
+)(
+  "rejects legacy routed $sandboxState reuse as $agentName without changing the receipt (#13863)",
+  ({ sandboxState, agentName }) => {
+    const entry = legacyRoutedSandbox();
+    const before = structuredClone(entry);
+    expect(() =>
+      assertHermesSwitchyardRoutingReusable({
+        agentName,
+        entry,
+        env: {},
+        recreate: true,
+        sandboxState,
+      }),
+    ).toThrow("onboard with a new sandbox name");
+    expect(entry).toEqual(before);
+  },
+);
+
+it.each([
+  { name: "explicit null bindings", options: { bindings: null } },
+  { name: "partial bindings", options: { bindings: { schemaVersion: 1 } } },
+  {
+    name: "unbound dedicated judge",
+    options: { judge: { provider: "nvidia-prod" as const, model: "nvidia/judge" } },
+  },
+])("rejects $name instead of treating it as a legacy receipt (#13863)", ({ options }) => {
+  const entry = legacyRoutedSandbox(options);
+  const before = structuredClone(entry);
+  expect(cloneSandboxWorkloadReceipt(entry.workload)).toBeUndefined();
+  expect(entry).toEqual(before);
+});
+
+it("rejects noncanonical legacy payloads even when their receipt hash matches (#13863)", () => {
+  const entry = legacyRoutedSandbox();
+  const workload = entry.workload;
+  const parsed: unknown = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString());
+  const encodedProfile = Buffer.from(JSON.stringify(parsed, null, 2)).toString("base64url");
+  expect(
+    cloneSandboxWorkloadReceipt({
+      ...workload,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    }),
+  ).toBeUndefined();
+});
+
+it.each([undefined, "openclaw"])(
+  "rejects legacy routed reuse when registry agent metadata is %s (#13863)",
+  (recordedAgent) => {
+    const entry = { ...legacyRoutedSandbox(), agent: recordedAgent };
+    const before = structuredClone(entry);
+    expect(() =>
+      assertHermesSwitchyardRoutingReusable({
+        agentName: "openclaw",
+        entry,
+        env: {},
+        recreate: true,
+        sandboxState: "ready",
+      }),
+    ).toThrow("onboard with a new sandbox name");
+    expect(entry).toEqual(before);
+  },
+);
+
+it("preserves ordinary managed OpenClaw reuse without a Switchyard route (#13863)", () => {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  const entry = {
+    ...legacyRoutedSandbox(),
+    agent: "openclaw",
+    workload: {
+      ...legacyRoutedSandbox().workload,
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"1".repeat(64)}`,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+    },
+  };
+  const before = structuredClone(entry);
+  expect(() =>
+    assertHermesSwitchyardRoutingReusable({
+      agentName: "openclaw",
+      entry,
+      env: {},
+      recreate: false,
+      sandboxState: "ready",
+    }),
+  ).not.toThrow();
+  expect(entry).toEqual(before);
+});
 
 it("retains binding observations across reservation reload and rejects malformed persisted roles (#13863)", async () => {
   const testHome = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-switchyard-registry-"));

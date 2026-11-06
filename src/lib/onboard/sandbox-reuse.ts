@@ -75,7 +75,13 @@ export function assertHermesSwitchyardRoutingReusable(input: {
   sandboxState: string;
   reservationSessionId?: string | null;
 }): void {
-  if (input.agentName !== "hermes" && !input.entry?.hermesSwitchyard) return;
+  const workload = input.entry?.workload;
+  if (
+    input.agentName !== "hermes" &&
+    !input.entry?.hermesSwitchyard &&
+    workload?.kind !== "managed-image"
+  )
+    return;
   const desired =
     input.agentName === "hermes" ? readHermesSwitchyardRoutingEnvironment(input.env) : null;
   if (input.sandboxState === "missing" && !input.entry?.workload) {
@@ -89,7 +95,6 @@ export function assertHermesSwitchyardRoutingReusable(input: {
     if (!input.entry?.hermesSwitchyard || ownsFreshReservation) return;
   }
   let recorded = null;
-  const workload = input.entry?.workload;
   if (workload?.kind === "managed-image") {
     try {
       const profile = decodeManagedStartupProfile(workload.encodedProfile);
