@@ -320,43 +320,6 @@ async fn cancelling_before_the_plan_saves_no_record_and_a_revised_document_is_ac
     assert_applies(&scripted, 1, "the revised document");
 }
 
-/// A first apply starts OpenTofu's apply with a state file in place, created
-/// once and before the plan that the apply uses.
-///
-/// OpenTofu 1.12.9 keeps an interrupted apply's progress only in a state
-/// directory that already has a state file: without one, the snapshot it saves
-/// when interrupted holds only the last resource it updated (#14155). The script
-/// stands in for OpenTofu, so this checks that the SDK creates the file first,
-/// not what OpenTofu then saves; a file created after the plan would make the
-/// saved plan stale.
-///
-/// Catches an SDK that plans and applies in a directory without a state file.
-#[tokio::test]
-async fn a_first_apply_starts_opentofu_with_a_state_file() {
-    let scripted = fresh();
-    scripted.set("root.apply", "ok");
-    let deployment = scripted.deployment(&missing(&scripted));
-    assert_not_refused(
-        deployment.apply(&original(), &uncancelled()).await,
-        "the first apply",
-    );
-    assert!(
-        scripted.written("root.state-at-apply").is_some(),
-        "OpenTofu began the first apply without a state file"
-    );
-    assert_not_refused(
-        deployment.apply(&original(), &uncancelled()).await,
-        "the second apply",
-    );
-    let commands = scripted.commands();
-    assert_eq!(count(&commands, "root refresh"), 1, "{commands:?}");
-    let position = |wanted: &str| commands.iter().position(|command| command == wanted);
-    assert!(
-        position("root refresh") < position("root plan"),
-        "the state file was created after the first plan: {commands:?}"
-    );
-}
-
 /// A deployment whose first apply bound storage and authentication and then
 /// stopped at once while Helm installed the gateway release, so the release is
 /// a record in the cluster that the state does not bind: the next plan

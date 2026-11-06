@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 terraform {
-  required_version = "= 1.12.9"
+  required_version = "= 1.12.12"
 }
 
 # Set by hcl_live::case. Each module declares the fields it reads.

@@ -266,10 +266,7 @@ impl Model {
 }
 
 fn infrastructure_step(operation: &str) -> bool {
-    matches!(
-        operation,
-        "tofu.init" | "tofu.state" | "tofu.plan" | "tofu.apply"
-    )
+    matches!(operation, "tofu.init" | "tofu.plan" | "tofu.apply")
 }
 
 fn supporting_resource(address: &str) -> bool {
@@ -292,7 +289,6 @@ fn supporting_resource(address: &str) -> bool {
 fn operation_label(operation: &str) -> Option<&str> {
     match operation {
         "tofu.init" => Some("Initializing infrastructure"),
-        "tofu.state" => Some("Creating infrastructure state"),
         "tofu.plan" => Some("Planning infrastructure changes"),
         "tofu.apply" => Some("Applying infrastructure changes"),
         "runtime.ready" => Some("Waiting for gateway and inference readiness"),
