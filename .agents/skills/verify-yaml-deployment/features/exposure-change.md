@@ -21,7 +21,7 @@ Preconditions: [export-reapply](export-reapply.md) passed, and the agent's inter
 
 1. Change the exposure by hand in `$RUN_DIR/deployment.yaml`, keeping any others.
    When `spec.sandboxes.assistant.serviceExposures` has a `BEARER_PASSTHROUGH` exposure, as the `openclaw` agent file declares for `dashboard`, set that exposure's `authorizationMode: STRIP` and `SERVICE` to its name.
-   Otherwise, as for `hermes` and `deepagents-code`, add a `probe` exposure and set `SERVICE=probe`: put it in the existing `serviceExposures` map, or add the map under the sandbox, beside its `image` and `harness`:
+   Otherwise, as for `hermes`, add a `probe` exposure and set `SERVICE=probe`: put it in the existing `serviceExposures` map, or add the map under the sandbox, beside its `image` and `harness`:
    ```yaml
          serviceExposures:
            probe:

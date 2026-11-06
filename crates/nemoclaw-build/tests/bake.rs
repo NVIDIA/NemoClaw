@@ -8,7 +8,7 @@
 use serde_json::Value;
 use std::{collections::BTreeSet, path::Path, process::Command};
 
-const HARNESSES: [&str; 12] = [
+const HARNESSES: [&str; 11] = [
     "deepagents",
     "hermes",
     "openclaw",
@@ -20,7 +20,6 @@ const HARNESSES: [&str; 12] = [
     "remote-agent",
     "pi",
     "opencode",
-    "deepagents-code",
 ];
 
 /// Whether Docker Buildx can run here; the Windows and macOS runners lack it.

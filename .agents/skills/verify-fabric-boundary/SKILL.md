@@ -24,7 +24,7 @@ Keep the configuration and identity needed to drive a run as prerequisites, not 
 - **Gateway:** a managed Docker gateway on the DGX Spark running the skill, as in [verify-yaml-deployment's scope](../verify-yaml-deployment/SKILL.md#scope).
 - **Agent:** one sandbox named `assistant` with one Fabric agent from the [agent table](#choose-the-agent-and-target).
 - **Target:** [dgx-spark](../verify-yaml-deployment/targets/dgx-spark.md) only. Another host type needs its own target file and proof first.
-- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks for `hermes` and `openclaw`, 131 for `deepagents-code`.
+- **Run:** one deployment, one pass through the 12 [lifecycle phases](features/README.md#lifecycle-phases), and one teardown. Every selected check gets an outcome: 136 checks.
 
 [Completed Runs](#completed-runs) lists the agent–target pairs run to completion, with the revision, date, and counts by outcome; a completed run doesn't prove the pair.
 A pair that isn't listed has no completed run: say so with the result.
@@ -35,7 +35,6 @@ A pair that isn't listed has no completed run: say so with the result.
 |---|---|---|
 | `hermes` | `nvidia.fabric.hermes` | Every feature |
 | `openclaw` | `nvidia.fabric.openclaw` | Every feature |
-| `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` | Every feature except the `web-ui` case, which the check log omits |
 
 | Target file | `TARGET` |
 |---|---|
@@ -219,14 +218,13 @@ Before the first check, write every selected check to `checks.md` with an empty 
 { echo '| case | phase | outcome | finding | evidence |'; echo '|---|---|---|---|---|'
   sed -n 's/^- `\([a-z-]*\)`: .* Phases: \(.*\)\.$/\1|\2/p' "$SKILL_DIR"/features/*.md |
   while IFS='|' read -r id phases; do
-    [ "$AGENT" = deepagents-code ] && [ "$id" = web-ui ] && continue
     printf '%s\n' "$phases" | tr ',' '\n' | sed 's/^ *//' |
       while read -r phase; do echo "| $id | $phase | | | |"; done
   done; } > "$EVIDENCE/checks.md"
 grep -c '^| [a-z-]* | [A-Z]' "$EVIDENCE/checks.md"
 ```
 
-The count must be 136, or 131 for `deepagents-code`.
+The count must be 136.
 Fill in each row's outcome, finding ID, and evidence path as the check finishes; leave no row empty at the end.
 Write each finding in `findings.md` as:
 
