@@ -11,6 +11,7 @@ import type {
 import {
   confirmRecoveredSandboxGatewayManaged,
   isSandboxGatewayHttpReachableForStatus,
+  OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS,
   resolveGatewayRecoveryWaitSeconds,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
@@ -130,10 +131,10 @@ describe("native gateway startup budget", () => {
 
   it.each([
     { fallback: undefined, override: undefined, seconds: 30 },
-    { fallback: 120, override: undefined, seconds: 120 },
-    { fallback: 120, override: "invalid", seconds: 120 },
-    { fallback: 120, override: "4.5", seconds: 4.5 },
-    { fallback: 120, override: "0", seconds: 0 },
+    { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: undefined, seconds: 120 },
+    { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: "invalid", seconds: 120 },
+    { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: "4.5", seconds: 4.5 },
+    { fallback: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, override: "0", seconds: 0 },
   ])(
     "bounds startup to $seconds seconds with fallback $fallback and override $override",
     async ({ fallback, override, seconds }) => {

@@ -141,11 +141,13 @@ import {
   type HermesPortableForwardRecoveryContext,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryTimingEvidence,
+  OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS,
   prepareHermesPortableLaunchForwards,
   verifyHermesPortableLaunchForwards,
   type PreparedHermesPortableForwardRecovery,
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
+  resolveGatewayRecoveryWaitSeconds,
   waitForStartedHermesGatewayProcess,
   waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
@@ -470,7 +472,8 @@ async function runSandboxConnectProbe(
     managedHermesGatewayProcessObserved === true && agent?.name === "hermes";
   if (
     startedStoppedContainer &&
-    (readConnectSandbox(sandboxName)?.agent ?? "openclaw") === "openclaw"
+    (readConnectSandbox(sandboxName)?.agent ?? "openclaw") === "openclaw" &&
+    resolveGatewayRecoveryWaitSeconds(OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS) > 0
   ) {
     const gatewayProcess = await measureAsync("processes", () =>
       waitForStartedNativeGatewayProcess(
@@ -478,7 +481,7 @@ async function runSandboxConnectProbe(
         "openclaw",
         getSandboxTargetGatewayName(sandboxName),
         {
-          defaultTimeoutSeconds: 120,
+          defaultTimeoutSeconds: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS,
           log: console.log,
         },
       ),

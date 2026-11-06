@@ -9,6 +9,7 @@ import {
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
 import { HermesPortableRecoveryRollbackError } from "../../onboard/experimental/hermes-portable-lifecycle";
+import { OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS } from "./process-recovery";
 
 describe("connectSandbox probe-only observe mode", () => {
   let exitSpy: MockInstance;
@@ -215,7 +216,7 @@ describe("connectSandbox probe-only observe mode", () => {
         "alpha",
         "openclaw",
         "nemoclaw-8091",
-        { defaultTimeoutSeconds: 120, log: console.log },
+        { defaultTimeoutSeconds: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS, log: console.log },
       );
       expect(
         harness.waitForStartedNativeGatewayProcessSpy.mock.invocationCallOrder[0],
@@ -242,6 +243,22 @@ describe("connectSandbox probe-only observe mode", () => {
       expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     },
   );
+
+  it("continues stopped OpenClaw recovery when the startup wait is disabled (#12280)", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "0");
+    const harness = createConnectHarness({
+      registryEntry: { stopped: true },
+      listOutput: "alpha Ready",
+      gatewayProcessSettlement: false,
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.waitForStartedNativeGatewayProcessSpy).not.toHaveBeenCalled();
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.registryEntries[0]?.stopped).toBe(false);
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalled();
+  });
 
   it("does not wait for startup when recovery did not start OpenClaw (#12280)", async () => {
     const harness = createConnectHarness();

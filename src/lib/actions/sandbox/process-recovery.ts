@@ -1569,6 +1569,7 @@ export async function isSandboxGatewayRunningForStatus(
 
 const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000, 2_000, 2_000, 2_000] as const;
 const NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+export const OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS = 120;
 
 /** Require one positive Hermes gateway observation after startup within the bounded window. */
 export async function waitForStartedHermesGatewayProcess(
