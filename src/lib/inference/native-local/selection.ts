@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
+import { resolveConfiguredModelRouterPort } from "../../core/model-router-port";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { isProtectedLocalInferencePort } from "../gateway/local-endpoint-ports";
 import {
@@ -25,6 +26,8 @@ export async function prepareNativeLocalSelection(input: {
   binding: Omit<NativeLocalBinding, "credentialEnv">;
   credentialValue: string | null;
   ownedProxy?: boolean;
+  /** Supplied only after the managed router has reconciled under its port lock. */
+  ownedModelRouterPort?: number;
   readAuthority?: typeof getNativeLocalProviderAuthority;
   writeAuthority?: typeof setNativeLocalProviderAuthority;
 }) {
@@ -35,7 +38,17 @@ export async function prepareNativeLocalSelection(input: {
     input.ownedProxy === true &&
     port === OLLAMA_PROXY_PORT &&
     new URL(binding.endpointUrl).hostname === "host.openshell.internal";
-  if (isProtectedLocalInferencePort(port, { ownedProxy })) {
+  const ownedModelRouterPort =
+    binding.provider === "nvidia-router" &&
+    input.ownedModelRouterPort === port &&
+    port === resolveConfiguredModelRouterPort() &&
+    new URL(binding.endpointUrl).hostname === "host.openshell.internal"
+      ? port
+      : undefined;
+  if (
+    (binding.provider === "nvidia-router" && ownedModelRouterPort === undefined) ||
+    isProtectedLocalInferencePort(port, { ownedProxy, ownedModelRouterPort })
+  ) {
     throw new Error("The selected local inference endpoint uses a protected host port.");
   }
   const readAuthority = input.readAuthority ?? getNativeLocalProviderAuthority;

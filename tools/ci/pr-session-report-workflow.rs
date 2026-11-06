@@ -29,12 +29,29 @@ gh() {{
     'api repos/example/repo/pulls/1 --jq .body // ""') printf 'Description\n' ;;
     'api --paginate --slurp repos/example/repo/issues/1/comments?per_page=100')
       jq -n --rawfile report .github/SESSION_REPORT_TEMPLATE.md --arg scenario "$scenario" '
-        [[range(100) | {{user: {{id: 8}}, body: $report}}], [{{user: {{id: 7}}, body: $report}}]]
+        [[range(100) | {{user: {{id: 8, login: "outsider"}}, body: $report}}], [{{user: {{id: 7, login: "author"}}, body: $report}}]]
         | if $scenario == "missing" then []
           elif $scenario == "outsider" then .[:1]
           elif $scenario == "duplicate" then .[1] += .[1]
           elif $scenario == "malformed" then .[1][0].body |= gsub("Models"; "Skills")
+          elif $scenario == "maintainer" or $scenario == "permission_failure" or $scenario == "duplicate_maintainer" or $scenario == "malformed_maintainer" then .[1][0].user = {{id: 9, login: "maintainer"}}
+          elif $scenario == "admin" then .[1][0].user = {{id: 10, login: "admin"}}
+          elif $scenario == "writer" then .[1][0].user = {{id: 11, login: "writer"}}
+          elif $scenario == "triage" then .[1][0].user = {{id: 12, login: "triage"}}
+          else . end
+        | if $scenario == "duplicate_maintainer" then .[1] += .[1]
+          elif $scenario == "malformed_maintainer" then .[1][0].body |= gsub("Models"; "Skills")
           else . end' ;;
+    api\ repos/example/repo/collaborators/*/permission*)
+      if [ "$scenario" = permission_failure ]; then return 42; fi
+      case "$2" in
+        */maintainer/permission) identity='{{role_name: "maintain", user: {{id: 9}}}}' ;;
+        */admin/permission) identity='{{role_name: "admin", user: {{id: 10}}}}' ;;
+        */writer/permission) identity='{{role_name: "write", user: {{id: 11}}}}' ;;
+        */triage/permission) identity='{{role_name: "triage", user: {{id: 12}}}}' ;;
+        *) identity='{{role_name: "read", user: {{id: 8}}}}' ;;
+      esac
+      jq -n "$identity" | jq -r "${{@: -1}}" ;;
     *) return 43 ;;
   esac
 }}
@@ -42,12 +59,12 @@ check() {{
 {adapter}
 }}
 # A fresh invocation after publication must recover from the initial missing report.
-for scenario in missing valid outsider duplicate malformed api_failure valid; do
+for scenario in missing valid outsider maintainer admin writer triage duplicate duplicate_maintainer malformed malformed_maintainer api_failure permission_failure maintainer; do
   set +e
   (set -e; check) > "$RUNNER_TEMP/output" 2>&1
   actual=$?
   set -e
-  case "$scenario" in valid) expected=0 ;; api_failure) expected=42 ;; *) expected=1 ;; esac
+  case "$scenario" in valid|maintainer|admin) expected=0 ;; api_failure|permission_failure) expected=42 ;; *) expected=1 ;; esac
   if [ "$actual" -ne "$expected" ]; then
     cat "$RUNNER_TEMP/output" >&2
     printf '%s: expected %s, got %s\n' "$scenario" "$expected" "$actual" >&2

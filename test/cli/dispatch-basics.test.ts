@@ -465,7 +465,9 @@ describe("CLI dispatch", () => {
         ).rejects.toThrow("process.exit:1");
 
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
-        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(stderr.join("\n")).toContain(
+          "Rebuild preflight failed: sandbox 'gw1-sb' has no registry entry.",
+        );
         expect(runOclifCommandById).not.toHaveBeenCalled();
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
@@ -478,7 +480,9 @@ describe("CLI dispatch", () => {
         await expect(dispatchCli(["gw1-sb", "rebuild", "--yes"])).rejects.toThrow("process.exit:1");
 
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "gw1-sb" });
-        expect(stderr.join("\n")).toContain("Sandbox 'gw1-sb' does not exist");
+        expect(stderr.join("\n")).toContain(
+          "Rebuild preflight failed: sandbox 'gw1-sb' has no registry entry.",
+        );
         expect(runOclifCommandById).not.toHaveBeenCalled();
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
@@ -589,7 +593,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
         `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
         '  "inference get") exit 1 ;;',
-        '  "sandbox exec --name liost --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
+        '  "sandbox exec --name liost -g nemoclaw --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -612,7 +616,7 @@ describe("CLI dispatch", () => {
     // selected gateway (#7105).
     expect(calls).not.toContain("sandbox list");
     expect(calls).toContain("sandbox list -g nemoclaw");
-    expect(calls).toContain("sandbox exec --name liost --tty -- /bin/bash -i");
+    expect(calls).toContain("sandbox exec --name liost -g nemoclaw --tty -- /bin/bash -i");
   });
 
   it("fails fast on gated NEMOCLAW_VLLM_MODEL without HF token before sandbox side effects", () => {

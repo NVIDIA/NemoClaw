@@ -13,6 +13,14 @@ import {
 import { prebuildSandboxImageIfEligible } from "../sandbox-prebuild";
 import { HERMES_PORTABLE_BUILD_CONTEXT_FILES } from "./hermes-portable-build-context-files";
 
+// Exact released Switchyard inputs, not permission to fetch arbitrary GitHub assets.
+const SWITCHYARD_ARCHIVES: Readonly<Record<string, string>> = {
+  "https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.0/switchyard-plugin-0.3.0-linux-x86_64.tar.gz":
+    "--checksum=sha256:d0306ee11bf44e1845f24f4fb56e4e11986ef6ac751f3abf303aef9fe1e798d2",
+  "https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/download/switchyard-plugin-0.3.0/switchyard-plugin-0.3.0-linux-arm64.tar.gz":
+    "--checksum=sha256:267c4fa1b0ea07a9fdff019f4791e5042f4f68093ae27a7afb7541d323b2f720",
+};
+
 const CONTEXT_SCHEMA_VERSION = 1 as const;
 const MAX_CONTEXT_ENTRIES = 1024;
 const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
@@ -47,6 +55,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/hermes-wrapper.py",
   "agents/hermes/host/managed-tool-gateway-matrix.json",
   "agents/hermes/image-build-probes.py",
+  "agents/hermes/install-switchyard.py",
   // Dockerfile copies the policy into build-time and runtime locations.
   "agents/hermes/managed_policy.py",
   "agents/hermes/managed_policy.py",
@@ -80,6 +89,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
+  "scripts/lib/patch-bundled-npm-undici.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/lib/reviewed-npm-audit.mts",
   "scripts/lib/reviewed-npm-identity.mts",
@@ -93,8 +103,10 @@ const LOCAL_COPY_SOURCES = [
   "ci/reviewed-npm-audit.json",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
   "src/lib/hermes-managed-route.ts",
+  "src/lib/hermes-switchyard-routing.ts",
   "src/lib/inference/native-local/agent-config.ts",
   "src/lib/core/endpoint-url-safety.ts",
+  "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/agent-config.ts",
   "src/lib/inference/native-provider/contract.ts",
   "src/lib/inference/native-provider/hosted.ts",
@@ -354,11 +366,15 @@ function parseDockerfileSources(
       const isReviewedPythonArchive = source?.startsWith("https://files.pythonhosted.org/");
       const isReviewedNpmArchive =
         source === reviewedNpm.source && checksum === reviewedNpm.checksum;
+      const isReviewedSwitchyardArchive =
+        source !== undefined &&
+        Object.hasOwn(SWITCHYARD_ARCHIVES, source) &&
+        SWITCHYARD_ARCHIVES[source] === checksum;
       if (
         sources.length !== 1 ||
         options.length !== 1 ||
         !/^--checksum=sha256:[a-f0-9]{64}$/u.test(checksum ?? "") ||
-        (!isReviewedPythonArchive && !isReviewedNpmArchive)
+        (!isReviewedPythonArchive && !isReviewedNpmArchive && !isReviewedSwitchyardArchive)
       ) {
         fail("Dockerfile has an unsupported local or unpinned ADD instruction");
       }

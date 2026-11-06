@@ -79,8 +79,10 @@ The wizard checks `ollama --version` and `/api/version` on port `11434` independ
 If NemoClaw detects an installed CLI or local running daemon but cannot read its version, onboarding uses the upgrade path instead of reusing it.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.
-On Linux, the wizard downloads a pinned snapshot of the official Ollama installer and verifies its SHA-256 digest before execution.
-If the download cannot be verified, onboarding stops without running it.
+On Linux, the system install path downloads a pinned snapshot of the official Ollama installer from `raw.githubusercontent.com` and verifies its SHA-256 digest before execution.
+That installer then downloads the release tarball from `ollama.com`; the sudo-free user-local path downloads the tarball from `ollama.com` directly.
+If the pinned installer download fails, onboarding stops without running it and reports the URL, host, curl exit code, a summary for common network errors, and recovery steps.
+If its digest does not match, onboarding also stops without running it.
 When the installed binary is stale, the verified installer asks for `0.32.9` by name because the version it calls latest is below the minimum on some hosts.
 If the installed binary is already at or above the minimum and only the daemon is stale, the wizard restarts the daemon without running the installer or replacing the newer binary.
 Linux upgrades use the sudo-driven system path because a user-local fallback would leave an existing system daemon serving the stale binary.
@@ -156,7 +158,8 @@ The menu identifies a reachable daemon as running and labels an installed but st
 NemoClaw lists installed models or offers starter models when none are installed.
 
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
-The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
+The menu shows currently available GPU memory when the host reports it, including `0`, or total GPU memory when available memory is unknown.
+A `0` reading means no GPU memory is currently free, so each known starter model is shown as exceeding available memory.
 
 Among installed models that fit, NemoClaw selects the registry-known model with the highest approximate VRAM requirement.
 Unregistered tags follow registry-known tags and retain Ollama's list order.
@@ -377,7 +380,9 @@ The chassis model qualifies only this Ollama model selection; it does not establ
 The proof runs one pinned CUDA workload and capacity query through the provider abstraction; Docker supplies its GPU flag and Podman supplies its NVIDIA CDI device without a separate model-selection path.
 On a WSL Station GB300, the Docker proof can also qualify the host for `qwen3.6:35b`.
 The bounded Windows chassis model must report Station GB300, the proof must match every reported GPU, and at least one proved device must report an `NVIDIA GB300` name.
-The Station GB300 Ollama qualification does not apply to Podman, managed vLLM, or generic multi-GPU hosts. Managed llama.cpp uses a separate Docker Desktop-only Station GB300 readiness qualification. It also requires the bounded product observation, a proof that reconciles every reported GPU, and exactly one proved GB300 GPU UUID for Docker device binding.
+The Station GB300 Ollama qualification does not apply to Podman, managed vLLM, or generic multi-GPU hosts.
+Managed llama.cpp uses a separate Docker Desktop-only Station GB300 readiness qualification.
+It also requires the bounded product observation, a proof that reconciles every reported GPU, and exactly one proved GB300 GPU UUID for Docker device binding.
 Missing, malformed, mismatched, or insufficient proof capacity retains the `qwen3.5:9b` fallback.
 This safeguard only changes automatic selection.
 

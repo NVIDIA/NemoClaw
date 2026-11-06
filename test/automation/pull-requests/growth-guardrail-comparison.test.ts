@@ -71,7 +71,7 @@ describe("growth checks against the proposed merge", () => {
     ]);
   });
 
-  it("preserves a nearby merge base without downloading the complete history", async () => {
+  it("uses shallow history when the merge base is nearby", async () => {
     repository.appendHistory(2048);
     repository.git(repository.origin, "branch", "-f", "candidate", "main");
     const base = repository.reduceBase();
@@ -88,8 +88,29 @@ describe("growth checks against the proposed merge", () => {
       "true",
     );
     expect(Number(repository.git(repository.checkout, "rev-list", "--count", "HEAD"))).toBeLessThan(
-      Number(repository.git(repository.origin, "rev-list", "--count", "main")),
+      64,
     );
+    expect(
+      Number(repository.git(repository.checkout, "rev-list", "--count", candidate)),
+    ).toBeLessThan(64);
+    expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
+    expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("deepens history when the merge base is beyond the shallow fetch", () => {
+    repository.appendHistory(64);
+    const base = repository.reduceBase();
+    repository.startCandidate();
+    repository.write("src/candidate.ts", "export const accepted = true;\n");
+    const candidate = repository.commit("candidate change");
+    repository.cloneBase("shallow");
+
+    expect(load(base, candidate).files).toEqual([
+      { filename: "src/candidate.ts", status: "added" },
+    ]);
+    expect(
+      Number(repository.git(repository.checkout, "rev-list", "--count", "HEAD")),
+    ).toBeGreaterThan(32);
     expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
     expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
   });

@@ -33,22 +33,29 @@ class ServerProcess:
                 self._persistent_env_overrides, self._env_overrides
             )
             self._log_file = subprocess.PIPE
-            self._process = subprocess.Popen(  # noqa: S603
-                cmd,
-                cwd=str(work_dir),
-                env=env,
-                stdout=self._log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=(sys.platform != "win32"),
-                creationflags=(
-                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-                ),
-            )
+            self._process = self._launch_process(cmd, work_dir, env)
             process = self._process
             output, _ = process.communicate(timeout=10)
             if process.returncode != 0:
                 raise RuntimeError(output.decode())
             self.outputs.append(output.decode())
+
+    def _launch_process(self, cmd, work_dir, env):
+        reader, writer = os.pipe()
+        try:
+            return subprocess.Popen(
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                creationflags=0,
+                pass_fds=(reader,),
+            )
+        finally:
+            os.close(reader)
+            os.close(writer)
 
     async def restart(self):
         with self._state_lock:

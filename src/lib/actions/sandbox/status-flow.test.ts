@@ -542,7 +542,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Policies: npm, telegram");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
-    expect(output).toContain("SSH sessions: 2");
+    expect(output).toContain("Active sessions: 2");
     expect(output).toContain("Update:");
     expect(output).toContain("Recovered NemoClaw gateway runtime via gateway reattach.");
     expect(output).toContain("Recovered sandbox 'alpha' from Docker via docker unpause");
@@ -551,7 +551,11 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Docker health:");
     expect(output).toContain("unhealthy");
     expect(output).toContain("NIM:      running (alpha-nim)");
-    expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
+    expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      "nemoclaw",
+    );
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -566,15 +570,29 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toContain("Policies: none");
   });
 
-  it("reports zero SSH sessions as 'none' without connection-negative language (#7805)", async () => {
+  it("reports zero active sessions as 'none' without connection-negative language (#7805)", async () => {
     const harness = createStatusFlowHarness();
     harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: true, sessions: [] });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("SSH sessions: none");
+    expect(output).toContain("Active sessions: none");
     expect(output).not.toMatch(/^\s*Connected:/m);
+  });
+
+  it("uses a port-only persisted gateway binding for active-session status", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: { gatewayName: undefined, gatewayPort: 8091 },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      "nemoclaw-8091",
+    );
   });
 
   it("reports durable read-only host directory exposure", async () => {
@@ -615,14 +633,14 @@ describe("showSandboxStatus flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("\u001b[31m");
   });
 
-  it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {
+  it("omits active sessions when the session probe is unavailable (#7805)", async () => {
     const harness = createStatusFlowHarness();
     harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: false, sessions: [] });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).not.toMatch(/^\s*(?:Connected|SSH sessions):/m);
+    expect(output).not.toMatch(/^\s*(?:Connected|Active sessions):/m);
   });
 
   it("omits serving-process status when the gateway is unavailable (#7003)", async () => {

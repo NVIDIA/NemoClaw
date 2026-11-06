@@ -136,6 +136,7 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
             scripts/lib/npm-diagnostics.sh
@@ -857,6 +858,7 @@ jobs:
             scripts/lib/bundled-npm-package.mts
             scripts/lib/patch-bundled-npm-undici.mts
             scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/reviewed-ci-npm-install.mts
@@ -2461,7 +2463,13 @@ jobs:
           set -euo pipefail
           install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
           sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$INSTALLER_RECEIPT_PARENT"
-          sudo -u "$ACCOUNT" env -i \
+          telemetry_env=()
+          for telemetry_name in CI GITHUB_ACTIONS GITHUB_RUN_ID GITHUB_RUN_ATTEMPT NEMOCLAW_TELEMETRY_TEST_LABEL NEMOCLAW_DISABLE_TELEMETRY; do
+            if [[ ${!telemetry_name+x} ]]; then
+              telemetry_env+=("$telemetry_name=${!telemetry_name}")
+            fi
+          done
+          sudo -u "$ACCOUNT" env -i "${telemetry_env[@]}" \
             CONTAINERS_CONF="$CONTAINERS_CONFIG" \
             CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             HOME="$QUALIFICATION_HOME" \
@@ -4905,18 +4913,19 @@ jobs:
       - name: Install reviewed OpenShell SDK archive without package credentials
         uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@342c8f0ab115febb905eb4729d32478f22207589
 
-      - name: Build shared policy boundary
+      - name: Build candidate CLI and shared policy boundary
         shell: bash
         run: |
           set -euo pipefail
-          [[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
-            echo "::error::Shared policy boundary output exists before the candidate build" >&2
+          [[ ! -e dist && ! -L dist && ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {
+            echo "::error::CLI or shared policy boundary output exists before the candidate build" >&2
             exit 1
           }
-          npm run build:policy-boundary
+          npm run build:cli
           for artifact in \
             nemoclaw/dist/shared/openshell-policy-boundary.cjs \
-            nemoclaw/dist/shared/sandbox-name.cjs; do
+            nemoclaw/dist/shared/sandbox-name.cjs \
+            dist/lib/actions/sandbox/channel-status.js; do
             [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {
               echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2
               exit 1
@@ -5136,6 +5145,10 @@ jobs:
               echo "::error::Protected managed-image contract changed platform" >&2
               exit 1
             }
+            if [[ "$agent" == "hermes" ]]; then
+              npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+                --image "$reference" --platform "$platform"
+            fi
             npx --no-install tsx scripts/checks/run-managed-image-direct-e2e.ts \
               --agent "$agent" \
               --image "$reference" \
@@ -5145,7 +5158,8 @@ jobs:
               --arg digest "$digest" \
               --arg platform "$platform" \
               --arg reference "$reference" \
-              '{agent: $agent, digest: $digest, platform: $platform, reference: $reference}' \
+              '{agent: $agent, digest: $digest, platform: $platform, reference: $reference} +
+                (if $agent == "hermes" then {hermesDiscordStatus: "passed"} else {} end)' \
               >> "$direct_runs"
           done < <(jq -c '.[]' "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT")
 
@@ -5256,7 +5270,8 @@ jobs:
           path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/
           if-no-files-found: error
           retention-days: 1
-          compression-level: 0
+          # The cache includes an uncompressed Docker image archive.
+          compression-level: 1
           overwrite: true
 
       - name: Upload protected managed-image evidence
@@ -5274,8 +5289,11 @@ jobs:
   # This lane runs after managed-image startup succeeds. Manual PR qualification
   # requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
-  # This GPU lane imports the exact candidate build cache and its complete
-  # locked npm cache seed, then rebuilds with BuildKit networking disabled.
+  # This GPU lane imports the candidate build cache and locked npm cache seed.
+  # It reuses the completed sandbox-user OpenClaw image only from this attempt,
+  # after checking the receipt, archive, image identity, and isolated-registry
+  # publication. Earlier-attempt and legacy root OpenClaw inputs still rebuild.
+  # Hermes and Deep Agents Code also rebuild with BuildKit networking disabled.
   # invalidState: Cold managed-image builds on the protected GPU runner can
   # stall in npm and terminate with "Exit handler never called!" before any
   # GPU, Ollama, NIM, or vLLM assertion executes.
@@ -5307,7 +5325,7 @@ jobs:
       ]
     if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 75
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read

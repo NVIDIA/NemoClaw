@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..").replaceAll("\\", "/");
+
 export type VitestWatchTriggerPattern = {
   pattern: RegExp;
   testsToRun: (file: string, match: RegExpMatchArray) => string[];
@@ -41,6 +45,19 @@ function runTests(...tests: string[]): () => string[] {
 }
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
+  {
+    pattern: /(?:^|\/)Dockerfile(?:\.base)?$/,
+    testsToRun: (file) => {
+      const relative = file.startsWith(`${REPO_ROOT}/`) ? file.slice(REPO_ROOT.length + 1) : file;
+      return /^Dockerfile(?:\.base)?$/.test(relative)
+        ? ["test/runtime/messaging/messaging-build-applier-integrity.test.ts"]
+        : [];
+    },
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/fixtures\/discord-enrollment-preload\.mts$/,
+    testsToRun: runTests("test/e2e/support/discord-enrollment-child.test.ts"),
+  },
   {
     pattern:
       /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
@@ -145,6 +162,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
     ),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/install-switchyard\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-switchyard-package.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/image-build-probes\.py$/,
@@ -289,6 +310,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
+      "test/inference/managed/managed-image-discord-workflow-boundary.test.ts",
       "test/e2e/support/managed-podman-docker-guard.test.ts",
       "test/inference/managed/managed-image-mcp-bridge-publication.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",

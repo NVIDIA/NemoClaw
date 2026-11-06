@@ -16,6 +16,7 @@ import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
 import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../../inference/openrouter";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
+import { checkTerminalAgentVersion } from "../../../agent/terminal-version-drift";
 import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
@@ -378,6 +379,17 @@ export async function requireLaunchSemanticHealth(
       const trustedExit = smoke.output?.match(/(?:^|\n)NEMOCLAW_AGENT_SMOKE_EXIT:(\d+)(?:\n|$)/);
       if (!trustedExit) throw new LaunchReadinessEvidenceError();
       throw new LaunchReadinessObservationError("health");
+    }
+    if (agent.expectedVersion) {
+      if (!deps.commandExecutor) throw new LaunchReadinessEvidenceError();
+      const version = await checkTerminalAgentVersion(
+        sandboxName,
+        agent,
+        deps.commandExecutor,
+        gatewayName,
+      );
+      if (version.status === "unverified") throw new LaunchReadinessEvidenceError();
+      if (version.status === "stale") throw new LaunchReadinessObservationError("health");
     }
   } else {
     const gatewayStartedAt = performance.now();

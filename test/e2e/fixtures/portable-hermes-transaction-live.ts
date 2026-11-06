@@ -202,7 +202,7 @@ export async function proveHermesPortableOnboardingTransaction(input: {
           );
           if (result.status !== 0) {
             throw new Error(
-              `OpenShell Hermes transaction sandbox creation failed (exit ${result.status}): ${redactSensitiveText(result.output.slice(-240))}`,
+              `OpenShell Hermes transaction sandbox creation failed (exit ${result.status}): ${redactSensitiveText(result.output)}`,
             );
           }
           return result;
@@ -271,9 +271,40 @@ export async function proveHermesPortableOnboardingTransaction(input: {
     primaryFailed = true;
     primaryFailure = error;
   }
+  const sandboxIsPresent = (): boolean => {
+    const result = capture(["sandbox", "list", "-g", gatewayName, "-o", "json"]);
+    if (result.error || result.status !== 0) {
+      throw new Error(
+        `OpenShell Hermes transaction cleanup observation failed (exit ${String(result.status)})`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(String(result.stdout));
+    } catch {
+      throw new Error("OpenShell Hermes transaction cleanup observation was malformed");
+    }
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every(
+        (sandbox) =>
+          sandbox !== null &&
+          typeof sandbox === "object" &&
+          !Array.isArray(sandbox) &&
+          typeof (sandbox as { name?: unknown }).name === "string",
+      )
+    ) {
+      throw new Error("OpenShell Hermes transaction cleanup observation was malformed");
+    }
+    const matches = parsed.filter((sandbox) => sandbox.name === sandboxName);
+    if (matches.length > 1) {
+      throw new Error("OpenShell Hermes transaction cleanup found duplicate sandbox names");
+    }
+    return matches.length === 1;
+  };
   const cleanupFailures: unknown[] = [];
   try {
-    if (capture(["sandbox", "get", "-g", gatewayName, "-o", "json", sandboxName]).status === 0) {
+    if (sandboxIsPresent()) {
       // The lifecycle capture caps every command at five seconds. Sandbox
       // deletion can take longer while OpenShell settles its container.
       assertHermesPortableOpenShellExecutableAuthority(
@@ -295,9 +326,16 @@ export async function proveHermesPortableOnboardingTransaction(input: {
       );
       if (deletion.status !== 0 || deletion.error) {
         throw new Error(
-          `OpenShell Hermes transaction sandbox deletion failed (exit ${String(deletion.status)}): ${redactSensitiveText(`${deletion.error?.message ?? ""}\n${deletion.stderr ?? ""}\n${deletion.stdout ?? ""}`.slice(-240))}`,
+          `OpenShell Hermes transaction sandbox deletion failed (exit ${String(deletion.status)}): ${redactSensitiveText(`${deletion.error?.message ?? ""}\n${deletion.stderr ?? ""}\n${deletion.stdout ?? ""}`)}`,
         );
       }
+    }
+    const absenceDeadline = Date.now() + 30_000;
+    while (sandboxIsPresent()) {
+      if (Date.now() >= absenceDeadline) {
+        throw new Error("OpenShell Hermes transaction sandbox remained after cleanup");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
     }
   } catch (error) {
     cleanupFailures.push(error);
@@ -307,11 +345,14 @@ export async function proveHermesPortableOnboardingTransaction(input: {
     const builtImageRef =
       imageRef.value ??
       (receipt ? `${PORTABLE_LOCAL_SANDBOX_IMAGE_REPO}:${receipt.receipt.transactionId}` : null);
+    if (!primaryFailed && (!builtImageRef || !cleanupPodman.current)) {
+      throw new Error("Successful Hermes transaction did not retain image cleanup authority");
+    }
     if (builtImageRef && cleanupPodman.current) {
       const removal = cleanupPodman.current(["image", "rm", "--force", builtImageRef], 15_000);
       if (removal.status !== 0 || removal.error) {
         throw new Error(
-          `Hermes transaction image removal failed: ${redactSensitiveText(String(removal.stderr).slice(-240))}`,
+          `Hermes transaction image removal failed: ${redactSensitiveText(String(removal.stderr))}`,
         );
       }
     }

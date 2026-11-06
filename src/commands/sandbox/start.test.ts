@@ -21,6 +21,13 @@ describe("SandboxStartCommand", () => {
     process.exitCode = 0;
   });
 
+  it("describes runtime verification without promising native gateway repair", () => {
+    expect(SandboxStartCommand.description).toContain("verify agent runtime readiness");
+    expect(SandboxStartCommand.description).toContain("For gateway-based agents");
+    expect(SandboxStartCommand.description).not.toContain("repair the in-sandbox gateway");
+    expect(SandboxStartCommand.description).not.toContain("the same way 'recover'");
+  });
+
   it("starts the named sandbox (#6026)", async () => {
     await SandboxStartCommand.run(["alpha"], rootDir);
 

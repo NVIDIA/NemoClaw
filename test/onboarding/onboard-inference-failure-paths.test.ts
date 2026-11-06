@@ -254,7 +254,13 @@ describe("setupInference dependency failures", () => {
     const getLocalProviderHealthCheck = vi.fn(() => ["curl", "-sf", "http://127.0.0.1:8000"]);
     const run = vi.fn(() => directRunResult({ status: 7 }));
     const harness = createDirectSetupInferenceHarness({
-      overrides: { exitProcess, validateLocalProvider, getLocalProviderHealthCheck, run },
+      overrides: {
+        exitProcess,
+        getManagedVllmProviderBinding: () => null,
+        validateLocalProvider,
+        getLocalProviderHealthCheck,
+        run,
+      },
     });
 
     await expect(harness.setupInference("test-box", "meta-llama", "vllm-local")).rejects.toThrow(
@@ -285,6 +291,7 @@ describe("setupInference dependency failures", () => {
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         exitProcess,
+        getManagedVllmProviderBinding: () => null,
         validateLocalProvider: () => ({ ok: false, message: "vLLM is unreachable" }),
         getLocalProviderHealthCheck,
         run,

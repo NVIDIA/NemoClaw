@@ -9,13 +9,14 @@ import {
 } from "./terminal-version-drift";
 
 interface TerminalVersionEnforcementOptions {
+  gatewayName?: string;
   beforeFailure?: () => Promise<void>;
   onFailure: (message: string) => Promise<never>;
 }
 
 /**
- * Require the manifest-declared terminal-agent version before onboarding can
- * record agent setup as complete.
+ * Require the manifest-declared terminal-agent version before reporting
+ * completed onboarding or successful terminal readiness.
  */
 export async function enforceTerminalAgentVersion(
   sandboxName: string,
@@ -23,7 +24,7 @@ export async function enforceTerminalAgentVersion(
   executor: OpenShellSandboxBufferedCommandExecutor,
   options: TerminalVersionEnforcementOptions,
 ): Promise<void> {
-  const result = await checkTerminalAgentVersion(sandboxName, agent, executor);
+  const result = await checkTerminalAgentVersion(sandboxName, agent, executor, options.gatewayName);
   if (result.status === "current" || result.status === "not-required") return;
 
   await options.beforeFailure?.();

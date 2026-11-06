@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/colossus-connectivity-registration.test.ts",
+      "test": "keeps default-branch SSH registration non-executing",
+      "category": "security"
+    },
+    {
       "file": "test/repository/dockerignore-security-contract.test.ts",
       "test": "excludes secret-bearing names at every directory depth",
       "category": "security"
@@ -137,6 +142,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/portable-sandbox-build-diagnostics.test.ts",
+      "test": "reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "binds the exact PR publication to the generic NVIDIA GPU job",
       "category": "security"
@@ -253,22 +263,12 @@
     },
     {
       "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
-      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
       "category": "security"
     },
     {
       "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed bundled Axios graph with the patched graph",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
-      "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
       "category": "security"
     },
     {
@@ -499,6 +499,16 @@
     {
       "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
       "test": "runs npm and messaging consumers after retrying an interrupted %s manifest write",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/package-contract/nemoclaw-plugin-metadata.test.ts",
+      "test": "keeps agent and blueprint runtime minimums compatible with the packaged plugin",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "budgets WSL shard 1 for serial live tests, cleanup and evidence upload",
       "category": "compatibility"
     }
   ]

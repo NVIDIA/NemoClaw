@@ -92,9 +92,13 @@ on:
       - "src/lib/agent/defs.ts"
       - "src/lib/core/retry.ts"
       - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
+      - "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts"
+      - "test/helpers/process-supervisor.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/fixtures/portable-hermes-transaction-live.ts"
+      - "test/e2e/fixtures/portable-hermes-probe-diagnostics.ts"
       - "test/e2e/fixtures/portable-registry-readiness.ts"
+      - "test/e2e/support/portable-hermes-probe-diagnostics.test.ts"
       - "test/e2e/support/portable-registry-readiness.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
@@ -141,12 +145,16 @@ on:
       - "test/e2e/fixtures/portable-profile-systemctl-shim.sh"
       - "test/e2e/fixtures/portable-profile-systemctl.ts"
       - "test/e2e/fixtures/portable-hermes-transaction-live.ts"
+      - "test/e2e/fixtures/portable-hermes-probe-diagnostics.ts"
       - "test/e2e/fixtures/portable-registry-readiness.ts"
+      - "test/e2e/support/portable-hermes-probe-diagnostics.test.ts"
       - "test/e2e/support/portable-registry-readiness.test.ts"
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"
       - "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts"
+      - "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts"
+      - "test/helpers/process-supervisor.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
       - "tools/e2e/full-e2e-timeout-contract.mts"
@@ -161,7 +169,7 @@ concurrency:
 jobs:
   rootless-linux:
     runs-on: ubuntu-26.04
-    timeout-minutes: 45
+    timeout-minutes: 85
     env:
       E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       PODMAN_APT_VERSION: "5.7.0+ds2-3build1"

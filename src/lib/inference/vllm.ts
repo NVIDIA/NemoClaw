@@ -19,12 +19,12 @@ import {
   dockerStop,
 } from "../adapters/docker";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
-import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { runCurlProbe } from "../adapters/http/probe";
 import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/vllm-port";
+import { readVllmStartupLogExcerpts, vllmEndpointReady } from "./vllm/startup-observations";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { redact, redactFull, runCapture, shellQuote } from "../runner";
 import { isSafeModelId } from "../validation";
@@ -34,7 +34,6 @@ import {
 } from "./model-acquisition/hugging-face";
 import { getGpuIndicesByName } from "./nim";
 import {
-  buildLocalDualStationDockerEnv,
   buildLocalManagedVllmDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
@@ -722,6 +721,8 @@ export async function pullImage(
   // The profile-specific maximum still bounds the complete pull operation.
   const result = await dockerPullWithProgressWatchdog(profile.image, {
     env: dockerEnv,
+    // The watchdog's generic env merge can reintroduce ambient Docker routing.
+    spawnImpl: (args, options) => dockerSpawn(args, { ...options, env: dockerEnv }),
     maxTimeoutMs: profile.pullTimeoutSec * 1000,
     logLine: emit,
   });
@@ -796,9 +797,7 @@ export function buildVllmRunArgs(
   if (model.managedBearerAuth && !/^[a-f0-9]{64}$/.test(managedApiKey)) {
     throw new Error("Managed host-local vLLM requires a valid host-global API key");
   }
-  const managedPublishHost = model.managedBearerAuth
-    ? validateManagedVllmBridgeHost(managedBridgeHost ?? "")
-    : null;
+  const managedPublishHost = validateManagedVllmBridgeHost(managedBridgeHost ?? "");
   return [
     "--pull=never",
     "--init",
@@ -830,8 +829,9 @@ export function buildVllmRunArgs(
         ]
       : []),
     "-p",
-    `${model.managedBearerAuth ? "127.0.0.1:" : ""}${String(VLLM_PORT)}:8000`,
-    ...(model.managedBearerAuth ? ["-p", `${managedPublishHost}:${String(VLLM_PORT)}:8000`] : []),
+    `127.0.0.1:${String(VLLM_PORT)}:8000`,
+    "-p",
+    `${managedPublishHost}:${String(VLLM_PORT)}:8000`,
     "--name",
     containerName,
     "--entrypoint",
@@ -1038,7 +1038,7 @@ function inspectVllmContainerOwnershipInDockerEnv(
         "--format",
         format,
       ],
-      { env, timeout: 10_000 },
+      { env, replaceEnv: true, timeout: 10_000 },
     ).trim();
     if (!output) return { kind: "absent" };
 
@@ -1070,30 +1070,12 @@ function inspectVllmContainerOwnershipInDockerEnv(
   }
 }
 
-function inspectVllmContainerOwnership(containerName: string): VllmContainerOwnership {
-  // A managed dual-Station head always lives on the physical host's default
-  // daemon. Inspect it before following ambient single-host Docker routing so
-  // DOCKER_HOST, DOCKER_CONTEXT, or Docker's persisted currentContext cannot
-  // hide the pair from running-state detection or replacement guards.
-  const canonicalOwnership = inspectVllmContainerOwnershipInDockerEnv(
-    containerName,
-    buildLocalDualStationDockerEnv(),
-  );
-  if (canonicalOwnership.kind === "dual-managed" || canonicalOwnership.kind === "unknown") {
-    return canonicalOwnership;
-  }
-
-  return inspectVllmContainerOwnershipInDockerEnv(containerName, buildVllmDockerEnv());
-}
-
 function vllmContainerReplacementTarget(
   containerName: string,
-  dockerEnv?: Record<string, string>,
+  dockerEnv: Record<string, string>,
   expectedContainerId?: string,
 ): { ok: true; containerId?: string } | { ok: false; reason: string } {
-  const ownership = dockerEnv
-    ? inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv)
-    : inspectVllmContainerOwnership(containerName);
+  const ownership = inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv);
   if (ownership.kind === "foreign") {
     return {
       ok: false,
@@ -1134,7 +1116,10 @@ export function isNemoClawManagedVllmRunning(): boolean {
   } catch {
     return false;
   }
-  const ownership = inspectVllmContainerOwnership(NEMOCLAW_VLLM_CONTAINER_NAME);
+  const ownership = inspectVllmContainerOwnershipInDockerEnv(
+    NEMOCLAW_VLLM_CONTAINER_NAME,
+    buildLocalManagedVllmDockerEnv(),
+  );
   return (ownership.kind === "managed" || ownership.kind === "dual-managed") && ownership.running;
 }
 
@@ -1223,10 +1208,29 @@ export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<Pers
   }
 }
 
+function preflightHostLocalVllmContainer(
+  profile: VllmProfile,
+  dockerEnv: Record<string, string>,
+  resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
+    resolveManagedVllmBridgeHost(dockerCapture, env),
+  expectedReplacementContainerId?: string,
+): { ok: true } | { ok: false; reason: string } {
+  try {
+    validateManagedVllmBridgeHost(resolveBridgeHost(dockerEnv));
+  } catch (error) {
+    return { ok: false, reason: (error as Error).message };
+  }
+  return vllmContainerReplacementTarget(
+    profile.containerName,
+    dockerEnv,
+    expectedReplacementContainerId,
+  );
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
-  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+  dockerEnv: Record<string, string>,
   resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
     resolveManagedVllmBridgeHost(dockerCapture, env),
   expectedReplacementContainerId?: string,
@@ -1250,7 +1254,7 @@ function startContainer(
       model,
       resolvedFlags,
       commandEnv,
-      model.managedBearerAuth ? resolveBridgeHost(dockerEnv) : undefined,
+      resolveBridgeHost(dockerEnv),
     );
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
@@ -1259,19 +1263,21 @@ function startContainer(
   // avoids deleting an unrelated same-name container if the name changes hands.
   const replacement = vllmContainerReplacementTarget(
     profile.containerName,
-    model.managedBearerAuth || expectedReplacementContainerId !== undefined ? dockerEnv : undefined,
+    dockerEnv,
     expectedReplacementContainerId,
   );
   if (!replacement.ok) return replacement;
   if (replacement.containerId) {
     dockerForceRm(replacement.containerId, {
       env: dockerEnv,
+      replaceEnv: true,
       ignoreError: true,
       suppressOutput: true,
     });
   }
   const result = dockerRunDetached(runArgs, {
     env: dockerEnv,
+    replaceEnv: true,
     ignoreError: true,
     suppressOutput: true,
   });
@@ -1283,40 +1289,6 @@ function startContainer(
     return { ok: false, reason: "the launched vLLM container identity could not be verified" };
   }
   return { ok: true, containerId: launched.containerId };
-}
-
-function vllmEndpointReady(baseUrl?: string): boolean {
-  if (baseUrl) {
-    // The dual-Station /v1 surface is bearer-protected. vLLM deliberately
-    // leaves /health outside its auth middleware, so readiness can stay
-    // secret-free while onboarding separately validates model inventory with
-    // the persisted key.
-    return runCurlProbe(
-      ["-sS", "--connect-timeout", "2", "--max-time", "5", `${baseUrl.replace(/\/+$/, "")}/health`],
-      { pinnedAddresses: [] },
-    ).ok;
-  }
-  const response = runCapture(
-    [
-      "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`,
-      ]),
-    ],
-    { ignoreError: true },
-  ).trim();
-  if (!response) return false;
-  try {
-    const parsed = JSON.parse(response) as { data?: unknown };
-    return Array.isArray(parsed.data);
-  } catch {
-    return false;
-  }
 }
 
 function verifyDualStationVllmAuthBoundary(
@@ -1391,30 +1363,21 @@ function sanitizeContainerLogOutput(output: string): string {
   return redact(redactFull(normalizedOutput));
 }
 
-function readContainerLogTail(
+async function printContainerLogTail(
   profile: VllmProfile,
-  lineCount = 80,
-  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
-): string[] {
-  const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
-    env: dockerEnv,
-    ignoreError: true,
-    includeStderr: true,
-  }).trim();
-  if (!output) return [];
-  const safeOutput = sanitizeContainerLogOutput(output);
-  return safeOutput.split(/\r?\n/).slice(-lineCount);
-}
-
-function printContainerLogTail(
-  profile: VllmProfile,
-  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
-): void {
-  const tail = readContainerLogTail(profile, 80, dockerEnv);
-  if (tail.length === 0) return;
-  process.stderr.write(`  --- Last ${String(tail.length)} vLLM log lines: ---\n`);
-  for (const line of tail) process.stderr.write(`    ${line}\n`);
-  process.stderr.write("  ---\n");
+  dockerEnv: Record<string, string>,
+): Promise<void> {
+  const excerpts = await readVllmStartupLogExcerpts(profile.containerName, dockerEnv, {
+    dockerCapture,
+    dockerSpawn,
+  });
+  for (const { lines, suffix } of excerpts) {
+    if (lines.length === 0) continue;
+    const tail = sanitizeContainerLogOutput(lines.join("\n")).split("\n").slice(-80);
+    process.stderr.write(`  --- Last ${String(tail.length)} vLLM log lines${suffix}: ---\n`);
+    for (const line of tail) process.stderr.write(`    ${line}\n`);
+    process.stderr.write("  ---\n");
+  }
 }
 
 // Poll the real OpenAI-compatible models endpoint for the legacy local path,
@@ -1444,7 +1407,7 @@ function waitForVllmReady(
 
     function poll(): void {
       if (resolved) return;
-      if (vllmEndpointReady(baseUrl)) {
+      if (vllmEndpointReady(baseUrl, runCapture)) {
         emit(`vLLM is serving on :${String(VLLM_PORT)}`);
         done({ ok: true });
         return;
@@ -1486,6 +1449,7 @@ function containerRestartCount(
 ): number {
   const out = dockerCapture(["inspect", "--format", "{{.RestartCount}}", profile.containerName], {
     env: dockerEnv,
+    replaceEnv: true,
     ignoreError: true,
   }).trim();
   const restarts = Number(out);
@@ -1498,7 +1462,7 @@ function containerStillRunning(
 ): boolean {
   const out = dockerCapture(
     ["ps", "--filter", `name=${profile.containerName}`, "--format", "{{.Names}}"],
-    { env: dockerEnv, ignoreError: true },
+    { env: dockerEnv, replaceEnv: true, ignoreError: true },
   ).trim();
   return out === profile.containerName;
 }
@@ -1693,8 +1657,8 @@ function printManagedStorageWarning({
   }
   console.error("  Useful diagnostics:");
   if (includeImage) {
-    console.error("    docker system df");
-    console.error("    docker info --format '{{.DockerRootDir}}'");
+    console.error("    docker --context default system df");
+    console.error("    docker --context default info --format '{{.DockerRootDir}}'");
   }
   console.error('    df -h "$HOME/.cache/huggingface"');
 }
@@ -1731,6 +1695,7 @@ async function managedStorageAccepted(
         dockerInfo: () =>
           dockerCapture(["info", "--format", "{{json .}}"], {
             env: dockerEnv,
+            replaceEnv: true,
             ignoreError: true,
             timeout: 10_000,
           }),
@@ -1998,6 +1963,7 @@ function adoptableServingPortHolder(
   // inspection. The fixed name can change hands between Docker commands.
   const published = dockerCapture(["port", ownership.containerId, "8000"], {
     env: dockerEnv,
+    replaceEnv: true,
     ignoreError: true,
     timeout: 10_000,
   })
@@ -2029,6 +1995,7 @@ export function imageIsCached(
   return Boolean(
     dockerImageInspectFormat("{{.Id}}", profile.image, {
       env: dockerEnv,
+      replaceEnv: true,
       ignoreError: true,
       timeout: 10_000,
     }).trim(),
@@ -2395,7 +2362,6 @@ async function runVllmInstall(
   // Port 25000 is not checked here: it belongs to the managed-cluster
   // rendezvous contract and this single-node path never binds it.
   let recoveredHostLocalContainerId: string | undefined;
-  let recoveredHostLocalDockerEnv: Record<string, string> | undefined;
   const servingPort = await opts.checkServingPort?.(VLLM_PORT);
   if (servingPort && !servingPort.ok) {
     // An interrupted host-local install can leave its authenticated managed
@@ -2421,7 +2387,6 @@ async function runVllmInstall(
         }
         recoveredHostLocalContainerId = adopted;
       }
-      recoveredHostLocalDockerEnv = hostLocalDockerEnv;
     } catch (error) {
       console.error(
         `  vLLM install failed: managed host-local vLLM recovery could not verify the container: ${(error as Error).message}`,
@@ -2482,10 +2447,7 @@ async function runVllmInstall(
   if (!proceed) return { ok: false };
 
   let hostLocalApiKey: string | null = null;
-  let localDockerEnv = dualStationPlan
-    ? buildLocalDualStationDockerEnv()
-    : (recoveredHostLocalDockerEnv ??
-      (model.managedBearerAuth ? buildLocalManagedVllmDockerEnv() : buildVllmDockerEnv()));
+  let localDockerEnv = buildLocalManagedVllmDockerEnv();
   let gpuMemoryWarningShown = false;
   const reportGpuMemoryWarning = (result: GpuMemoryPreflightResult): void => {
     if (!result.ok || !result.warning || gpuMemoryWarningShown) return;
@@ -2534,15 +2496,14 @@ async function runVllmInstall(
       return { ok: false };
     }
   } else {
-    const replacement = vllmContainerReplacementTarget(
-      runtimeProfile.containerName,
-      model.managedBearerAuth || recoveredHostLocalContainerId !== undefined
-        ? localDockerEnv
-        : undefined,
+    const preflight = preflightHostLocalVllmContainer(
+      runtimeProfile,
+      localDockerEnv,
+      opts.resolveManagedBridgeHost,
       recoveredHostLocalContainerId,
     );
-    if (!replacement.ok) {
-      console.error(`  vLLM install failed: ${replacement.reason}`);
+    if (!preflight.ok) {
+      console.error(`  vLLM install failed: ${preflight.reason}`);
       return { ok: false };
     }
   }
@@ -2738,7 +2699,7 @@ async function runVllmInstall(
 
         const ready = await waitForVllmReady(runtimeProfile, start.baseUrl, localDockerEnv);
         if (!ready.ok) {
-          printContainerLogTail(runtimeProfile, localDockerEnv);
+          await printContainerLogTail(runtimeProfile, localDockerEnv);
           await rollbackStartedPair();
           console.error(`  vLLM install failed: ${String(ready.reason)}`);
           return { ok: false };
@@ -2833,6 +2794,7 @@ async function runVllmInstall(
     if (!hostLocalApiKey) {
       dockerForceRm(start.containerId, {
         env: localDockerEnv,
+        replaceEnv: true,
         ignoreError: true,
         suppressOutput: true,
       });
@@ -2848,6 +2810,7 @@ async function runVllmInstall(
     } catch (error) {
       dockerForceRm(start.containerId, {
         env: localDockerEnv,
+        replaceEnv: true,
         ignoreError: true,
         suppressOutput: true,
       });
@@ -2868,9 +2831,10 @@ async function runVllmInstall(
     : undefined;
   const ready = await waitForVllmReady(runtimeProfile, hostLocalBaseUrl, localDockerEnv);
   if (!ready.ok) {
-    printContainerLogTail(runtimeProfile, localDockerEnv);
+    await printContainerLogTail(runtimeProfile, localDockerEnv);
     dockerStop(runtimeProfile.containerName, {
       env: localDockerEnv,
+      replaceEnv: true,
       ignoreError: true,
       suppressOutput: true,
     });
@@ -2896,6 +2860,7 @@ async function runVllmInstall(
     if (!authBoundary.ok) {
       dockerStop(runtimeProfile.containerName, {
         env: localDockerEnv,
+        replaceEnv: true,
         ignoreError: true,
         suppressOutput: true,
       });

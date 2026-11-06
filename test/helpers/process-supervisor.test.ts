@@ -6,8 +6,10 @@
  * SIGTERM -> SIGKILL escalation.
  */
 
-import { spawn } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
 
 import { superviseChild } from "./process-supervisor.ts";
 
@@ -149,5 +151,69 @@ describe("helpers/process-supervisor", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(out.join("")).toMatch(/supervised-stdin-payload/);
+  });
+
+  it("closes descendant-held output and verifies the build group after SIGKILL", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 4242,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => true),
+    });
+    const kill = vi
+      .spyOn(process, "kill")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockImplementation(() => {
+        throw Object.assign(new Error("group absent"), { code: "ESRCH" });
+      });
+    vi.useFakeTimers();
+    try {
+      const result = superviseChild(child as unknown as ChildProcess, {
+        timeoutMs: 10,
+        killGraceMs: 0,
+        postKillOutputDrainMs: 100,
+      });
+      await vi.advanceTimersByTimeAsync(11);
+      child.emit("exit", null, "SIGKILL");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await result).toMatchObject({ timedOut: true, signal: "SIGKILL" });
+      expect(child.stdout.destroyed).toBe(true);
+      expect(child.stderr.destroyed).toBe(true);
+      expect(kill).toHaveBeenCalledWith(-child.pid, 0);
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
+  });
+
+  it("reports a build group that survives successful SIGKILL delivery", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 4242,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => true),
+    });
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    vi.useFakeTimers();
+    try {
+      const result = superviseChild(child as unknown as ChildProcess, {
+        timeoutMs: 10,
+        killGraceMs: 0,
+        postKillOutputDrainMs: 100,
+      });
+      await vi.advanceTimersByTimeAsync(11);
+      child.emit("exit", null, "SIGKILL");
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect((await result).cleanupError).toBeDefined();
+      expect(kill).toHaveBeenCalledWith(-child.pid, 0);
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
   });
 });

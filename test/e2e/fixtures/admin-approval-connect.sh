@@ -136,15 +136,56 @@ checks=(
     ('cron-wait-timeout', r'timed out waiting for cron run '),
     ('timeout', r'timed?\s*out|timeout'),
     ('pairing-required', r'device pairing|required.*pairing|pairing required'),
-    ('authorization-rejected', r'denied|forbidden|unauthorized|approval.*(?:failed|rejected)'),
+    ('authorization-rejected', r'denied|forbidden|unauthorized'),
     ('scope-upgrade-pending', r'scope upgrade pending'),
     ('gateway-unavailable', r'gateway|connection|econn|socket|network'),
+    ('approval-command-failed', r'approval.*(?:failed|rejected)'),
     ('invalid-response', r'invalid|parse|json'),
 )
 if sys.argv[2] == 'selection': checks=selection_checks + checks
 label=next((name for name, pattern in checks if re.search(pattern, raw, re.IGNORECASE)), 'command-failed' if raw.strip() else 'no-output')
 print(f'ADMIN_DIAGNOSTIC={label}', file=sys.stderr)
 PY_ADMIN_DIAGNOSTIC
+}
+emit_post_approval_request_state() {
+  python3 - "$1" <<'PY_ADMIN_POST_STATE'
+import json, os, signal, subprocess, sys
+
+def emit(state):
+    print(f'ADMIN_APPROVAL_REQUEST_STATE={state}', file=sys.stderr)
+
+try:
+    process = subprocess.Popen(
+        ['/bin/bash', '--noprofile', '--norc', '-c', 'openclaw devices list --json'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        output, _ = process.communicate(timeout=8)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        process.communicate()
+        emit('unavailable')
+        raise SystemExit(0)
+    if process.returncode != 0 or len(output) > 65536:
+        emit('unavailable')
+        raise SystemExit(0)
+    data = json.loads(output)
+    if not isinstance(data, dict):
+        emit('invalid')
+        raise SystemExit(0)
+    pending = data.get('pending')
+    pending = [] if pending is None else pending
+    if not isinstance(pending, list) or any(not isinstance(item, dict) for item in pending):
+        emit('invalid')
+        raise SystemExit(0)
+    matching = [item for item in pending if item.get('requestId') == sys.argv[1]]
+    emit('pending' if len(matching) == 1 else 'absent' if not matching else 'invalid')
+except (OSError, ValueError, TypeError, UnicodeDecodeError):
+    emit('unavailable')
+PY_ADMIN_POST_STATE
 }
 run_with_bounded_output() {
   local output_path="$1"
@@ -198,9 +239,13 @@ request_id="$(cat "$request_id_file")"
   exit 26
 }
 echo "ISSUE_5324_STAGE=explicit-admin-approval"
-if ! run_with_bounded_output "$approve_output" openclaw devices approve "$request_id"; then
+approve_status=0
+run_with_bounded_output "$approve_output" openclaw devices approve "$request_id" || approve_status=$?
+if [ "$approve_status" -ne 0 ]; then
   echo "ADMIN_APPROVE_FAILED" >&2
+  printf 'ADMIN_APPROVE_COMMAND_STATUS=%s\n' "$approve_status" >&2
   emit_admin_diagnostic "$approve_output"
+  emit_post_approval_request_state "$request_id" || echo "ADMIN_APPROVAL_REQUEST_STATE=unavailable" >&2
   exit 27
 fi
 # Feature tests verify the approved scope through their own native operation.

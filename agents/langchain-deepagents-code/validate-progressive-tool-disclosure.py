@@ -41,11 +41,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, ValidationError
 
 PINNED_VERSIONS = {
-    "deepagents-code": "0.1.71",
-    "deepagents": "0.7.15",
-    "langchain": "1.4.3",
-    "langchain-core": "1.6.6",
-    "langgraph": "1.2.12",
+    "deepagents-code": "0.1.87",
+    "deepagents": "0.7.29",
+    "langchain": "1.4.7",
+    "langchain-core": "1.7.0",
+    "langgraph": "1.2.18",
 }
 
 
@@ -906,7 +906,7 @@ def _validate_pinned_executor_collision_and_namespace_guard() -> None:
     assert "reserved name 'execute'" in errors["reserved_loaded_mcp"]
 
 
-def _validate_direct_mode_execution() -> None:
+async def _validate_direct_mode_execution() -> None:
     executions: list[str] = []
 
     @tool("direct_visible_probe")
@@ -957,7 +957,7 @@ def _validate_direct_mode_execution() -> None:
                 mcp_tools=[direct_probe],
                 mcp_server_info=[info],
             )
-            agent.invoke(
+            await agent.ainvoke(
                 {"messages": [HumanMessage(content="Call the directly visible tool.")]}
             )
     finally:
@@ -1059,7 +1059,7 @@ async def _validate_async_discovery() -> None:
     assert agent.get_state(config).values["discovered_tools"] == ["async_hidden_probe"]
 
 
-def _validate_local_subagent_isolation() -> None:
+async def _validate_local_subagent_isolation() -> None:
     @tool("isolated_probe")
     def isolated_probe() -> str:
         """Return an isolated probe capability."""
@@ -1100,7 +1100,7 @@ def _validate_local_subagent_isolation() -> None:
             mcp_tools=[isolated_probe],
             mcp_server_info=[info],
         )
-        agent.invoke(
+        await agent.ainvoke(
             {"messages": [HumanMessage(content="Delegate an isolation proof.")]}
         )
 
@@ -1119,11 +1119,11 @@ def main() -> None:
     _validate_bounded_catalog_and_provider_native_tools()
     _validate_guessed_tool_execution()
     _validate_pinned_executor_collision_and_namespace_guard()
-    _validate_direct_mode_execution()
+    asyncio.run(_validate_direct_mode_execution())
     _validate_checkpoints_and_threads()
     _validate_concurrent_discovery()
     asyncio.run(_validate_async_discovery())
-    _validate_local_subagent_isolation()
+    asyncio.run(_validate_local_subagent_isolation())
     print("progressive-disclosure-runtime-ok")
 
 
