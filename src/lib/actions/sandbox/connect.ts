@@ -147,6 +147,7 @@ import {
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
   waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
@@ -467,6 +468,29 @@ async function runSandboxConnectProbe(
 
   let settledHermesGatewayObserved =
     managedHermesGatewayProcessObserved === true && agent?.name === "hermes";
+  if (
+    startedStoppedContainer &&
+    (readConnectSandbox(sandboxName)?.agent ?? "openclaw") === "openclaw"
+  ) {
+    const gatewayProcess = await measureAsync("processes", () =>
+      waitForStartedNativeGatewayProcess(
+        sandboxName,
+        "openclaw",
+        getSandboxTargetGatewayName(sandboxName),
+        {
+          defaultTimeoutSeconds: 120,
+          log: console.log,
+        },
+      ),
+    );
+    if (gatewayProcess !== true) {
+      probeTiming?.markFailureStage("processes");
+      console.error(
+        `  Probe failed: the OpenClaw gateway in sandbox '${sandboxName}' did not become observable and running before the startup settlement window expired.`,
+      );
+      process.exit(1);
+    }
+  }
   if (startedStoppedContainer && agent?.name === "hermes") {
     const gatewayProcess = await measureAsync("processes", () =>
       waitForStartedHermesGatewayProcess(sandboxName, getSandboxTargetGatewayName(sandboxName), {

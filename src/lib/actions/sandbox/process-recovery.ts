@@ -1643,19 +1643,20 @@ export async function waitForStartedNativeGatewayProcess(
       options.environment ?? process.env,
     ) *
       1_000;
+  let running: boolean | null = false;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;
-    const running = await probe(sandboxName, gatewayName, {
+    running = await probe(sandboxName, gatewayName, {
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
-    if (running !== false) return running;
+    if (running === true) return true;
     const delayMs = Math.min(NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now());
     log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
     await delay(delayMs);
   }
-  return false;
+  return running === null ? null : false;
 }
 
 export async function isSandboxGatewayHttpReachableForStatus(

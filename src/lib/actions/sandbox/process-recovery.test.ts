@@ -81,6 +81,53 @@ function sequencedExecutor(
 }
 
 describe("native gateway startup budget", () => {
+  it("waits through unavailable inspection until OpenClaw is running (#12280)", async () => {
+    let elapsedMs = 0;
+    const probe = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    const delay = vi.fn(async (delayMs: number) => {
+      elapsedMs += delayMs;
+    });
+
+    await expect(
+      waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+        environment: {},
+        probe,
+        delay,
+        now: () => elapsedMs,
+      }),
+    ).resolves.toBe(true);
+
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(elapsedMs).toBe(4_000);
+  });
+
+  it("bounds persistently unavailable OpenClaw inspection by the override (#12280)", async () => {
+    let elapsedMs = 0;
+    const probe = vi.fn(async () => null);
+    const delay = vi.fn(async (delayMs: number) => {
+      elapsedMs += delayMs;
+    });
+
+    await expect(
+      waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+        environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "4.5" },
+        probe,
+        delay,
+        now: () => elapsedMs,
+      }),
+    ).resolves.toBe(null);
+
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(elapsedMs).toBe(4_500);
+    expect(probe).toHaveBeenLastCalledWith("alpha", "nemoclaw-19080", {
+      startup: { timeoutMs: 500 },
+    });
+  });
+
   it.each([
     { fallback: undefined, override: undefined, seconds: 30 },
     { fallback: 120, override: undefined, seconds: 120 },

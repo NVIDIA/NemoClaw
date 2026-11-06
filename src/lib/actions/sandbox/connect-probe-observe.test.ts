@@ -200,6 +200,58 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it.each([null, { name: "openclaw" }])(
+    "waits for a just-started OpenClaw gateway with session agent %j (#12280)",
+    async (sessionAgent) => {
+      const harness = createConnectHarness({
+        sessionAgent,
+        registryEntry: { stopped: true, gatewayPort: 8091 },
+        listOutput: "alpha Ready",
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+      expect(harness.waitForStartedNativeGatewayProcessSpy).toHaveBeenCalledWith(
+        "alpha",
+        "openclaw",
+        "nemoclaw-8091",
+        { defaultTimeoutSeconds: 120, log: console.log },
+      );
+      expect(
+        harness.waitForStartedNativeGatewayProcessSpy.mock.invocationCallOrder[0],
+      ).toBeLessThan(harness.checkAndRecoverSpy.mock.invocationCallOrder[0]!);
+      expect(harness.publishLaunchReadinessSpy).toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, null])(
+    "rejects a just-started OpenClaw with startup result %s (#12280)",
+    async (gatewayProcessSettlement) => {
+      const harness = createConnectHarness({
+        registryEntry: { stopped: true },
+        listOutput: "alpha Ready",
+        gatewayProcessSettlement,
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.waitForStartedNativeGatewayProcessSpy).toHaveBeenCalledOnce();
+      expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+      expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not wait for startup when recovery did not start OpenClaw (#12280)", async () => {
+    const harness = createConnectHarness();
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.waitForStartedNativeGatewayProcessSpy).not.toHaveBeenCalled();
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+  });
+
   it("waits for a just-started Hermes gateway before process recovery", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
