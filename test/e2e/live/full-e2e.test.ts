@@ -741,6 +741,8 @@ async function assertColdOnboardPerformance(input: {
   budget: ColdOnboardPerformanceBudget;
   install: ShellProbeResult;
   installCompletedAtMs: number;
+  pathResolutionMs: number;
+  adminPrerequisiteMs: number;
   model: string;
   outputEvents: readonly ShellProbeOutputEvent[];
   providerName: string;
@@ -812,6 +814,17 @@ async function assertColdOnboardPerformance(input: {
       ...firstTurnLatency,
       rootEndToFirstTurnCompletionMs: performanceEvaluation.rootEndToFirstTurnCompletionMs,
       tracePhasesMs: traceWindow.phaseDurationsMs,
+      providerTiming: traceWindow.providerTiming,
+      tailTiming: {
+        pathResolutionMs: input.pathResolutionMs,
+        adminPrerequisiteMs: input.adminPrerequisiteMs,
+        firstTurnCommandMs,
+        otherAfterInstallMs:
+          firstTurnStartedAtMs -
+          input.installCompletedAtMs -
+          input.pathResolutionMs -
+          input.adminPrerequisiteMs,
+      },
     },
     firstTurnCohort: {
       agent: "openclaw",
@@ -1035,13 +1048,17 @@ test(
         });
     const installCompletedAtMs = Date.now();
     expect(install.exitCode, resultText(install)).toBe(0);
+    const pathResolutionStartedAtMs = Date.now();
     await host.resolveOpenShellCommandPath({
       artifactName: "phase-2-resolve-openshell-command",
       env: env(),
       redactionValues,
       timeoutMs: 60_000,
     });
+    const pathResolutionMs = Date.now() - pathResolutionStartedAtMs;
+    const adminPrerequisiteStartedAtMs = Date.now();
     await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, env(), redactionValues, false);
+    const adminPrerequisiteMs = Date.now() - adminPrerequisiteStartedAtMs;
     await (coldOnboard
       ? assertColdOnboardPerformance({
           apiKey: hosted.apiKey,
@@ -1049,6 +1066,8 @@ test(
           budget: coldOnboardBudget!,
           install,
           installCompletedAtMs,
+          pathResolutionMs,
+          adminPrerequisiteMs,
           model: hosted.model,
           outputEvents: coldOnboard.outputEvents,
           providerName: hosted.providerName,

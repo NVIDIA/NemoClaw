@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { withTraceSpan } from "../trace";
 import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import type { NimStartReceipt } from "../inference/nim";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
@@ -406,10 +407,12 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           // Probe the endpoint's runtime max_model_len so a custom vLLM endpoint
           // gets its real context window baked in instead of a small
           // architecture default; an explicit override always wins (#6177).
-          await applyCompatibleEndpointContextWindow(
-            state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
-            selectedModel,
-            { credentialEnv: selectedCredentialEnv },
+          await withTraceSpan("nemoclaw.inference.context_window_discovery", {}, () =>
+            applyCompatibleEndpointContextWindow(
+              state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
+              selectedModel,
+              { credentialEnv: selectedCredentialEnv },
+            ),
           );
           const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
           if (

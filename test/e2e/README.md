@@ -2638,6 +2638,15 @@ The sandbox-image workflow accepts manual and reusable workflow calls for image 
 
 ## Onboard performance budget
 
+The full-E2E budget artifact also retains provider operation timings for endpoint
+preflight, timeout calibration, validation probes, and context-window discovery.
+Only fixed operation names, numeric timings, and span status codes are retained;
+status codes describe span completion, not endpoint acceptance. Covered time is
+an interval union, with an explicit unattributed remainder. The cold-start tail
+separates command-path resolution, admin prerequisites, and the first reply.
+These diagnostics do not alter budgets or subtract work from their measurements.
+Raw traces are still deleted before artifact upload.
+
 The push/manual scorecard evaluates the trusted `cloud-onboard` timing
 summary against `ci/onboard-performance-budget.json`. The budget covers the
 warm-system path and is advisory: exceeding the total-duration cap or a
