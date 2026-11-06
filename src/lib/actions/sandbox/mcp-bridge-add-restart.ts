@@ -1149,6 +1149,9 @@ async function addMcpBridgeUnlocked(
     // attached before it accepts credential_binding.provider, and withholds
     // that provider's static credential until the bound policy is active.
     if (recovery.policyState === "absent") {
+      console.log(
+        `  Opening MCP route policy for '${entry.server}' (credential binding pending)...`,
+      );
       await applyGeneratedPolicy(sandboxName, entry, target, {
         bindCredential: false,
         runtimeSelection: providerRuntimeSelection,
@@ -1197,6 +1200,7 @@ async function addMcpBridgeUnlocked(
       await attachProvider(sandboxName, entry, providerRuntimeSelection, providerAdapter);
     }
     if (recovery.policyState !== "bound") {
+      console.log(`  Binding the credential to MCP route policy for '${entry.server}'...`);
       await applyGeneratedPolicy(sandboxName, entry, target, {
         runtimeSelection: providerRuntimeSelection,
       });
@@ -1205,6 +1209,9 @@ async function addMcpBridgeUnlocked(
     let refreshedAfterObservedAbsence = false;
     let authorizationPreviousRevision =
       providerResult.action === "updated" ? previousCredentialRevision : undefined;
+    console.log(
+      `  Waiting for OpenShell to synchronize the MCP credential for '${entry.server}' (required even with --no-probe)...`,
+    );
     let credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
@@ -1282,6 +1289,7 @@ async function addMcpBridgeUnlocked(
     const hermesFinalityDeadline =
       adapter === "hermes-config" ? beginHermesMcpReloadFinalityDeadline() : undefined;
     try {
+      console.log(`  Registering MCP server '${entry.server}' with ${agent.name}...`);
       await registerAgentAdapterAtCurrentCredentialRevision(
         sandboxName,
         adapter,
