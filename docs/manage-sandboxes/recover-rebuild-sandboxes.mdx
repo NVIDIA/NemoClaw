@@ -91,6 +91,10 @@ $$nemoclaw <sandbox-name> recover
 ```
 
 The command verifies the native gateway and re-establishes the dashboard port forward.
+After starting a stopped sandbox, `recover` waits up to 120 seconds for the OpenClaw gateway before ordinary process recovery and host-forward repair.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` to override this startup budget.
+If the budget expires, recovery exits nonzero before those repairs.
+With a value of `0`, recovery skips the startup wait and continues ordinary recovery and verification.
 If the gateway is stopped, `recover` reports it and does not relaunch it.
 Run `gateway restart` to request a native restart.
 If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.

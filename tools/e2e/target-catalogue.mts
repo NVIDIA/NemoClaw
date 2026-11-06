@@ -1495,6 +1495,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     owningPaths: [
+      "src/lib/actions/sandbox/connect.ts",
+      "src/lib/actions/sandbox/process-recovery.ts",
+      "src/lib/actions/sandbox/start.ts",
       "src/lib/actions/sandbox/gateway-state.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "tools/e2e/sandbox-survival-timeout-contract.mts",
