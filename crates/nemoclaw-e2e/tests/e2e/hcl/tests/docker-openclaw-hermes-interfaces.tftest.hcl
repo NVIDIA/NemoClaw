@@ -6,7 +6,9 @@
 # the token apply names, OpenClaw's Control UI loads and serves its
 # configuration, Hermes's API server lists its models and answers a chat
 # completion with the stub model's reply, and Hermes's dashboard page loads
-# with its session token. The stub refuses requests without the run's key,
+# with its session token. OpenClaw's terminal UI, opened with the dashboard's
+# token through `openshell sandbox exec --tty`, shows the stub's reply to a
+# prompt and exits on Ctrl-D. The stub refuses requests without the run's key,
 # so the reply also shows NemoClaw sent the configured key. In each sandbox,
 # the agent's user can write and read a file in the agent's workspace, and
 # the key is not in the environment a command sees. In hermes, a command can
@@ -98,6 +100,34 @@ run "interfaces" {
         token_path = null
         path       = "/"
         contains   = "__HERMES_SESSION_TOKEN__"
+      }
+    }
+  }
+
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+# OpenClaw's terminal UI is a client of the Gateway that serves the Control
+# UI, at the dashboard's port and with its token; its status line reads
+# "connected | idle" once it can take a prompt.
+run "terminal" {
+  module {
+    source = "./terminal"
+  }
+
+  variables {
+    connection = run.apply.result.connection
+    targets = {
+      openclaw_tui = {
+        sandbox    = "claw"
+        command    = ["openclaw", "tui", "--url", "ws://127.0.0.1:18789", "--token", "TOKEN"]
+        token_path = one([for access in run.apply.result.interfaces : access.tokenPath if access.sandbox == "claw"])
+        ready      = "connected | idle"
+        prompt     = "Reply to this NemoClaw live test."
+        reply      = "nemoclaw-stub-reply"
       }
     }
   }
