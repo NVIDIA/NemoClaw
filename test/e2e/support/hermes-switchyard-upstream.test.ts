@@ -2,8 +2,77 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { expect, test } from "vitest";
-import { HERMES_SWITCHYARD_LOCAL_UPSTREAM } from "../fixtures/hermes-switchyard-package.ts";
+import {
+  HERMES_SWITCHYARD_LOCAL_UPSTREAM,
+  HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES,
+} from "../fixtures/hermes-switchyard-package.ts";
+
+test("routed fixture provisions both integrity anchors without changing file authority", () => {
+  const result = spawnSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES +
+        String.raw`
+import importlib.util
+import json
+import stat
+import sys
+from tempfile import TemporaryDirectory
+
+spec = importlib.util.spec_from_file_location('runtime_config_guard', sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+with TemporaryDirectory() as directory:
+    home = Path(directory) / 'hermes'
+    home.mkdir()
+    config = home / 'config.yaml'
+    env = home / '.env'
+    config.write_text('model:\n  default: fixture-original\nmcp_servers: {}\n')
+    env.write_text('HERMES_API_PORT=18642\n')
+    strict = Path(directory) / 'hermes.config-hash'
+    compat = home / '.config-hash'
+    original = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + str(p) + '\n'
+                       for p in (config, env))
+    strict.write_text(original)
+    compat.write_text(original)
+    strict.chmod(0o600)
+    compat.chmod(0o640)
+    def authority(p):
+        s = p.stat()
+        return (s.st_uid, s.st_gid, stat.S_IMODE(s.st_mode), s.st_ino)
+    before = [authority(p) for p in (strict, compat)]
+    config.write_text('model:\n  default: switchyard\nmcp_servers: {}\n')
+    provision_config_hashes(home, strict)
+    guard.inspect_mcp_integrity_snapshot(str(home), str(strict), str(compat))
+    consistent = strict.read_bytes() == compat.read_bytes()
+    changed = strict.read_text() != original
+    unchanged_authority = before == [authority(p) for p in (strict, compat)]
+    compat.write_text(original)
+    try:
+        guard.inspect_mcp_integrity_snapshot(str(home), str(strict), str(compat))
+        rejected = False
+    except guard.UnsafePathError:
+        rejected = True
+    print(json.dumps({'consistent': consistent, 'changed': changed,
+                      'unchangedAuthority': unchanged_authority, 'rejectsStaleAnchor': rejected}))
+`,
+      path.resolve(import.meta.dirname, "../../../agents/hermes/runtime-config-guard.py"),
+    ],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    consistent: true,
+    changed: true,
+    unchangedAuthority: true,
+    rejectsStaleAnchor: true,
+  });
+});
 
 test.each([
   {
