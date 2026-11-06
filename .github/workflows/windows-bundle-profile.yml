@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Investigation / Windows bundle profile
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-bundle-profile.yml
+      - crates/nemoclaw-build/examples/bundle_profile_experiment.rs
+permissions:
+  contents: read
+concurrency:
+  group: windows-bundle-profile-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compare:
+    name: Windows / Codegen-unit ABBA
+    if: github.head_ref == 'perf/windows-bundle-profile' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEST_PLATFORM: windows_amd64
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: windows_amd64
+          cache-prefix: native-bundle-v1
+          save-cache: "false"
+      - name: Verify experiment rules
+        run: >-
+          cargo test --locked --target-dir target/ci-runner -p nemoclaw-build
+          --no-default-features --example bundle_profile_experiment
+      - name: Verify SDK manifest wire contract
+        run: >-
+          cargo test --locked -p nemoclaw-build
+          --example bundle_profile_experiment sdk_manifest_serializer_matches_the_checked_wire_contract
+      - name: Compare unchanged optimization with codegen units 16 and 64
+        id: compare
+        run: >-
+          cargo run --locked --target-dir target/ci-runner -p nemoclaw-build
+          --no-default-features --example bundle_profile_experiment -- --codegen-units
+      - name: Build native validation executables
+        id: native-build
+        if: always() && steps.compare.outcome == 'success'
+        run: cargo ci build
+      - name: Validate baseline native lifecycle
+        id: baseline
+        env:
+          NEXTEST_TEST_THREADS: "4"
+        if: always() && steps.compare.outcome == 'success' && steps.native-build.outcome == 'success'
+        run: |
+          target/ci-runner/debug/examples/bundle_profile_experiment.exe --restore 16
+          cargo ci lifecycle
+      - name: Preserve baseline validation timings
+        if: always() && steps.compare.outcome == 'success'
+        run: |
+          mkdir -p .build/windows-bundle-profile/validation
+          if [ -f target/nextest/lifecycle/lifecycle.xml ]; then
+            cp target/nextest/lifecycle/lifecycle.xml .build/windows-bundle-profile/validation/baseline.xml
+          fi
+          rm -f target/nextest/lifecycle/lifecycle.xml
+      - name: Validate candidate native lifecycle
+        id: candidate
+        env:
+          NEXTEST_TEST_THREADS: "4"
+        if: always() && steps.compare.outcome == 'success' && steps.native-build.outcome == 'success'
+        run: |
+          target/ci-runner/debug/examples/bundle_profile_experiment.exe --restore 64
+          cargo ci lifecycle
+      - name: Preserve candidate validation timings
+        if: always() && steps.compare.outcome == 'success'
+        run: |
+          if [ -f target/nextest/lifecycle/lifecycle.xml ]; then
+            cp target/nextest/lifecycle/lifecycle.xml .build/windows-bundle-profile/validation/candidate.xml
+          fi
+      - name: Publish comparison summary
+        if: always()
+        run: |
+          if [ -f .build/windows-bundle-profile/summary.md ]; then
+            cat .build/windows-bundle-profile/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload evidence without the bundle snapshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-bundle-profile-${{ github.run_attempt }}
+          path: |
+            .build/windows-bundle-profile/*.json
+            .build/windows-bundle-profile/*.md
+            .build/windows-bundle-profile/*.log
+            .build/windows-bundle-profile/profiles/*.toml
+            .build/windows-bundle-profile/samples/*/*.log
+            .build/windows-bundle-profile/samples/*/*.html
+            .build/windows-bundle-profile/samples/*/*.json
+            .build/windows-bundle-profile/validation/*.xml
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
