@@ -369,7 +369,8 @@ fn prepare(
 /// The reference image's case, which this suite binds to the derived image.
 const DUMMY_CASE: &str = "docker-dummy";
 
-/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image.
+/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
+/// and a workspace volume named for the UID, so runs never share one.
 fn dummy_case(
     template: &str,
     uid: &str,
@@ -385,6 +386,10 @@ fn dummy_case(
             ("http://127.0.0.1:17697", endpoint),
             ("172.30.122.0/24", subnet),
             (&zero, image),
+            (
+                "source: hcl-dummy-workspace",
+                &format!("source: hcl-dummy-workspace-{uid}"),
+            ),
         ],
     )?)
 }
@@ -572,6 +577,7 @@ mod tests {
             "  uid: u-1",
             "    networkCIDR: 172.30.9.0/24",
             "        ref: i@1",
+            "              source: hcl-dummy-workspace-u-1",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }

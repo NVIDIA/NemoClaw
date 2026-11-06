@@ -69,6 +69,7 @@ Run blocks call these modules:
 |---|---|
 | `tests/e2e/hcl/cli` | Runs one bundled `nemoclaw` command, `plan`, `apply`, or `destroy`, and reports its exit status, error, and JSON result. |
 | `tests/e2e/hcl/verifier` | Invokes agents through `hcl_live::probe` and reports targets without a reply, without an expected one-word answer, or from an unexpected runtime. |
+| `tests/e2e/hcl/volume` | Before a Docker case's first apply, creates each named volume that its sandboxes mount, with the bundled Docker provider, as a platform provides one: with OpenShell's default approval labels for the deployment's workspace and its root owned by the given sandbox identity. NemoClaw's destroy leaves the volumes, and the test removes them when the case ends. |
 | `tests/e2e/hcl/command` | Runs one fixed command per target in a named sandbox through `hcl_live::command`, with the pinned OpenShell CLI's `openshell sandbox exec`, and reports targets whose command exits nonzero, or whose output lacks the expected text or contains the forbidden text. Reports hold only the exit status and whether the output matched; the output stays in the run's private `work` directory. |
 
 | Case | Runner | Checks |
@@ -82,7 +83,7 @@ Run blocks call these modules:
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment ([Agent Interfaces](#agent-interfaces)). |
-| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage. |
+| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
@@ -205,12 +206,13 @@ To run one of them by hand, supply its inputs as its section describes.
 
 The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualify-the-reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-The agent must reply with the configured `reply` setting, a plan must report no changes, and destroy must keep only the gateway's storage.
-A second apply must then reuse that storage, refreshing rather than creating it again, run the gateway in a new container, and the agent must reply again before a final destroy.
+Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keep Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
+The agent must reply with the configured `reply` setting, the `tests/e2e/hcl/command` module must write a marker file in the workspace as that user, a plan must report no changes, and destroy must keep only the gateway's storage.
+A second apply must then reuse that storage, refreshing rather than creating it again, and run the gateway in a new container; the new sandbox must read the marker from the kept volume, and the agent must reply again before a final destroy.
 It requests no inference and does not qualify a production adapter.
 
-`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
-After the suite, it removes every resource labeled with the document's UID and the gateway's sandbox objects; when the tests pass, it fails if OpenShell left a sandbox object.
+`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, a volume name with the UID, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
+After the suite, it removes every resource labeled with the document's UID, which includes the volume, and the gateway's sandbox objects; when the tests pass, it fails if OpenShell left a sandbox object.
 To run the scenario by hand, bind the template the same way and follow [HCL E2E Scenarios](#hcl-e2e-scenarios) with `NEMOCLAW_HCL_CASE=docker-dummy` and `NEMOCLAW_HCL_DOCUMENT=/absolute/path/to/bound.yaml`.
 
 ## Agent Interfaces

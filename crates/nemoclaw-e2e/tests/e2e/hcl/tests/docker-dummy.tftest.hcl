@@ -1,11 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The reference dummy agent behind a managed Docker gateway: apply, the
-# configured reply, an unchanged plan, destroy that keeps only the gateway's
+# The reference dummy agent behind a managed Docker gateway, with its
+# workspace on a named volume: apply, the configured reply, a marker written
+# in the workspace, an unchanged plan, destroy that keeps only the gateway's
 # storage, then a redeploy that reuses that storage with a new gateway
-# container, the reply again, and destroy. It needs no model or credentials;
-# cargo ci live-docker runs it.
+# container, the marker read back in the new sandbox, the reply again, and
+# destroy. It needs no model or credentials; cargo ci live-docker runs it.
+
+# The workspace volume, which a platform provides before apply. The agent
+# image runs agents as 10001:10001 (image/fabric/Dockerfile).
+run "volume" {
+  module {
+    source = "./volume"
+  }
+
+  variables {
+    owner = "10001:10001"
+  }
+}
 
 run "apply" {
   module {
@@ -35,6 +48,29 @@ run "reply" {
         request          = { message = "dummy-lifecycle" }
         response_pointer = "/output/message"
         answer           = "dummy-reply"
+      }
+    }
+  }
+
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
+  }
+}
+
+# The agent's user writes a marker in the workspace before destroy.
+run "write_marker" {
+  module {
+    source = "./command"
+  }
+
+  variables {
+    connection = run.apply.result.connection
+    targets = {
+      write = {
+        sandbox  = "assistant"
+        command  = ["sh", "-c", "echo nemoclaw-volume-test > /sandbox/workspace/nemoclaw-volume-test && cat /sandbox/workspace/nemoclaw-volume-test"]
+        contains = "nemoclaw-volume-test\n"
       }
     }
   }
@@ -96,6 +132,30 @@ run "redeploy" {
       && contains(keys(output.changes), "docker_container.managed_gateway_runtime")
     )
     error_message = "Redeploy failed, created the gateway's storage again, or kept no new gateway container: ${output.error}"
+  }
+}
+
+# Destroy kept the volume, and the new sandbox reads the marker that the
+# destroyed one wrote.
+run "read_marker" {
+  module {
+    source = "./command"
+  }
+
+  variables {
+    connection = run.redeploy.result.connection
+    targets = {
+      read = {
+        sandbox  = "assistant"
+        command  = ["cat", "/sandbox/workspace/nemoclaw-volume-test"]
+        contains = "nemoclaw-volume-test\n"
+      }
+    }
+  }
+
+  assert {
+    condition     = length(output.failed) == 0
+    error_message = "failed: ${join(", ", output.failed)}"
   }
 }
 
