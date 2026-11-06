@@ -982,14 +982,17 @@ jobs:
             --platform "$PLATFORM"
 
       - name: Prepare passive Hermes native crash capture
+        id: hermes-crash-capture
         if: matrix.agent == 'hermes' && matrix.arch == 'amd64'
         timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
           if ! command -v gdb >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gdb
+            if ! sudo apt-get update || ! sudo apt-get install -y --no-install-recommends gdb; then
+              echo '::warning::Debugger installation failed; Hermes qualification will run without crash capture.'
+              exit 0
+            fi
           fi
           umask 077
           saved="$RUNNER_TEMP/nemoclaw-hermes-original-core-pattern"
@@ -997,6 +1000,7 @@ jobs:
           test ! -L "$saved"
           cp /proc/sys/kernel/core_pattern "$saved"
           printf '%s\n' '/tmp/nemoclaw-hermes-crash/core.%p' | sudo tee /proc/sys/kernel/core_pattern >/dev/null
+          printf '%s\n' 'enabled=true' >> "$GITHUB_OUTPUT"
 
       - name: Qualify Hermes root entrypoint and Switchyard package
         if: matrix.agent == 'hermes'
@@ -1005,7 +1009,7 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: ${{ steps.contract.outputs.reference }}
           NEMOCLAW_RUN_LIVE_E2E: "1"
-          NEMOCLAW_HERMES_CRASH_CAPTURE: ${{ matrix.arch == 'amd64' && '1' || '0' }}
+          NEMOCLAW_HERMES_CRASH_CAPTURE: ${{ matrix.arch == 'amd64' && steps.hermes-crash-capture.outputs.enabled == 'true' && '1' || '0' }}
         run: |
           npx --no-install vitest run --project e2e-live \
             test/e2e/live/hermes-root-entrypoint-smoke.test.ts

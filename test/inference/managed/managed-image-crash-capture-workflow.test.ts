@@ -48,6 +48,8 @@ describe("managed-image passive crash capture workflow", () => {
 
   it.each([
     { failure: "none", expectedPattern: original },
+    { failure: "package-update", expectedPattern: original },
+    { failure: "package-install", expectedPattern: original },
     { failure: "prepare", expectedPattern: original },
     { failure: "restore", expectedPattern: "/tmp/nemoclaw-hermes-crash/core.%p\n" },
     { failure: "read", expectedPattern: original },
@@ -60,19 +62,27 @@ describe("managed-image passive crash capture workflow", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const builder = required(workflow.jobs?.["pr-build-and-entrypoint"], "missing PR builder");
     const prepare = step(builder, "Prepare passive Hermes native crash capture");
+    const qualification = step(builder, "Qualify Hermes root entrypoint and Switchyard package");
     const cleanup = step(builder, "Restore core settings and remove private Hermes crash memory");
+    const packageFailure = failure.startsWith("package-");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-core-cleanup-"));
     const kernel = path.join(directory, "synthetic-core-pattern");
     const saved = path.join(directory, "nemoclaw-hermes-original-core-pattern");
     const privateMemory = path.join(directory, "nemoclaw-hermes-crash-owned");
     const unrelated = path.join(directory, "unrelated");
     const removed = path.join(directory, "container-removal-attempted");
+    const output = path.join(directory, "step-output");
     // Execute the workflow shell with only privileged/external boundaries replaced.
     // Real temporary files exercise restoration and deletion; no host kernel
     // setting, package manager or Docker daemon is touched.
     const boundaries = String.raw`
       gdb() { :; }
+      command() {
+        if test "$*" = '-v gdb' && test -n "$FAIL_PACKAGE"; then return 1; fi
+        builtin command "$@"
+      }
       sudo() {
+        if test "$1" = apt-get; then test "$2" != "$FAIL_PACKAGE"; return; fi
         test "$1" = tee && test "$2" = "$FAKE_KERNEL" || return 92
         test "$FAIL_WRITE" != 1 || return 1
         command tee "$FAKE_KERNEL"
@@ -113,6 +123,8 @@ describe("managed-image passive crash capture workflow", () => {
           env: {
             PATH: process.env.PATH,
             RUNNER_TEMP: directory,
+            GITHUB_OUTPUT: output,
+            FAIL_PACKAGE: packageFailure ? failure.slice("package-".length) : "",
             FAKE_KERNEL: kernel,
             SAVED: saved,
             FAILURE: phase === "cleanup" ? failure : "",
@@ -127,14 +139,29 @@ describe("managed-image passive crash capture workflow", () => {
       );
     try {
       fs.writeFileSync(kernel, original);
+      fs.writeFileSync(output, "");
       const setup = execute(required(prepare.run, "missing capture setup"), "prepare");
       expect(setup.status, setup.stderr).toBe(failure === "prepare" ? 1 : 0);
-      expect(fs.readFileSync(saved, "utf8")).toBe(original);
+      expect(fs.existsSync(saved)).toBe(!packageFailure);
+      expect(fs.readFileSync(packageFailure ? kernel : saved, "utf8")).toBe(original);
+      expect(fs.readFileSync(output, "utf8")).toBe(
+        packageFailure || failure === "prepare" ? "" : "enabled=true\n",
+      );
+      expect(prepare.id).toBe("hermes-crash-capture");
+      expect(qualification.env?.NEMOCLAW_HERMES_CRASH_CAPTURE).toBe(
+        "${{ matrix.arch == 'amd64' && steps.hermes-crash-capture.outputs.enabled == 'true' && '1' || '0' }}",
+      );
+      expect(prepare).not.toHaveProperty("continue-on-error");
+      expect(qualification).not.toHaveProperty("continue-on-error");
+      expect(cleanup).not.toHaveProperty("continue-on-error");
+      expect(cleanup.if).toBe("always() && matrix.agent == 'hermes' && matrix.arch == 'amd64'");
       fs.mkdirSync(privateMemory);
       fs.writeFileSync(path.join(privateMemory, "core"), "private synthetic process memory");
       fs.mkdirSync(unrelated);
       const result = execute(required(cleanup.run, "missing capture cleanup"), "cleanup");
-      expect(result.status, result.stderr).toBe(["none", "prepare"].includes(failure) ? 0 : 1);
+      expect(result.status, result.stderr).toBe(
+        packageFailure || ["none", "prepare"].includes(failure) ? 0 : 1,
+      );
       expect(fs.existsSync(privateMemory)).toBe(false);
       expect(fs.existsSync(unrelated)).toBe(true);
       expect(fs.existsSync(removed)).toBe(failure !== "list");

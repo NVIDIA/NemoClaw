@@ -155,7 +155,15 @@ describe("GPU inference probe script (#14069)", { timeout: 15_000 }, () => {
     `${SCOPED_HANDLE}; echo unsafe`,
   ])("rejects missing, raw, and malformed credentials before making a request", async (token) => {
     const { result, args } = await runScript(token);
-    expect(result.status).toBe("failed");
+    expect(result).toMatchObject({
+      status: "failed",
+      kind: "unreachable",
+      endpoint: `${NATIVE_BINDING.endpointUrl}/models`,
+      recovery: expect.arrayContaining([
+        "Re-run onboarding after restoring native endpoint access and scoped credentials.",
+      ]),
+    });
+    expect(JSON.stringify(result)).not.toContain("sandbox runtime exec path did not respond");
     expect(args).toBeNull();
     expect(JSON.stringify(result)).not.toContain("raw-test-secret");
   });
@@ -170,8 +178,38 @@ describe("GPU inference probe script (#14069)", { timeout: 15_000 }, () => {
     },
   );
 
-  it("rejects a failed curl even when it prints a successful HTTP code", async () => {
-    expect((await runScript(SCOPED_HANDLE, "200", 28)).result.status).toBe("failed");
+  it.each([
+    { httpCode: "000", curlStatus: 6 },
+    { httpCode: "", curlStatus: 7 },
+    { httpCode: "000", curlStatus: 28 },
+    { httpCode: "200", curlStatus: 28 },
+  ])("reports native curl failures with endpoint recovery and no retry", async (failure) => {
+    const { result, args } = await runScript(SCOPED_HANDLE, failure.httpCode, failure.curlStatus);
+    expect(result).toMatchObject({
+      status: "failed",
+      kind: "unreachable",
+      endpoint: `${NATIVE_BINDING.endpointUrl}/models`,
+      recovery: expect.arrayContaining([
+        "Check the selected local backend and its recorded native provider attachment.",
+        "Do not configure shared inference as a fallback for this native route.",
+      ]),
+    });
+    expect(JSON.stringify(result)).not.toContain("sandbox runtime exec path did not respond");
+    expect(JSON.stringify(result)).not.toContain(SCOPED_HANDLE);
+    expect(args).not.toContain("inference.local");
+  });
+
+  it("reports a native sandbox exec timeout without inferring an endpoint response", async () => {
+    const execInSandbox = vi.fn(async () => null);
+    const sleep = vi.fn();
+    const result = await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
+      ...gpuPatchOptions(),
+      resolveInferenceRoute: () => NATIVE_ROUTE,
+      deps: { execInSandbox, sleep },
+    });
+    expect(result).toMatchObject({ status: "failed", kind: "exec" });
+    expect(execInSandbox).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -200,13 +238,15 @@ describe("GPU inference probe script (#14069)", { timeout: 15_000 }, () => {
     { status: 1, stdout: "NO_CURL", stderr: "raw-test-secret" },
     { status: 0, stdout: "noise HTTP_200", stderr: "raw-test-secret" },
     { status: 0, stdout: "HTTP_200\nHTTP_503", stderr: "raw-test-secret" },
+    { status: 0, stdout: "NATIVE_INFERENCE_PROBE_FAILED", stderr: "raw-test-secret" },
+    { status: 1, stdout: "NATIVE_INFERENCE_PROBE_FAILED\nHTTP_200", stderr: "raw-test-secret" },
   ])("rejects misleading exec output without disclosing it", async (response) => {
     const result = await verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
       ...gpuPatchOptions(),
       resolveInferenceRoute: () => NATIVE_ROUTE,
       deps: { execInSandbox: vi.fn(async () => response), sleep: vi.fn() },
     });
-    expect(result.status).toBe("failed");
+    expect(result).toMatchObject({ status: "failed", kind: "exec" });
     expect(JSON.stringify(result)).not.toContain("raw-test-secret");
   });
 });

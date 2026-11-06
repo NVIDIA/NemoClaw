@@ -269,7 +269,7 @@ async function probeSandboxRuntimeInference(
 ): Promise<RuntimeProbeOutcome> {
   // Keep the qualified endpoint in one shell argument.
   const safeEndpoint = `'${endpoint.replace(/'/g, "'\\''")}'`;
-  const script =
+  const probeScript =
     `if ! command -v curl >/dev/null 2>&1; then echo NO_CURL; exit 0; fi; ` +
     (nativeLocal ? `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; ` : "") +
     `code=$(curl -q -so /dev/null -w '%{http_code}' ` +
@@ -278,6 +278,11 @@ async function probeSandboxRuntimeInference(
     `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null)` +
     (nativeLocal ? ` || exit $?; ` : ` || code=000; `) +
     `echo "HTTP_$code"`;
+  // An exit status alone cannot distinguish a native probe failure from exec
+  // rejection. Emit a fixed marker only after the sandbox runs the probe.
+  const script = nativeLocal
+    ? `( ${probeScript} ) || { status=$?; echo NATIVE_INFERENCE_PROBE_FAILED; exit "$status"; }`
+    : probeScript;
   const probe = async (): Promise<RuntimeProbeOutcome> => {
     const result = await deps.execInSandbox(sandboxName, script);
     if (result === null) {
@@ -287,13 +292,19 @@ async function probeSandboxRuntimeInference(
       };
     }
 
+    const out = (result.stdout || "").trim();
+    if (nativeLocal && result.status !== 0 && out === "NATIVE_INFERENCE_PROBE_FAILED") {
+      return {
+        kind: "unreachable",
+        detail: "native inference probe failed (scoped credential or endpoint transport error)",
+      };
+    }
     if (result.status !== 0) {
       return {
         kind: "exec-failed",
         detail: "sandbox inference probe failed (credential or transport error)",
       };
     }
-    const out = (result.stdout || "").trim();
     if (out === "NO_CURL") return { kind: "no-curl" };
     const match = out.match(/^HTTP_(\d{3})$/);
     if (match) {

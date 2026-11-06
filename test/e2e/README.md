@@ -33,7 +33,9 @@ jobs require it before exporting their validated image contracts. Their architec
 artifacts retain the probe results, including failures. Both architectures must pass for
 Switchyard release qualification; a startup-hold result alone does not qualify the package.
 
-The PR Hermes amd64 job enables passive crash diagnostics for the isolated package probe.
+The PR Hermes amd64 job enables passive crash diagnostics for the isolated package probe
+only after preparation succeeds. If debugger package installation fails, qualification runs
+without crash capture. Core-setting and cleanup failures still fail the job.
 Python's fault handler records Python stacks; the probe records executable identity and memory
 mappings before and after native shutdown. Only that probe raises its core soft limit, to 256 MiB.
 On exit 134 or 139, host GDB reads the core against the still-running container's executable and
