@@ -395,16 +395,6 @@ test(
       timeoutMs: 10_000,
     });
     expect(recoveredContainerId).toBe(sourceContainerId);
-    await artifacts.writeJson("cold-openclaw-recovery.json", {
-      sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
-      runtime: runtimeProvider.id,
-      sandboxId: sourceSandboxId,
-      sourceContainerId,
-      recoveredContainerId,
-      recoverExitCode: recover.exitCode,
-      nativeHealthStatus: nativeHealth.stdout.trim(),
-      forwardedHealthStatus: forwardedHealth.stdout.trim(),
-    });
 
     progress.phase("destroy the sandbox");
     await sandbox.cleanupSandbox(SANDBOX_NAME, {
@@ -427,6 +417,17 @@ test(
     await artifacts.target.complete({
       id: "sandbox-survival",
       status: "passed",
+      coldRecovery: {
+        sourceRevision: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
+        runtime: runtimeProvider.id,
+        sandboxId: sourceSandboxId,
+        recoveredSandboxIds: recoveredIds,
+        sourceContainerId,
+        recoveredContainerId,
+        recoverExitCode: recover.exitCode,
+        nativeHealthStatus: nativeHealth.stdout.trim(),
+        forwardedHealthStatus: forwardedHealth.stdout.trim(),
+      },
       assertions: {
         installCompleted: install.exitCode === 0,
         openshellStopStartCompleted: true,
@@ -434,6 +435,14 @@ test(
         nativeAgentReadyAfterStart: true,
         markersPersistedAfterRestart: true,
         nativePluginInvokedAfterRestart: true,
+        firstPublicRecoverSucceeded: recover.exitCode === 0,
+        nativeHealthAfterRecover:
+          nativeHealth.exitCode === 0 && /^(?:200|401)$/u.test(nativeHealth.stdout.trim()),
+        forwardedHealthAfterRecover:
+          forwardedHealth.exitCode === 0 && /^(?:200|401)$/u.test(forwardedHealth.stdout.trim()),
+        sandboxIdentityPreservedAfterRecover:
+          recoveredIds.length === 1 && recoveredIds[0] === sourceSandboxId,
+        containerIdentityPreservedAfterRecover: recoveredContainerId === sourceContainerId,
         destroyedAtEnd,
       },
     });
