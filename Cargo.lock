@@ -3618,12 +3618,13 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5d25211b25a8fc887e8d5c606d57d6ab22f1d76c#5d25211b25a8fc887e8d5c606d57d6ab22f1d76c"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "glob",
  "ipnet",
+ "libc",
  "miette",
  "nix 0.29.0",
  "openshell-crypto",
@@ -3634,7 +3635,6 @@ dependencies = [
  "protoc-bin-vendored",
  "rustix",
  "rustls",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3653,7 +3653,7 @@ dependencies = [
 [[package]]
 name = "openshell-crypto"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5d25211b25a8fc887e8d5c606d57d6ab22f1d76c#5d25211b25a8fc887e8d5c606d57d6ab22f1d76c"
 dependencies = [
  "aws-lc-rs",
  "jsonwebtoken",
@@ -3671,7 +3671,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5d25211b25a8fc887e8d5c606d57d6ab22f1d76c#5d25211b25a8fc887e8d5c606d57d6ab22f1d76c"
 dependencies = [
  "hyper-util",
  "serde",
@@ -3684,7 +3684,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5d25211b25a8fc887e8d5c606d57d6ab22f1d76c#5d25211b25a8fc887e8d5c606d57d6ab22f1d76c"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -3698,7 +3698,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47#ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=5d25211b25a8fc887e8d5c606d57d6ab22f1d76c#5d25211b25a8fc887e8d5c606d57d6ab22f1d76c"
 dependencies = [
  "miette",
  "noyalib",
@@ -4777,15 +4777,6 @@ dependencies = [
  "rustls-pki-types",
  "schannel",
  "security-framework",
-]
-
-[[package]]
-name = "rustls-pemfile"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
-dependencies = [
- "rustls-pki-types",
 ]
 
 [[package]]
