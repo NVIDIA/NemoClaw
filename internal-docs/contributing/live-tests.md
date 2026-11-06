@@ -78,8 +78,6 @@ Run blocks call these modules:
 
 | Case | Runner | Checks |
 |---|---|---|
-| Case | Runner | Agent and reply |
-|---|---|---|
 | `docker-openclaw-nvidia` | Live / HCL | OpenClaw on NVIDIA hosted inference; any reply. |
 | `docker-openclaw-v0-parity` | Live / HCL and Live / Brev | The [hosted parity](#hosted-nvidia-parity) OpenClaw document; `FOUR`. |
 | `docker-hermes-v0-parity` | Live / HCL | The hosted parity Hermes document; `FOUR`. |

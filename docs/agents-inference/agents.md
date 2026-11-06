@@ -38,8 +38,9 @@ Use several sandbox definitions to isolate agents, credentials, and lifecycles.
 The [multiple-agent example](../../examples/multiple-models.yaml) demonstrates shared inference definitions with independent sandbox selections.
 An agent's model choices do not restrict other processes within its sandbox beyond the sandbox's provider and network policy.
 
-### Run One Deep Agents or Pi Request
+### Run One Agent Request
 
+Every harness takes a request through the same Fabric command; the [headless OpenClaw request](#run-one-headless-openclaw-request) shows a complete example.
 Use the exact adapter's public Fabric input contract and inspect its public result contract.
 Inside the sandbox, `fabric-agent-ctl invoke --agent NAME --runtime-id ID --input FILE` sends one JSON value from a file to the running agent and returns Fabric's run result in `result`.
 `NAME` is the agent's YAML `agent.name`, and `ID` is its current runtime ID.

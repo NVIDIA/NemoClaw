@@ -76,7 +76,7 @@ Agents:
 JSON results carry the same facts under `agents`, keyed by sandbox name: `agent`, the agent's name, and `runtimeId`. If an apply result also lists interfaces, the CLI prints the gateway and workspace selection once under **Agents**, not again under **Agent interfaces**.
 A plan lists them under **Agents, as last applied**: its changes can replace a runtime, and the next apply reports the new ID.
 An agent without a recorded runtime, such as before the first apply, is listed with `no runtime recorded` and has no `runtimeId`.
-[Run one request](agents.md#run-one-deep-agents-or-pi-request) shows the command and its input.
+[Run one request](agents.md#run-one-agent-request) shows the command and its input.
 The selected Fabric adapter owns how the harness handles the request.
 
 ## Forward a Native Service

@@ -41,4 +41,4 @@ Keep the image, schema, and bundle matched to the desired configuration.
 
 The [configuration validator](../../crates/nemoclaw-sdk/src/config/validation.rs) checks deployment structure and transport contracts.
 [Fabric compatibility assessment](../../crates/nemoclaw-fabric/src/capabilities.rs) checks the advertised native constraints for both onboarding and OpenTofu planning.
-The [first-request procedure](../agents-inference/agents.md#run-one-deep-agents-or-pi-request) has been rehearsed with Hermes, Deep Agents, Pi and OpenCode; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
+The [first-request procedure](../agents-inference/agents.md#run-one-agent-request) has been rehearsed with Hermes, Deep Agents, Pi and OpenCode; a tested harness, model and platform matrix is tracked in [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641).
