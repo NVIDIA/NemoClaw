@@ -210,7 +210,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 describe.skipIf(process.platform === "win32")(
   "Hermes restored native credential transaction",
   () => {
-    it.each(["local", "nvidia"])(
+    it.each(["local", "nvidia", "nvidia-stripped"])(
       "bounds restored %s adoption and preserves denials and recovery fences",
       (provider) => {
         const result = spawnSync(
@@ -232,12 +232,14 @@ class GatewayConfig:
 sys.modules['gateway.config']=types.SimpleNamespace(GatewayConfig=GatewayConfig)
 # Model an admitted managed nonroot topology; do not alter any hash/digest/path/race predicates.
 guard._managed_nonroot_reconciliation_is_allowed=lambda:True
-nvidia = sys.argv[2] == 'nvidia'
+nvidia = sys.argv[2].startswith('nvidia')
+stripped = sys.argv[2] == 'nvidia-stripped'
 
 
 def sha(b):return hashlib.sha256(b).hexdigest()
 def run(case):
  with tempfile.TemporaryDirectory(prefix='hermes-restored-') as t:
+  os.chown(t,os.geteuid(),os.getegid())
   r=pathlib.Path(t);s=r/'sandbox';h=s/'.hermes';h.mkdir(parents=True)
   os.chmod(s,0o770);os.chmod(h,0o700)
   config=h/'config.yaml';env=h/'.env';compat=h/'.config-hash';strict=r/'strict';state=r/'state.json'
@@ -247,7 +249,7 @@ def run(case):
   def body(ref):
    data=local_body(ref)
    return data.replace(b'compatible-endpoint',b'nvidia-prod').replace(b'http://host.openshell.internal:8000/v1',b'https://integrate.api.nvidia.com/v1').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'NVIDIA_INFERENCE_API_KEY') if nvidia and not case.startswith('registered-') else data
-  old=body('openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN');fresh=body('openshell:resolve:env:v8_NEMOCLAW_LOCAL_INFERENCE_TOKEN')
+  old=body('[STRIPPED_BY_MIGRATION]' if stripped and not case.startswith('registered-') else 'openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN');fresh=body('openshell:resolve:env:v8_NEMOCLAW_LOCAL_INFERENCE_TOKEN')
   if case.startswith('registered-'):
    old=old.replace(b'compatible-endpoint',b'operator-provider').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'VENDOR_API_KEY')
    fresh=fresh.replace(b'compatible-endpoint',b'operator-provider').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'VENDOR_API_KEY')

@@ -185,14 +185,18 @@ export function createInitialHermesInferenceRoute(
         selected.registered,
       );
       if (options.projection === "credential") {
-        refreshHermesNativeLocalCredential(config, {
-          upstreamProvider: provider,
-          model,
-          baseUrl: route.inferenceBaseUrl,
-          inferenceApi: route.inferenceApi,
-          nativeCredentialHandle: handle,
-          registeredCredentialEnv: selected.registered?.credentialEnv,
-        });
+        refreshHermesNativeLocalCredential(
+          config,
+          {
+            upstreamProvider: provider,
+            model,
+            baseUrl: route.inferenceBaseUrl,
+            inferenceApi: route.inferenceApi,
+            nativeCredentialHandle: handle,
+            registeredCredentialEnv: selected.registered?.credentialEnv,
+          },
+          { recoverStrippedNvidia: nvidia && options.workload === "registered" },
+        );
       }
       assertCurrent(`apply initial Hermes inference route in sandbox '${sandboxName}'`);
       if (options.projection === "credential") {

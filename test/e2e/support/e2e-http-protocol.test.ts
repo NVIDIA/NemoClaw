@@ -3,6 +3,7 @@
 
 import http from "node:http";
 import https from "node:https";
+import { createSecureContext, type ConnectionOptions } from "node:tls";
 import { describe, expect, it } from "vitest";
 import {
   closeServer,
@@ -72,6 +73,9 @@ describe("fake provider HTTP protocol", () => {
       initialRefreshToken: "fixture-refresh",
     };
     const fixture = await startRuntimeIdentityOAuthServer(options);
+    const tlsOptions: ConnectionOptions = {
+      secureContext: createSecureContext({ ca: fixture.certificate }),
+    };
     const exchange = (refreshToken: string) =>
       new Promise<{ status: number | undefined; body: Record<string, unknown> }>(
         (resolve, reject) => {
@@ -81,7 +85,7 @@ describe("fake provider HTTP protocol", () => {
               port: fixture.port,
               path: "/oauth/token",
               method: "POST",
-              ca: fixture.certificate,
+              ...tlsOptions,
               headers: { "content-type": "application/x-www-form-urlencoded" },
             },
             (response) => {

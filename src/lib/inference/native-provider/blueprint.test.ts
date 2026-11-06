@@ -853,9 +853,9 @@ type ResumeFaultCase = [
 
 describe("blueprint configuration resume", () => {
   it.each([
-    ["symlink", (directory: string, retained: string) => fs.symlinkSync(retained, directory), 0],
+    ["symlink", (directory: string, retained: string) => fs.symlinkSync(retained, directory), 1],
     ["directory", (directory: string) => fs.mkdirSync(directory), 1],
-    ["file", (directory: string) => fs.writeFileSync(directory, "unrelated file"), 0],
+    ["file", (directory: string) => fs.writeFileSync(directory, "unrelated file"), 1],
   ] as const)(
     "refuses a %s replacing the run directory after receipt publication",
     async (_replacement, replace, closedDescriptors) => {
@@ -895,12 +895,17 @@ describe("blueprint configuration resume", () => {
     try {
       expect(() => findBlueprintNativeReceipt(f.input)).toThrow("incomplete");
       await f.resume();
-      const completed = JSON.parse(fs.readFileSync(f.file, "utf8"));
-      expect(completed).toEqual({
-        ...f.plan,
-        native_inference: { ...f.plan.native_inference, configPublished: true },
-      });
-      expect(fs.statSync(f.file).mode & 0o777).toBe(0o600);
+      const completedFd = fs.openSync(f.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const completed = JSON.parse(fs.readFileSync(completedFd, "utf8"));
+        expect(completed).toEqual({
+          ...f.plan,
+          native_inference: { ...f.plan.native_inference, configPublished: true },
+        });
+        expect(fs.fstatSync(completedFd).mode & 0o777).toBe(0o600);
+      } finally {
+        fs.closeSync(completedFd);
+      }
       expect(f.deps.writeConfig).toHaveBeenCalledWith(
         f.input.sandboxName,
         expect.arrayContaining([
@@ -918,7 +923,12 @@ describe("blueprint configuration resume", () => {
       expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
       expect(f.adapter.detachProvider).not.toHaveBeenCalled();
       expect(f.input.createSandbox).not.toHaveBeenCalled();
-      expect(fs.readFileSync(f.file, "utf8")).not.toContain("test-host-secret");
+      const finalFd = fs.openSync(f.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        expect(fs.readFileSync(finalFd, "utf8")).not.toContain("test-host-secret");
+      } finally {
+        fs.closeSync(finalFd);
+      }
     } finally {
       fs.rmSync(f.home, { recursive: true, force: true });
     }

@@ -20,16 +20,25 @@ describe("Gateway destination CA snapshots", () => {
   it("stores normalized public certificates once and retains previous generations", () => {
     const root = tmpDir();
     const first = stageGatewayNetworkTrust(root, PEM);
-    const inode = fs.statSync(first.path).ino;
+    const readSnapshot = (file: string) => {
+      const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        return { metadata: fs.fstatSync(fd), content: fs.readFileSync(fd, "utf8") };
+      } finally {
+        fs.closeSync(fd);
+      }
+    };
+    const initial = readSnapshot(first.path);
+    const inode = initial.metadata.ino;
     expect(first.sha256).toBe(createHash("sha256").update(PEM).digest("hex"));
-    expect(fs.statSync(first.path).mode & 0o777).toBe(0o444);
+    expect(initial.metadata.mode & 0o777).toBe(0o444);
     expect(fs.statSync(path.dirname(first.path)).mode & 0o777).toBe(0o700);
     expect(stageGatewayNetworkTrust(root, PEM)).toEqual(first);
-    expect(fs.statSync(first.path).ino).toBe(inode);
+    expect(readSnapshot(first.path).metadata.ino).toBe(inode);
     const rotated = stageGatewayNetworkTrust(root, PEM + PEM);
     expect(rotated.sha256).not.toBe(first.sha256);
-    expect(fs.readFileSync(first.path, "utf8")).toBe(PEM);
-    expect(fs.readFileSync(rotated.path, "utf8")).toBe(PEM + PEM);
+    expect(readSnapshot(first.path).content).toBe(PEM);
+    expect(readSnapshot(rotated.path).content).toBe(PEM + PEM);
     expect(fs.readdirSync(path.dirname(first.path))).toHaveLength(2);
   });
 
