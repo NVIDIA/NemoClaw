@@ -3119,6 +3119,7 @@ dependencies = [
  "nemoclaw-sdk",
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
+ "nix 0.29.0",
  "openshell-core",
  "openshell-provider",
  "prost",

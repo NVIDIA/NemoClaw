@@ -298,6 +298,155 @@ async fn kubernetes_operations(
     })
 }
 
+/// Open a terminal UI in a sandbox with `openshell sandbox exec --tty` in a
+/// 40-by-120 pseudo-terminal, as a person would from a terminal: wait for the
+/// ready text, type the prompt, then Enter, which a terminal UI reads as a
+/// paste when it arrives with the prompt; wait for the reply; then press
+/// Ctrl-D and wait for the command to exit. A `TOKEN` argument becomes the
+/// token that `TOKEN_PATH` names, read with `openshell sandbox exec`. The
+/// published report holds the exit status and the steps that saw their text;
+/// the screen output and the token stay private for `hcl/terminal`.
+#[cfg(unix)]
+#[test]
+#[ignore = "run by tests/e2e/hcl/terminal for one target"]
+fn terminal() {
+    use nix::pty::{Winsize, openpty};
+    use std::{io::Read as _, sync::Mutex, time::Instant};
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let sandbox = input("SANDBOX");
+    let token = match input("TOKEN_PATH").as_str() {
+        "" => None,
+        path => {
+            let output = sandbox_exec(&sandbox, &["cat", path]).output().unwrap();
+            assert!(output.status.success(), "cannot read the interface's token");
+            Some(String::from_utf8(output.stdout).unwrap().trim().to_owned())
+        }
+    };
+    let command: Vec<String> = serde_json::from_str(&input("COMMAND")).unwrap();
+    let command: Vec<&str> = command
+        .iter()
+        .map(|argument| match (&token, argument.as_str()) {
+            (Some(token), "TOKEN") => token.as_str(),
+            _ => argument.as_str(),
+        })
+        .collect();
+    let size = Winsize {
+        ws_row: 40,
+        ws_col: 120,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let pty = openpty(Some(&size), None).unwrap();
+    let mut exec = openshell();
+    exec.args(["sandbox", "exec", "-n", &sandbox, "--tty", "--"])
+        .args(&command)
+        .stdin(pty.slave.try_clone().unwrap())
+        .stdout(pty.slave.try_clone().unwrap())
+        .stderr(pty.slave.try_clone().unwrap());
+    let mut child = exec.spawn().unwrap();
+    // Reading the terminal ends once no process holds its other side open.
+    drop(exec);
+    drop(pty.slave);
+    let screen = Arc::new(Mutex::new(Vec::new()));
+    let reader = {
+        let screen = Arc::clone(&screen);
+        let mut master = fs::File::from(pty.master.try_clone().unwrap());
+        std::thread::spawn(move || {
+            let mut buffer = [0; 8192];
+            // Reading fails with EIO once the command closes the terminal.
+            while let Ok(read @ 1..) = master.read(&mut buffer) {
+                screen.lock().unwrap().extend_from_slice(&buffer[..read]);
+            }
+        })
+    };
+    let mut master = fs::File::from(pty.master);
+    let shown = |text: &str, within: Duration| {
+        let deadline = Instant::now() + within;
+        loop {
+            if visible(&screen.lock().unwrap()).contains(text) {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+    let ready = shown(&input("READY"), Duration::from_secs(60));
+    let replied = ready && {
+        master.write_all(input("PROMPT").as_bytes()).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        master.write_all(b"\r").unwrap();
+        shown(&input("REPLY"), Duration::from_secs(60))
+    };
+    let _ = master.write_all(b"\x04");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    drop(master);
+    let _ = reader.join();
+    fs::write(input("OUTPUT"), visible(&screen.lock().unwrap())).unwrap();
+    fs::write(
+        input("REPORT"),
+        json!({"sandbox": sandbox, "ready": ready, "replied": replied,
+            "exit_code": status.and_then(|status| status.code())})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// What a terminal shows of `output`, roughly: its text without control
+/// sequences.
+#[cfg(unix)]
+fn visible(output: &[u8]) -> String {
+    let text = String::from_utf8_lossy(output);
+    let mut shown = String::with_capacity(text.len());
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        match (character, characters.peek()) {
+            // CSI: parameters and intermediates, then one final byte.
+            ('\x1b', Some('[')) => {
+                characters.next();
+                for character in characters.by_ref() {
+                    if ('@'..='~').contains(&character) {
+                        break;
+                    }
+                }
+            }
+            // OSC, DCS and the like: up to BEL or ST.
+            ('\x1b', Some(']' | 'P' | '_' | '^')) => {
+                while let Some(character) = characters.next() {
+                    if character == '\x07'
+                        || (character == '\x1b' && characters.next_if_eq(&'\\').is_some())
+                    {
+                        break;
+                    }
+                }
+            }
+            // A character set designation: two more characters.
+            ('\x1b', Some('(' | ')')) => {
+                characters.next();
+                characters.next();
+            }
+            ('\x1b', Some(_)) => {
+                characters.next();
+            }
+            (character, _) if character.is_control() && character != '\n' => {}
+            (character, _) => shown.push(character),
+        }
+    }
+    shown
+}
+
 /// The managed Kubernetes gateway that `binding` records, reached as the
 /// SDK's providers reach it: through the port-forward the returned connection
 /// holds, with the token and TLS files in its environment.
@@ -723,4 +872,13 @@ fn timing_tables_list_each_run_in_order_with_their_total() {
          | apply | 40.2 s |\n\
          | destroy | 33.8 s |\n"
     );
+}
+
+/// The terminal probe matches text a terminal UI shows, which arrives among
+/// colors, a window title, cursor moves, and character set changes.
+#[cfg(unix)]
+#[test]
+fn visible_text_drops_control_sequences() {
+    let output = b"\x1b]0;openclaw tui\x07\x1b(B\x1b[?25l\x1b[1;32mconnected\x1b[0m | idle\r\n\x1b[2Knemoclaw-stub-reply";
+    assert_eq!(visible(output), "connected | idle\nnemoclaw-stub-reply");
 }

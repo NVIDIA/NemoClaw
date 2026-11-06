@@ -62,5 +62,9 @@ futures-util.workspace = true
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
+[target.'cfg(unix)'.dev-dependencies]
+# hcl_live::terminal opens a terminal UI in a pseudo-terminal.
+nix.workspace = true
+
 [lints]
 workspace = true
