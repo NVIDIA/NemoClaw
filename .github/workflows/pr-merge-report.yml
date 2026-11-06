@@ -68,6 +68,17 @@ jobs:
           else
             printf 'Reporter installation: reports start with the next merged PR.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Record publication inputs
+        if: steps.installed.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
+          git diff --exit-code -- tools/ci/pr-merge-report.rs
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq 'add | [.[] | select(.body | contains("<!-- agent-session-report:v1 -->")) | {id,body}] | sort_by(.id)' > "$RUNNER_TEMP/opening-before.json"
       - name: Compile the trusted reporter
         if: steps.installed.outputs.available == 'true'
         run: rustc --edition=2024 -D warnings tools/ci/pr-merge-report.rs -o "$RUNNER_TEMP/merge-report"
@@ -78,10 +89,46 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post > "$RUNNER_TEMP/merge-outcomes.md"
-          cat "$RUNNER_TEMP/merge-outcomes.md" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Verify hosted publication
         if: steps.installed.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          comments="repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100"
+          gh api --paginate --slurp "$comments" > "$RUNNER_TEMP/comments-after.json"
+          jq 'add | [.[] | select(.body | contains("<!-- agent-session-report:v1 -->")) | {id,body}] | sort_by(.id)' "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/opening-after.json"
+          cmp "$RUNNER_TEMP/opening-before.json" "$RUNNER_TEMP/opening-after.json"
+          query='add | [.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- nemoclaw-merge-report:v1 -->"))) | {id,body}]'
+          jq "$query" "$RUNNER_TEMP/comments-after.json" > "$RUNNER_TEMP/report-before-retry.json"
+          jq -e --arg head "$PR_HEAD_SHA" 'length == 1 and (.[0].body | startswith("<details>")) and (.[0].body | contains($head))' "$RUNNER_TEMP/report-before-retry.json"
+          "$RUNNER_TEMP/merge-report" "$GITHUB_REPOSITORY" "$PR_NUMBER" --post > "$RUNNER_TEMP/duplicate-preview.md"
+          gh api --paginate --slurp "$comments" --jq "$query" > "$RUNNER_TEMP/report-after-retry.json"
+          cmp "$RUNNER_TEMP/report-before-retry.json" "$RUNNER_TEMP/report-after-retry.json"
+          changed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | select(.filename == "tools/ci/pr-merge-report.rs") | .filename')"
+          jq -n --arg workflow "$GITHUB_WORKFLOW_SHA" --arg reporter "$(git rev-parse HEAD)" \
+            --arg blob "$(git rev-parse HEAD:tools/ci/pr-merge-report.rs)" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson opening_count "$(jq length "$RUNNER_TEMP/opening-before.json")" \
+            --arg repository "$GITHUB_REPOSITORY" --arg number "$PR_NUMBER" --arg head "$PR_HEAD_SHA" \
+            --arg fork "$PR_HEAD_REPOSITORY" --arg changed "$changed" \
+            '{workflow_revision:$workflow,reporter_revision:$reporter,reporter_blob:$blob,run_id:$run,run_attempt:$attempt,repository:$repository,pr:$number,pr_head:$head,opening_report_count:$opening_count,
+              fork_modified_reporter:($fork != "" and $fork != $repository and $changed != ""),
+              trusted_checkout:true,publication_readback:true,opening_preserved:true,duplicate_avoided:true}' > "$RUNNER_TEMP/merge-outcomes-receipt.json"
+      - name: Retain the generated report
+        id: evidence
+        if: always() && steps.installed.outputs.available == 'true'
+        run: |
+          if [ -s "$RUNNER_TEMP/merge-outcomes.md" ]; then
+            printf 'available=true\n' >> "$GITHUB_OUTPUT"
+            cat "$RUNNER_TEMP/merge-outcomes.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.evidence.outputs.available == 'true'
         with:
           name: merge-outcomes
-          path: ${{ runner.temp }}/merge-outcomes.md
+          path: |
+            ${{ runner.temp }}/merge-outcomes.md
+            ${{ runner.temp }}/merge-outcomes-receipt.json
           retention-days: 90

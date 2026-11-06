@@ -191,8 +191,8 @@ type Result<T> = std::result::Result<T, String>;
 
 // gh applies these jq expressions to each API page. TSV escapes control characters,
 // so an untrusted check name cannot create additional records or fields.
-const PR_QUERY: &str = r#"[.merged,.base.ref,.head.sha,.head.ref,.created_at,.merged_at,(.merged_at | if . == null then -1 else fromdateiso8601 end),.additions,.deletions,.changed_files,(.created_at|fromdateiso8601)] | @tsv"#;
-const RUN_QUERY: &str = r#"[.id,.head_sha,(.created_at|fromdateiso8601),.workflow_id,(.head_branch // ""),([(.pull_requests // [])[].number]|join(","))] | @tsv"#;
+const PR_QUERY: &str = r#"[.merged,.base.ref,.head.sha,.head.ref,.created_at,.merged_at,(.merged_at | if . == null then -1 else fromdateiso8601 end),.additions,.deletions,.changed_files,(.created_at|fromdateiso8601),(.head.repo.id // 0)] | @tsv"#;
+const RUN_QUERY: &str = r#"[.id,.head_sha,(.created_at|fromdateiso8601),.workflow_id,(.head_branch // ""),([(.pull_requests // [])[].number]|join(",")),(.head_repository.id // 0)] | @tsv"#;
 const CHECK_QUERY: &str = r#"def stamp: if . == null then -1 else fromdateiso8601 end; .check_runs[] | [.id,.name,.app.id,.app.slug,(.started_at|stamp),(.completed_at|stamp),(.conclusion // "unfinished"),(.details_url // "")] | @tsv"#;
 const REVIEW_QUERY: &str = r#".[] | select(.submitted_at != null) | [.id,.state,.commit_id,(.submitted_at|fromdateiso8601)] | @tsv"#;
 
@@ -228,7 +228,7 @@ impl Api {
 
     fn pr(&self) -> Result<Vec<String>> {
         let mut rows = self.rows(&format!("pulls/{}", self.number), PR_QUERY)?;
-        if rows.len() != 1 || rows[0].len() != 11 {
+        if rows.len() != 1 || rows[0].len() != 12 {
             return Err("Incomplete PR metadata".into());
         }
         let row = rows.remove(0);
@@ -252,6 +252,7 @@ impl Api {
     fn collect(&self, pr: &[String]) -> Result<Report> {
         let merged: i64 = number(&pr[6])?;
         let opened: i64 = number(&pr[10])?;
+        let head_repository: u64 = number(&pr[11])?;
         let mut report = Report {
             repo: self.repo.clone(),
             number: self.number,
@@ -307,12 +308,17 @@ impl Api {
                 }
                 continue;
             }
-            fields(&row, 6)?;
+            fields(&row, 7)?;
             let id = number(&row[0])?;
             let run = Run::parse(&row)?;
             if run.created >= opened
                 && run.created <= merged
-                && run.belongs(self.number, &pr[3], commits.contains(&run.sha))
+                && run.belongs(
+                    self.number,
+                    &pr[3],
+                    head_repository,
+                    commits.contains(&run.sha),
+                )
             {
                 commits.insert(run.sha.clone());
                 report.observe(&run.sha, run.created);
@@ -351,7 +357,7 @@ impl Api {
                     if run.sha != sha
                         || run.created < opened
                         || run.created > merged
-                        || !run.belongs(self.number, &pr[3], true)
+                        || !run.belongs(self.number, &pr[3], head_repository, true)
                     {
                         continue;
                     }
@@ -395,7 +401,10 @@ impl Api {
 
     fn post(&self, original: &[String], body: &str) -> Result<()> {
         let current = self.pr()?;
-        if current[1..3] != original[1..3] || current[5] != original[5] {
+        if current[1..3] != original[1..3]
+            || current[5] != original[5]
+            || current[11] != original[11]
+        {
             return Err("PR identity changed during collection".into());
         }
         if self.existing()? {
@@ -447,10 +456,11 @@ struct Run {
     workflow: u64,
     branch: String,
     prs: String,
+    repository: u64,
 }
 impl Run {
     fn parse(row: &[String]) -> Result<Self> {
-        fields(row, 6)?;
+        fields(row, 7)?;
         validate_sha(&row[1])?;
         Ok(Self {
             sha: row[1].clone(),
@@ -458,11 +468,16 @@ impl Run {
             workflow: number(&row[3])?,
             branch: row[4].clone(),
             prs: row[5].clone(),
+            repository: number(&row[6])?,
         })
     }
-    fn belongs(&self, pr: u64, branch: &str, known_commit: bool) -> bool {
+    fn belongs(&self, pr: u64, branch: &str, repository: u64, known_commit: bool) -> bool {
         self.prs.split(',').any(|n| n == pr.to_string())
-            || (self.prs.is_empty() && self.branch == branch && known_commit)
+            || (self.prs.is_empty()
+                && self.branch == branch
+                && repository != 0
+                && self.repository == repository
+                && known_commit)
     }
 }
 
@@ -525,7 +540,7 @@ fn comment_body(body: &str) -> String {
     }
     let end = body[..end].rfind('\n').unwrap_or(end);
     format!(
-        "{}\n\nTiming rows truncated to fit GitHub's comment limit. The full report is in this workflow run's summary and merge-outcomes artifact.\n\n</details>\n",
+        "{}\n\nTiming rows truncated to fit GitHub's comment limit. The workflow attempts to retain the full report in its summary and merge-outcomes artifact; check the workflow result if either is unavailable.\n\n</details>\n",
         &body[..end]
     )
 }
