@@ -5,7 +5,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { type DockerCommandResult, DockerProbe, resultText } from "../fixtures/docker-probe.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
-import { HERMES_SWITCHYARD_PACKAGE_PROBE } from "../fixtures/hermes-switchyard-package.ts";
+import {
+  HERMES_SWITCHYARD_PACKAGE_PROBE,
+  HERMES_SWITCHYARD_ROUTED_BOOTSTRAP,
+  HERMES_SWITCHYARD_ROUTED_EVIDENCE,
+} from "../fixtures/hermes-switchyard-package.ts";
 import { captureHermesCrash, hermesCrashCaptureArgs } from "../fixtures/hermes-crash-capture.ts";
 
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
@@ -724,6 +728,65 @@ test(
       async ({ containers, image, probe, runId }) => {
         context.progress.phase("validate clean Hermes root-entrypoint readiness");
         await runCleanVariant(probe, image, runId, containers, { artifacts, shellProbe });
+      },
+    );
+  },
+);
+
+test(
+  "starts the routed gateway after the packaged judge qualifies production routing files",
+  {
+    meta: {
+      e2ePhases: [
+        "check Docker and prepare the Hermes root-entrypoint image",
+        "validate routed Hermes root-entrypoint readiness",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+    const context = { artifacts, cleanup, progress, secrets, signal, skip };
+    await runRootEntrypointScenario(
+      context,
+      {
+        id: "routed-startup",
+        assertion: "routedStartupVerified",
+        contract: [
+          "the real entrypoint qualifies root-owned routing files before starting the gateway",
+          "the packaged router classifies and answers through authenticated local fixtures",
+          "the gateway reaches readiness as its gateway user with routing activation configured",
+          "fixture providers use resolver placeholders and cannot contact external services",
+        ],
+      },
+      async ({ containers, image, probe, runId }) => {
+        progress.phase("validate routed Hermes root-entrypoint readiness");
+        const container = `nemoclaw-hermes-root-routed-${runId}`;
+        containers.push(container);
+        await probe.expect(
+          [
+            "run",
+            "-d",
+            "--network",
+            "none",
+            "--user",
+            "root",
+            "--name",
+            container,
+            "--entrypoint",
+            "/bin/bash",
+            image,
+            "-c",
+            HERMES_SWITCHYARD_ROUTED_BOOTSTRAP,
+          ],
+          { artifactName: "start-routed-root-entrypoint-container", timeoutMs: RUN_TIMEOUT_MS },
+        );
+        await waitForHealth(probe, container);
+        await assertGatewayProcess(probe, container);
+        await expectContainerSh(
+          probe,
+          container,
+          "switchyard-routed-startup",
+          HERMES_SWITCHYARD_ROUTED_EVIDENCE,
+        );
       },
     );
   },

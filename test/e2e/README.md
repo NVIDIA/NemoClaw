@@ -34,9 +34,19 @@ The clean Hermes root-entrypoint scenario also owns the Switchyard package's rea
 contract. It checks the shipped files and root ownership, proves the healthy supervised
 gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
 native loading and cleanup on the image's architecture. The isolated process loads the
-production-generated adaptive deployment with local upstream fixtures. It sends one request
+production-generated adaptive deployment with local upstream fixtures. It sends a request
 through the `switchyard` route and requires the classifier to select the efficient target.
-The probe does not call external providers or change the supervised gateway.
+It then runs the shipped judge qualifier against native routing marks and separate
+judge/answer token accounting. The qualifier's deterministic tests own evidence rejection,
+cleanup, and both gateway launch gates. A separate routed-startup scenario installs the
+production-generated routing files at their root-owned production paths. It starts the real
+entrypoint with resolver placeholders and local provider fixtures on a network-disabled
+container. Both judge and answer calls must occur before the gateway listens. The scenario
+then requires gateway readiness with routing activation configured under the gateway user.
+The packaged qualifier validates classification and separate token accounting before startup
+continues. This proves the successful entrypoint handoff, not OpenShell credential rewriting
+or real provider access. Container cleanup removes the fixture processes, placeholders, and
+routing files. The clean package probe still leaves its supervised gateway unchanged.
 `test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
 The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native

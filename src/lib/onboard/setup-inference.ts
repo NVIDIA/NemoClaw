@@ -237,6 +237,7 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  environment?: NodeJS.ProcessEnv;
   sandboxPolicyReader?: Parameters<typeof readCustomNativeSandboxPolicy>[0]["reader"];
   recordMigratedProviderCredential?: (
     name: string,
@@ -1155,6 +1156,20 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
+        const environment = deps.environment ?? process.env;
+        const switchyard = await inferenceProviders.setupSwitchyardInferenceIfConfigured({
+          sandboxName,
+          gatewayName,
+          provider,
+          model,
+          endpointUrl,
+          endpointSource,
+          credentialEnv,
+          environment,
+          options,
+          deps,
+        });
+        if (switchyard) return switchyard;
         const {
           authority: hermesAuthority,
           selected: nativeHostedSelection,

@@ -2,18 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { switchyardBindingFixture } from "../../helpers/hermes-switchyard.ts";
+import { applyHermesManagedRoute } from "../../../src/lib/hermes-managed-route.ts";
 
 import {
   createHermesSwitchyardRoutingIntent,
+  HERMES_RELAY_PLUGINS_FILE,
+  HERMES_RELAY_PLUGIN_STATE_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
   serializeHermesSwitchyardRouting,
 } from "../../../src/lib/hermes-switchyard-routing.ts";
 
-const packageRouting = serializeHermesSwitchyardRouting(
-  createHermesSwitchyardRoutingIntent({
-    efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
-    capable: { provider: "openai-api", model: "fixture-capable" },
-  }),
+const intent = createHermesSwitchyardRoutingIntent({
+  efficient: { provider: "nvidia-prod", model: "fixture-efficient" },
+  capable: { provider: "openai-api", model: "fixture-capable" },
+});
+const packageRouting = serializeHermesSwitchyardRouting(intent, switchyardBindingFixture(intent));
+const routedGatewayConfig: Record<string, unknown> = {};
+applyHermesManagedRoute(routedGatewayConfig, {
+  model: intent.routeId,
+  baseUrl: "https://integrate.api.nvidia.com/v1",
+  upstreamProvider: "nvidia-prod",
+  inferenceApi: "openai-completions",
+});
+const routedGatewayConfigBase64 = Buffer.from(JSON.stringify(routedGatewayConfig)).toString(
+  "base64",
 );
 const relayPluginsBase64 = Buffer.from(packageRouting.relayPluginsToml, "utf8").toString("base64");
 const relayPluginStateBase64 = Buffer.from(packageRouting.relayPluginStateJson, "utf8").toString(
@@ -24,60 +37,18 @@ const switchyardDeploymentBase64 = Buffer.from(
   "utf8",
 ).toString("base64");
 
-// Runs as the gateway user: inspect the real unconfigured gateway, then load the
-// package in a separate, test-only Hermes process. No external calls or durable config.
-export const HERMES_SWITCHYARD_PACKAGE_PROBE = String.raw`
-pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"
-test -n "$pid"
-/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I -X faulthandler - "$pid" <<'PY'
-import asyncio
-import base64
-import hashlib
+export const HERMES_SWITCHYARD_LOCAL_UPSTREAM = String.raw`
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.metadata import version
 import json
-import os
 from pathlib import Path
-import platform
-import sys
-from tempfile import TemporaryDirectory
+import socket
 from threading import Thread
-import tomllib
-import nemo_relay
-from agent import relay_runtime
-
-capture = os.environ.get('NEMOCLAW_HERMES_CRASH_CAPTURE') == '1'
-if capture:
-    import resource
-    Path('/tmp/nemoclaw-hermes-crash').mkdir(mode=0o700)
-    assert resource.getrlimit(resource.RLIMIT_CORE) == (0, 268435456)
-    resource.setrlimit(resource.RLIMIT_CORE, (268435456, 268435456))
-    executable = os.readlink('/proc/self/exe')
-    print('NEMOCLAW_HERMES_CRASH_PROCESS=' + json.dumps({
-        'pid': os.getpid(), 'executable': executable,
-        'python_sha256': hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
-        'python_version': platform.python_version(),
-        'kernel': platform.release(), 'architecture': platform.machine(),
-        'hermes_version': version('hermes-agent'), 'relay_version': version('nemo-relay'),
-    }), flush=True)
-
-def capture_maps(stage):
-    if capture:
-        # Mapping metadata only: never read mapped memory, environment or locals.
-        print('NEMOCLAW_HERMES_MAPS_' + stage + '\n' + Path('/proc/self/maps').read_text(), flush=True)
-
-capture_maps('initial')
-
-RELAY_PLUGINS_SOURCE = base64.b64decode('${relayPluginsBase64}').decode('utf-8')
-RELAY_PLUGIN_STATE_SOURCE = base64.b64decode('${relayPluginStateBase64}').decode('utf-8')
-SWITCHYARD_DEPLOYMENT_SOURCE = base64.b64decode('${switchyardDeploymentBase64}').decode('utf-8')
-SWITCHYARD_DEPLOYMENT_PATH = '${HERMES_SWITCHYARD_DEPLOYMENT_FILE}'
-
 
 class LocalUpstream:
-    def __init__(self, role):
+    def __init__(self, role, evidence=None):
         self.role = role
         self.calls = []
+        self.evidence = evidence
 
     def __enter__(self):
         upstream = self
@@ -88,6 +59,19 @@ class LocalUpstream:
                 length = int(self.headers.get('content-length', '0'))
                 body = json.loads(self.rfile.read(length))
                 upstream.calls.append(body)
+                if upstream.evidence is not None:
+                    key = 'OPENAI_API_KEY' if upstream.role == 'capable' else 'NVIDIA_INFERENCE_API_KEY'
+                    authorized = self.headers.get('authorization') == 'Bearer xapp-OPENSHELL-RESOLVE-ENV-' + key
+                    if not authorized:
+                        self.send_error(401)
+                        return
+                    with socket.socket() as connection:
+                        gateway_listening = connection.connect_ex(('127.0.0.1', 18642)) == 0
+                    with upstream.evidence.open('a', encoding='utf-8') as evidence:
+                        evidence.write(json.dumps({
+                            'role': upstream.role, 'model': body['model'],
+                            'gatewayListening': gateway_listening,
+                        }) + '\n')
                 if upstream.role == 'capable':
                     content = json.dumps({
                         'crux': 'bounded fixture task',
@@ -132,6 +116,54 @@ class LocalUpstream:
         self.server.server_close()
         self.thread.join(timeout=5)
         assert not self.thread.is_alive()
+`;
+
+// Runs as the gateway user: inspect the real unconfigured gateway, then load the
+// package in a separate, test-only Hermes process. No external calls or durable config.
+export const HERMES_SWITCHYARD_PACKAGE_PROBE = String.raw`
+pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"
+test -n "$pid"
+/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I -X faulthandler - "$pid" <<'PY'
+import asyncio
+import base64
+import hashlib
+import importlib.util
+from importlib.metadata import version
+import os
+import platform
+import sys
+from tempfile import TemporaryDirectory
+import tomllib
+import nemo_relay
+from agent import relay_runtime
+${HERMES_SWITCHYARD_LOCAL_UPSTREAM}
+
+capture = os.environ.get('NEMOCLAW_HERMES_CRASH_CAPTURE') == '1'
+if capture:
+    import resource
+    Path('/tmp/nemoclaw-hermes-crash').mkdir(mode=0o700)
+    assert resource.getrlimit(resource.RLIMIT_CORE) == (0, 268435456)
+    resource.setrlimit(resource.RLIMIT_CORE, (268435456, 268435456))
+    executable = os.readlink('/proc/self/exe')
+    print('NEMOCLAW_HERMES_CRASH_PROCESS=' + json.dumps({
+        'pid': os.getpid(), 'executable': executable,
+        'python_sha256': hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
+        'python_version': platform.python_version(),
+        'kernel': platform.release(), 'architecture': platform.machine(),
+        'hermes_version': version('hermes-agent'), 'relay_version': version('nemo-relay'),
+    }), flush=True)
+
+def capture_maps(stage):
+    if capture:
+        # Mapping metadata only: never read mapped memory, environment or locals.
+        print('NEMOCLAW_HERMES_MAPS_' + stage + '\n' + Path('/proc/self/maps').read_text(), flush=True)
+
+capture_maps('initial')
+
+RELAY_PLUGINS_SOURCE = base64.b64decode('${relayPluginsBase64}').decode('utf-8')
+RELAY_PLUGIN_STATE_SOURCE = base64.b64decode('${relayPluginStateBase64}').decode('utf-8')
+SWITCHYARD_DEPLOYMENT_SOURCE = base64.b64decode('${switchyardDeploymentBase64}').decode('utf-8')
+SWITCHYARD_DEPLOYMENT_PATH = '${HERMES_SWITCHYARD_DEPLOYMENT_FILE}'
 
 bundle = Path('/opt/nemo-relay/plugins/switchyard')
 library = bundle / 'libswitchyard_nemo_relay_plugin.so'
@@ -151,7 +183,9 @@ assert {str(p.relative_to(bundle)) for p in bundle.rglob('*') if p.is_file()} ==
     'notices/protocol/LICENSE', 'notices/protocol/NOTICE',
     'notices/switchyard-translation/LICENSE', 'notices/switchyard-translation/NOTICE',
 }
-for entry in [*bundle.parents, bundle, *bundle.rglob('*')]:
+qualifier_script = Path('/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py')
+for entry in [*bundle.parents, bundle, *bundle.rglob('*'),
+              *qualifier_script.parents, qualifier_script]:
     assert not entry.is_symlink(), entry
     assert entry.stat().st_uid == 0, entry
     assert entry.stat().st_mode & 0o022 == 0, entry
@@ -243,10 +277,22 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
 
         result = asyncio.run(execute_switchyard_route())
         assert result['choices'][0]['message']['content'] == 'routed-efficient'
-        assert len(capable.calls) == 1
+        # Exercise the shipped qualification consumer against native marks and accounting.
+        # The local endpoints substitute only fixture transport, not the classifier or Relay API.
+        runtime.shutdown()
+        runtime = None
+        spec = importlib.util.spec_from_file_location(
+            'judge_qualification', '/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py')
+        qualification = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(qualification)
+        qualification.PLUGINS_PATH = str(config)
+        qualification.qualify(
+            ('fixture-capable', 'fixture-efficient', 'fixture-capable'),
+            relay=nemo_relay, runtime_factory=relay_runtime.RelayRuntime)
+        assert len(capable.calls) == 2
         assert capable.calls[0]['model'] == 'fixture-capable'
         assert capable.calls[0]['response_format']['type'] == 'json_schema'
-        assert len(efficient.calls) == 1
+        assert len(efficient.calls) == 2
         assert efficient.calls[0]['model'] == 'fixture-efficient'
         assert state.read_bytes() == state_before
         capture_maps('before_shutdown')
@@ -263,5 +309,129 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
 # The separate probe must not change the gateway's routing state.
 assert library.name not in Path(f'/proc/{pid}/maps').read_text()
 print('Switchyard package, disabled gateway, adaptive route, native activation, and cleanup verified')
+PY
+`;
+
+const routedUpstreamBase64 = Buffer.from(
+  HERMES_SWITCHYARD_LOCAL_UPSTREAM +
+    String.raw`
+from threading import Event
+with LocalUpstream('efficient', Path('/tmp/switchyard-efficient.jsonl')) as efficient, \
+     LocalUpstream('capable', Path('/tmp/switchyard-capable.jsonl')) as capable:
+    print(json.dumps({'efficient': efficient.base_url, 'capable': capable.base_url}), flush=True)
+    Event().wait()
+`,
+  "utf8",
+).toString("base64");
+
+// Fresh-image provisioning, matching agents/hermes/Dockerfile. Runtime updates
+// must still use the production transaction and startup-owner checks.
+export const HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES = String.raw`
+import hashlib
+from pathlib import Path
+
+def provision_config_hashes(hermes_dir, strict_hash):
+    hash_paths = (hermes_dir / 'config.yaml', hermes_dir / '.env')
+    hash_text = ''.join(
+        hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path) + '\n'
+        for path in hash_paths)
+    # Update the compatibility anchor first and retain both files' metadata.
+    (hermes_dir / '.config-hash').write_text(hash_text)
+    strict_hash.write_text(hash_text)
+`;
+
+// Only transport and credentials are synthetic. The entrypoint, privilege drop,
+// production routing paths, qualifier main(), and native router remain unchanged.
+export const HERMES_SWITCHYARD_ROUTED_BOOTSTRAP = String.raw`
+set -euo pipefail
+exec /opt/hermes/.venv/bin/python -I - <<'PY'
+import base64
+import json
+import os
+from pathlib import Path
+import selectors
+import subprocess
+import yaml
+${HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES}
+
+upstream = subprocess.Popen([
+    '/usr/bin/setpriv', '--reuid=gateway', '--regid=gateway', '--init-groups', '--',
+    '/opt/hermes/.venv/bin/python', '-I', '-c',
+    base64.b64decode('${routedUpstreamBase64}').decode('utf-8'),
+], stdout=subprocess.PIPE)
+try:
+    with selectors.DefaultSelector() as selector:
+        selector.register(upstream.stdout, selectors.EVENT_READ)
+        if not selector.select(timeout=10):
+            raise RuntimeError('Local Switchyard fixtures did not start')
+        endpoints = json.loads(upstream.stdout.readline(4096))
+    deployment = base64.b64decode('${switchyardDeploymentBase64}').decode('utf-8')
+    for original, local in (
+        ('https://integrate.api.nvidia.com/v1', endpoints['efficient']),
+        ('https://api.openai.com/v1', endpoints['capable']),
+    ):
+        assert deployment.count(original) == 1
+        deployment = deployment.replace(original, local)
+    directory = Path('${HERMES_RELAY_PLUGINS_FILE}').parent
+    directory.mkdir(exist_ok=True)
+    directory.chmod(0o755)
+    os.chown(directory, 0, 0)
+    for path, content in (
+        ('${HERMES_RELAY_PLUGINS_FILE}', base64.b64decode('${relayPluginsBase64}').decode('utf-8')),
+        ('${HERMES_RELAY_PLUGIN_STATE_FILE}', base64.b64decode('${relayPluginStateBase64}').decode('utf-8')),
+        ('${HERMES_SWITCHYARD_DEPLOYMENT_FILE}', deployment),
+    ):
+        target = Path(path)
+        target.write_text(content, encoding='utf-8')
+        os.chown(target, 0, 0)
+        target.chmod(0o444)
+    # Provision the generated route and its policy before startup, as the image
+    # builder does. Keep both integrity anchors consistent; do not bypass the guard.
+    route = json.loads(base64.b64decode('${routedGatewayConfigBase64}'))
+    config_path = Path('/sandbox/.hermes/config.yaml')
+    config = yaml.safe_load(config_path.read_text())
+    config.update(route)
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    policy_path = directory / 'hermes-managed-policy.json'
+    policy = json.loads(policy_path.read_text())
+    policy['config'].update(route)
+    policy_path.write_text(json.dumps(policy))
+    provision_config_hashes(config_path.parent, Path('/etc/nemoclaw/hermes.config-hash'))
+    environment = dict(os.environ, HERMES_NEMO_RELAY_PLUGINS_TOML='${HERMES_RELAY_PLUGINS_FILE}')
+    for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
+        environment[key] = 'xapp-OPENSHELL-RESOLVE-ENV-' + key
+    os.execve('/usr/local/bin/nemoclaw-start', ['/usr/local/bin/nemoclaw-start'], environment)
+finally:
+    upstream.terminate()
+    upstream.wait(timeout=5)
+PY
+`;
+
+export const HERMES_SWITCHYARD_ROUTED_EVIDENCE = String.raw`
+pid="$(ps -eo pid=,user=,args= | awk '$2 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1; exit }')"
+test -n "$pid"
+/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I - "$pid" <<'PY'
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+import yaml
+
+assert yaml.safe_load(Path('/sandbox/.hermes/config.yaml').read_text())['model']['default'] == 'switchyard'
+# Only the real entrypoint can have issued these calls: this scenario never invokes
+# the qualifier itself. Both model calls must precede the gateway's listener.
+for role in ('capable', 'efficient'):
+    calls = [json.loads(line) for line in Path('/tmp/switchyard-' + role + '.jsonl').read_text().splitlines()]
+    assert calls == [{'role': role, 'model': 'fixture-' + role, 'gatewayListening': False}], calls
+for name in ('hermes-relay-plugins.toml', 'hermes-switchyard-v1.toml', '.dynamic-plugins.json'):
+    path = Path('/usr/local/share/nemoclaw') / name
+    assert path.stat().st_uid == 0 and stat.S_IMODE(path.stat().st_mode) == 0o444
+    assert not os.access(path, os.W_OK)
+pid = int(sys.argv[1])
+# Hermes can initialize its agent runtime lazily; readiness must retain activation
+# consent, not require the gateway to load the library before its first agent turn.
+assert b'HERMES_NEMO_RELAY_PLUGINS_TOML=${HERMES_RELAY_PLUGINS_FILE}' in Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+print(json.dumps({'qualificationBeforeGateway': True, 'routedGatewayConfigured': True}))
 PY
 `;

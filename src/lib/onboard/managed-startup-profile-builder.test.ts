@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { switchyardBindingFixture } from "../../../test/helpers/hermes-switchyard";
+import {
+  encodeSwitchyardProviderBindings,
+  HERMES_SWITCHYARD_BINDINGS_ENV,
+} from "../hermes-switchyard-routing";
+
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
@@ -758,6 +764,9 @@ describe("buildManagedStartupProfile", () => {
       switchyardRouting: null,
       webSearch: { enabled: false, provider: "tavily" },
     });
+    expect(decodeManagedStartupProfile(built.encodedProfile).agentConfig).not.toHaveProperty(
+      "switchyardBindings",
+    );
   });
 
   it("persists validated Switchyard routing in the Hermes startup profile (#13862)", () => {
@@ -769,6 +778,10 @@ describe("buildManagedStartupProfile", () => {
       hermesInput({
         environment: {
           [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
+          [HERMES_SWITCHYARD_BINDINGS_ENV]: encodeSwitchyardProviderBindings(
+            switchyardBindingFixture(routing),
+            routing,
+          ),
         },
       }),
     );

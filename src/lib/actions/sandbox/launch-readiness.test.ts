@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { performance } from "node:perf_hooks";
+import { createHash } from "node:crypto";
+import { createSwitchyardProviderFixture } from "../../../../test/support/switchyard-provider-adapter";
+import { createHermesSwitchyardRoutingIntent } from "../../hermes-switchyard-routing";
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
+import { requireNativeInferenceHealth } from "./launch-readiness/health";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
@@ -168,6 +174,102 @@ describe("launch readiness validation", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  async function switchyardReadinessFixture() {
+    const routing = createHermesSwitchyardRoutingIntent({
+      efficient: { provider: "nvidia-prod", model: "nvidia/nano" },
+      capable: { provider: "openai-api", model: "gpt-5" },
+    });
+    const f = createSwitchyardProviderFixture(routing, GATEWAY_NAME, SANDBOX);
+    const { bindings } = await f.setup();
+    const profile = managedStartupE2eProfile("hermes");
+    const encodedProfile = encodeManagedStartupProfile({
+      ...profile,
+      agentConfig: {
+        agent: "hermes",
+        webSearch: { enabled: false, provider: "tavily" },
+        switchyardRouting: routing,
+        switchyardBindings: bindings,
+      },
+    });
+    const routedEntry = {
+      ...entry("hermes"),
+      provider: routing.capable.provider,
+      model: routing.capable.model,
+      credentialEnv: "OPENAI_API_KEY",
+      endpointUrl: "https://api.openai.com/v1",
+      hermesSwitchyard: { routing, bindings },
+      workload: {
+        schemaVersion: 1,
+        kind: "managed-image",
+        reference: `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"1".repeat(64)}`,
+        release: "v0.1.0",
+        sourceRevision: "2".repeat(40),
+        sourceCohort: "ghrun-1-1",
+        capabilityContractVersion: 1,
+        startupProfileContractVersion: 1,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+        credentialProxyReplayRequired: false,
+        shared: true,
+      },
+    } satisfies SandboxEntry;
+    sandbox = routedEntry;
+    const currentDeps = { ...deps(), switchyardProviderAdapter: f.input.adapter };
+    return { f, currentDeps, routedEntry };
+  }
+
+  it("rejects an unconfigured Switchyard selection before publishing a lease (#13863)", async () => {
+    const { currentDeps } = await switchyardReadinessFixture();
+    sandbox.model = null;
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(
+      await publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).toMatchObject({ kind: "validation-failed", category: "config" });
+    expect(publishedIdentity).toBeNull();
+  });
+
+  it("classifies absent Switchyard bindings as a configuration error (#13863)", async () => {
+    const { currentDeps } = await switchyardReadinessFixture();
+    delete sandbox.hermesSwitchyard;
+    await expect(
+      requireNativeInferenceHealth({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        agentName: "hermes",
+        entry: sandbox,
+        deps: currentDeps,
+      }),
+    ).rejects.toMatchObject({ category: "config" });
+  });
+
+  it("classifies a malformed managed profile as a configuration error (#13863)", async () => {
+    const { currentDeps, routedEntry } = await switchyardReadinessFixture();
+    sandbox = {
+      ...routedEntry,
+      workload: { ...routedEntry.workload, encodedProfile: "invalid-profile" },
+    };
+    await expect(
+      requireNativeInferenceHealth({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        agentName: "hermes",
+        entry: sandbox,
+        deps: currentDeps,
+      }),
+    ).rejects.toMatchObject({ category: "config" });
+  });
+
+  it("rechecks Switchyard bindings without consulting the shared inference route (#13863)", async () => {
+    const { currentDeps, f } = await switchyardReadinessFixture();
+    await createAcceptedLease(currentDeps);
+    externalEvents = [];
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
+    expect(externalEvents).not.toContain("inference-get");
+    expect(externalEvents).not.toContain("inference-health");
+    f.names.splice(0, 1);
+    expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "fallback" });
   });
 
   function deps(): LaunchReadinessDeps {
