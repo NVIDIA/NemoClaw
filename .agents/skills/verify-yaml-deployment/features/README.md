@@ -34,6 +34,5 @@
 | [exposure-change.md](exposure-change.md) | every agent | A changed service exposure replaces the sandbox and reaches the gateway |
 | [openclaw-dashboard.md](openclaw-dashboard.md) | `openclaw` | The Control UI through a service exposure with curl and in a browser through a forward, signed in with the token file |
 | [hermes-interfaces.md](hermes-interfaces.md) | `hermes` | The API server and dashboard through forwards |
-| [deepagents-code-terminal.md](deepagents-code-terminal.md) | `deepagents-code` | `dcode`'s terminal UI through the printed `Open` command |
 
 Run them in this order: deploy-and-answer, the agent's interface feature, export-reapply, then exposure-change, which replaces the sandbox.

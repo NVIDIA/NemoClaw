@@ -48,11 +48,12 @@ impl Fixture {
                 "cargo",
                 r#"#!/bin/sh
 if [ "$1 $2" = 'nextest --version' ]; then
-    printf 'cargo-nextest 0.9.150\n'
+    printf 'cargo-nextest 0.9.151\n'
     exit 0
 fi
 printf '%s\n' "$@" > arguments
 printf '%s\n' "${NEXTEST_TEST_THREADS-unset}" > test-threads-env
+[ -n "${NEMOCLAW_HCL_CASE-}" ] && printf '%s\n' "$NEMOCLAW_HCL_CASE" >> hcl-cases
 if [ "$1" = build ]; then
     /bin/mkdir -p target/debug
     printf '#!/bin/sh\nprintf "%%s\\n" "$@" > bundled\n' > target/debug/nemoclaw-build
@@ -233,14 +234,31 @@ fi
         for (path, content) in [
             ("dist/linux_arm64/manifest.json", "{}"),
             ("image/ollama/Dockerfile", "FROM ollama/ollama@sha256:0\n"),
-            // The HCL E2E cases the suite binds to its run.
+            // The HCL E2E cases the suite binds to its run, with their scenarios.
             (
                 "crates/nemoclaw-e2e/cases/docker-dummy.yaml",
                 include_str!("../../nemoclaw-e2e/cases/docker-dummy.yaml"),
             ),
             (
+                "crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-dummy.tftest.hcl",
+                "\n",
+            ),
+            (
                 "crates/nemoclaw-e2e/cases/docker-openclaw-hermes-interfaces.yaml",
                 include_str!("../../nemoclaw-e2e/cases/docker-openclaw-hermes-interfaces.yaml"),
+            ),
+            (
+                "crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-openclaw-hermes-interfaces.tftest.hcl",
+                "\n",
+            ),
+            // A hosted case, which neither live suite runs.
+            (
+                "crates/nemoclaw-e2e/cases/docker-openclaw-nvidia.yaml",
+                include_str!("../../nemoclaw-e2e/cases/docker-openclaw-nvidia.yaml"),
+            ),
+            (
+                "crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-openclaw-nvidia.tftest.hcl",
+                "\n",
             ),
         ] {
             let file = self.0.path().join(path);
@@ -255,7 +273,7 @@ fi
             "dist/linux_arm64/bin/nemoclaw",
             "dist/linux_arm64/libexec/tofu",
             ".tools/protoc-36.2/bin/protoc",
-            ".tools/nextest-0.9.150/cargo-nextest",
+            ".tools/nextest-0.9.151/cargo-nextest",
             "target/debug/terraform-provider-openshell",
             "target/debug/terraform-provider-fabric",
             "target/debug/terraform-provider-vllm",
@@ -399,7 +417,7 @@ fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_a
         assert!(!unpacked.path().join(&path).exists(), "{path}");
     }
     for path in [
-        ".tools/nextest-0.9.150/cargo-nextest",
+        ".tools/nextest-0.9.151/cargo-nextest",
         "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);
@@ -480,10 +498,10 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
         String::from_utf8_lossy(&output.stderr)
     );
     let log = fixture.docker_log();
-    // ARM64 builds OpenClaw, Hermes, Deep Agents Code and the reference
-    // dummy, under the shared prefix the live steps load: each exports its
-    // catalog, then builds its labeled stage.
-    for name in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+    // ARM64 builds OpenClaw, Hermes and the reference dummy, under the shared
+    // prefix the live steps load: each exports its catalog, then builds its
+    // labeled stage.
+    for name in ["openclaw", "hermes", "dummy"] {
         assert!(
             log.contains(&format!("buildx bake {name} --set {name}.target=catalog")),
             "{log}"
@@ -501,7 +519,7 @@ fn live_images_builds_the_agent_and_dummy_images_once_and_saves_them_compressed(
         fs::read_to_string(fixture.0.path().join(".build/ci/live-images.tar.zst")).unwrap();
     assert!(
         archive.trim()
-            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:deepagents-code docker.io/library/nc-live-images:dummy",
+            == "exported docker.io/library/nc-live-images:openclaw docker.io/library/nc-live-images:hermes docker.io/library/nc-live-images:dummy",
         "{archive}"
     );
 }
@@ -513,7 +531,7 @@ fn live_images_report_each_build_duration() {
     let output = fixture.run(&["live-images"]);
     let report = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{report}");
-    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+    for image in ["openclaw", "hermes", "dummy"] {
         let tag = format!("nc-live-images:{image}");
         let start = report
             .find(&format!("Building live image {tag}\n"))
@@ -537,7 +555,7 @@ fn live_images_report_each_build_duration() {
 
 #[test]
 fn live_images_report_failed_build_duration_and_stop() {
-    let images = ["openclaw", "hermes", "deepagents-code", "dummy"];
+    let images = ["openclaw", "hermes", "dummy"];
     for (index, image) in images.iter().enumerate() {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
@@ -611,7 +629,7 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
     );
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
-    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+    for image in ["openclaw", "hermes", "dummy"] {
         assert!(
             log.lines().any(|line| line
                 .strip_prefix(&format!("tag nc-live-images:{image} nc-live-"))
@@ -773,14 +791,14 @@ fn live_docker_pulls_a_v1_commits_images_instead_of_building() {
     );
     let log = fixture.docker_log();
     let package = "ghcr.io/nvidia/nemoclaw/v1-ci";
-    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+    for image in ["openclaw", "hermes", "dummy"] {
         let pulled = format!("pull --quiet {package}:{image}-{commit}-");
         assert!(
             log.lines().any(|line| line.starts_with(&pulled)),
             "{image} not pulled: {log}"
         );
     }
-    for image in ["openclaw", "hermes", "deepagents-code", "dummy"] {
+    for image in ["openclaw", "hermes", "dummy"] {
         assert!(
             log.lines().any(
                 |line| line.starts_with(&format!("tag {package}:{image}-{commit}-"))
@@ -837,4 +855,81 @@ fn live_images_commit_is_a_full_commit_for_the_live_steps_only() {
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(message), "{args:?}: {error}");
     }
+}
+
+impl Fixture {
+    /// The HCL cases that live-suite commands ran, in order.
+    fn hcl_cases(&self) -> Vec<String> {
+        fs::read_to_string(self.0.path().join("hcl-cases"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+#[test]
+fn live_docker_runs_every_docker_case_or_only_the_requested_ones() {
+    for (requested, expected) in [
+        (
+            None,
+            &["docker-dummy", "docker-openclaw-hermes-interfaces"][..],
+        ),
+        (
+            Some("docker-openclaw-hermes-interfaces"),
+            &["docker-openclaw-hermes-interfaces"],
+        ),
+        (Some(""), &[]),
+    ] {
+        let fixture = Fixture::new();
+        fixture.fake_container_tools();
+        fixture.seed_live_inputs();
+        fs::write(fixture.0.path().join("images.tar.zst"), "prebuilt images\n").unwrap();
+        let mut args = vec!["live-docker", "--images", "images.tar.zst"];
+        if let Some(requested) = requested {
+            args.extend(["--hcl-cases", requested]);
+        }
+        let output = fixture.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fixture.hcl_cases(), expected, "{requested:?}");
+    }
+}
+
+#[test]
+fn live_docker_refuses_a_case_that_runs_elsewhere_before_starting() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_live_inputs();
+    let output = fixture.run(&["live-docker", "--hcl-cases", "docker-openclaw-nvidia"]);
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("docker-openclaw-nvidia"), "{error}");
+    assert!(fixture.docker_log().is_empty(), "{}", fixture.docker_log());
+}
+
+#[test]
+fn live_kind_without_requested_cases_starts_no_cluster() {
+    let fixture = Fixture::new();
+    fixture.fake_container_tools();
+    fixture.seed_live_inputs();
+    let output = fixture.run(&["live-kind", "--hcl-cases", ""]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fixture.docker_log().is_empty(), "{}", fixture.docker_log());
+    assert!(fixture.hcl_cases().is_empty());
+}
+
+#[test]
+fn only_the_live_suites_take_hcl_cases() {
+    let output = Fixture::new().run(&["contract", "--hcl-cases", "docker-dummy"]);
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("--hcl-cases"), "{error}");
 }

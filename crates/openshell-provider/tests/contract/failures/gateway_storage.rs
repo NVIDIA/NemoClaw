@@ -18,7 +18,7 @@ use std::{
 
 const NAME: &str = "nc-0123456789abcdef-gateway";
 const OWNER: &str = "302ff5e1-088d-42ce-959f-4ff4c3570c13";
-const IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:f0b36dba21d282c52e498c25289658cfd6cd4f343b0069fde5609e25b002cdea";
+const IMAGE: &str = "ghcr.io/nvidia/openshell/gateway@sha256:9b94165a3dbcf6d454b822e5b21f371f168c44155c8fa1d6dd55ba091a041d1f";
 
 async fn docker_engine() -> (Fixture, Arc<Mutex<Engine>>) {
     let engine = Arc::new(Mutex::new(Engine::default()));

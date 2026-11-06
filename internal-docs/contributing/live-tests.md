@@ -69,6 +69,8 @@ Run blocks call these modules:
 |---|---|
 | `tests/e2e/hcl/cli` | Runs one bundled `nemoclaw` command, `plan`, `apply`, or `destroy`, and reports its exit status, error, and JSON result. |
 | `tests/e2e/hcl/verifier` | Invokes agents through `hcl_live::probe` and reports targets without a reply, without an expected one-word answer, or from an unexpected runtime. |
+| `tests/e2e/hcl/volume` | Before a Docker case's first apply, creates each named volume that its sandboxes mount, with the bundled Docker provider, as a platform provides one: with OpenShell's default approval labels for the deployment's workspace and its root owned by the given sandbox identity. NemoClaw's destroy leaves the volumes, and the test removes them when the case ends. |
+| `tests/e2e/hcl/command` | Runs one fixed command per target in a named sandbox through `hcl_live::command`, with the pinned OpenShell CLI's `openshell sandbox exec`, and reports targets whose command exits nonzero, or whose output lacks the expected text or contains the forbidden text. Reports hold only the exit status and whether the output matched; the output stays in the run's private `work` directory. |
 
 | Case | Runner | Checks |
 |---|---|---|
@@ -80,8 +82,8 @@ Run blocks call these modules:
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
-| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key ([Agent Interfaces](#agent-interfaces)). |
-| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage. |
+| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
+| `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
@@ -97,7 +99,7 @@ The hosted cases make real hosted inference requests, which may incur charges.
 
 The workflows destroy each deployment in a separate step after success, failure, or cancellation and upload outcome reports with the destroy receipt.
 Requests, replies, command output, and credentials stay in the run's private `work` directory.
-CI / Bundle runs the hosted cases from Linux AMD64's test archive, bundle, and live images whenever it runs the live suites, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
+CI / Bundle runs the selected hosted cases from Linux AMD64's test archive, bundle, and live images, except on a fork's pull request, and adds the GPU cases through Live / HCL on `v1` pushes and manual runs; each case's document decides [where it runs](testing.md#live-suites), and the plan [selects the cases](testing.md#live-suites) a pull request affects. To run either set alone against a candidate, such as an OpenShell, Fabric, or agent image upgrade, dispatch Live / HCL, or run a case by hand as below.
 
 To run a case by hand on Linux with Docker, load the candidate images, bind the case's image templates and `uid` as the `Live / HCL` workflow does, and run from `crates/nemoclaw-e2e`:
 
@@ -204,12 +206,13 @@ To run one of them by hand, supply its inputs as its section describes.
 
 The `docker-dummy` [HCL E2E scenario](#hcl-e2e-scenarios) deploys an image derived from the [reference dummy image](agent-image-maintenance.md#qualify-the-reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-The agent must reply with the configured `reply` setting, a plan must report no changes, and destroy must keep only the gateway's storage.
-A second apply must then reuse that storage, refreshing rather than creating it again, run the gateway in a new container, and the agent must reply again before a final destroy.
+Its gateway allows driver configuration, and its sandbox mounts a named volume on `/sandbox/workspace`, as [Keep Agent Files on Mounted Volumes](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) describes; the `tests/e2e/hcl/volume` module creates the volume before the first apply and gives it to the agent image's user, UID 10001.
+The agent must reply with the configured `reply` setting, the `tests/e2e/hcl/command` module must write a marker file in the workspace as that user, a plan must report no changes, and destroy must keep only the gateway's storage.
+A second apply must then reuse that storage, refreshing rather than creating it again, and run the gateway in a new container; the new sandbox must read the marker from the kept volume, and the agent must reply again before a final destroy.
 It requests no inference and does not qualify a production adapter.
 
-`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
-After the suite, it removes every resource labeled with the document's UID and the gateway's sandbox objects; when the tests pass, it fails if OpenShell left a sandbox object.
+`cargo ci live-docker` binds `cases/docker-dummy.yaml` to a fresh UID, free gateway port and subnet, a volume name with the UID, and the derived image by digest, then runs `hcl_live::case` with `NEMOCLAW_HCL_DOCUMENT` naming the bound copy.
+After the suite, it removes every resource labeled with the document's UID, which includes the volume, and the gateway's sandbox objects; when the tests pass, it fails if OpenShell left a sandbox object.
 To run the scenario by hand, bind the template the same way and follow [HCL E2E Scenarios](#hcl-e2e-scenarios) with `NEMOCLAW_HCL_CASE=docker-dummy` and `NEMOCLAW_HCL_DOCUMENT=/absolute/path/to/bound.yaml`.
 
 ## Agent Interfaces
@@ -222,9 +225,14 @@ Apply must report each interface's port, sign-in, and token file.
 The `tests/e2e/hcl/interface` module then runs `hcl_live::interface` once per request: it reads the reported token with `openshell sandbox exec`, forwards the port with `openshell forward service`, and sends one request with the token as a Bearer credential.
 OpenClaw's Control UI page must load and its configuration endpoint must accept the token; Hermes's API server must list its models and answer a chat completion with the stub's reply, which also shows that NemoClaw sent the configured key; Hermes's dashboard page must load with its session token.
 Reports hold status codes; tokens and response bodies stay in the run's private `work` directory.
+Then the `tests/e2e/hcl/command` module runs two commands in each sandbox: one writes a marker file in `/sandbox/workspace`, the workspace that the SDK's Fabric configuration sets, and reads it back as the agent image's user, UID 10001; the other lists the environment, which must include the variable that the sandbox reads the model registration's key from, `NEMOCLAW_INFERENCE_MODEL_..._KEY`, but not the run's model key.
+Two more commands in OpenClaw's sandbox check its network policy with `python3`, which the images have instead of curl.
+Each sandbox's managed inference grant already gives the image's executables, `python3` among them, the model's `/v1/**` paths, so only OpenClaw's document also grants `python3` the stub's `/health`.
+A request there must get the stub's 401, which shows that it reached the stub; without the grant, OpenShell's proxy answers 403.
+A connection to the managed gateway, at the gateway network's second address and its endpoint's port, must fail with `EACCES`, OpenShell's refusal: no grant names that host, and the sandbox's OpenShell proxy, which runs on the host network, can reach it.
 The stub's reply does not establish inference; `docker-openclaw-nvidia` covers hosted inference.
 
-The Deep Agents Code terminal and Hermes's browser chat need a pseudo-terminal, and are not checked live.
+Hermes's browser chat needs a pseudo-terminal, and is not checked live.
 Rejected interfaces, refused tokens, a killed dashboard process, and tokens kept out of output and state are integration checks ([#14060](https://github.com/NVIDIA/NemoClaw/issues/14060)).
 
 ## Docker Gateway Isolation

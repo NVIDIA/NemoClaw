@@ -28,7 +28,6 @@ A pair that isn't listed is unproven: say so with the result.
 |---|---|---|
 | [agents/openclaw.md](agents/openclaw.md) | `openclaw` | `nvidia.fabric.openclaw` |
 | [agents/hermes.md](agents/hermes.md) | `hermes` | `nvidia.fabric.hermes` |
-| [agents/deepagents-code.md](agents/deepagents-code.md) | `deepagents-code` | `nvidia.fabric.langchain.deepagents-code` |
 
 | Target file | `TARGET` |
 |---|---|

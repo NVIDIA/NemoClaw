@@ -155,25 +155,11 @@ async fn interface() {
         time::Instant,
     };
     let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
-    let openshell = || {
-        let mut command = Command::new(input("OPENSHELL"));
-        command
-            .env_remove("OPENSHELL_GATEWAY")
-            .env("OPENSHELL_GATEWAY_ENDPOINT", input("ENDPOINT"))
-            .env("OPENSHELL_WORKSPACE", input("WORKSPACE"))
-            .stdin(Stdio::null());
-        command
-    };
     let sandbox = input("SANDBOX");
     let token = match input("TOKEN_PATH").as_str() {
         "" => None,
         path => {
-            let output = openshell()
-                .args([
-                    "sandbox", "exec", "-n", &sandbox, "--no-tty", "--", "cat", path,
-                ])
-                .output()
-                .unwrap();
+            let output = sandbox_exec(&sandbox, &["cat", path]).output().unwrap();
             assert!(output.status.success(), "cannot read the interface's token");
             Some(String::from_utf8(output.stdout).unwrap().trim().to_owned())
         }
@@ -238,6 +224,53 @@ async fn interface() {
     fs::write(
         input("REPORT"),
         json!({"sandbox": sandbox, "port": input("PORT"), "status": status}).to_string(),
+    )
+    .unwrap();
+}
+
+/// The pinned OpenShell CLI, on the gateway and workspace that apply reports.
+fn openshell() -> Command {
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let mut command = Command::new(input("OPENSHELL"));
+    command
+        .env_remove("OPENSHELL_GATEWAY")
+        .env("OPENSHELL_GATEWAY_ENDPOINT", input("ENDPOINT"))
+        .env("OPENSHELL_WORKSPACE", input("WORKSPACE"))
+        .stdin(std::process::Stdio::null());
+    command
+}
+
+/// `openshell sandbox exec` of `command` in `sandbox`, as a person would run
+/// it.
+fn sandbox_exec(sandbox: &str, command: &[&str]) -> Command {
+    let mut exec = openshell();
+    exec.args(["sandbox", "exec", "-n", sandbox, "--no-tty", "--"])
+        .args(command);
+    exec
+}
+
+/// Run one command in a sandbox with `openshell sandbox exec`. The published
+/// report holds its exit status and whether its output, standard output and
+/// error together, contains the expected text and none of the forbidden
+/// text; the output stays in the private work directory.
+#[test]
+#[ignore = "run by tests/e2e/hcl/command for one target"]
+fn command() {
+    let input = |name: &str| var(format!("NEMOCLAW_HCL_{name}")).unwrap();
+    let sandbox = input("SANDBOX");
+    let command: Vec<String> = serde_json::from_str(&input("COMMAND")).unwrap();
+    let command: Vec<&str> = command.iter().map(String::as_str).collect();
+    let output = sandbox_exec(&sandbox, &command).output().unwrap();
+    let mut text = output.stdout;
+    text.extend_from_slice(&output.stderr);
+    let text = String::from_utf8_lossy(&text);
+    let (contains, excludes) = (input("CONTAINS"), input("EXCLUDES"));
+    let matched = text.contains(&contains) && (excludes.is_empty() || !text.contains(&excludes));
+    fs::write(input("OUTPUT"), text.as_bytes()).unwrap();
+    fs::write(
+        input("REPORT"),
+        json!({"sandbox": sandbox, "exit_code": output.status.code(), "matched": matched})
+            .to_string(),
     )
     .unwrap();
 }

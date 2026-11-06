@@ -121,7 +121,8 @@ fn fixture_files() -> Vec<(String, String)> {
         ),
         (
             "crates/nemoclaw-e2e/cases/kind-two.yaml",
-            "kind: NemoClawConfig\n".into(),
+            "kind: NemoClawConfig\nspec:\n  gateway:\n    runtime:\n      provider: kubernetes\n"
+                .into(),
         ),
         (
             "crates/nemoclaw-e2e/tests/e2e/hcl/tests/kind-two.tftest.hcl",
@@ -766,7 +767,7 @@ fn local_execution_skips_bundle_and_lifecycle_but_keeps_ordinary_checks() {
             "cargo",
             r#"#!/bin/sh
 if [ "$1" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
-if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.150'; exit 0; fi
+if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.151'; exit 0; fi
 printf '%s\n' "$*" >> "$CHECK_LOG"
 if [ "$1" = build ]; then
   mkdir -p target/debug
@@ -1055,19 +1056,13 @@ fn explicit_base_bypasses_pr_discovery() {
 /// The references `v1` pushes for `commit` that the live suites pull: the
 /// agent, the reference image, and the proxy, on both Linux architectures.
 fn pushed(commit: &str) -> Vec<String> {
-    [
-        "openclaw",
-        "hermes",
-        "deepagents-code",
-        "dummy",
-        "ollama-proxy",
-    ]
-    .iter()
-    .flat_map(|name| {
-        ["arm64", "amd64"]
-            .map(|arch| format!("ghcr.io/nvidia/nemoclaw/v1-ci:{name}-{commit}-{arch}"))
-    })
-    .collect()
+    ["openclaw", "hermes", "dummy", "ollama-proxy"]
+        .iter()
+        .flat_map(|name| {
+            ["arm64", "amd64"]
+                .map(|arch| format!("ghcr.io/nvidia/nemoclaw/v1-ci:{name}-{commit}-{arch}"))
+        })
+        .collect()
 }
 
 impl Repo {
@@ -1258,6 +1253,52 @@ fn runtime_image_inputs_select_only_the_cases_that_run_the_image() {
         let (selected, selection) = repo.selected(&base, &[]);
         assert_eq!(selected, expected, "{path}: {selection}");
     }
+}
+
+#[test]
+fn the_selection_names_where_each_selected_case_runs() {
+    let repo = Repo::new();
+    let base = repo.base();
+    repo.commit(&[("image/vllm/Dockerfile", Some("# changed\n"))]);
+    let (_, selection) = repo.selected(&base, &[]);
+    assert_eq!(
+        selection["runners"],
+        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": []}),
+        "{selection}"
+    );
+    assert_eq!(
+        selection["nvidia_key"],
+        serde_json::json!([]),
+        "{selection}"
+    );
+}
+
+#[test]
+fn all_selects_every_case_without_analysis() {
+    let repo = Repo::new();
+    // A dirty checkout can't be analyzed, but --all doesn't analyze.
+    write(repo.0.path(), "docs/guide.md", "# Uncommitted\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["changes", "cases", "--all"])
+        .current_dir(repo.0.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let selection: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        selection["selected"],
+        serde_json::json!(EVERY_CASE),
+        "{selection}"
+    );
+    assert_eq!(
+        selection["runners"],
+        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": ["kind-two"]}),
+        "{selection}"
+    );
 }
 
 #[test]

@@ -4,9 +4,6 @@
 //! convention (NVIDIA/NeMo-Fabric#547): the configuration chooses each HTTP
 //! interface's loopback port, and an interface's adapter-generated token is
 //! at `<artifact root>/.fabric/<adapter>/runtimes/<runtime-id>/interfaces/<name>.token`.
-//! A terminal interface has no port: its launcher, at
-//! `<artifact root>/.fabric/<adapter>/runtimes/<runtime-id>/interfaces/<name>`,
-//! is run in the sandbox with `openshell sandbox exec --tty`.
 //! An agent whose configuration sets `runtime.keep_state` keeps its native
 //! state in the folder Fabric names after it,
 //! `<artifact root>/.fabric/state/<adapter id>/<agent name>`, so its
@@ -28,9 +25,6 @@ pub enum SignIn {
     BearerToken,
     /// None: anyone who can reach the port can use the interface.
     None,
-    /// None beyond OpenShell's: anyone who can run `openshell sandbox exec`
-    /// in the sandbox can run the interface's launcher.
-    SandboxExec,
     /// The adapter's documentation says; NemoClaw doesn't know this interface.
     AdapterDocumented,
 }
@@ -48,10 +42,6 @@ pub struct InterfaceAccess {
     /// runtime's ID is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_path: Option<String>,
-    /// The launcher in the sandbox, for a terminal interface, when the
-    /// runtime's ID is known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub launcher: Option<String>,
     pub sign_in: SignIn,
 }
 
@@ -59,28 +49,20 @@ struct Convention {
     /// The adapter's directory under `.fabric`.
     directory: &'static str,
     token: bool,
-    /// Whether the interface is a terminal launcher rather than a listener.
-    launcher: bool,
     sign_in: SignIn,
 }
 
 /// What the P0 adapters' READMEs document for each interface.
 fn convention(adapter_id: &str, interface: &str) -> Option<Convention> {
-    let (directory, token, launcher, sign_in) = match (adapter_id, interface) {
-        ("nvidia.fabric.openclaw", "dashboard") => {
-            ("openclaw", true, false, SignIn::TokenInUrlFragment)
-        }
-        ("nvidia.fabric.hermes", "api") => ("hermes", true, false, SignIn::BearerToken),
-        ("nvidia.fabric.hermes", "dashboard") => ("hermes", false, false, SignIn::None),
-        ("nvidia.fabric.langchain.deepagents-code", "terminal") => {
-            ("deepagents-code", false, true, SignIn::SandboxExec)
-        }
+    let (directory, token, sign_in) = match (adapter_id, interface) {
+        ("nvidia.fabric.openclaw", "dashboard") => ("openclaw", true, SignIn::TokenInUrlFragment),
+        ("nvidia.fabric.hermes", "api") => ("hermes", true, SignIn::BearerToken),
+        ("nvidia.fabric.hermes", "dashboard") => ("hermes", false, SignIn::None),
         _ => return None,
     };
     Some(Convention {
         directory,
         token,
-        launcher,
         sign_in,
     })
 }
@@ -147,20 +129,12 @@ pub fn access(
                 _ => None,
             };
             let token_path = interfaces
-                .as_ref()
                 .filter(|_| {
                     convention
                         .as_ref()
                         .is_some_and(|convention| convention.token)
                 })
                 .map(|directory| format!("{directory}/{name}.token"));
-            let launcher = interfaces
-                .filter(|_| {
-                    convention
-                        .as_ref()
-                        .is_some_and(|convention| convention.launcher)
-                })
-                .map(|directory| format!("{directory}/{name}"));
             InterfaceAccess {
                 sandbox: sandbox.into(),
                 interface: name.clone(),
@@ -169,7 +143,6 @@ pub fn access(
                     .and_then(|port| u16::try_from(port).ok())
                     .filter(|port| *port != 0),
                 token_path,
-                launcher,
                 sign_in: convention
                     .map_or(SignIn::AdapterDocumented, |convention| convention.sign_in),
             }
