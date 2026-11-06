@@ -6,7 +6,9 @@
 # same reply and refuses any request without the run's key. Apply reports
 # each interface; a person reaches it with the pinned OpenShell CLI's forward
 # and the token apply names. cargo ci live-docker gives each run a fresh
-# identity, gateway port and subnet, stub address, and agent images.
+# identity, gateway port and subnet, stub address, and agent images. Only
+# claw grants python3 the stub's /health, which the managed inference grant
+# leaves out.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -37,6 +39,20 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
         tier: isolated
+        grants:
+          stub-health:
+            endpoints:
+              # The managed inference grant's address and protocol, which
+              # OpenShell requires of endpoints that share a host and port.
+              - host: 172.30.123.1
+                port: 17699
+                allowed_ips:
+                  - 172.30.123.1/32
+                path: /health
+                protocol: rest
+                access: read-only
+            binaries:
+              - path: /usr/local/bin/python3
       harness:
         kind: nvidia.fabric.openclaw
         settings:
