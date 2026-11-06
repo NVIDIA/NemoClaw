@@ -8,8 +8,8 @@ ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=e5b5ebf2b81cc3c6325301ea419ebf2453dab12e
-ARG FABRIC_SHA256=3c20aed57985f4d19fa0a30204448a7989761991757317ec67ba8c187ba577d5
+ARG FABRIC_REVISION=934ab7eca1ec9ac86a22fd24913f2e9d68637c4a
+ARG FABRIC_SHA256=33c4e855e3b72464546b5cb77cc83644f7401956976d34dc7f11cd4235203ff6
 # OpenClaw release 2026.9.34, the only version the pinned Fabric's OpenClaw
 # adapter supports; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:70e88573161a9248cfe992c069f638085ac066278e03f11a46bcbd115f38e3fc
@@ -248,58 +248,6 @@ RUN mkdir -p /opt/fabric/share/nemo-fabric/adapters/opencode \
     && ln -s /opt/fabric-source/adapters/typescript/opencode/opencode.fabric-adapter.json \
         /opt/fabric/share/nemo-fabric/adapters/opencode/opencode.fabric-adapter.json \
     && printf '%s\n' '{"nvidia.fabric.opencode": {"files": ["/opt/fabric-source"], "binaries": ["bun"]}}' > /opt/nemoclaw/adapters.json
-USER node
-
-FROM common-wheels AS deepagents-code-build
-COPY --from=node /node/ /
-RUN mkdir -p /opt/fabric-source/adapter-contract /opt/fabric-source/adapters \
-    && cp -a /src/fabric/adapter-contract/typescript /opt/fabric-source/adapter-contract/ \
-    && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/
-RUN --mount=type=cache,target=/root/.npm \
-    cd /opt/fabric-source/adapter-contract/typescript && npm ci --ignore-scripts --no-audit --no-fund && npm run build \
-    && cd /opt/fabric-source/adapters/typescript \
-    && npm ci --workspace nemo-fabric-adapters-deepagents-code --include-workspace-root --ignore-scripts --no-audit --no-fund \
-    && npm run build --workspace nemo-fabric-adapters-common && npm run build --workspace nemo-fabric-adapters-deepagents-code
-
-# Keep the packed adapter and npm's locked dependencies; drop the links to the
-# workspace's other adapters, which aren't packed.
-RUN mkdir -p /opt/deepagents-code/adapters/typescript \
-    && cp -a /opt/fabric-source/adapters/typescript/node_modules /opt/deepagents-code/adapters/typescript/ \
-    && for link in /opt/deepagents-code/adapters/typescript/node_modules/nemo-fabric-adapters-*; do \
-        case "${link##*/}" in nemo-fabric-adapters-common|nemo-fabric-adapters-deepagents-code) ;; *) rm "$link" ;; esac; \
-    done \
-    && for package in adapter-contract/typescript adapters/typescript/common adapters/typescript/deepagents-code; do \
-        mkdir -p "/opt/deepagents-code/$package" \
-        && (cd "/opt/fabric-source/$package" && npm pack --ignore-scripts --pack-destination "/opt/deepagents-code/$package") \
-        && tar -xzf /opt/deepagents-code/$package/*.tgz -C "/opt/deepagents-code/$package" --strip-components=1 \
-        && rm /opt/deepagents-code/$package/*.tgz || exit 1; \
-    done
-
-# Deep Agents Code pins exact versions and needs Python 3.14, so it gets its
-# own environment from NemoClaw's lock, apart from Fabric's. Its one source
-# distribution, forbiddenfruit, builds with the lock's own setuptools.
-FROM base AS deepagents-code-env
-COPY image/fabric/deepagents-code/pyproject.toml image/fabric/deepagents-code/uv.lock /build/
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
-    uv export --project /build --frozen --no-emit-project --format requirements-txt --output-file /requirements.txt \
-    && python3 -m venv --without-pip /opt/deepagents-code \
-    && uv pip install --python /opt/deepagents-code/bin/python --require-hashes \
-        --build-constraints /requirements.txt -r /requirements.txt \
-    && uv pip check --python /opt/deepagents-code/bin/python
-
-# Fabric's Deep Agents Code adapter runs on Node.js and runs dcode, from its own
-# environment, as an ACP server; dcode's tools use git and ripgrep.
-FROM interactive AS deepagents-code
-COPY --from=deepagents-code-build /opt/deepagents-code /opt/fabric-source
-COPY --from=deepagents-code-env /opt/deepagents-code /opt/deepagents-code
-COPY --from=deepagents-code-env /requirements.txt /opt/nemoclaw/source/deepagents-code-requirements.txt
-# The adapter runs dcode from PATH. Fabric discovery skips symlinked
-# directories, so link only the descriptor.
-RUN ln -s /opt/deepagents-code/bin/dcode /usr/local/bin/dcode \
-    && mkdir -p /opt/fabric/share/nemo-fabric/adapters/deepagents-code \
-    && ln -s /opt/fabric-source/adapters/typescript/deepagents-code/deepagents-code.fabric-adapter.json \
-        /opt/fabric/share/nemo-fabric/adapters/deepagents-code/deepagents-code.fabric-adapter.json \
-    && printf '%s\n' '{"nvidia.fabric.langchain.deepagents-code": {"files": ["/opt/fabric-source", "/opt/deepagents-code"], "binaries": ["node", "dcode"]}}' > /opt/nemoclaw/adapters.json
 USER node
 
 

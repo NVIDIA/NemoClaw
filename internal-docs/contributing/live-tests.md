@@ -230,7 +230,7 @@ A request there must get the stub's 401, which shows that it reached the stub; w
 A connection to the managed gateway, at the gateway network's second address and its endpoint's port, must fail with `EACCES`, OpenShell's refusal: no grant names that host, and the sandbox's OpenShell proxy, which runs on the host network, can reach it.
 The stub's reply does not establish inference; `docker-openclaw-nvidia` covers hosted inference.
 
-The Deep Agents Code terminal and Hermes's browser chat need a pseudo-terminal, and are not checked live.
+Hermes's browser chat needs a pseudo-terminal, and is not checked live.
 Rejected interfaces, refused tokens, a killed dashboard process, and tokens kept out of output and state are integration checks ([#14060](https://github.com/NVIDIA/NemoClaw/issues/14060)).
 
 ## Docker Gateway Isolation
