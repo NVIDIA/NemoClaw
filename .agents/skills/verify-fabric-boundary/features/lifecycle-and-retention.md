@@ -85,7 +85,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    EOF
    ```
 
-   Result: both exits are 0, apply ends with `Apply complete`, `RUNTIME_ID` is one nonempty ID, the doctor passes, and the reply shows `run` `succeeded`, `error` `null`, `same_runtime` `true`, and `response` `$WORD`.
+   Result: both exits are 0, apply ends with `Apply complete`, `RUNTIME_ID` is one nonempty ID, the doctor passes, and the reply's `response` is `$WORD`.
    [native-interfaces](native-interfaces.md) reads the new entry points from `$APPLY_OUT`.
 5. **After a transition:** set `PHASE` to the next phase's directory, write its [fresh phase input](README.md#driving-conventions), and re-run every check whose Phases list names that phase, in the [map's order](README.md#features).
    The [lifecycle phases](README.md#lifecycle-phases) table gives each After-phase's check count; run exactly those.

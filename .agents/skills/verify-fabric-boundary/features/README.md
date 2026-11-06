@@ -35,7 +35,7 @@
 
   The input JSON holds only `nonce` and `phase`.
   Before a plugin event check, confirm that its trigger and ledger entries for this nonce are absent.
-  Never put the input nonce or a skill's hidden recipe in a file or skill prompt; use a unique request ID when the harness supports one.
+  Never put the input nonce or a skill's hidden recipe in a file or skill prompt.
 - **Prompts.** Send each feature file's prompt exactly. Replace only its `<...>` placeholders, with values from `bindings.md`, and send the same text in every phase.
   Save the exact text sent in `CHECK_DIR`.
   A harness constraint that `bindings.md` records, such as the plugin format, may be appended after the prompt's last line; it must not change the requested behavior or the expected output.
@@ -84,13 +84,17 @@
     jq -Rs . "$CHECK_DIR/$1.prompt.txt" |
       openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - > "$CHECK_DIR/$1.reply.json"
     echo "exit $?"
-    jq --arg rt "$RUNTIME_ID" '{run: .result.status, error: .result.error, same_runtime: (.result.runtime_id == $rt), response: .result.output.response}' "$CHECK_DIR/$1.reply.json"
+    jq '{run: .result.status, error: .result.error, response: .result.output.response}' "$CHECK_DIR/$1.reply.json"
   }
   ```
 
   Pass `-` as `fill`'s argument when the prompt has no `<script>`.
   After each request, save the current turn's native calls, with their arguments, output, and exit status, from the record `bindings.md` names, in `$CHECK_DIR/NAME.calls.txt`; keep earlier turns out of that file.
   Once, after defining them, print `$SHELL_TOOL`, `$FILE_WRITE_TOOL`, `$SKILL_AUTHORING`, and `$NATIVE_SKILL_DIR`; each must match `bindings.md`.
+  The [bridge invocation test](../../../../crates/nemoclaw-e2e/tests/integration/fabric_bridge.rs) checks the selected agent and runtime ID, stdin input, and no replay of uncertain work.
+  The [bridge envelope tests](../../../../crates/fabric-provider/src/bridge.rs) and [native result tests](../../../../crates/nemoclaw-e2e/src/state.rs) cover operation and native result status separately; `ask` keeps status and error output for diagnosis.
+  The SDK's [`routes_set_the_harness_provider_and_sampling`](../../../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) checks exact model variant projection.
+  Keep runtime IDs and any returned request IDs as evidence; request-ID support belongs to Fabric and remains unresolved in #14203.
 - **Record each check.** When a check finishes, fill in its row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](#proof-rules) require.
 - **Product assertions and commands.** Each Sub-feature line and `Result` states intended behavior, which the selected revision may not implement yet; keep it as written.
   Take each control's command from the tool's own help or documentation, save that help in `$CHECK_DIR`, and record the command in `bindings.md` or the check's evidence.
