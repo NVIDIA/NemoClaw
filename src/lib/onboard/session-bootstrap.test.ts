@@ -98,6 +98,37 @@ function createDeps(
 
 describe("prepareOnboardSession", () => {
   it.each([true, false])(
+    "preserves retained router recovery metadata before fresh session replacement (fresh=%s)",
+    async (fresh) => {
+      const stored = createSession({
+        provider: "legacy-custom-router",
+        routerPid: 4242,
+        routerPort: 4100,
+        routerCredentialHash: "retained",
+      });
+      const before = structuredClone(stored);
+      const { deps, getSession } = createDeps(stored);
+      await expect(
+        prepareOnboardSession(
+          {
+            resume: false,
+            fresh,
+            requestedFromDockerfile: null,
+            requestedSandboxName: "replacement",
+            cannotPrompt: true,
+            nonInteractive: true,
+          },
+          deps,
+        ),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(deps.clearSession).not.toHaveBeenCalled();
+      expect(deps.createSession).not.toHaveBeenCalled();
+      expect(deps.saveSession).not.toHaveBeenCalled();
+      expect(getSession()).toEqual(before);
+    },
+  );
+
+  it.each([true, false])(
     "rejects legacy router resume before durable state changes (resumable=%s)",
     async (resumable) => {
       const stored = { ...createSession({ provider: "nvidia-router" }), resumable };

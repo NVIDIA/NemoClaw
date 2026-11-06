@@ -14,6 +14,7 @@ The `routed` and `nvidia-router` selections are unavailable, including when resu
 NemoClaw rejects those selections without migrating providers or cleaning up existing resources.
 
 [Choose a supported inference provider](../learn-and-choose/choose-inference-provider) for a new onboarding attempt.
+If a previous run retained router recovery metadata, inspect and clean up those resources before starting a new onboarding session.
 Use a new sandbox name to preserve an existing sandbox while configuring its replacement.
 Removal of the built-in router does not create an automatic migration to NeMo Switchyard.
 
@@ -29,7 +30,9 @@ NemoClaw does not stop arbitrary processes or remove credentials when it rejects
 
 ## Router and Sandbox Lifecycle Locks
 
-Legacy cleanup retains the router-port and sandbox lifecycle locks.
-It checks process ownership and other sandbox references before stopping a recorded router.
-If ownership or remaining references cannot be established, cleanup preserves the resource and its metadata for inspection.
+The sandbox `destroy` command retains the router-port and sandbox lifecycle locks.
+Before stopping a recorded router, `destroy` checks process ownership and other sandbox references.
+If ownership or remaining references cannot be established, `destroy` preserves the router and its recovery metadata for inspection.
+Use the [destroy command reference](../../reference/commands#$$nemoclaw-name-destroy) for recovery guidance.
+Uninstall has a broader removal scope; follow the [uninstall instructions](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) before using it.
 Do not kill a process using only a stale recorded PID.

@@ -5457,6 +5457,16 @@ agent_supports_deferred_onboarding() {
   grep -Eq '^deferred_onboarding:[[:space:]]*true[[:space:]]*$' "$manifest_path"
 }
 
+validate_retired_inference_provider() {
+  local provider
+  provider="$(printf '%s' "${NEMOCLAW_PROVIDER:-}" | tr '[:upper:]_' '[:lower:]-' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$provider" in
+    routed | nvidia-router)
+      error "Model Router has been removed; choose a supported inference provider."
+      ;;
+  esac
+}
+
 validate_deferred_onboarding_request() {
   [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
 
@@ -7953,6 +7963,7 @@ main() {
   # Validate service-port overrides before dependency installation or any
   # other host mutation. The installed CLI applies the same canonical-decimal
   # contract when it consumes these forwarded values.
+  validate_retired_inference_provider
   validate_forwarded_service_port_overrides
 
   load_station_vllm_conflict_helpers

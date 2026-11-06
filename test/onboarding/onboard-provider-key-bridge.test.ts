@@ -113,6 +113,7 @@ Object.assign(process.env, env, {
     return JSON.parse(result.stdout.trim()) as {
       outcome: "completed" | "exit";
       exitCode?: number | null;
+      message?: string;
       result?: { provider: string; credentialEnv: string | null };
       env: Record<string, string | null>;
       lines: string[];
@@ -123,38 +124,21 @@ Object.assign(process.env, env, {
 }
 
 describe("onboard provider-key compatibility bridges", () => {
-  it(
-    "copies credential-like NEMOCLAW_PROVIDER_KEY into the Model Router credential env",
+  it.each(["sk-router-fallback", "routed"])(
+    "rejects retired routing without bridging provider-key value %s into credentials",
     testTimeoutOptions(90_000),
-    () => {
+    (providerKey) => {
       const payload = runSetupNimBridgeScenario({
         NEMOCLAW_PROVIDER: "routed",
-        NEMOCLAW_PROVIDER_KEY: "sk-router-fallback",
+        NEMOCLAW_PROVIDER_KEY: providerKey,
       });
-
-      assert.equal(payload.outcome, "completed");
-      assert.equal(payload.result?.provider, "nvidia-router");
-      assert.equal(payload.result?.credentialEnv, "NVIDIA_INFERENCE_API_KEY");
-      assert.equal(payload.env.NVIDIA_INFERENCE_API_KEY, "sk-router-fallback");
-    },
-  );
-
-  it(
-    "does not copy selector-like NEMOCLAW_PROVIDER_KEY into the Model Router credential env",
-    testTimeoutOptions(90_000),
-    () => {
-      const payload = runSetupNimBridgeScenario({
-        NEMOCLAW_PROVIDER: "routed",
-        NEMOCLAW_PROVIDER_KEY: "routed",
-      });
-
       assert.equal(payload.outcome, "exit");
-      assert.equal(payload.exitCode, 1);
+      assert.equal(payload.result, undefined);
       assert.equal(payload.env.NVIDIA_INFERENCE_API_KEY, null);
-      assert.ok(
-        payload.lines.some((line) =>
-          line.includes("NVIDIA_INFERENCE_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required"),
-        ),
+      assert.equal(payload.env.NEMOCLAW_PROVIDER_KEY, providerKey);
+      assert.match(
+        [payload.message, ...payload.lines].join("\n"),
+        /Model Router has been removed|Unsupported NEMOCLAW_PROVIDER: routed/,
       );
     },
   );

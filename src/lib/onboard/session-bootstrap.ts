@@ -809,7 +809,15 @@ function prepareFreshSession(
   if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
     reportUnsupportedApfLifecycle("portable", deps);
   }
-  assertNoIncompleteExternalComponentActivation(deps.loadSession());
+  const previousSession = deps.loadSession();
+  if (
+    previousSession?.routerPid ||
+    previousSession?.routerPort ||
+    previousSession?.routerCredentialHash
+  ) {
+    rejectRetiredModelRouterSession(previousSession);
+  }
+  assertNoIncompleteExternalComponentActivation(previousSession);
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
