@@ -7,6 +7,7 @@ import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
 } from "../../inference/selection";
+import { readRecordedDashboardOrigins } from "../../dashboard/url";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DcodeAutoApprovalMode,
@@ -49,6 +50,7 @@ export type RebuildGpuOptOutEntry = {
   model?: string | null;
   preferredInferenceApi?: string | null;
   hostMounts?: import("../../state/registry/types").SandboxHostMount[];
+  dashboardOrigins?: readonly string[];
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -142,6 +144,7 @@ export type RebuildRecreateOnboardOpts = {
   managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
+  dashboardOrigins?: readonly string[];
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
@@ -172,6 +175,15 @@ export function buildRebuildRecreateOnboardOpts(args: {
   }
   const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
   const hostMounts = normalizePersistedSandboxHostMounts(args.sb?.hostMounts);
+  // A present but invalid record must not silently drop the origins (#13177).
+  const recordedOrigins = args.sb?.dashboardOrigins;
+  const dashboardOrigins =
+    recordedOrigins === undefined ? null : readRecordedDashboardOrigins(recordedOrigins);
+  if (recordedOrigins !== undefined && dashboardOrigins === null) {
+    throw new Error(
+      "Recorded dashboard origins are invalid. Run onboard again with valid --dashboard-origin values, or without them to remove the origins, then rebuild.",
+    );
+  }
   const targetGatewayName = resolveSandboxGatewayName(args.sb);
   const targetGatewayPort = resolveGatewayPortFromName(targetGatewayName);
   if (targetGatewayPort === null) {
@@ -223,5 +235,6 @@ export function buildRebuildRecreateOnboardOpts(args: {
     baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
+    ...(dashboardOrigins ? { dashboardOrigins } : {}),
   };
 }

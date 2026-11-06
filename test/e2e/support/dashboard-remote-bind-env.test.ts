@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
+import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
 import { isValidName } from "../../../src/lib/name-validation.ts";
 
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
@@ -123,6 +124,34 @@ describe("dashboard remote-bind E2E environment", () => {
   });
 });
 
+describe("dashboard-remote-bind target ownership (#13177)", () => {
+  it.each([
+    "src/lib/dashboard/url.ts",
+    "scripts/generate-openclaw-config.mts",
+    "src/lib/onboard/managed-startup/onboard-profile.ts",
+    "src/lib/onboard/managed-startup/agent-environment.ts",
+    "src/lib/actions/sandbox/rebuild-env-isolation.ts",
+    "src/lib/actions/sandbox/agents/managed-workload-rebuild-profile.ts",
+    "src/lib/onboard/command.ts",
+    "src/lib/onboard/command-support.ts",
+    "src/lib/onboard/session-bootstrap.ts",
+    "src/lib/onboard/resume-config.ts",
+    "src/lib/onboard/sandbox-reuse.ts",
+    "src/lib/onboard/managed-startup/profile.ts",
+    "src/lib/onboard/managed-startup/profile-builder.ts",
+    "src/lib/actions/sandbox/rebuild-gpu-opt-out.ts",
+    "src/lib/onboard/workload/clone.ts",
+    "src/lib/state/gateway-registry.ts",
+    "src/lib/state/registry-normalization.ts",
+    "src/lib/state/registry.ts",
+    "src/lib/onboard/sandbox-registration.ts",
+    "src/lib/onboard/sandbox-create/orchestration.ts",
+  ])("selects the live dashboard-origin owner when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "dashboard-remote-bind",
+    );
+  });
+});
 describe("remote API refusal probe", () => {
   it.each([false, true])(
     "distinguishes listening=%s from a refused connection",
@@ -163,6 +192,13 @@ it("selects dashboard-remote-bind when its host-network probe helper changes", (
       changedFiles: ["test/e2e/live/dashboard-remote-bind-env.ts"],
     },
   );
+  expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+    "dashboard-remote-bind",
+  );
+});
+
+it("plans dashboard-remote-bind when dashboard-origin registry validation changes", () => {
+  const plan = buildE2eWorkflowPlan({}, { changedFiles: ["src/lib/state/gateway-registry.ts"] });
   expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
     "dashboard-remote-bind",
   );

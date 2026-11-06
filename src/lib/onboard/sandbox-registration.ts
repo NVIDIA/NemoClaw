@@ -116,6 +116,8 @@ export interface CreatedSandboxRegistryEntryInput {
    * commands can report the external origin (#11439).
    */
   dashboardExternalUrl?: string | null;
+  /** Extra OpenClaw dashboard browser origins recorded for rebuild (#13177). */
+  dashboardOrigins?: readonly string[];
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
@@ -369,6 +371,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...(input.dashboardExternalUrl != null
       ? { dashboardExternalUrl: input.dashboardExternalUrl }
       : {}),
+    ...(input.dashboardOrigins?.length ? { dashboardOrigins: [...input.dashboardOrigins] } : {}),
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,

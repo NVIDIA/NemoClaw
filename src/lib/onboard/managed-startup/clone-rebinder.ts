@@ -5,7 +5,7 @@ import { recordedNativeProviderAttachment } from "../../inference/native-provide
 import { createHash } from "node:crypto";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
-import { rebindLoopbackDashboardUrlPort } from "../../dashboard/url";
+import { readRecordedDashboardOrigins, rebindLoopbackDashboardUrlPort } from "../../dashboard/url";
 import { resolveContextWindowForModel } from "../../inference/context-window";
 import { rebindSandboxMessagingPlanForClone } from "../../messaging/clone-rebind";
 import { isValidName } from "../../name-validation";
@@ -58,6 +58,8 @@ export interface ManagedStartupCloneCurrentState {
   readonly hermesDashboardTui?: boolean;
   readonly dashboardPort?: number | null;
   readonly dashboardRemoteBindPrepared?: boolean;
+  /** The source's recorded extra OpenClaw dashboard origins (#13177). */
+  readonly dashboardOrigins?: readonly string[];
   readonly dcodeAutoApprovalMode?: "disabled" | "thread-opt-in" | string;
   readonly observabilityEnabled?: boolean;
 }
@@ -252,10 +254,21 @@ function currentSourceDashboard(
     if (remoteBind !== (profile.dashboard.bindAddress === "0.0.0.0")) {
       fail("current OpenClaw dashboard bind state conflicts with its managed receipt");
     }
+    // Re-onboarding can change or remove origins without a rebuild, so the
+    // receipt's list may be stale; the source's registry record is current (#13177).
+    const { extraOrigins: _receiptOrigins, ...dashboard } = profile.dashboard;
+    const recordedOrigins =
+      current.dashboardOrigins === undefined
+        ? []
+        : readRecordedDashboardOrigins([...current.dashboardOrigins]);
+    if (recordedOrigins === null) {
+      fail("current OpenClaw dashboard origins are invalid");
+    }
     return {
-      ...profile.dashboard,
+      ...dashboard,
       url: urlAtPort(profile.dashboard.url, port),
       port,
+      ...(recordedOrigins.length > 0 ? { extraOrigins: recordedOrigins } : {}),
     };
   }
   if (profile.dashboard.agent === "hermes") {

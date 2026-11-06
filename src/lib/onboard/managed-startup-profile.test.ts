@@ -124,6 +124,7 @@ const OPENCLAW_PROFILE = {
     port: 18_789,
     bindAddress: "0.0.0.0",
     wslExposure: true,
+    extraOrigins: ["https://launchpad.example.test:8443"],
   },
   tools: {
     disclosure: "progressive",

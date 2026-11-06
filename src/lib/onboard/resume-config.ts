@@ -31,6 +31,7 @@ export interface ResumeSessionLike {
     fromDockerfile?: string | null;
     fromImage?: string | null;
     hostMounts?: SandboxHostMount[];
+    dashboardOrigins?: string[];
   } | null;
   steps?: {
     sandbox?: { status?: string | null } | null;
@@ -154,6 +155,7 @@ export function getResumeConfigConflicts(
     toolDisclosure?: ToolDisclosure | null;
     observabilityEnabled?: boolean | null;
     hostMounts?: readonly SandboxHostMount[];
+    dashboardOrigins?: readonly string[];
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
      * validated registry state, so credential aliases must not synthesize a new
@@ -261,6 +263,20 @@ export function getResumeConfigConflicts(
       field: "host mounts",
       requested: requestedHostMounts,
       recorded: recordedHostMounts,
+    });
+  }
+
+  // Resume reuses the recorded dashboard origins; an explicit different list
+  // would silently replace what the interrupted run selected (#13177).
+  const requestedOrigins = opts.dashboardOrigins?.length
+    ? JSON.stringify([...opts.dashboardOrigins].sort())
+    : null;
+  const recordedOrigins = JSON.stringify([...(session?.metadata?.dashboardOrigins ?? [])].sort());
+  if (requestedOrigins !== null && requestedOrigins !== recordedOrigins) {
+    conflicts.push({
+      field: "dashboard origins",
+      requested: requestedOrigins,
+      recorded: recordedOrigins,
     });
   }
 

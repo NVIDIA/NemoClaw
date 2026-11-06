@@ -69,6 +69,7 @@ export interface ManagedWorkloadCloneRegistryFields {
   readonly hermesDashboardTui?: true;
   readonly dashboardPort?: number;
   readonly dashboardRemoteBindPrepared: boolean;
+  readonly dashboardOrigins?: SandboxEntry["dashboardOrigins"];
 }
 
 export interface PreparedManagedWorkloadCloneHandoff {
@@ -236,6 +237,10 @@ function registryFields(
     ...(dashboardPort === undefined ? {} : { dashboardPort }),
     dashboardRemoteBindPrepared:
       profile.dashboard.agent === "openclaw" && profile.dashboard.bindAddress === "0.0.0.0",
+    // The registry is the record rebuild replays, so it must match the profile.
+    ...(profile.dashboard.agent === "openclaw" && profile.dashboard.extraOrigins
+      ? { dashboardOrigins: [...profile.dashboard.extraOrigins] }
+      : {}),
   };
 }
 

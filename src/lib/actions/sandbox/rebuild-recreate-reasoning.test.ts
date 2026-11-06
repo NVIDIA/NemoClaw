@@ -169,14 +169,17 @@ function stubJournaledRecreateSession(): void {
 
 describe("rebuild recreate OpenClaw dashboard origin (#13177)", () => {
   let previousChatUiUrl: string | undefined;
+  let previousDashboardOrigins: string | undefined;
 
   beforeEach(() => {
     previousChatUiUrl = process.env.CHAT_UI_URL;
+    previousDashboardOrigins = process.env.NEMOCLAW_DASHBOARD_ORIGINS;
     stubJournaledRecreateSession();
   });
 
   afterEach(() => {
     restoreEnv("CHAT_UI_URL", previousChatUiUrl);
+    restoreEnv("NEMOCLAW_DASHBOARD_ORIGINS", previousDashboardOrigins);
     vi.restoreAllMocks();
   });
 
@@ -239,6 +242,31 @@ describe("rebuild recreate OpenClaw dashboard origin (#13177)", () => {
     ).resolves.toBe(true);
 
     expect(observed()).toBe("https://launchpad.example.test:18790");
+  });
+
+  it("warns that an exported NEMOCLAW_DASHBOARD_ORIGINS is ignored", async () => {
+    process.env.NEMOCLAW_DASHBOARD_ORIGINS = "https://ambient.example.test:9443";
+    observeInnerChatUiUrl();
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sandboxEntry: {
+            name: SANDBOX_NAME,
+            agent: "openclaw",
+            dashboardOrigins: ["https://launchpad.example.test:8443"],
+          },
+          recreateOptions: { ...recreateOptions, controlUiPort: 18_790 },
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(vi.mocked(console.log)).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Ignoring NEMOCLAW_DASHBOARD_ORIGINS='https://ambient.example.test:9443' — rebuilding 'rebuild-reasoning-effort' with its recorded dashboard origins 'https://launchpad.example.test:8443'.",
+      ),
+    );
+    expect(process.env.NEMOCLAW_DASHBOARD_ORIGINS).toBe("https://ambient.example.test:9443");
   });
 
   it("recreates a sandbox without a recorded origin on loopback", async () => {

@@ -181,6 +181,11 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    * left unset and reported as `http://127.0.0.1:<dashboardPort>/` (#11439).
    */
   dashboardExternalUrl?: string | null;
+  /**
+   * Extra OpenClaw dashboard browser origins that keep their own port, recorded
+   * at onboard so rebuild can replay them (#13177). Omitted when none is set.
+   */
+  dashboardOrigins?: string[];
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
   /** Generation proving which durable same-name recreate registered this row. */

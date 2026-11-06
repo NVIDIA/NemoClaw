@@ -67,6 +67,7 @@ export {
   verifyReadOnlyHostMountSources,
 } from "./host-mount";
 export { requireReadOnlyHostMountRuntimeSupport };
+
 export {
   isOnboardResumeIntentRaceError,
   OnboardResumeIntentError,
@@ -491,6 +492,8 @@ export interface OnboardSessionBootstrapInput {
   apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+  /** Extra OpenClaw dashboard origins from this command; resume reuses the recorded list. */
+  requestedDashboardOrigins?: readonly string[];
   servingProfileProvenance?: ServingProfileProvenance | null;
   checkpointProfile?: CheckpointOnboardProfile;
   portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
@@ -515,6 +518,7 @@ export interface OnboardSessionBootstrapDeps {
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
       hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+      dashboardOrigins?: readonly string[];
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -771,6 +775,7 @@ async function prepareResumeSession(
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
     hostMounts: input.requestedHostMounts,
+    dashboardOrigins: input.requestedDashboardOrigins,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -835,6 +840,9 @@ function prepareFreshSession(
       fromImage,
       ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
         ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
+        : {}),
+      ...(input.requestedDashboardOrigins?.length
+        ? { dashboardOrigins: [...input.requestedDashboardOrigins] }
         : {}),
     },
   });

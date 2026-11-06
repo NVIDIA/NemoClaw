@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveRecordedDashboardUrlForPort } from "../../dashboard/url";
+import {
+  DASHBOARD_ORIGINS_ENV,
+  parseDashboardOrigins,
+  resolveRecordedDashboardUrlForPort,
+} from "../../dashboard/url";
 
 // #5735: A rebuild recreates a sandbox from its persisted registry/session
 // config. Ambient onboarding-selection env vars left over from an *unrelated*
@@ -169,6 +173,41 @@ export function describeIgnoredDashboardOriginEnv(input: {
 }
 
 /**
+ * Explain an exported `NEMOCLAW_DASHBOARD_ORIGINS` that a rebuild ignores
+ * (#13177). Rebuild replays the origins recorded at onboarding. Returns the
+ * warning lines to print when the export names different origins, including a
+ * value that is not a valid origin list; otherwise returns no lines.
+ */
+export function describeIgnoredDashboardOriginsEnv(input: {
+  readonly sandboxName: string;
+  readonly cliName: string;
+  readonly recordedOrigins: readonly string[];
+  readonly env?: NodeJS.ProcessEnv;
+}): string[] {
+  const requested = (input.env ?? process.env)[DASHBOARD_ORIGINS_ENV]?.trim() ?? "";
+  if (requested === "") return [];
+  let requestedOrigins: string[] | null;
+  try {
+    requestedOrigins = parseDashboardOrigins([requested]);
+  } catch {
+    requestedOrigins = null;
+  }
+  const sameOrigins =
+    requestedOrigins !== null &&
+    requestedOrigins.length === input.recordedOrigins.length &&
+    requestedOrigins.every((origin) => input.recordedOrigins.includes(origin));
+  if (sameOrigins) return [];
+  const recorded = input.recordedOrigins.length > 0 ? input.recordedOrigins.join(", ") : "none";
+  // Never echo the raw value: an invalid entry can carry user information.
+  const shown =
+    requestedOrigins === null ? "(not a valid origin list)" : `'${requestedOrigins.join(",")}'`;
+  return [
+    `Ignoring ${DASHBOARD_ORIGINS_ENV}=${shown} — rebuilding '${input.sandboxName}' with its recorded dashboard origins '${recorded}'.`,
+    `To change the dashboard origins, run: ${input.cliName} onboard --name ${input.sandboxName} --dashboard-origin <origin>, then ${input.cliName} ${input.sandboxName} rebuild.`,
+  ];
+}
+
+/**
  * Choose the `CHAT_UI_URL` that an OpenClaw rebuild hands to its inner onboard
  * (#13177), or null when the rebuild does not manage an OpenClaw dashboard.
  *
@@ -181,6 +220,7 @@ export function planRecordedDashboardOriginForRecreate(input: {
   readonly sandboxName: string;
   readonly cliName: string;
   readonly recordedExternalUrl: string | null | undefined;
+  readonly recordedDashboardOrigins?: readonly string[];
   readonly rebuildAgent: string | null;
   readonly controlUiPort: number | null;
   readonly replacementDashboard?: { readonly agent: string; readonly url?: string };
@@ -198,11 +238,19 @@ export function planRecordedDashboardOriginForRecreate(input: {
         });
   return {
     chatUiUrl,
-    warnings: describeIgnoredDashboardOriginEnv({
-      sandboxName: input.sandboxName,
-      cliName: input.cliName,
-      replayedChatUiUrl: chatUiUrl,
-      env: input.env,
-    }),
+    warnings: [
+      ...describeIgnoredDashboardOriginEnv({
+        sandboxName: input.sandboxName,
+        cliName: input.cliName,
+        replayedChatUiUrl: chatUiUrl,
+        env: input.env,
+      }),
+      ...describeIgnoredDashboardOriginsEnv({
+        sandboxName: input.sandboxName,
+        cliName: input.cliName,
+        recordedOrigins: input.recordedDashboardOrigins ?? [],
+        env: input.env,
+      }),
+    ],
   };
 }

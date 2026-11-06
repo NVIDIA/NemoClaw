@@ -7,6 +7,7 @@ import {
   AMBIENT_RECREATE_ENV_VARS,
   assessAmbientRecreateEnv,
   describeIgnoredDashboardOriginEnv,
+  describeIgnoredDashboardOriginsEnv,
   isolateAmbientRecreateEnv,
   sanitizeEnvValueForDisplay,
 } from "./rebuild-env-isolation.js";
@@ -51,6 +52,87 @@ describe("describeIgnoredDashboardOriginEnv (#13177)", () => {
       env: { CHAT_UI_URL: "https://x.test\n\u001b[2KDone" },
     });
     expect(first).not.toMatch(/[\n\u001b]/);
+  });
+});
+
+describe("describeIgnoredDashboardOriginsEnv (#13177)", () => {
+  const recorded = ["https://launchpad.example.test:8443"];
+
+  it("warns when an exported NEMOCLAW_DASHBOARD_ORIGINS differs from the recorded origins", () => {
+    expect(
+      describeIgnoredDashboardOriginsEnv({
+        sandboxName: "alpha",
+        cliName: "nemoclaw",
+        recordedOrigins: recorded,
+        env: { NEMOCLAW_DASHBOARD_ORIGINS: "https://other.example.test:9443" },
+      }),
+    ).toEqual([
+      "Ignoring NEMOCLAW_DASHBOARD_ORIGINS='https://other.example.test:9443' — rebuilding 'alpha' with its recorded dashboard origins 'https://launchpad.example.test:8443'.",
+      "To change the dashboard origins, run: nemoclaw onboard --name alpha --dashboard-origin <origin>, then nemoclaw alpha rebuild.",
+    ]);
+  });
+
+  it("names 'none' when the sandbox has no recorded origins", () => {
+    const [first] = describeIgnoredDashboardOriginsEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      recordedOrigins: [],
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: "https://other.example.test:9443" },
+    });
+    expect(first).toContain("with its recorded dashboard origins 'none'");
+  });
+
+  it.each([
+    { case: "unset", env: {} },
+    { case: "empty", env: { NEMOCLAW_DASHBOARD_ORIGINS: " " } },
+    {
+      case: "the same origins in another spelling",
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: " HTTPS://Launchpad.Example.Test:8443/ " },
+    },
+  ])("stays quiet when NEMOCLAW_DASHBOARD_ORIGINS is $case", ({ env }) => {
+    expect(
+      describeIgnoredDashboardOriginsEnv({
+        sandboxName: "alpha",
+        cliName: "nemoclaw",
+        recordedOrigins: recorded,
+        env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("renders an untrusted value on one safe line", () => {
+    const [first] = describeIgnoredDashboardOriginsEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      recordedOrigins: recorded,
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: "https://x.test\n\u001b[2KDone" },
+    });
+    expect(first).not.toMatch(/[\n\u001b]/);
+  });
+
+  it("names an invalid value by a placeholder so credentials never reach the warning", () => {
+    const [first] = describeIgnoredDashboardOriginsEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      recordedOrigins: recorded,
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: "https://user:s3cret@launchpad.example.test:8443" },
+    });
+
+    expect(first).toContain("Ignoring NEMOCLAW_DASHBOARD_ORIGINS=(not a valid origin list)");
+    expect(first).not.toContain("s3cret");
+  });
+
+  it("shows the normalized origins rather than the raw value", () => {
+    const [first] = describeIgnoredDashboardOriginsEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      recordedOrigins: recorded,
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: " HTTPS://Other.Example.Test:9443/ " },
+    });
+
+    expect(first).toContain(
+      "Ignoring NEMOCLAW_DASHBOARD_ORIGINS='https://other.example.test:9443'",
+    );
   });
 });
 

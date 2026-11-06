@@ -65,6 +65,8 @@ export interface SandboxCreateIntent {
   readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
+  /** Extra OpenClaw dashboard browser origins requested for this sandbox. */
+  readonly dashboardOrigins?: readonly string[];
   /** Present only when the operator explicitly selected observability on or off. */
   readonly observabilityRequestedExplicitly?: true;
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
@@ -191,6 +193,8 @@ export type OnboardOptions = {
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+  /** Extra OpenClaw dashboard browser origins that keep their own port. */
+  dashboardOrigins?: readonly string[];
   sandboxGpu?: "enable" | "disable" | null;
   sandboxGpuDevice?: string | null;
   /** GPU exposed to the host-side vLLM container managed by NemoClaw. */

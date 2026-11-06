@@ -288,6 +288,29 @@ describe("rebindManagedStartupProfileForClone", () => {
     expect(Object.isFrozen(rebound.profile.tools.enabledGateways)).toBe(true);
   });
 
+  it.each([
+    ["removes origins the source no longer records", undefined, undefined],
+    [
+      "uses origins the source changed to",
+      ["https://other.example.test:9443"],
+      ["https://other.example.test:9443"],
+    ],
+  ])("%s instead of the receipt's origins (#13177)", (_case, recorded, expected) => {
+    const input = openClawInput();
+    const built = buildManagedStartupProfile({
+      ...input,
+      dashboard: { ...input.dashboard, extraOrigins: ["https://launchpad.example.test:8443"] },
+    } as ManagedStartupProfileBuilderInput);
+
+    const rebound = rebind(built, "openclaw", 20_789, { dashboardOrigins: recorded });
+
+    expect(
+      rebound.profile.dashboard.agent === "openclaw"
+        ? rebound.profile.dashboard.extraOrigins
+        : null,
+    ).toEqual(expected);
+  });
+
   it("rebinds the current compatible-endpoint reasoning effort instead of stale receipt tuning", () => {
     const built = buildManagedStartupProfile({
       ...openClawInput(),

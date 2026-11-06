@@ -738,8 +738,6 @@ const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
 const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
-const { getTransportRecoveryMessage } = validationRecovery;
-
 // Validation functions — delegated to src/lib/validation.ts
 const {
   classifyValidationFailure,
@@ -769,8 +767,7 @@ const {
   prompt,
   getNavigationChoice,
   exitOnboardFromPrompt,
-  validateNvidiaApiKeyValue: (value: string, envName: string) =>
-    validateNvidiaApiKeyValue(value, envName),
+  validateNvidiaApiKeyValue,
   compactText,
   redact,
   runOpenshell,
@@ -782,7 +779,7 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   prompt,
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string | null) =>
     validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
-  getTransportRecoveryMessage: (failure: any) => getTransportRecoveryMessage(failure),
+  getTransportRecoveryMessage: validationRecovery.getTransportRecoveryMessage,
   exitOnboardFromPrompt,
 });
 
@@ -2653,6 +2650,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             agentFlag: opts.agent || null,
             envAgent: process.env.NEMOCLAW_AGENT || null,
             requestedHostMounts: opts.hostMounts,
+            requestedDashboardOrigins: opts.dashboardOrigins,
             ...stationSessionInput,
           },
           {
@@ -3006,6 +3004,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           hostMounts: effectiveHostMounts,
+          dashboardOrigins: session?.metadata.dashboardOrigins,
           endpointProvenance,
           recreateSandbox: isRecreateSandbox,
           controlUiPort: _preflightDashboardPort,

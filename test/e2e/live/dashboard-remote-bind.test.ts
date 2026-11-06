@@ -23,7 +23,35 @@ import { parseJsonFromText } from "./json-envelope.ts";
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
+// main's WSL shard timing contract budgets this value inside shard 1
+// (test/automation/e2e/platform-vitest-main-workflow.test.ts), so it stays at 50
+// minutes. The per-step budgets below are ceilings, not expected durations;
+// live runs on this target finish in 6 to 8 minutes.
 const TEST_TIMEOUT_MS = 50 * 60_000;
+const REBUILD_TIMEOUT_MS = 25 * 60_000;
+const EXTRA_DASHBOARD_ORIGIN = "https://launchpad.example.test:8443";
+// Rebuild must ignore these exported values and replay the recorded origins (#13177).
+const AMBIENT_CHAT_UI_URL = "https://ambient-ui.example.test";
+const AMBIENT_DASHBOARD_ORIGIN = "https://ambient.example.test:9443";
+
+/** Read the running gateway's allowed browser origins from inside the sandbox. */
+async function readAllowedOrigins(
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  sandboxName: string,
+  artifactName: string,
+): Promise<string[]> {
+  const result = await sandbox.exec(
+    sandboxName,
+    [
+      "python3",
+      "-c",
+      "import json; print(json.dumps(json.load(open('/sandbox/.openclaw/openclaw.json'))['gateway']['controlUi']['allowedOrigins']))",
+    ],
+    { artifactName, env: sandboxAccessEnv(), timeoutMs: 60_000 },
+  );
+  expect(result.exitCode, `read allowedOrigins failed\n${resultText(result)}`).toBe(0);
+  return parseJsonFromText(result.stdout) as string[];
+}
 
 function remoteHostCandidate(): string {
   const externalIpv4 = Object.values(os.networkInterfaces())
@@ -83,6 +111,11 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
         agent === "openclaw"
           ? "remote binding does not suppress the insecure dashboard audit findings"
           : "Hermes API health is reachable only through the loopback host forward",
+        ...(agent === "openclaw"
+          ? [
+              "onboarding and rebuild apply recorded dashboard origins and ignore conflicting exported values",
+            ]
+          : []),
         "terminal cleanup removes the sandbox and gateway",
       ],
     });
@@ -142,6 +175,7 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
       env: testEnv({
         ...hosted.env,
         NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
+        ...(agent === "openclaw" ? { NEMOCLAW_DASHBOARD_ORIGINS: EXTRA_DASHBOARD_ORIGIN } : {}),
       }),
       redactionValues,
       timeoutMs: 25 * 60_000,
@@ -149,6 +183,15 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
     expect(install.exitCode, resultText(install)).toBe(0);
 
     switch (agent) {
+      case "openclaw":
+        expect(
+          await readAllowedOrigins(
+            sandbox,
+            sandboxName,
+            "dashboard-remote-bind-origins-after-onboard",
+          ),
+        ).toContain(EXTRA_DASHBOARD_ORIGIN);
+        break;
       case "hermes": {
         const initialDashboard = await host.command(
           process.execPath,
@@ -349,5 +392,24 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
         }),
       ]),
     );
+
+    // Conflicting exported values must not replace the recorded origins.
+    const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+      artifactName: "dashboard-remote-bind-rebuild",
+      env: testEnv({
+        CHAT_UI_URL: AMBIENT_CHAT_UI_URL,
+        NEMOCLAW_DASHBOARD_ORIGINS: AMBIENT_DASHBOARD_ORIGIN,
+      }),
+      redactionValues,
+      timeoutMs: REBUILD_TIMEOUT_MS,
+    });
+    expect(rebuild.exitCode, `Sandbox rebuild failed\n${resultText(rebuild)}`).toBe(0);
+    const rebuiltOrigins = await readAllowedOrigins(
+      sandbox,
+      sandboxName,
+      "dashboard-remote-bind-origins-after-rebuild",
+    );
+    expect(rebuiltOrigins).toContain(EXTRA_DASHBOARD_ORIGIN);
+    expect(rebuiltOrigins.join(" ")).not.toContain("ambient");
   },
 );
