@@ -4,7 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as projection from "../../onboard/hermes/initial-inference-route";
 import { patchHermesInferenceConfig } from "../inference-set";
-import { applyHermesManagedRoute } from "../../hermes-managed-route";
+import {
+  applyHermesManagedRoute,
+  refreshHermesNativeLocalCredential,
+} from "../../hermes-managed-route";
 import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../inference-credential";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../inference/native-nvidia/contract";
 import type { ConfigObject } from "../../security/credential-filter";
@@ -420,6 +423,198 @@ describe("restored Hermes NVIDIA credential handoff", () => {
       expect(f.io.restartGateway).not.toHaveBeenCalled();
     },
   );
+
+  function strippedFixture() {
+    const f = fixture(true);
+    f.config.model.api_key = "[STRIPPED_BY_MIGRATION]";
+    f.config.providers["nvidia-prod"]!.api_key = "[STRIPPED_BY_MIGRATION]";
+    f.config.custom_providers[0]!.api_key = "[STRIPPED_BY_MIGRATION]";
+    return f;
+  }
+
+  it.each([false, true])(
+    "recovers three stripped NVIDIA slots with Discord enrolled: %s (#14094)",
+    async (discord) => {
+      const f = fixture(discord);
+      f.config.model.api_key = "[STRIPPED_BY_MIGRATION]";
+      f.config.providers["nvidia-prod"]!.api_key = "[STRIPPED_BY_MIGRATION]";
+      f.config.custom_providers[0]!.api_key = "[STRIPPED_BY_MIGRATION]";
+      const expected = structuredClone(f.config);
+
+      await f.run();
+
+      expected.model.api_key = f.handle;
+      expected.providers["nvidia-prod"]!.api_key = f.handle;
+      expected.custom_providers[0]!.api_key = f.handle;
+      expect(f.config).toEqual(expected);
+      expect(f.io.readNvidiaCredentialHandle).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        f.runtime.gatewayName,
+        f.entry.nativeNvidiaProviderAttachment,
+      );
+      expect(f.io.readCredentialHandle).not.toHaveBeenCalled();
+      expect(f.io.writeSandboxConfig).toHaveBeenCalledExactlyOnceWith("alpha", f.target, expected, {
+        restoreNativeLocalCredential: true,
+      });
+      expect(f.io.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      name: "model",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.config.model.default = "foreign";
+      },
+    },
+    {
+      name: "endpoint",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.config.model.base_url = "https://other.example/v1";
+      },
+    },
+    {
+      name: "upstream metadata",
+      change: (f: ReturnType<typeof fixture>) => {
+        Reflect.deleteProperty(f.config, "_nemoclaw_upstream");
+      },
+    },
+    {
+      name: "duplicate custom provider",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.config.custom_providers.push({ ...f.config.custom_providers[0] });
+      },
+    },
+    {
+      name: "registered gateway",
+      change: (f: ReturnType<typeof fixture>) => {
+        f.entry.gatewayName = "foreign";
+      },
+    },
+    {
+      name: "provider receipt",
+      change: (f: ReturnType<typeof fixture>) => {
+        Object.assign(f.entry.nativeNvidiaProviderAttachment!, { providerName: "foreign" });
+      },
+    },
+  ])("rejects stripped state with invalid $name (#14094)", async ({ change }) => {
+    const f = strippedFixture();
+    change(f);
+    const before = structuredClone(f.config);
+    await expect(f.run()).rejects.toThrow();
+    expect(f.config).toEqual(before);
+    expect(f.io.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.io.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { intact: [0] },
+    { intact: [1] },
+    { intact: [2] },
+    { intact: [0, 1] },
+    { intact: [0, 2] },
+    { intact: [1, 2] },
+  ])("rejects partial stripped state with intact slots $intact (#14094)", async ({ intact }) => {
+    const f = strippedFixture();
+    const slots = [
+      f.config.model,
+      f.config.providers["nvidia-prod"]!,
+      f.config.custom_providers[0]!,
+    ];
+    intact.forEach((index) => {
+      slots[index]!.api_key = NVIDIA_INFERENCE_PLACEHOLDER;
+    });
+    const before = structuredClone(f.config);
+    await expect(f.run()).rejects.toThrow("does not match its registered route");
+    expect(f.config).toEqual(before);
+    expect(f.io.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not reconstruct a missing NVIDIA attachment from stripped config (#14094)", async () => {
+    const f = strippedFixture();
+    delete f.entry.nativeNvidiaProviderAttachment;
+    const before = structuredClone(f.config);
+    await f.run();
+    expect(f.config).toEqual(before);
+    expect(f.io.readNvidiaCredentialHandle).not.toHaveBeenCalled();
+    expect(f.io.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "unavailable binding",
+      acquire: async (_f: ReturnType<typeof fixture>): Promise<string> => {
+        throw new Error("attachment verification failed");
+      },
+    },
+    {
+      name: "changed binding",
+      acquire: async (f: ReturnType<typeof fixture>) => {
+        f.entry.nativeNvidiaProviderAttachment = {
+          ...f.entry.nativeNvidiaProviderAttachment!,
+          providerId: "foreign",
+        };
+        return f.handle;
+      },
+    },
+    {
+      name: "changed identity",
+      acquire: async (f: ReturnType<typeof fixture>) => {
+        f.entry.lifecycleLiveIdentityFingerprint = fingerprintOpenShellSandboxId("foreign")!;
+        return f.handle;
+      },
+    },
+  ])(
+    "stops stripped recovery after $name during credential acquisition (#14094)",
+    async ({ acquire }) => {
+      const f = strippedFixture();
+      f.io.readNvidiaCredentialHandle.mockImplementation(() => acquire(f));
+      const before = structuredClone(f.config);
+      await expect(f.run()).rejects.toThrow();
+      expect(f.config).toEqual(before);
+      expect(f.io.readSandboxConfig).not.toHaveBeenCalled();
+      expect(f.io.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(f.io.restartGateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps default credential validation strict for stripped NVIDIA state (#14094)", () => {
+    const f = strippedFixture();
+    const before = structuredClone(f.config);
+    expect(() =>
+      refreshHermesNativeLocalCredential(f.config, {
+        upstreamProvider: "nvidia-prod",
+        model: f.entry.model!,
+        baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        inferenceApi: "openai-completions",
+        nativeCredentialHandle: f.handle,
+      }),
+    ).toThrow("does not match its registered route");
+    expect(f.config).toEqual(before);
+  });
+
+  it("preserves aliased user settings while replacing stripped slots (#14094)", async () => {
+    const f = strippedFixture();
+    f.config.user_model_options = f.config.model;
+    const userSettings = structuredClone(f.config.model);
+    await f.run();
+    expect(f.config.user_model_options).toEqual(userSettings);
+    expect(f.config.model.api_key).toBe(f.handle);
+    expect(f.config.model).toEqual({ ...userSettings, api_key: f.handle });
+  });
+
+  it("does not retry or activate after an uncertain recovery write (#14094)", async () => {
+    const f = strippedFixture();
+    let committed: ConfigObject | undefined;
+    f.io.writeSandboxConfig.mockImplementation((_name, _target, config) => {
+      committed = structuredClone(config);
+      throw new Error("write response lost");
+    });
+    await expect(f.run()).rejects.toThrow("write response lost");
+    expect(committed).toMatchObject({ model: { api_key: f.handle } });
+    expect(f.io.writeSandboxConfig).toHaveBeenCalledOnce();
+    expect(f.io.restartGateway).not.toHaveBeenCalled();
+  });
 
   it("rejects an invalid restored NVIDIA route before writing (#14020)", async () => {
     const f = fixture(true);

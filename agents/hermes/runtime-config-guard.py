@@ -2899,7 +2899,9 @@ def _recover_restored_native_local_source(state_file: str) -> None:
         os.close(parent_fd)
 
 
-def _validate_restored_native_credential(source_text: str, candidate_bytes: bytes) -> None:
+def _validate_restored_native_credential(
+    source_text: str, candidate_bytes: bytes, *, recover_stripped_nvidia: bool = False,
+) -> None:
     """Restrict a restored write to one provider's three credential slots."""
     try:
         source = yaml.safe_load(source_text)
@@ -2926,7 +2928,11 @@ def _validate_restored_native_credential(source_text: str, candidate_bytes: byte
             or managed.get("api") != model.get("base_url")
             or matches[0].get("base_url") != model.get("base_url")
             or not isinstance(previous, str)
-            or (previous != "${" + env_key + "}" and re.fullmatch(pattern, previous) is None)
+            or (
+                previous != "${" + env_key + "}"
+                and re.fullmatch(pattern, previous) is None
+                and not (recover_stripped_nvidia and nvidia and previous == "[STRIPPED_BY_MIGRATION]")
+            )
             or managed.get("api_key") != previous
             or matches[0].get("api_key") != previous
             or not isinstance(reference, str)
@@ -3002,7 +3008,9 @@ def _adopt_restored_native_local_source(
     if not secrets.compare_digest(hashlib.sha256(source_text.encode("utf-8")).hexdigest(), expected_config_sha256 or ""):
         raise UnsafePathError("Hermes config changed after the host read it; retry the command")
     _validate_hermes_config_candidate(source_text.encode("utf-8"))
-    _validate_restored_native_credential(source_text, candidate_bytes)
+    # Only restored-write adoption admits stripped NVIDIA slots. Read-only
+    # health verification retains the validator's strict default.
+    _validate_restored_native_credential(source_text, candidate_bytes, recover_stripped_nvidia=True)
     env_text, env_snapshot = _read_text(env_path, MAX_ENV_BYTES)
     validator = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
     if os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD:
