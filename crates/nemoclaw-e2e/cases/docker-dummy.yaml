@@ -3,7 +3,8 @@
 
 # The reference dummy agent behind a managed Docker gateway. The dummy
 # implements the image's bridge contract, including native health, without
-# Fabric, a model, or credentials, and replies with its reply setting.
+# Fabric, a model, or credentials, and replies with its reply setting. Its
+# workspace is a named volume, which the gateway allows sandboxes to mount.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -18,6 +19,9 @@ spec:
     endpoint: http://127.0.0.1:17697
     engine: unix:///var/run/docker.sock
     networkCIDR: 172.30.122.0/24
+    config:
+      openshell.drivers.docker:
+        allow_driver_config: true
   inferenceProviders:
     hosted:
       provider: openai
@@ -34,6 +38,15 @@ spec:
           reply: dummy-reply
       network:
         tier: isolated
+      driverConfig:
+        docker:
+          mounts:
+            # cargo ci live-docker names a volume for each run, which the
+            # tests/e2e/hcl/volume module creates before apply.
+            - type: volume
+              source: hcl-dummy-workspace
+              target: /sandbox/workspace
+              read_only: false
       agent:
         name: main
         inference:
