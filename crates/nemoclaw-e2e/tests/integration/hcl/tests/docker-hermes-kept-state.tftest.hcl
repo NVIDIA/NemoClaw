@@ -5,6 +5,8 @@
 # sandbox mounts the same volume, and the agent starts again with kept state
 # under the same name, so Fabric hands it the folder the old runtime used.
 # That Hermes finds its sessions there needs real Hermes; the live suite owns it.
+# Each sandbox also mounts a skills volume on /sandbox/skills, and each start
+# request lists that path in the agent's skills.paths.
 
 # Docker is mocked. Its alias follows from the runner's engine socket, and
 # its IDs match what the fixtures module declares to the engine.
@@ -78,6 +80,27 @@ run "teardown" {
       })
     ])
     error_message = "A Hermes sandbox does not mount the artifacts volume on /sandbox/artifacts."
+  }
+
+  assert {
+    condition = alltrue([
+      for sandbox in module.observed.openshell.created_sandboxes :
+      contains(sandbox.driver_config.docker.mounts, {
+        type      = "volume"
+        source    = "hermes-skills"
+        target    = "/sandbox/skills"
+        read_only = false
+      })
+    ])
+    error_message = "A Hermes sandbox does not mount the skills volume on /sandbox/skills."
+  }
+
+  assert {
+    condition = [
+      for exec in module.observed.openshell.execs :
+      try(jsondecode(exec.stdin).skills.paths, null) if contains(exec.command, "start")
+    ] == [["/sandbox/skills"], ["/sandbox/skills"]]
+    error_message = "The agent did not start in each sandbox with /sandbox/skills in its skills paths."
   }
 
   assert {

@@ -3,7 +3,7 @@
 
 # A Hermes agent behind a managed Docker gateway whose sandbox mounts a volume
 # on /sandbox/artifacts, where Fabric keeps the agent's state across
-# runtimes.
+# runtimes, and one on /sandbox/skills, where the agent reads its skills.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
@@ -28,6 +28,9 @@ spec:
         ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.hermes
+        config:
+          skills:
+            paths: [/sandbox/skills]
       network:
         tier: isolated
       driverConfig:
@@ -36,6 +39,10 @@ spec:
             - type: volume
               source: hermes-artifacts
               target: /sandbox/artifacts
+              read_only: false
+            - type: volume
+              source: hermes-skills
+              target: /sandbox/skills
               read_only: false
       agent:
         name: hermes
