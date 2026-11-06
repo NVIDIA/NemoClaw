@@ -84,11 +84,11 @@ The evidence cell names the counters, cutoff, and any excluded activity.
 - **Codex:** use the last actual cumulative usage snapshot in `event_msg` / `token_count` events' `info.total_token_usage` at or before the cutoff.
   Map `input_tokens`, `cached_input_tokens`, and `output_tokens` to the three counts.
   Check the recorded version's accounting before treating that snapshot as complete.
-  In [Codex 0.160.0, remote compaction v2](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/core/src/compact_remote_v2.rs) records response usage separately without adding it to these cumulative counters.
+  In Codex 0.160.0, remote compaction v2 (`codex-rs/core/src/compact_remote_v2.rs`) records response usage separately without adding it to these cumulative counters.
   Reconcile response-level usage once per response ID when the records establish coverage, adding only usage not already included in the cumulative counters.
   If compaction usage cannot be reconciled, report known counts as `partial` and explain the gap; use `unavailable` if no usable counters exist.
   Skip context-limit placeholders that set only `total_tokens` and zero the category counters.
-  [A placeholder resets the counters](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/protocol/src/protocol.rs), so later snapshots can omit earlier usage.
+  In Codex 0.160.0, a placeholder resets the counters (`codex-rs/protocol/src/protocol.rs`), so later snapshots can omit earlier usage.
   Reconcile disjoint segments on both sides of each reset when the record supports it; otherwise report a known lower bound as `partial`, even when later actual counters exist, or `unavailable` if none exist.
   Do not sum running totals within a segment, add `last_token_usage` to them, or add `reasoning_output_tokens` to output again.
 - **Claude Code:** read assistant `message.usage` from the session JSONL.
@@ -97,10 +97,10 @@ The evidence cell names the counters, cutoff, and any excluded activity.
   Reconcile with final response usage when available; otherwise report known lower bounds as `partial`, or `unavailable` if no usable counters exist.
   Sum `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` for input, `cache_read_input_tokens` for cached input, and `output_tokens` for output.
 - **Pi:** inspect the recorded version's schema.
-  Its [usage accounting](https://github.com/badlogic/pi-mono/blob/2a32a605a9f18a5f0191f65358a2e764b2f69fc7/packages/coding-agent/src/core/usage-totals.ts) reads assistant and tool-result `message.usage`, plus `usage` on usage, compaction, and branch-summary entries when present.
+  At Pi revision `2a32a605a9f18a5f0191f65358a2e764b2f69fc7`, usage accounting (`packages/coding-agent/src/core/usage-totals.ts`) reads assistant and tool-result `message.usage`, plus `usage` on usage, compaction, and branch-summary entries when present.
   Sum unique authoring-session entries through the cutoff, including paid activity on abandoned branches: `input + cacheRead + cacheWrite` for input, `cacheRead` for cached input, and `output` for output.
   Do not add `totalTokens` or reasoning subtotals to these counts.
-  Confirm that the provider reported the counters before marking usage `recorded`: the [OpenAI-completions adapter](https://github.com/badlogic/pi-mono/blob/2a32a605a9f18a5f0191f65358a2e764b2f69fc7/packages/ai/src/api/openai-completions.ts) defaults missing usage fields to zero, so a stored zero alone does not establish zero usage.
+  Confirm that the provider reported the counters before marking usage `recorded`: at the same Pi revision, the OpenAI-completions adapter (`packages/ai/src/api/openai-completions.ts`) defaults missing usage fields to zero, so a stored zero alone does not establish zero usage.
   Treat unverified counters as gaps; use `partial` for known lower bounds, or `unavailable` if no usable counters exist.
 
 Exclude inherited activity before a fork's authoring boundary; subtract a recorded cumulative baseline when needed.
