@@ -444,6 +444,24 @@ This procedure follows the implemented CLI lifecycle; recovery from arbitrary ma
 Recreation starts the runtime but does not check that it answers.
 Check the recreated runtime with one [request](../agents-inference/agents.md#run-one-deep-agents-or-pi-request) before relying on it; do not replay an invocation whose effects are unknown merely to test recovery.
 
+### Recover from an Unfinished Helm Install
+
+This procedure applies to managed Kubernetes and OpenShift deployments.
+
+NemoClaw installs the gateway release atomically: when the install fails or Helm's 600-second wait times out, Helm uninstalls the release before the apply returns, and the apply's error carries Helm's reason.
+The namespace, credential key, and the gateway's volume claims stay.
+Helm removes the gateway's pods with the release, so to see why the gateway didn't become ready, read its pods' events and logs while the apply waits.
+Correct the cause, such as a missing default StorageClass or an unreachable OIDC issuer, then apply again.
+
+After a first interrupt, the apply waits for the install to finish or for Helm to uninstall it.
+A second interrupt, a crash, or a killed process can stop the install before then, which leaves the release `pending-install` in the cluster without a binding in the state.
+Helm refuses to install that name again, and NemoClaw can't tell the release from another owner's, so plan, apply, and destroy stop before changing anything, name the release, and leave it.
+If the release is this deployment's, remove it with Helm and rerun the operation:
+
+```sh
+helm uninstall RELEASE --namespace NAMESPACE
+```
+
 ### Recover an Interrupted Helm Removal
 
 This procedure applies to managed Kubernetes and OpenShift deployments.

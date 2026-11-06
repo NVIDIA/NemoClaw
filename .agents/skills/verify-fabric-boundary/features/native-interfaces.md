@@ -14,26 +14,71 @@ Every agent's terminal UI is in scope, and the web UI is in scope for `hermes` a
 - `hermes-tui-stop`: Hermes only; stopping the managed Fabric runtime ends its open native TUI and cancels its owned in-flight work, invalidates the old runtime and entry point, and preserves already-persisted conversation and files. Phases: Runtime restart.
 - `hermes-tui-recovery`: Hermes only; unchanged recovery in the same sandbox provides a usable native TUI and supported explicit resume of the persisted pre-stop conversation. Phases: After runtime restart.
 
-For `deepagents-code`, `web-ui` is out of this skill's scope; the check log omits it.
 For agents other than `hermes`, omit both `hermes-tui-*` checks.
 
 ## How to get to it (user POV)
 
 - The **Agent interfaces** block that apply prints for the interfaces the launch enabled, with each interface's `Open`, `Forward`, `Token`, and `Sign in` lines.
-- **Terminal UI:** the `Open` command apply prints, run from a terminal on the client host, as [deepagents-code-terminal](../../verify-yaml-deployment/features/deepagents-code-terminal.md) drives it for `deepagents-code`.
+- **Terminal UI:** the `Open` command apply prints, run from a terminal on the client host.
 - **Web UI:** the `Forward` command apply prints, then a browser on `http://127.0.0.1:PORT`, signed in as the `Sign in` line says. [openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md) drives OpenClaw's Control UI with its token; [hermes-interfaces](../../verify-yaml-deployment/features/hermes-interfaces.md) drives Hermes's dashboard, which has no sign-in.
 
 | Agent | `tui` entry point | `web-ui` entry point |
 |---|---|---|
 | `hermes` | The terminal UI entry that apply lists | `assistant/dashboard`: its browser chat |
 | `openclaw` | The terminal UI entry that apply lists | `assistant/dashboard`: the Control UI chat |
-| `deepagents-code` | `assistant/terminal`: its `Open` command | Out of scope |
 
 ## Driving it with the OpenShell CLI, util-linux `script`, and Chromium
 
 Preconditions: `inference` passed in this phase, the phase's [fresh phase input](README.md#driving-conventions) is written, and the [request helpers](README.md#driving-conventions) are defined.
-Drive the terminal UI with the pseudo-terminal driver from [deepagents-code-terminal](../../verify-yaml-deployment/features/deepagents-code-terminal.md) and the web UI with the Playwright Chromium driver from [openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md), extended to type each saved prompt in turn and wait for its answer before the next.
+Drive the terminal UI with the pseudo-terminal driver below, which needs util-linux's `script`, and the web UI with the Playwright Chromium driver from [openclaw-dashboard](../../verify-yaml-deployment/features/openclaw-dashboard.md), extended to type each saved prompt in turn and wait for its answer before the next.
 Never send these prompts through `ask`: a headless request isn't a UI turn.
+
+`script` gives the terminal UI a 40-by-120 pseudo-terminal, and these shell functions type into it through a FIFO and read the screen from its output file:
+
+```sh
+TTY=$EVIDENCE/tty
+# Start COMMAND in a new pseudo-terminal with HOME as its client home.
+term_open() {
+  rm -rf "$TTY" && mkdir -p "$TTY" && mkfifo "$TTY/in"
+  env -u OPENSHELL_GATEWAY HOME="$2" XDG_CONFIG_HOME="$2/.config" \
+    script --quiet --flush --return --command "stty rows 40 cols 120 && exec $1" /dev/null \
+    < "$TTY/in" > "$TTY/raw" 2>&1 &
+  TERM_PID=$!
+  exec 3> "$TTY/in"
+}
+term_mark() { stat -c %s "$TTY/raw"; }
+# What the terminal showed after MARK, without control sequences; a carriage return starts a new line.
+# The C locale makes [@-~] a byte range; in en_US.UTF-8 it misses letters such as K.
+term_shown() {
+  tail -c "+$(( ${1:-0} + 1 ))" "$TTY/raw" \
+    | LC_ALL=C sed -E 's#\x1b\[[0-?]*[ -/]*[@-~]##g; s#\x1b[]P_^][^\x07\x1b]*(\x07|\x1b\\)##g; s#\x1b[()*+].##g; s#\x1b.##g' \
+    | tr '\r' '\n'
+}
+# Type KEYS into the terminal. The subshell takes the SIGPIPE if the session has ended.
+term_send() { kill -0 "$TERM_PID" 2> /dev/null && ( printf '%b' "$1" >&3 ) 2> /dev/null; }
+# Wait up to SECONDS for a line after MARK to match the grep -E PATTERN; GREP_FLAGS such as -x apply.
+# After the time runs out or the session ends, check once more.
+term_wait() {
+  local end=$(( $(date +%s) + $3 )) last=
+  until term_shown "$1" | LC_ALL=C grep -qE ${4:-} -- "$2"; do
+    [ -z "$last" ] || return 1
+    [ "$(date +%s)" -lt "$end" ] && kill -0 "$TERM_PID" 2> /dev/null || last=1
+    sleep 0.5
+  done
+}
+# Wait up to SECONDS for the session to end, close the input, and set TERM_EXIT to its
+# exit status, or to FAIL after killing it. Call it directly, not in $(...): a subshell can't wait for it.
+term_close() {
+  local i
+  for i in $(seq $(( $1 * 2 ))); do kill -0 "$TERM_PID" 2> /dev/null || break; sleep 0.5; done
+  exec 3>&-
+  if kill -0 "$TERM_PID" 2> /dev/null; then
+    kill "$TERM_PID"; wait "$TERM_PID"; TERM_EXIT=FAIL
+  else
+    wait "$TERM_PID"; TERM_EXIT=$?
+  fi
+}
+```
 
 1. **Read the entry points** from the latest apply's output, `$APPLY_OUT`: [lifecycle-and-retention](lifecycle-and-retention.md) sets it after each transition, and the Initial phase uses the launch's apply output:
 
@@ -153,7 +198,7 @@ Missing supported resume is Failed; an earlier failure that left no persisted co
 ## Gotchas
 
 - A listener, a `200` page, or a forward that connects proves no UI; only answered turns and the independent file effect do.
-- Never launch a separate harness process, such as a standalone `dcode`, `hermes`, or `openclaw` command outside the entry point apply prints, to get a UI pass. `openshell sandbox connect` attaches to the sandbox's main process and can't open a terminal UI.
+- Never launch a separate harness process, such as a standalone `hermes` or `openclaw` command outside the entry point apply prints, to get a UI pass. `openshell sandbox connect` attaches to the sandbox's main process and can't open a terminal UI.
 - No browser automation or pseudo-terminal on the runner, or no access to the gateway, is a runner problem: mark the check Not tested with a finding, not Failed.
 - Entry points name the runtime or rewrite the token at each runtime start. After every transition, read the `Open`, `Forward`, and `Token` lines again from the latest apply; an old launcher path or token is gone.
 - Use a new client home for the terminal UI and a fresh browser context after every transition: a cached page or home can show an earlier conversation, and each word must be new to it.

@@ -147,6 +147,8 @@ impl Deployment {
                 cancel,
             )
             .await?;
+        // Removing authentication waits for the gateway release to go.
+        super::helm_install::check_unbound(&plan, bindings, &record.document, &record.generations)?;
         Ok((
             check_destroy_plan(&plan, &expected, bindings, &compiled.retained)?,
             true,

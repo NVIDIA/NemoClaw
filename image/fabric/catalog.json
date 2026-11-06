@@ -947,148 +947,6 @@
     },
     {
       "descriptor": {
-        "adapter_id": "nvidia.fabric.langchain.deepagents-code",
-        "adapter_kind": "process",
-        "capabilities": {
-          "cancellation": false,
-          "metadata": {
-            "health_checks": [
-              "live"
-            ]
-          },
-          "service": false,
-          "streaming": false,
-          "updates": false
-        },
-        "config": {
-          "accepts": [
-            "models",
-            "models.base_url"
-          ]
-        },
-        "contract_version": "fabric.adapter/v1alpha2",
-        "extension_schemas": {
-          "run_result": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "additionalProperties": false,
-            "properties": {
-              "session_id": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "stop_reason": {
-                "enum": [
-                  "end_turn",
-                  "max_tokens",
-                  "max_turn_requests",
-                  "refusal",
-                  "cancelled"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "session_id",
-              "stop_reason"
-            ],
-            "type": "object"
-          }
-        },
-        "model_schema": {
-          "additionalProperties": false,
-          "properties": {
-            "api_key_env": {
-              "minLength": 1,
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-              "type": "string"
-            },
-            "base_url": {
-              "format": "uri",
-              "pattern": "^https?://",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "model": {
-              "minLength": 1,
-              "type": "string"
-            },
-            "provider": {
-              "const": "openai"
-            }
-          },
-          "required": [
-            "provider",
-            "model"
-          ],
-          "type": "object"
-        },
-        "requirements": {
-          "binaries": [
-            "node",
-            "dcode"
-          ]
-        },
-        "runner": {
-          "command": "node",
-          "script": "dist/cli.js"
-        },
-        "settings_schema": {
-          "additionalProperties": false,
-          "properties": {
-            "approval_mode": {
-              "description": "How Deep Agents Code approves gated actions during invocations, which no person can answer: auto uses its classifier, with the default model, and denies what it escalates; yolo allows every gated action.",
-              "enum": [
-                "auto",
-                "yolo"
-              ],
-              "type": "string"
-            },
-            "insecure_http_model_hosts": {
-              "description": "Explicitly trusted HTTP model endpoint hostnames, without schemes, ports, paths, or wildcards.",
-              "items": {
-                "maxLength": 253,
-                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$",
-                "type": "string"
-              },
-              "type": "array",
-              "uniqueItems": true
-            },
-            "interfaces": {
-              "additionalProperties": false,
-              "description": "Native interfaces offered by the runtime.",
-              "properties": {
-                "terminal": {
-                  "additionalProperties": false,
-                  "description": "Deep Agents Code's terminal UI, opened by <artifact root>/.fabric/deepagents-code/runtimes/<runtime-id>/interfaces/terminal in a separate session that shares the runtime's configuration and session store.",
-                  "properties": {
-                    "enabled": {
-                      "default": true,
-                      "description": "Write a launcher for Deep Agents Code's terminal UI. A present terminal is on unless this is false.",
-                      "type": "boolean"
-                    }
-                  },
-                  "type": "object"
-                }
-              },
-              "type": "object"
-            }
-          },
-          "required": [
-            "approval_mode"
-          ],
-          "type": "object"
-        }
-      },
-      "provenance": [
-        {
-          "source": "nemo-fabric-adapter-catalog"
-        }
-      ]
-    },
-    {
-      "descriptor": {
         "adapter_id": "nvidia.fabric.mini-swe-agent",
         "adapter_kind": "python",
         "capabilities": {
@@ -2335,8 +2193,8 @@
       ]
     }
   ],
-  "fabric_revision": "e5b5ebf2b81cc3c6325301ea419ebf2453dab12e",
+  "fabric_revision": "934ab7eca1ec9ac86a22fd24913f2e9d68637c4a",
   "schema_version": 2,
-  "source_sha256": "3c20aed57985f4d19fa0a30204448a7989761991757317ec67ba8c187ba577d5",
+  "source_sha256": "33c4e855e3b72464546b5cb77cc83644f7401956976d34dc7f11cd4235203ff6",
   "targets": []
 }

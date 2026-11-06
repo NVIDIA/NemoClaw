@@ -320,6 +320,7 @@ impl Deployment {
             &with_observations(&expected, &compile::observations(&compiled.graph)),
             &bindings,
         )?;
+        runtime::check_install(&plan, &bindings, &document, &record.generations)?;
         // Only OpenShell and Fabric creations can lose their identity with a
         // lost reply; OpenTofu saves every other resource's ID.
         let objects = allowed(&compiled.objects);

@@ -101,22 +101,22 @@ enum Action {
     /// Build this command without default features (`cargo ci`), so it can
     /// install the pinned Protocol Buffers compiler before anything needs it.
     Ci {
-        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
-        /// archive, live-docker, and live-kind run only when named.
+        /// One step: tools, fmt, clippy, build, test, schema, bundle, contract,
+        /// or integration; archive, live-docker, and live-kind run only when named.
         step: Option<String>,
         /// Override the detected PR base (fallback: origin/v1), including local edits.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         base: Option<String>,
         /// Run every local check without impact analysis or PR discovery.
-        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images", "images_commit"])]
+        #[arg(long, conflicts_with_all = ["base", "step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         full: bool,
         /// Print the selected steps and their plan as JSON without running checks.
-        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit"])]
+        #[arg(long, conflicts_with_all = ["step", "partition", "archive_file", "images", "images_commit", "hcl_cases"])]
         dry_run: bool,
-        /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
+        /// Nextest partition for an explicitly selected contract or integration run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
-        /// Run lifecycle tests from a nextest archive instead of compiling them.
+        /// Run contract, integration, or live tests from a nextest archive instead of compiling them.
         #[arg(long)]
         archive_file: Option<PathBuf>,
         /// Load the live suites' images from this `ci live-images` archive
@@ -127,6 +127,11 @@ enum Action {
         /// per-commit package instead of building them.
         #[arg(long)]
         images_commit: Option<String>,
+        /// Run only these comma-separated live HCL cases, each of which must run
+        /// in the named live suite; empty runs none. Without it, the suite runs
+        /// every case placed on it.
+        #[arg(long, value_name = "CASES")]
+        hcl_cases: Option<String>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -144,14 +149,24 @@ enum Action {
         #[arg(long)]
         worktree: bool,
         /// Base revision, such as the pull request base commit.
-        #[arg(long)]
-        base: String,
+        #[arg(long, required_unless_present = "all")]
+        base: Option<String>,
+        /// With `cases`, select every case without analysis, as for `v1` pushes.
+        #[arg(long, conflicts_with = "base")]
+        all: bool,
+        /// With `cases`, also select this live HCL case, such as a reviewed
+        /// recommendation. Repeat for more cases.
+        #[arg(long = "add", value_name = "CASE")]
+        add: Vec<String>,
     },
-    /// Report a platform's whole lifecycle suite from its partitions' JUnit
-    /// artifacts, and add the report to the GitHub job summary. On the Linux
-    /// CI runners, fail when a test binary exceeds its budget.
-    LifecycleTiming {
-        /// Directory holding the downloaded lifecycle-PLATFORM-SHARD-ATTEMPT
+    /// Report a platform's whole contract or integration suite from its
+    /// partitions' JUnit artifacts, and add the report to the GitHub job
+    /// summary. On the Linux CI runners, fail when a test binary exceeds its
+    /// budget.
+    SuiteTiming {
+        /// The step: contract or integration.
+        step: String,
+        /// Directory holding the downloaded STEP-PLATFORM-SHARD-ATTEMPT
         /// artifacts, one subdirectory each.
         directory: PathBuf,
         #[arg(long)]
@@ -173,10 +188,13 @@ enum ChangedWorkflow {
     Plan,
     /// `CI / Images`.
     Images,
-    /// `Live / Docker` and `Live / Kind`.
+    /// The live suites: `E2E Docker tests` and `E2E Kubernetes (kind) tests`.
     Live,
     /// The `v1` commit whose pushed images the live suites can pull, or none.
     LiveImages,
+    /// The live HCL cases that the changes since the merge base with the base
+    /// revision affect, as JSON with the analyzed commit and each case's reason.
+    Cases,
 }
 #[cfg(feature = "sdk")]
 #[derive(Subcommand)]
@@ -229,6 +247,9 @@ enum ImageAction {
         #[arg(required = true)]
         images: Vec<String>,
     },
+    /// Print each live HCL case's model runtime images as JSON: the Bake
+    /// targets to build before the case runs, read from its document.
+    Runtimes,
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
         /// A local image, by tag or digest, or with --registry an image in a
@@ -675,6 +696,13 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
+            ImageAction::Runtimes => {
+                nemoclaw_build::hcl_cases::runtimes(root).and_then(|runtimes| {
+                    let runtimes = serde_json::to_string(&runtimes).map_err(|e| e.to_string())?;
+                    println!("{runtimes}");
+                    Ok(())
+                })
+            }
             ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
                 nemoclaw_build::images::qualify(image)
@@ -698,29 +726,44 @@ async fn main() -> Result<()> {
         }
         .map_err(Into::into);
     }
-    if let Action::LifecycleTiming {
+    if let Action::SuiteTiming {
+        step,
         directory,
         platform,
         shards,
     } = &cli.command
     {
+        let step = nemoclaw_build::ci::Step::parse(step)
+            .filter(|step| nemoclaw_build::ci::Step::BUNDLED.contains(step))
+            .ok_or("the step must be contract or integration")?;
         let shards: Vec<u32> = serde_json::from_str(shards)
             .map_err(|error| format!("--shards must be a JSON list of numbers: {error}"))?;
-        return run_ci::report_lifecycle_suite(directory, platform, &shards);
+        return run_ci::report_partitioned_suite(step, directory, platform, &shards);
     }
     if let Action::Changes {
         workflow,
         base,
+        all,
         worktree,
+        add,
     } = &cli.command
     {
+        if (*all || !add.is_empty()) && !matches!(workflow, ChangedWorkflow::Cases) {
+            return Err("--all and --add require changes cases".into());
+        }
+        if *worktree && !matches!(workflow, ChangedWorkflow::Plan) {
+            return Err("--worktree requires changes plan".into());
+        }
+        if matches!(workflow, ChangedWorkflow::Cases) {
+            let selection = nemoclaw_build::changes::cases(Path::new("."), base.as_deref(), add)?;
+            println!("{}", serde_json::to_string_pretty(&selection)?);
+            return Ok(());
+        }
+        let base = base.as_deref().expect("clap requires --base without --all");
         if matches!(workflow, ChangedWorkflow::Plan) {
             let plan = nemoclaw_build::changes::plan(Path::new("."), base, *worktree);
             println!("{}", serde_json::to_string_pretty(&plan)?);
             return Ok(());
-        }
-        if *worktree {
-            return Err("--worktree requires changes plan".into());
         }
         if matches!(workflow, ChangedWorkflow::LiveImages) {
             let (commit, reason) =
@@ -737,7 +780,9 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         let (workflow, name) = match workflow {
-            ChangedWorkflow::Plan | ChangedWorkflow::LiveImages => unreachable!(),
+            ChangedWorkflow::Plan | ChangedWorkflow::LiveImages | ChangedWorkflow::Cases => {
+                unreachable!()
+            }
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
             ChangedWorkflow::Live => (nemoclaw_build::changes::Workflow::Live, "live"),
         };
@@ -752,21 +797,36 @@ async fn main() -> Result<()> {
         archive_file,
         images,
         images_commit,
+        hcl_cases,
         base,
         full,
         dry_run,
     } = &cli.command
     {
-        if partition.is_some() && step.as_deref() != Some("lifecycle") {
-            return Err("--partition requires ci lifecycle".into());
+        if hcl_cases.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
+            return Err("--hcl-cases requires ci live-docker or live-kind".into());
+        }
+        let hcl_cases: Option<Vec<String>> = hcl_cases.as_deref().map(|cases| {
+            cases
+                .split(',')
+                .map(str::trim)
+                .filter(|case| !case.is_empty())
+                .map(str::to_owned)
+                .collect()
+        });
+        if partition.is_some() && !matches!(step.as_deref(), Some("contract" | "integration")) {
+            return Err("--partition requires ci contract or integration".into());
         }
         if archive_file.is_some()
             && !matches!(
                 step.as_deref(),
-                Some("lifecycle" | "live-docker" | "live-kind")
+                Some("contract" | "integration" | "live-docker" | "live-kind")
             )
         {
-            return Err("--archive-file requires ci lifecycle, live-docker, or live-kind".into());
+            return Err(
+                "--archive-file requires ci contract, integration, live-docker, or live-kind"
+                    .into(),
+            );
         }
         if images.is_some() && !matches!(step.as_deref(), Some("live-docker" | "live-kind")) {
             return Err("--images requires ci live-docker or live-kind".into());
@@ -824,8 +884,11 @@ async fn main() -> Result<()> {
             step.as_deref(),
             partition.as_deref(),
             archive_file.as_deref(),
-            images.as_deref(),
-            images_commit.as_deref(),
+            run_ci::LiveInputs {
+                images: images.as_deref(),
+                images_commit: images_commit.as_deref(),
+                hcl_cases: hcl_cases.as_deref(),
+            },
             plan.as_ref(),
         )
         .await;
@@ -852,7 +915,7 @@ async fn main() -> Result<()> {
         | Action::ReleaseAssess { .. }
         | Action::Images { .. }
         | Action::Changes { .. }
-        | Action::LifecycleTiming { .. } => {
+        | Action::SuiteTiming { .. } => {
             unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]

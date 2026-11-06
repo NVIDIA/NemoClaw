@@ -15,7 +15,7 @@ use nemoclaw_sdk::{
     CancellationToken, Deployment, ObservationError, Progress, Secrets,
     compile::{Generations, Target},
     config::Document,
-    kubernetes::{GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
+    kubernetes::{AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
 };
 use serde_json::{Value, json};
 use std::{
@@ -272,6 +272,29 @@ pub fn plan_json(targets: &[Target], action: &str) -> String {
                 _ => (bound(target), bound(target)),
             };
             change(&target.address, action, before, after)
+        })
+        .collect();
+    json!({"format_version": "1.0", "resource_changes": changes}).to_string()
+}
+
+/// `show -json PLAN` after an apply that bound the targets named in `bound_now`
+/// and then failed or stopped while Helm installed the gateway release: those
+/// targets are no-ops, the authentication resource's refresh observes the
+/// release record, and the other targets are created.
+pub fn leftover_plan_json(targets: &[Target], bound_now: &[&str]) -> String {
+    let changes: Vec<Value> = targets
+        .iter()
+        .map(|target| {
+            if bound_now.contains(&target.address.as_str()) {
+                let mut before = bound(target);
+                if target.kind == AUTH_KIND {
+                    before["release_present"] = json!("true");
+                }
+                change(&target.address, "no-op", before.clone(), before)
+            } else {
+                let after = serde_json::to_value(&target.values).unwrap();
+                change(&target.address, "create", Value::Null, after)
+            }
         })
         .collect();
     json!({"format_version": "1.0", "resource_changes": changes}).to_string()

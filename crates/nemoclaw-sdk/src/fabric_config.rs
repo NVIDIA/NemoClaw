@@ -71,6 +71,50 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         result["runtime"]["keep_state"] = true.into();
     }
     for route in &selection.inference.routes {
+        // Match Fabric's adapter_config_compatibility_issues until it is public.
+        // Model extensions can declare legacy sampling fields outside config.accepts.
+        for (field, authored, input_name) in [
+            (
+                "max_tokens",
+                route.overrides.tuning.max_tokens.is_some(),
+                "maxTokens",
+            ),
+            (
+                "temperature",
+                route.overrides.tuning.temperature.is_some(),
+                "temperature",
+            ),
+            ("top_p", route.overrides.tuning.top_p.is_some(), "topP"),
+        ] {
+            let extension = route
+                .overrides
+                .extensions
+                .as_ref()
+                .and_then(|values| values.get(field))
+                .is_some_and(|value| !value.is_null());
+            if (authored || extension)
+                && descriptor.is_some_and(|descriptor| {
+                    let path = format!("models.{field}");
+                    !descriptor["config"]["accepts"]
+                        .as_array()
+                        .is_some_and(|fields| fields.iter().any(|accepted| accepted == &path))
+                        && !(field != "temperature"
+                            && descriptor["extension_schemas"]["model"]["properties"]
+                                .get(field)
+                                .is_some())
+                })
+            {
+                let source = if authored {
+                    input_name.to_owned()
+                } else {
+                    format!("extensions.{field}")
+                };
+                return Err(ConfigError(format!(
+                    "{}.overrides.{source}: the adapter does not accept this model field",
+                    selection.route_path(route)
+                )));
+            }
+        }
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;

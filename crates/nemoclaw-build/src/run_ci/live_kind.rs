@@ -72,6 +72,7 @@ pub(super) async fn run_live_kind(
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
     images: live_images::Source<'_>,
+    hcl_cases: Option<&[String]>,
 ) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
@@ -79,6 +80,16 @@ pub(super) async fn run_live_kind(
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
         return Err("build the bundle first: cargo ci bundle".into());
+    }
+    // The suite runs only HCL E2E cases, so with none it needs no cluster.
+    let cases = nemoclaw_build::hcl_cases::on(
+        Path::new("."),
+        nemoclaw_build::hcl_cases::Runner::LiveKind,
+        hcl_cases,
+    )?;
+    if cases.is_empty() {
+        eprintln!("live-kind: no HCL E2E case selected");
+        return Ok(());
     }
     let node = pins
         .images
@@ -209,7 +220,7 @@ pub(super) async fn run_live_kind(
     let junit = Path::new("target").join("nextest").join(profile).join(file);
     let mut reports = Vec::new();
     let mut result = Ok(());
-    for case_name in KIND_CASES {
+    for case_name in &cases {
         let case = inputs.path().join(format!("{case_name}.yaml"));
         let mut namespace = [0u8; 6];
         getrandom::fill(&mut namespace).map_err(|_| "cannot name the case's namespace")?;
@@ -217,7 +228,8 @@ pub(super) async fn run_live_kind(
             &case,
             kind_case(
                 &fs::read_to_string(
-                    Path::new("crates/nemoclaw-e2e/cases").join(format!("{case_name}.yaml")),
+                    Path::new(nemoclaw_build::hcl_cases::DOCUMENTS)
+                        .join(format!("{case_name}.yaml")),
                 )?,
                 &live::uuid()?,
                 &format!("https://127.0.0.1:{}", live::free_port()?),
@@ -285,11 +297,6 @@ pub(super) async fn run_live_kind(
     drop(cleanup);
     result
 }
-
-/// The HCL E2E cases that live-kind runs, in order: the default kubernetes
-/// runtime and development authentication profiles, then the OpenShift
-/// profile with an existing OIDC issuer.
-const KIND_CASES: [&str; 2] = ["kind-kubernetes-development", "kind-openshift-oidc"];
 
 /// The kind case bound to one run: its UID, which is also its token audience,
 /// gateway endpoint, namespace (which also names the stub model's and the
