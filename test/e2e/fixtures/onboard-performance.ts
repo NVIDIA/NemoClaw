@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { summarizeProviderTiming, type ProviderTiming } from "./provider-timing.ts";
 import type { ShellProbeOutputEvent } from "./shell-probe.ts";
 
 const ONBOARD_SCOPE = "nemoclaw.onboard";
@@ -32,6 +33,7 @@ export interface OnboardTraceWindow {
   durationMs: number;
   finishedAtMs: number;
   phaseDurationsMs: Record<OnboardPhaseName, number>;
+  providerTiming: ProviderTiming;
   startedAtMs: number;
 }
 
@@ -192,6 +194,7 @@ export function readOnboardTraceWindow(artifact: unknown): OnboardTraceWindow {
     throw new Error("trace artifact is missing resource_spans");
   }
 
+  const records: Record<string, unknown>[] = [];
   const roots: Record<string, unknown>[] = [];
   const phases = new Map<OnboardPhaseName, Record<string, unknown>>();
   for (const resourceSpan of resourceSpans) {
@@ -207,6 +210,7 @@ export function readOnboardTraceWindow(artifact: unknown): OnboardTraceWindow {
       for (const span of spans) {
         const record = span as Record<string, unknown>;
         if (record.trace_id !== summaryTraceId) continue;
+        records.push(record);
         if (record?.name === ONBOARD_ROOT_SPAN) roots.push(record);
         if (typeof record?.name === "string" && ONBOARD_PHASE_NAME_SET.has(record.name)) {
           const phaseName = record.name as OnboardPhaseName;
@@ -257,6 +261,10 @@ export function readOnboardTraceWindow(artifact: unknown): OnboardTraceWindow {
     durationMs: root.durationMs,
     finishedAtMs: Number(root.endNs / NANOSECONDS_PER_MILLISECOND),
     phaseDurationsMs,
+    providerTiming: summarizeProviderTiming(
+      phases.get("nemoclaw.onboard.phase.provider_selection")!,
+      records,
+    ),
     startedAtMs: Number(root.startNs / NANOSECONDS_PER_MILLISECOND),
   };
 }

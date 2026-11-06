@@ -92,6 +92,132 @@ function completePhaseBudgets(value = 1_500) {
   return Object.fromEntries(ONBOARD_PHASE_NAMES.map((name) => [name, value]));
 }
 
+describe("provider timing diagnostics", () => {
+  function operation(
+    name: string,
+    id: string,
+    start: number,
+    duration: number,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      ...phaseSpan(ONBOARD_PHASE_NAMES[2], id, start, duration),
+      name,
+      parent_span_id: "0000000000000004",
+      ...overrides,
+    };
+  }
+
+  it("retains only fixed timing fields and counts overlapping operations once", () => {
+    const poison = "credential-and-endpoint-must-not-be-retained";
+    const trace = readOnboardTraceWindow(
+      traceArtifact({}, [
+        ...PHASE_SPANS,
+        operation("nemoclaw.inference.endpoint_preflight", "0000000000000010", 2000, 100, {
+          attributes: { api_key: poison },
+          events: [{ name: poison }],
+        }),
+        operation(
+          "nemoclaw.inference.validation_timeout_calibration",
+          "0000000000000011",
+          2100,
+          200,
+        ),
+        operation("nemoclaw.inference.validation_probe", "0000000000000012", 2150, 50, {
+          parent_span_id: "0000000000000011",
+          status: { code: "ERROR", message: poison },
+        }),
+        operation("nemoclaw.inference.context_window_discovery", "0000000000000013", 2400, 100),
+        operation(poison, "0000000000000014", 2500, 50),
+      ]),
+    );
+    expect(trace.providerTiming).toEqual({
+      observations: [
+        {
+          operation: "nemoclaw.inference.endpoint_preflight",
+          offsetMs: 0,
+          durationMs: 100,
+          status: "OK",
+        },
+        {
+          operation: "nemoclaw.inference.validation_timeout_calibration",
+          offsetMs: 100,
+          durationMs: 200,
+          status: "OK",
+        },
+        {
+          operation: "nemoclaw.inference.validation_probe",
+          offsetMs: 150,
+          durationMs: 50,
+          status: "ERROR",
+        },
+        {
+          operation: "nemoclaw.inference.context_window_discovery",
+          offsetMs: 400,
+          durationMs: 100,
+          status: "OK",
+        },
+      ],
+      rejectedObservations: 0,
+      coveredMs: 400,
+      unattributedMs: 350,
+    });
+    expect(JSON.stringify(trace.providerTiming)).not.toContain(poison);
+    const budget = readColdOnboardPerformanceBudget({
+      fullE2eColdPath: {
+        authoritativeLocalBaseBuildAllowanceMs: 0,
+        phaseBudgetsMs: completePhaseBudgets(600),
+        rootEndToFirstTurnCompletionBudgetMs: 1000,
+        rootStartToFirstTurnCompletionBudgetMs: 10000,
+        sandboxPhaseSingleObservationMaxOverageMs: 0,
+      },
+    });
+    const baseline = evaluateColdOnboardPerformance(
+      readOnboardTraceWindow(traceArtifact()),
+      8000,
+      budget,
+    );
+    expect(baseline.passed).toBe(false);
+    expect(evaluateColdOnboardPerformance(trace, 8000, budget)).toEqual(baseline);
+  });
+
+  it.each([
+    { parent_span_id: ROOT_SPAN_ID },
+    { parent_span_id: "0000000000000010" },
+    { parent_span_id: "0000000000000099" },
+    { start_time_unix_nano: timestampNs(1999), end_time_unix_nano: timestampNs(2099) },
+    { duration_ms: NaN },
+    { status: { code: "arbitrary-error-message" } },
+    { span_id: "not-an-id" },
+  ])("leaves malformed or unrelated observations unattributed: %j", (overrides) => {
+    const trace = readOnboardTraceWindow(
+      traceArtifact({}, [
+        ...PHASE_SPANS,
+        operation("nemoclaw.inference.validation_probe", "0000000000000010", 2000, 100, overrides),
+      ]),
+    );
+    expect(trace.providerTiming).toEqual({
+      observations: [],
+      rejectedObservations: 1,
+      coveredMs: 0,
+      unattributedMs: 750,
+    });
+  });
+
+  it("rejects ambiguous duplicate operation identities and excludes foreign traces", () => {
+    const span = operation("nemoclaw.inference.validation_probe", "0000000000000010", 2000, 100);
+    const trace = readOnboardTraceWindow(
+      traceArtifact({}, [...PHASE_SPANS, span, span, { ...span, trace_id: FOREIGN_TRACE_ID }]),
+    );
+    expect(trace.providerTiming).toEqual({
+      observations: [],
+      rejectedObservations: 2,
+      coveredMs: 0,
+      unattributedMs: 750,
+    });
+  });
+});
+
 describe("onboard performance evidence", () => {
   it("reads one successful, root-bound onboard trace with consistent timing", () => {
     expect(readOnboardTraceWindow(traceArtifact())).toEqual({
@@ -103,6 +229,12 @@ describe("onboard performance evidence", () => {
         "nemoclaw.onboard.phase.provider_selection": 750,
         "nemoclaw.onboard.phase.inference": 1_000,
         "nemoclaw.onboard.phase.sandbox": 1_250,
+      },
+      providerTiming: {
+        observations: [],
+        rejectedObservations: 0,
+        coveredMs: 0,
+        unattributedMs: 750,
       },
       startedAtMs: 1_000,
     });
