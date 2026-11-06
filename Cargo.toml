@@ -81,7 +81,7 @@ tar = "0.4"
 rustix = { version = "1", features = ["fs", "termios"] }
 zip = { version = "9.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1"
-schemars = "=1.2.2"
+schemars = "=1.2.3"
 jsonschema = { version = "=0.56.0", default-features = false }
 pulldown-cmark = { version = "=0.13.4", default-features = false }
 pulldown-cmark-to-cmark = "=22.0.1"
