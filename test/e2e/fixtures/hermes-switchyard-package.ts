@@ -324,6 +324,22 @@ with LocalUpstream('efficient', Path('/tmp/switchyard-efficient.jsonl')) as effi
   "utf8",
 ).toString("base64");
 
+// Fresh-image provisioning, matching agents/hermes/Dockerfile. Runtime updates
+// must still use the production transaction and startup-owner checks.
+export const HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES = String.raw`
+import hashlib
+from pathlib import Path
+
+def provision_config_hashes(hermes_dir, strict_hash):
+    hash_paths = (hermes_dir / 'config.yaml', hermes_dir / '.env')
+    hash_text = ''.join(
+        hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path) + '\n'
+        for path in hash_paths)
+    # Update the compatibility anchor first and retain both files' metadata.
+    (hermes_dir / '.config-hash').write_text(hash_text)
+    strict_hash.write_text(hash_text)
+`;
+
 // Only transport and credentials are synthetic. The entrypoint, privilege drop,
 // production routing paths, qualifier main(), and native router remain unchanged.
 export const HERMES_SWITCHYARD_ROUTED_BOOTSTRAP = String.raw`
@@ -335,8 +351,8 @@ import os
 from pathlib import Path
 import selectors
 import subprocess
-import hashlib
 import yaml
+${HERMES_SWITCHYARD_PROVISION_CONFIG_HASHES}
 
 upstream = subprocess.Popen([
     '/usr/bin/setpriv', '--reuid=gateway', '--regid=gateway', '--init-groups', '--',
@@ -370,7 +386,7 @@ try:
         os.chown(target, 0, 0)
         target.chmod(0o444)
     # Provision the generated route and its policy before startup, as the image
-    # builder does. Keep the integrity anchor consistent; do not bypass the guard.
+    # builder does. Keep both integrity anchors consistent; do not bypass the guard.
     route = json.loads(base64.b64decode('${routedGatewayConfigBase64}'))
     config_path = Path('/sandbox/.hermes/config.yaml')
     config = yaml.safe_load(config_path.read_text())
@@ -380,14 +396,7 @@ try:
     policy = json.loads(policy_path.read_text())
     policy['config'].update(route)
     policy_path.write_text(json.dumps(policy))
-    hash_paths = (config_path, Path('/sandbox/.hermes/.env'))
-    hash_text = ''.join(
-        hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path) + '\n'
-        for path in hash_paths)
-    # The image publishes the same config/env digest at both startup anchors.
-    # Keep the compatibility anchor consistent before committing the strict one.
-    for hash_path in (Path('/sandbox/.hermes/.config-hash'), Path('/etc/nemoclaw/hermes.config-hash')):
-        hash_path.write_text(hash_text)
+    provision_config_hashes(config_path.parent, Path('/etc/nemoclaw/hermes.config-hash'))
     environment = dict(os.environ, HERMES_NEMO_RELAY_PLUGINS_TOML='${HERMES_RELAY_PLUGINS_FILE}')
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
         environment[key] = 'xapp-OPENSHELL-RESOLVE-ENV-' + key
