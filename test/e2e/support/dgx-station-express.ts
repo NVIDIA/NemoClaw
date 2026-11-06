@@ -247,6 +247,7 @@ export async function runStationExpressSmoke(options: {
   environment: NodeJS.ProcessEnv;
   repoRoot: string;
   phases: { inspect(): void; install(): void; assert(): void; cleanup(): void };
+  verifyPublication: (environment: NodeJS.ProcessEnv) => Promise<void>;
   writeEvidence: (name: string, value: unknown) => Promise<unknown>;
   now?: () => number;
   modelCacheMetadata?: () => ReturnType<typeof stationModelCacheMetadata>;
@@ -377,7 +378,7 @@ export async function runStationExpressSmoke(options: {
       await command("station-managed-vllm", "docker", [
         "inspect",
         "--format",
-        '[{"Image":{{json .Image}},"State":{"Running":{{json .State.Running}}},"Config":{"Cmd":{{json .Config.Cmd}},"Entrypoint":{{json .Config.Entrypoint}},"Labels":{"com.nvidia.nemoclaw.managed-vllm":{{json (index .Config.Labels "com.nvidia.nemoclaw.managed-vllm")}}}}}]',
+        '[{"Image":{{json .Image}},"State":{"Running":{{json .State.Running}}},"Config":{"Cmd":{{json .Config.Cmd}},"Entrypoint":{{json .Config.Entrypoint}},"Labels":{"com.nvidia.nemoclaw.managed-vllm":{{json (index .Config.Labels "com.nvidia.nemoclaw.managed-vllm")}}}},"HostConfig":{"PortBindings":{{json .HostConfig.PortBindings}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}}}]',
         "nemoclaw-vllm",
       ]),
     );
@@ -389,6 +390,7 @@ export async function runStationExpressSmoke(options: {
       parseJson(fs.readFileSync(path.join(env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8")),
       env.E2E_MANAGED_IMAGE_REVISION!,
     );
+    await options.verifyPublication(env);
     const response = await options.sandbox.exec(
       STATION_SMOKE_SANDBOX,
       [
