@@ -217,7 +217,7 @@ def selected(expression, context, failed)
 end
 
 def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', reporter: nil, retrying: false)
-  FileUtils.rm_rf(["#{root}/workspace", "#{root}/temp", "#{root}/artifacts"]) if retrying
+  FileUtils.rm_rf(["#{root}/workspace", "#{root}/temp"]) if retrying
   FileUtils.rm_f(Dir["#{root}/output-*"]) if retrying
   FileUtils.mkdir_p(["#{root}/bin", "#{root}/workspace", "#{root}/temp", "#{root}/artifacts"])
   File.write("#{root}/summary", '')
@@ -309,7 +309,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     touch "$FIXTURE/posted"
     test "$SCENARIO" != readback_failure
   SH
-  context = {'github' => {'event_name' => 'pull_request_target', 'repository' => 'example/repo', 'token' => 'fixture-token',
+  context = {'github' => {'event_name' => 'pull_request_target', 'repository' => 'example/repo', 'token' => 'fixture-token', 'run_attempt' => retrying ? '2' : '1',
     'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'merge_commit_sha' => 'd' * 40,
       'head' => {'sha' => head, 'repo' => {'full_name' => 'example/fork'}}}}},
     'runner' => {'temp' => "#{root}/temp"}, 'steps' => {}}
@@ -317,12 +317,13 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
   trigger = (workflow['on'] || workflow[true]).fetch('pull_request_target')
   eligible = trigger.fetch('types').include?(action) && trigger.fetch('branches').include?('main')
   failed = false
+  artifact = nil
   return {failed: false, root: root, original_comments: original_comments} unless eligible && selected(job['if'], context, failed)
   job.fetch('steps').each_with_index do |step, index|
     next unless selected(step['if'], context, failed)
     env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario,
       'RUNNER_TEMP' => "#{root}/temp", 'GITHUB_REPOSITORY' => 'example/repo', 'GITHUB_STEP_SUMMARY' => "#{root}/summary",
-      'GITHUB_WORKFLOW_SHA' => 'e' * 40, 'GITHUB_RUN_ID' => '1234', 'GITHUB_RUN_ATTEMPT' => retrying ? '2' : '1', 'GITHUB_OUTPUT' => "#{root}/output-#{index}"}
+      'GITHUB_WORKFLOW_SHA' => 'e' * 40, 'GITHUB_RUN_ID' => '1234', 'GITHUB_RUN_ATTEMPT' => context['github']['run_attempt'], 'GITHUB_OUTPUT' => "#{root}/output-#{index}"}
     env['REAL_REPORTER'] = reporter ? 'true' : ''
     env['REAL_RUSTC'] = ENV.fetch('REAL_RUSTC')
     (step['env'] || {}).each { |key, text| env[key] = interpolate(text, context) }
@@ -342,8 +343,16 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         File.open("#{root}/workspace/tools/ci/pr-merge-report.rs", 'a') { |file| file.puts('# changed after checkout') }
       end
     when /\Aactions\/upload-artifact@/
-      interpolate(step.fetch('with').fetch('path'), context).lines.map(&:strip).each do |path|
-        FileUtils.cp(path, "#{root}/artifacts") if File.file?(path)
+      name = interpolate(step.fetch('with').fetch('name'), context)
+      artifact = "#{root}/artifacts/#{name}"
+      if File.exist?(artifact)
+        failed = true
+        File.open("#{root}/errors", 'a') { |file| file.puts("Artifact already exists in this run: #{name}") }
+      else
+        FileUtils.mkdir_p(artifact)
+        interpolate(step.fetch('with').fetch('path'), context).lines.map(&:strip).each do |path|
+          FileUtils.cp(path, artifact) if File.file?(path)
+        end
       end
     when nil
       _, stderr, status = Open3.capture3(env, 'bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.fetch('run'),
@@ -356,7 +365,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     outputs = File.exist?(env['GITHUB_OUTPUT']) ? File.readlines(env['GITHUB_OUTPUT']).map(&:strip).map { |line| line.split('=', 2) }.to_h : {}
     context['steps'][step['id']] = {'outputs' => outputs} if step['id']
   end
-  {failed: failed, root: root, original_comments: original_comments}
+  {failed: failed, root: root, original_comments: original_comments, artifact: artifact}
 end
 
 def assert_no_code_or_publication(result)
@@ -371,13 +380,14 @@ raise 'Readback failure suppressed' unless failure[:failed]
 report = File.read("#{failure[:root]}/temp/merge-outcomes.md")
 raise 'Report lost after POST' unless report.include?('Full timing rows')
 raise 'Summary lost after POST' unless File.read("#{failure[:root]}/summary").include?(report)
-raise 'Artifact lost after POST' unless File.read("#{failure[:root]}/artifacts/merge-outcomes.md") == report
+raise 'Artifact lost after POST' unless File.read("#{failure[:artifact]}/merge-outcomes.md") == report
 first = exercise(workflow, "#{ARGV[0]}/recovery", 'recovery_failure', parent, head, reporter: reporter_source)
 raise 'Real readback failure suppressed' unless first[:failed]
 first_report = File.read("#{first[:root]}/temp/merge-outcomes.md")
 raise 'Failed attempt lost full report' unless first_report.include?('+209 / -10 lines across 5 files')
-raise 'Failed attempt lost artifact' unless File.read("#{first[:root]}/artifacts/merge-outcomes.md") == first_report
-raise 'Failed attempt claimed qualification' if File.exist?("#{first[:root]}/artifacts/merge-outcomes-receipt.json")
+raise 'Failed attempt lost artifact' unless File.read("#{first[:artifact]}/merge-outcomes.md") == first_report
+raise 'Failed attempt claimed qualification' if File.exist?("#{first[:artifact]}/merge-outcomes-receipt.json")
+first_artifact = Dir["#{first[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] }
 published = JSON.parse(File.read("#{first[:root]}/comments.json"))
 raise 'Failed readback did not follow POST' unless File.read("#{first[:root]}/posts") == "POST\n"
 recovered = exercise(workflow, first[:root], 'recovery', parent, head, reporter: reporter_source, retrying: true)
@@ -387,14 +397,18 @@ raise 'Recovery changed published comments' unless JSON.parse(File.read("#{recov
 recovered_report = File.read("#{recovered[:root]}/temp/merge-outcomes.md")
 raise 'Recovered attempt lost full report' unless recovered_report.include?('+209 / -10 lines across 5 files')
 raise 'Recovered summary lost report' unless File.read("#{recovered[:root]}/summary").include?(recovered_report)
-raise 'Recovered artifact lost report' unless File.read("#{recovered[:root]}/artifacts/merge-outcomes.md") == recovered_report
-recovered_receipt = JSON.parse(File.read("#{recovered[:root]}/artifacts/merge-outcomes-receipt.json"))
-raise 'Recovered receipt lost revision, attempt or opening report' unless recovered_receipt.values_at('reporter_revision', 'run_attempt', 'opening_report_count') == [parent, '2', 1]
+raise 'Recovered artifact lost report' unless File.read("#{recovered[:artifact]}/merge-outcomes.md") == recovered_report
+recovered_receipt = JSON.parse(File.read("#{recovered[:artifact]}/merge-outcomes-receipt.json"))
+raise 'Recovered receipt lost run, revision, attempt or opening report' unless recovered_receipt.values_at('run_id', 'reporter_revision', 'run_attempt', 'opening_report_count') == ['1234', parent, '2', 1]
+raise 'Attempts did not retain distinct artifact identities' unless Dir.children("#{first[:root]}/artifacts").sort == ['merge-outcomes-1', 'merge-outcomes-2']
+raise 'First attempt artifact identity changed' unless File.basename(first[:artifact]) == 'merge-outcomes-1'
+raise 'Recovered artifact identity lost its attempt' unless File.basename(recovered[:artifact]) == 'merge-outcomes-2'
+raise 'Recovery changed the first artifact' unless Dir["#{first[:artifact]}/*"].to_h { |path| [File.basename(path), File.binread(path)] } == first_artifact
 valid = exercise(workflow, "#{ARGV[0]}/valid", 'valid', parent, head)
 raise File.read("#{valid[:root]}/errors") if valid[:failed]
 raise 'PR source executed' unless File.read("#{valid[:root]}/executions") == "trusted\ntrusted\n"
 raise 'Checkout persisted credentials' if File.exist?("#{valid[:root]}/credentials")
-receipt = JSON.parse(File.read("#{valid[:root]}/artifacts/merge-outcomes-receipt.json"))
+receipt = JSON.parse(File.read("#{valid[:artifact]}/merge-outcomes-receipt.json"))
 raise 'Receipt is not revision-bound' unless receipt.values_at('workflow_revision', 'reporter_revision') == ['e' * 40, parent]
 raise 'Fork-modified reporter scenario was not covered' unless receipt['fork_modified_reporter']
 raise 'Opening report was absent' unless receipt['opening_report_count'] == 1

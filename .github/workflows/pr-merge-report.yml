@@ -127,7 +127,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && steps.evidence.outputs.available == 'true'
         with:
-          name: merge-outcomes
+          name: merge-outcomes-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/merge-outcomes.md
             ${{ runner.temp }}/merge-outcomes-receipt.json

@@ -69,8 +69,9 @@ fork that changes `tools/ci/pr-merge-report.rs` and merges through normal review
 This document does not authorize creating or merging a qualification PR.
 The installation merge itself skips reporting when its parent lacks the helper.
 
-For the covering scenario, inspect the real workflow run and its `merge-outcomes`
-artifact. Require all of the following before recording acceptance:
+For the covering scenario, inspect the real workflow run and its artifact.
+The name is `merge-outcomes-` followed by the run attempt, such as
+`merge-outcomes-1`. Require all of the following before recording acceptance:
 
 - The run uses the installed workflow revision and the merged fork PR's closed
   event. The job's token-permission log shows read access to contents, actions
@@ -84,7 +85,8 @@ artifact. Require all of the following before recording acceptance:
   second-invocation comparison. The opening report stays intact and no second
   merge report appears. The receipt's `opening_report_count` is at least one.
 - Summary retention and artifact upload succeed. The artifact contains the full
-  report and `merge-outcomes-receipt.json` from that run attempt.
+  report and `merge-outcomes-receipt.json` from that run attempt. The artifact
+  name and receipt's `run_attempt` match the selected attempt.
 - The receipt has `fork_modified_reporter: true`. An ordinary same-repository
   run or a fork PR without a reporter change supplies smoke evidence only.
 
@@ -100,4 +102,6 @@ the posted report, stop and investigate. Do not retry integrity failures or
 access denials. Retry transient API failures only under the repository's
 [bounded retry policy](../../.agents/skills/_shared/pr-follow-up.md#bounded-retry-policy).
 An allowed retry regenerates the report; an existing bot report prevents another
-POST. Successful verification retains the recovered report and receipt.
+POST. If the failed attempt retained an artifact, verify it is unchanged after
+a permitted rerun. Verify that the recovered attempt's artifact contains its
+report and receipt.

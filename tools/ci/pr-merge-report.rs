@@ -620,7 +620,7 @@ fn comment_body(body: &str) -> String {
     }
     let end = body[..end].rfind('\n').unwrap_or(end);
     format!(
-        "{}\n\nTiming rows truncated to fit GitHub's comment limit. The workflow attempts to retain the full report in its summary and merge-outcomes artifact; check the workflow result if either is unavailable.\n\n</details>\n",
+        "{}\n\nTiming rows truncated to fit GitHub's comment limit. The workflow attempts to retain the full report in its summary and the artifact for that run attempt; check the workflow result if either is unavailable.\n\n</details>\n",
         &body[..end]
     )
 }
