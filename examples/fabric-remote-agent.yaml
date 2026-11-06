@@ -3,7 +3,7 @@
 # yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
 
 # Replace the fixture endpoint/model with your own compatible service.
-# See docs/reference/fabric-harnesses.md for protocol requirements and test commands.
+# See docs/references/fabric-harnesses.md for protocol requirements and test commands.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

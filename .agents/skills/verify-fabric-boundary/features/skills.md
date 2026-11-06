@@ -4,15 +4,14 @@
 # Supplied and Generated Skills
 
 A user keeps skills on the mounted workspace at `/sandbox/workspace/skills/`, and the agent finds them through its native skill discovery from its first start.
-Asked only to use a skill by name, the agent loads it and follows its instructions, which the request doesn't repeat.
+Asked only to use a skill by name, the agent loads it, or reuses the view from earlier in the same conversation, and follows its instructions, which the request doesn't repeat.
 The agent also creates a skill of its own through its native authoring mechanism; that skill is saved in the same mounted directory without the user choosing a path, and the agent finds and uses it again after every lifecycle transition.
 Files that survive a transition aren't enough: each phase needs fresh native discovery and a fresh result.
 
 ## Sub-features
 
 - `skill-discovery`: native skill discovery lists the supplied `capability-probe` skill and views it, as the current turn's native discovery or loading record shows, not only the reply. Phases: Initial, After stop/start, After recreate, After config change, After restore.
-- `skill-execution`: asked only to use `capability-probe`, the agent loads it natively and follows its undisclosed recipe, writing `results/skill-result.json` with `probe` set to `agent-capability-probe` and the input's nonce and phase. Phases: Initial, After stop/start, After recreate, After config change, After restore.
-- `mounted-skill-yaml`: the adapter's YAML mount and skill-path fields resolve to a native discovery root at `/sandbox/workspace/skills`, and the supplied skill is discovered and runs from it without manual configuration or loader calls. Phases: Initial.
+- `skill-execution`: asked only to use `capability-probe`, the agent loads it natively, or reuses its earlier view as [Instruction Evidence](#instruction-evidence) allows, and follows its undisclosed recipe, writing `results/skill-result.json` with `probe` set to `agent-capability-probe` and the input's nonce and phase. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `mounted-skill-first-start`: the skill seeded before the first runtime starts is discovered and runs on first startup, before any install, reload, activation restart, or manual import. Phases: Initial.
 - `mounted-supplied-skill`: the supplied skill keeps its seeded hash, is discovered and loaded natively, and produces fresh output after every transition; persistence, discovery, loading, and output are each required. Phases: Initial, After runtime restart, After stop/start, After recreate, After config change, After restore.
 - `generated-skill`: the agent creates a run-named skill with a unique marker once, through its native authoring mechanism, and native discovery finds and views it after every transition without re-creation. Phases: Initial, After stop/start, After recreate, After config change, After restore.
@@ -24,6 +23,27 @@ Files that survive a transition aren't enough: each phase needs fresh native dis
 - A request through `fabric-agent-ctl invoke`, as [deploy-and-answer](../../verify-yaml-deployment/features/deploy-and-answer.md) sends it, naming a skill or asking the agent to create one.
 - The mounted skill directory `/sandbox/workspace/skills/`, which the launch makes the agent's skill path.
 - The agent's native skill discovery, viewing, and authoring, as `bindings.md` records them.
+
+## Instruction Evidence
+
+When a harness keeps one conversation per runtime, an agent that viewed a skill in this phase's discovery request may follow it in the run request without loading it again.
+Loading passes when either of these holds before the run request reads its input:
+
+- **Current load:** the run request's own native calls view or load the skill, or read the file that native discovery listed.
+- **Reuse:** all of these hold:
+  - This phase's discovery request viewed the skill, as its saved `discover.calls.txt` or `discover.skills.txt` shows. For `skill-execution`, that is the `skill-discovery` check's request.
+  - Both replies show the same runtime ID.
+  - The skill file still matches its sealed hash in this phase, as step 2's hash lines check for the supplied skill and step 9's for the generated one.
+  - The harness's session record shows no compaction, reset, or new session between that view and the run request. Save the part of the record that shows this in `$CHECK_DIR/session.txt`.
+
+`bindings.md` names where the session record is; for Hermes, it is the session database, read from a copy as the [native records](README.md#driving-conventions) convention says.
+If the session record can't show whether the context was compacted or reset, Loading is Not tested, with that gap in a finding; a discovery, input-read, or output failure that you observe independently stays Failed.
+Otherwise, if neither holds, Loading is Failed.
+
+- After every lifecycle transition, the phase's own discovery request must view the skill before a run may rely on reuse.
+- Never copy the discovery request's calls into `run.calls.txt`.
+- Correct output alone never proves loading.
+- Authoring prompts and the agent's claims never replace a native read of the saved skill.
 
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
@@ -57,7 +77,7 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
 
    The launch seeds it once, before the first apply, and records its hash in `$EVIDENCE/seeded.sha256`.
    This skill's recipe stays in this file and the volume; no prompt repeats it.
-2. **Supplied skill requests.** The supplied-skill checks use these commands, one request per prompt, in their own `CHECK_DIR`; steps 3 to 6 say which each sends. Before each `run`, remove the stale output:
+2. **Supplied skill requests.** The supplied-skill checks use these commands, one request per prompt, in their own `CHECK_DIR`; steps 3 to 5 say which each sends. Before each `run`, remove the stale output:
 
    ```sh
    openshell sandbox exec -n assistant --no-tty -- sha256sum /sandbox/workspace/skills/capability-probe/SKILL.md | tee "$CHECK_DIR/hash.txt"
@@ -76,8 +96,8 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    Read each result separately:
    - **Persistence:** `grep` prints the seeded hash's line.
    - **Discovery:** `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `capability-probe` from `/sandbox/workspace/skills/capability-probe/`, and a native view of its content.
-   - **Loading:** `run.calls.txt` shows a current-turn native skill view or load of `capability-probe`, or a file read of the path native discovery listed, before the input read.
-   - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/skill-result.json`.
+   - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `capability-probe`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
+   - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json`, wrote `results/skill-result.json`, and read the result back.
 3. **`mounted-skill-first-start`:** run it first in the Initial phase, before any other request in this run, including `inference`:
 
    ```sh
@@ -89,23 +109,12 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    Result: step 2's four results, with no install, reload, activation restart, or manual import before them.
    Missing observable discovery or no supported binding is Failed with a missing-implementation finding; discovery that ran but omitted the skill is Failed.
    Disclose any per-item enablement; it doesn't support a claim about a default path.
-4. **`mounted-skill-yaml`:** it sends no request; it pairs the configuration evidence with step 3's discovery and run:
-
-   ```sh
-   CASE=mounted-skill-yaml; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
-   grep -n -F /sandbox/workspace/skills "$EVIDENCE/deployment.yaml" | tee "$CHECK_DIR/yaml.txt"
-   ```
-
-   Copy the native configuration that `bindings.md` names for skill paths from the sandbox into `$CHECK_DIR/native-config.txt`, redacting credentials.
-   Result: `yaml.txt` shows the skill-path field the adapter declares and the workspace mount; `native-config.txt` lists `/sandbox/workspace/skills` as a discovery root; and `$EVIDENCE/initial/mounted-skill-first-start/` shows discovery and a passing run.
-   Record directory configuration and per-item discovery as separate evidence.
-   No declared skill-path field is Failed with a finding; don't invent a key.
-5. **`skill-discovery` and `skill-execution`:** set `CASE` and `CHECK_DIR` for each, then send step 2's `discover` prompt for `skill-discovery` and its `run` prompt, with the stale-output removal, for `skill-execution`.
+4. **`skill-discovery` and `skill-execution`:** set `CASE` and `CHECK_DIR` for each, then send step 2's `discover` prompt for `skill-discovery` and its `run` prompt, with the stale-output removal, for `skill-execution`.
    Result: discovery's result for `skill-discovery`, and loading and output for `skill-execution`. Model prose that names the skill without a native record is Failed.
-6. **`mounted-supplied-skill`:** set `CASE=mounted-supplied-skill` and its `CHECK_DIR`, and send both of step 2's prompts in every phase it lists, including After runtime restart.
+5. **`mounted-supplied-skill`:** set `CASE=mounted-supplied-skill` and its `CHECK_DIR`, and send both of step 2's prompts in every phase it lists, including After runtime restart.
    Write `$CHECK_DIR/result.md` with persistence, discovery, loading, and output as four separate lines.
    Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
-7. **Create the generated skill:** in the Initial phase only, as part of `generated-skill`. Choose the run-scoped name and marker, then send the creation prompt once:
+6. **Create the generated skill:** in the Initial phase only, as part of `generated-skill`. Choose the run-scoped name and marker, then send the creation prompt once:
 
    ```sh
    CASE=generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -137,7 +146,7 @@ MARKER=%s
    Keep any authoring retry's request, reply, and calls in `$CHECK_DIR` before sealing the hash.
    The configured read paths and the agent's reply can't establish that no skill exists; record "no skill" only after the search.
    If no skill was saved, don't create one for the agent: link every later `generated-skill` and `mounted-generated-skill` row to the creation finding, Failed for missing support and Not tested for a runner or access problem.
-8. **`mounted-generated-skill-save`:** resolve it from step 7's evidence; it sends no request:
+7. **`mounted-generated-skill-save`:** resolve it from step 6's evidence; it sends no request:
 
    ```sh
    CASE=mounted-generated-skill-save; CHECK_DIR=$EVIDENCE/$PHASE/$CASE; mkdir -p "$CHECK_DIR"
@@ -151,7 +160,7 @@ MARKER=%s
    - Record a missing YAML write-target setting in the finding without inventing one.
 
    Never copy, move, or link the skill to make this or any later check pass.
-9. **`generated-skill`:** in every phase it lists, including Initial after step 7, send discovery in a separate request:
+8. **`generated-skill`:** in every phase it lists, including Initial after step 6, send discovery in a separate request:
 
    ```sh
    CASE=generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -163,7 +172,7 @@ MARKER=%s
 
    Result: `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `$SKILL_NAME`, and its native view contains `$MARKER`.
    Missing discovery is Failed even when the file remains on disk.
-10. **`mounted-generated-skill`:** in every phase it lists, check the original, discover it, and run it on fresh input:
+9. **`mounted-generated-skill`:** in every phase it lists, check the original, discover it, and run it on fresh input:
 
     ```sh
     CASE=mounted-generated-skill; CHECK_DIR=$EVIDENCE/$PHASE/$CASE
@@ -185,13 +194,13 @@ MARKER=%s
     Write `$CHECK_DIR/result.md` with four separate lines:
     - **Persistence:** `same`, at the recorded save location.
     - **Discovery:** the current turn's native discovery lists `$SKILL_NAME` from that location.
-    - **Loading:** `run.calls.txt` shows a current-turn native view or load of the skill, or a file read of the path native discovery listed.
-    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, written by current-turn native file calls.
+    - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `$SKILL_NAME`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
+    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/generated-skill-result.json`.
 
     Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
 ## Gotchas
 
-- Never paste a skill's contents or its expected output into a prompt. The run prompts name the skill only, so a correct result proves the agent loaded it.
+- Never paste a saved skill's contents or its expected output into an execution prompt. The run prompts name the skill only, and correct output alone never proves loading.
 - Some harnesses list skills in the system prompt instead of through a tool. Then the discovery evidence is the runtime's loaded skill list for the turn, not the reply.
 - `skill-execution` and `mounted-supplied-skill` both write `results/skill-result.json`. Remove it before each run so one check can't pass on the other's output.
 - Retained files prove neither discovery nor fresh execution. [lifecycle-and-retention](lifecycle-and-retention.md)'s `retention` check tracks the supplied skill's hash; these checks need a fresh native discovery in each phase.

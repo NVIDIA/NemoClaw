@@ -15,6 +15,19 @@ gateway-name resolution.
   surface doesn't yet cover (providers, policy, logs, settings, SSH,
   forwarding).
 
+## Raw configuration message migration
+
+`SandboxConfigSnapshot` and `GetSandboxConfigResponse` now include the repeated
+`service_routes` field. This is an additive protobuf wire change; ordinary RPC
+callers can continue reading responses. It describes the supervisor's declared
+application ingress allowlist, not service discovery. An empty list installs no
+application routes.
+
+Code constructing complete raw Rust message literals must add
+`service_routes: Vec::new()` or use `..Default::default()` for unspecified fields.
+Exhaustive destructuring patterns must include `service_routes` or end with `..`.
+The curated SDK API is unchanged.
+
 ## Auth and refresh
 
 The curated surface drives OIDC refresh automatically: proactively before a
@@ -60,6 +73,11 @@ target port, and an authorization mode; an empty name selects the unnamed
 endpoint. Authorization is stripped by default. Select `BearerPassthrough` only
 when the sandbox application validates its own bearer credential. The returned
 `SandboxRef::service_urls` map contains each routed URL under the same name.
+
+`exec` sends the sandbox's owner replica in the `x-openshell-replica` header so
+an edge proxy with replica routing can skip the peer relay. The owner is cached
+for 30 seconds, and a call is retried once without the header if the owner's
+route has no ready endpoints.
 
 Curated calls without a workspace argument explicitly select the `default`
 workspace. Cross-workspace listing uses the separate `*_all_workspaces`

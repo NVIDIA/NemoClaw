@@ -1,10 +1,99 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::{
-    compile::{Generations, targets},
+    compile::{Generations, compile, targets},
     config::{Document, schema::input_schema},
 };
 use serde_json::{Value, json};
+
+#[test]
+fn shell_restriction_changes_only_the_allow_list_and_restores_the_baseline_graph() {
+    // The adapter owns these names and file settings; the SDK must not interpret them.
+    let shell = "fixture.shell-launch";
+    let other_tools = json!(["fixture.file-read", "fixture.lookup"]);
+    let mut baseline = input(2);
+    let sandbox = &mut baseline["spec"]["sandboxes"]["sandbox-0"];
+    sandbox["agent"]["tools"] = json!({"allow":["fixture.file-read", shell, "fixture.lookup"]});
+    sandbox["harness"]["kind"] = json!("org.fixture.adapter");
+    sandbox["harness"]["settings"] = json!({
+        "files": {"instructions": "/sandbox/workspace/AGENTS.md"}
+    });
+    sandbox["harness"]["config"] = json!({
+        "skills": {"paths": ["/sandbox/workspace/skills/probe"]},
+        "relay": {"plugins": {"dynamic": [{
+            "manifest": "/sandbox/workspace/plugins/probe/relay-plugin.toml",
+            "config": {"mode": "observe"}
+        }]}},
+        "runtime": {"keep_state": true, "max_turns": 7}
+    });
+    sandbox["driverConfig"] = json!({"docker": {"mounts": [
+        {"type": "volume", "source": "workspace", "target": "/sandbox/workspace", "read_only": false},
+        {"type": "volume", "source": "artifacts", "target": "/sandbox/artifacts", "read_only": false}
+    ]}});
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let compile_input = |value: &Value| {
+        let document = parse(value).unwrap();
+        let rows = targets(&document, &generations).unwrap();
+        let agent = rows
+            .iter()
+            .find(|row| row.address == "fabric_agent.sandbox-0")
+            .unwrap();
+        (
+            nemoclaw_fabric::agent::compose(&agent.values).unwrap(),
+            compile(&document, &generations, "0.1.0").unwrap(),
+        )
+    };
+    let (baseline_settings, baseline_graph) = compile_input(&baseline);
+    let mut restricted = baseline.clone();
+    restricted["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"]["allow"] = other_tools.clone();
+    let (restricted_settings, restricted_graph) = compile_input(&restricted);
+    assert_eq!(
+        restricted_settings["tools"]["enabled"], other_tools,
+        "restriction must remove only the adapter's shell tool"
+    );
+    let mut expected_settings = baseline_settings;
+    expected_settings["tools"]["enabled"] = other_tools.clone();
+    assert_eq!(
+        restricted_settings, expected_settings,
+        "shell restriction must preserve every other Fabric setting"
+    );
+
+    // Agent inputs and read-only harness discovery carry the same configuration.
+    // The sandbox declaration stays unchanged; its configuration trigger replaces it.
+    let mut expected_graph = baseline_graph.clone();
+    expected_graph["resource"]["terraform_data"]["agent_sandbox-0"]["input"] =
+        json!(expected_settings.to_string());
+    expected_graph["resource"]["fabric_agent"]["sandbox-0"]["tools"]["enabled"] = other_tools;
+    for read in ["sandbox_sandbox-0", "sandbox_sandbox-0_acquired"] {
+        if let Some(discovery) = expected_graph["data"]["fabric_harnesses"].get_mut(read) {
+            discovery["config_json"] = json!(expected_settings.to_string());
+        }
+    }
+    assert_ne!(
+        restricted_graph["resource"]["terraform_data"]["agent_sandbox-0"],
+        baseline_graph["resource"]["terraform_data"]["agent_sandbox-0"],
+        "restriction must change the sandbox's configuration trigger"
+    );
+    assert_eq!(
+        restricted_graph, expected_graph,
+        "restriction must leave the rest of the graph unchanged, including the other agent"
+    );
+    assert_eq!(
+        restricted_graph["resource"]["openshell_sandbox"]["sandbox-0"]["lifecycle"]["replace_triggered_by"],
+        json!(["terraform_data.agent_sandbox-0"]),
+        "the changed configuration must replace its sandbox"
+    );
+
+    restricted["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"] =
+        baseline["spec"]["sandboxes"]["sandbox-0"]["agent"]["tools"].clone();
+    let (_, restored_graph) = compile_input(&restricted);
+    assert_eq!(
+        restored_graph, baseline_graph,
+        "restore must reproduce the entire baseline graph"
+    );
+}
 
 fn input(count: usize) -> Value {
     let mut value: Value =

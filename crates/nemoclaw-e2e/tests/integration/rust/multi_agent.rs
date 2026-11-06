@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Several OpenClaw agents in one deployment, each in its own sandbox, through
 //! the SDK and the bundle's CLI against the fixture gateway: one agent's
-//! rejected start, and another owner's label on one sandbox. The HCL
-//! integration scenario kubernetes-external-three-agents owns one agent's
-//! replacement and restart leaving the others unchanged.
+//! rejected start, another owner's label on one sandbox, and a first apply
+//! killed while their sandboxes are created. The HCL integration scenario
+//! kubernetes-external-three-agents owns one agent's replacement and restart
+//! leaving the others unchanged.
 use crate::deployment::Lifecycle;
 use nemoclaw_e2e::openshell::State;
 use nemoclaw_sdk::config::{AgentTools, Document};
@@ -289,4 +290,141 @@ async fn a_foreign_owner_on_one_agent_stops_planning_without_touching_the_others
 
     lifecycle.fixture.state.lock().unwrap().sandboxes = owned;
     lifecycle.destroy();
+}
+
+/// A first apply whose OpenTofu is killed. Unix only: the test ends
+/// OpenTofu's process group, which the SDK creates there.
+#[cfg(unix)]
+mod killed_apply {
+    use super::three_agents;
+    use crate::deployment::Lifecycle;
+    use std::{
+        collections::BTreeSet,
+        fs,
+        path::Path,
+        process::Command,
+        time::{Duration, Instant},
+    };
+
+    /// Polls `done` every 20 ms until it holds, failing with `what` after 60 s.
+    async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting until {what}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// The ID of every resource instance in OpenTofu's state file.
+    fn bound_ids(state: &Path) -> BTreeSet<String> {
+        let Ok(bytes) = fs::read(state) else {
+            return BTreeSet::new();
+        };
+        let Ok(state) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            return BTreeSet::new();
+        };
+        state["resources"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|resource| resource["instances"].as_array().into_iter().flatten())
+            .filter_map(|instance| instance["attributes"]["id"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Ends OpenTofu, which holds `state` open while it applies, with the
+    /// providers in its process group, at once: as a crash or an out-of-memory
+    /// kill would, without the interrupt that lets OpenTofu save its state first.
+    fn kill_opentofu(state: &Path) {
+        let found = Command::new("lsof").arg("-t").arg(state).output().unwrap();
+        let pid = String::from_utf8(found.stdout).unwrap();
+        let pid = pid.trim();
+        assert!(
+            !pid.is_empty() && !pid.contains('\n'),
+            "expected one process holding {}, found {pid:?}",
+            state.display()
+        );
+        // The SDK starts OpenTofu as the leader of its own process group.
+        let killed = Command::new("sh")
+            .args(["-c", "kill -s KILL -- \"-$0\"", pid])
+            .status()
+            .unwrap();
+        assert!(
+            killed.success(),
+            "cannot kill OpenTofu's process group {pid}"
+        );
+    }
+
+    /// A first apply whose OpenTofu is killed keeps a binding for every gateway
+    /// object that OpenTofu saved. During an apply, OpenTofu saves its state when
+    /// a resource finishes at least 20 s after the last save (its minimum
+    /// `TF_STATE_PERSIST_INTERVAL`). The fixture holds the three sandbox
+    /// creations past that interval and then lets one finish; OpenTofu is killed
+    /// once it has saved that sandbox, while it waits for the other two.
+    ///
+    /// Catches a pinned OpenTofu whose saved state in a new state directory holds
+    /// only the latest change (opentofu/opentofu#4809, before 1.12.12), which
+    /// loses the workspace and provider bindings.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+    async fn a_killed_first_apply_keeps_a_binding_for_every_object_it_saved() {
+        let lifecycle = Lifecycle::start(&three_agents().yaml().unwrap()).await;
+        let fixture = &lifecycle.fixture;
+        fixture.state.lock().unwrap().sandbox_create_permits = Some(0);
+        let saved = lifecycle.directory.path().join("terraform.tfstate");
+        let sandbox_ids = || -> BTreeSet<String> {
+            let state = fixture.state.lock().unwrap();
+            state
+                .sandboxes
+                .values()
+                .map(|sandbox| sandbox.metadata.as_ref().unwrap().id.clone())
+                .collect()
+        };
+        let kill = async {
+            wait_until("all three sandbox creations are held", || {
+                fixture.state.lock().unwrap().active_sandbox_creates == 3
+            })
+            .await;
+            // OpenTofu started the interval when it saved the first created
+            // resource, before the sandboxes, which depend on it.
+            tokio::time::sleep(Duration::from_secs(21)).await;
+            fixture.state.lock().unwrap().sandbox_create_permits = Some(1);
+            wait_until("OpenTofu saved a state with the released sandbox", || {
+                let created = sandbox_ids();
+                !created.is_empty() && bound_ids(&saved).is_superset(&created)
+            })
+            .await;
+            kill_opentofu(&saved);
+        };
+        let applying = lifecycle
+            .deployment
+            .apply(&lifecycle.document, &lifecycle.cancel);
+        tokio::pin!(applying);
+        let result = tokio::select! {
+            result = &mut applying => panic!("the apply ended before OpenTofu was killed: {result:?}"),
+            () = kill => applying.await,
+        };
+        assert!(result.is_err(), "the killed apply succeeded");
+        assert_eq!(sandbox_ids().len(), 1, "one sandbox creation was released");
+        let created: BTreeSet<String> = {
+            let state = fixture.state.lock().unwrap();
+            let workspaces = state
+                .workspaces
+                .values()
+                .map(|workspace| &workspace.metadata);
+            let providers = state.providers.values().map(|provider| &provider.metadata);
+            let sandboxes = state.sandboxes.values().map(|sandbox| &sandbox.metadata);
+            workspaces
+                .chain(providers)
+                .chain(sandboxes)
+                .map(|metadata| metadata.as_ref().unwrap().id.clone())
+                .collect()
+        };
+        let bound = bound_ids(&saved);
+        let unbound: Vec<&String> = created.difference(&bound).collect();
+        assert!(
+            unbound.is_empty(),
+            "the killed first apply lost the bindings of gateway objects {unbound:?}"
+        );
+    }
 }

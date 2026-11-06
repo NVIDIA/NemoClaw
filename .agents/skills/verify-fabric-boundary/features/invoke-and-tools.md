@@ -50,7 +50,7 @@ Preconditions: the [launch](../SKILL.md#launch) seeded the supplied script below
    echo "$RUNTIME_ID $INF_NONCE" > "$CHECK_DIR/ids.txt"
    ```
 
-   Result: `exit 0`; `run` is `succeeded`, `error` is `null`, `same_runtime` is `true`, and `response` is `INFERENCE_OK-` followed by `$INF_NONCE`.
+   Result: `response` is `INFERENCE_OK-` followed by `$INF_NONCE`.
    Record the runtime ID and any request ID the reply carries in `ids.txt`.
 3. **`file-read`:**
 

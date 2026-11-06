@@ -44,6 +44,11 @@ pub enum Progress {
     /// A mutating OpenTofu subprocess has launched. Emitted synchronously once
     /// per launch, before child output; this does not prove any change completed.
     MutationStarted,
+    /// The operation was cancelled while OpenTofu was applying. OpenTofu
+    /// starts no further resource operations and saves the state after those
+    /// in progress finish; the operation then returns `Error::Cancelled`. The
+    /// deployment's force-stop token ends OpenTofu sooner.
+    Stopping,
     Download(crate::DownloadProgress),
     /// A resource operation observed in OpenTofu's machine-readable UI.
     Resource {
@@ -184,6 +189,8 @@ pub struct Deployment {
     bundle_directory: PathBuf,
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
+    /// Ends OpenTofu at once after an operation was cancelled during an apply.
+    force_stop: CancellationToken,
     /// Shared by clones, so a deployment hashes an unchanged bundle once.
     bundle: Arc<crate::bundle::VerifiedBundle>,
     /// Reads the caller's variables that locate the API server from a pod;
@@ -197,6 +204,7 @@ impl Deployment {
             bundle_directory: bundle_directory.into(),
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
+            force_stop: CancellationToken::new(),
             bundle: Arc::default(),
             pod_environment: |name| std::env::var(name).ok(),
         }
@@ -207,6 +215,15 @@ impl Deployment {
     }
     pub fn with_progress(mut self, progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         self.progress = progress;
+        self
+    }
+    /// Cancelling an operation's token during an apply lets OpenTofu finish
+    /// the resource operations in progress and save the state, which can take
+    /// as long as the slowest of them. Cancelling `token` as well ends
+    /// OpenTofu at once; a resource it was creating can then exist without a
+    /// binding in the state.
+    pub fn with_force_stop(mut self, token: CancellationToken) -> Self {
+        self.force_stop = token;
         self
     }
     fn open(&self) -> Result<(Bundle, Store), Error> {
@@ -303,6 +320,7 @@ impl Deployment {
             &with_observations(&expected, &compile::observations(&compiled.graph)),
             &bindings,
         )?;
+        runtime::check_install(&plan, &bindings, &document, &record.generations)?;
         // Only OpenShell and Fabric creations can lose their identity with a
         // lost reply; OpenTofu saves every other resource's ID.
         let objects = allowed(&compiled.objects);

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Interrupted and refused operations on a managed Kubernetes deployment leave
-//! the state that the next run recovers from (`docs/design/scope.md`, Ownership
+//! the state that the next run recovers from (`internal-docs/design/scope.md`, Ownership
 //! and Recovery).
 //!
 //! Each test drives `Deployment` over a bundle whose OpenTofu is a script (see
@@ -18,8 +18,8 @@
 #![cfg(unix)]
 
 use crate::scripted_tofu::{
-    Events, Scripted, destroy_plan_json, destroying, kubernetes_document, placeholder_generations,
-    plan_json, planning, state_json,
+    Events, Scripted, destroy_plan_json, destroying, kubernetes_document, leftover_plan_json,
+    placeholder_generations, plan_json, planning, state_json,
 };
 use nemoclaw_sdk::{
     CancellationToken, Deployment, Error, OperationResult, Outcome, Progress,
@@ -31,6 +31,8 @@ use std::{
     fmt::Debug,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 const STORAGE: &str = "openshell_kubernetes_storage.runtime";
@@ -316,4 +318,128 @@ async fn cancelling_before_the_plan_saves_no_record_and_a_revised_document_is_ac
         "a revised document is accepted",
     );
     assert_applies(&scripted, 1, "the revised document");
+}
+
+/// A deployment whose first apply bound storage and authentication and then
+/// stopped at once while Helm installed the gateway release, so the release is
+/// a record in the cluster that the state does not bind: the next plan
+/// refreshes authentication, which observes the record.
+async fn stopped_during_the_helm_install(scripted: &Scripted) -> Deployment {
+    scripted.set("root.apply", "fail");
+    let deployment = scripted.deployment(&missing(scripted));
+    assert!(
+        matches!(
+            deployment.apply(&original(), &uncancelled()).await,
+            Err(Error::Execution { .. })
+        ),
+        "the first apply must fail in OpenTofu"
+    );
+    let generations = scripted.generations();
+    let targets: Vec<Target> = compile::runtime_targets(&original(), &generations)
+        .unwrap()
+        .into_iter()
+        .chain(compile::targets(&original(), &generations).unwrap())
+        .filter(|target| !target.address.starts_with("data."))
+        .collect();
+    let bound: Vec<Target> = targets
+        .iter()
+        .filter(|target| matches!(target.kind.as_str(), STORAGE_KIND | AUTH_KIND))
+        .cloned()
+        .collect();
+    let addresses: Vec<&str> = bound.iter().map(|target| target.address.as_str()).collect();
+    scripted.set("root.state", state_json(&bound));
+    scripted.set("root.apply.plan", leftover_plan_json(&targets, &addresses));
+    deployment
+}
+
+/// After an apply stopped at once while Helm installed the gateway release,
+/// plan and apply stop before OpenTofu applies anything, name the release, and
+/// leave it: NemoClaw can't tell it from another owner's release.
+///
+/// Catches an apply that plans a second install, which Helm refuses with
+/// "cannot re-use a name that is still in use" after the apply has started.
+#[tokio::test]
+async fn plan_and_apply_after_a_stopped_helm_install_name_the_unbound_release() {
+    let scripted = fresh();
+    let deployment = stopped_during_the_helm_install(&scripted).await;
+    let applies = count(&scripted.commands(), "root apply");
+    let planned = deployment.plan(&original(), &uncancelled()).await;
+    let applied = deployment.apply(&original(), &uncancelled()).await;
+    for (operation, result) in [("plan", planned), ("apply", applied)] {
+        match result {
+            Err(Error::UnboundRelease { release, namespace }) => {
+                assert_eq!(namespace, "agents", "{operation}");
+                assert!(release.ends_with("-gateway"), "{operation}: {release}");
+            }
+            other => panic!("{operation}: expected the unbound release, got {other:?}"),
+        }
+    }
+    assert_applies(&scripted, applies, "after the stopped install");
+}
+
+/// OpenTofu has started creating the storage resource.
+fn storage_started(event: &Progress) -> bool {
+    matches!(
+        event,
+        Progress::Resource { address: Some(address), status: "started", .. } if address == STORAGE
+    )
+}
+
+/// After an interrupt, the caller hears that the apply is stopping and can
+/// stop an OpenTofu that keeps running at once. The process tests check that
+/// an interrupt alone waits for OpenTofu to exit.
+///
+/// Catches an SDK that ignores the request to stop now and keeps waiting.
+#[tokio::test]
+async fn stopping_now_after_an_interrupt_ends_opentofu_at_once() {
+    let scripted = fresh();
+    scripted.set("root.apply", "stubborn");
+    let (cancel, force, events) = (uncancelled(), uncancelled(), Events::default());
+    let stopped_at = Arc::new(Mutex::new(None));
+    let hook = {
+        let (record, cancel, force, stopped_at) = (
+            events.recording(),
+            cancel.clone(),
+            force.clone(),
+            stopped_at.clone(),
+        );
+        Arc::new(move |event: Progress| {
+            if storage_started(&event) {
+                *stopped_at.lock().unwrap() = Some(Instant::now());
+                cancel.cancel();
+                force.cancel();
+            }
+            record(event);
+        })
+    };
+    let result = scripted
+        .deployment(&missing(&scripted))
+        .with_progress(hook)
+        .with_force_stop(force)
+        .apply(&original(), &cancel)
+        .await;
+    let elapsed = stopped_at
+        .lock()
+        .unwrap()
+        .expect("the apply never started creating storage")
+        .elapsed();
+    assert_cancelled(result, "the stopped apply");
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "the apply took {elapsed:?} to stop after it was told to stop now"
+    );
+    assert!(
+        events.contains(|event| *event == Progress::Stopping),
+        "the caller was not told that the apply is stopping"
+    );
+    let pid = scripted
+        .written("root.apply-pid")
+        .expect("the script recorded no process ID");
+    let alive = std::process::Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success();
+    assert!(!alive, "OpenTofu is still running after the apply stopped");
 }

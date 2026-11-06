@@ -8,8 +8,9 @@
 //! Installing a release through `apply` would pull the pinned chart, so each
 //! test starts from an interrupted runtime apply that the SDK's
 //! `test-scenarios` setup builds, then imports the fixture release with the
-//! Helm provider. This file checks lost Helm bindings; its child module checks
-//! authentication failures and cancellation.
+//! Helm provider. This file checks lost Helm bindings; its child modules check
+//! authentication failures and cancellation, and a release that an unfinished
+//! install left without a binding.
 
 use super::kube_api;
 use super::transport;
@@ -31,6 +32,8 @@ use std::{
 
 #[path = "helm_recovery/destroy_faults.rs"]
 mod destroy_faults;
+#[path = "helm_recovery/unfinished_install.rs"]
+mod unfinished_install;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fault {
     Healthy,
@@ -151,7 +154,8 @@ impl Api {
     }
 
     fn release(&self, name: &str, namespace: &str) {
-        self.objects.insert(release_record(name, namespace));
+        self.objects
+            .insert(release_record(name, namespace, "deployed"));
     }
 
     /// Objects that belong to someone else: a second deployment's retained
@@ -161,7 +165,7 @@ impl Api {
     /// creates can share one, and no name is one the fixture deployment uses.
     fn neighbors(&self, namespace: &str) -> Vec<Value> {
         let owner = json!({"nemoclaw.nvidia.com/uid": NEIGHBOR_OWNER});
-        let mut release = release_record(NEIGHBOR, namespace);
+        let mut release = release_record(NEIGHBOR, namespace, "deployed");
         release["metadata"]["uid"] = json!("neighbor-release");
         let neighbors = vec![
             json!({"apiVersion":"v1", "kind":"Namespace",
@@ -193,20 +197,20 @@ impl Api {
 const NEIGHBOR_OWNER: &str = "0f6d3c52-8a1e-4b7f-9d20-6e4b5a3c1f87";
 const NEIGHBOR: &str = "nc-neighbor-gateway";
 
-/// Helm's record of release `name`. Helm accepts its original uncompressed
-/// JSON storage format. The release has no workloads: these tests qualify
-/// recovery, not a chart.
-fn release_record(name: &str, namespace: &str) -> Value {
+/// Helm's record of release `name` with `status`. Helm accepts its original
+/// uncompressed JSON storage format. The release has no workloads: these tests
+/// qualify recovery, not a chart.
+fn release_record(name: &str, namespace: &str, status: &str) -> Value {
     let release = json!({
         "name": name, "namespace": namespace, "version":1,
-        "info":{"status":"deployed", "description":"recovery fixture",
+        "info":{"status":status, "description":"recovery fixture",
             "first_deployed":"2026-01-01T00:00:00Z", "last_deployed":"2026-01-01T00:00:00Z"},
         "chart":{"metadata":{"name":nemoclaw_sdk::kubernetes::gateway::CHART, "version":"0.0.115", "apiVersion":"v2"}},
         "config":{}, "manifest":"", "hooks":[]
     });
     json!({"apiVersion":"v1", "kind":"Secret", "type":"helm.sh/release.v1",
     "metadata":{"name":format!("sh.helm.release.v1.{name}.v1"), "namespace":namespace,
-        "labels":{"owner":"helm", "name":name, "status":"deployed", "version":"1"}},
+        "labels":{"owner":"helm", "name":name, "status":status, "version":"1"}},
     "data":{"release":STANDARD.encode(STANDARD.encode(release.to_string()))}})
 }
 

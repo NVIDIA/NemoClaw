@@ -74,8 +74,8 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                     "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-openclaw-1/interfaces/dashboard.token"
                         .into()
                 ),
-                launcher: None,
-                sign_in: SignIn::TokenInUrlFragment,
+                    sign_in: SignIn::TokenInUrlFragment,
+                terminal: Some("openclaw tui --url ws://127.0.0.1:18789 --token TOKEN".into()),
             },
             InterfaceAccess {
                 sandbox: "reviewer".into(),
@@ -86,8 +86,8 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                     "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token"
                         .into()
                 ),
-                launcher: None,
-                sign_in: SignIn::BearerToken,
+                    sign_in: SignIn::BearerToken,
+                terminal: None,
             },
         ]
     );
@@ -98,6 +98,10 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
         "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token"
     );
     assert_eq!(json["interfaces"][1]["signIn"], "bearer_token");
+    assert_eq!(
+        json["interfaces"][0]["terminal"],
+        "openclaw tui --url ws://127.0.0.1:18789 --token TOKEN"
+    );
 }
 
 /// An agent that keeps its state has one token path for every runtime, so it is
@@ -120,6 +124,11 @@ async fn an_agent_that_keeps_its_state_reports_its_token_without_a_runtime_id() 
         .find(|access| access.sandbox == "assistant")
         .unwrap();
     assert_eq!(openclaw.token_path, None);
+    // The terminal command names no token file, so it needs no runtime ID.
+    assert_eq!(
+        openclaw.terminal.as_deref(),
+        Some("openclaw tui --url ws://127.0.0.1:18789 --token TOKEN")
+    );
 }
 
 /// Hermes's dashboard has no token or sign-in: the forward is its access control.
@@ -145,65 +154,10 @@ async fn an_interface_without_a_token_reports_no_token_path() {
             interface: "dashboard".into(),
             port: Some(9119),
             token_path: None,
-            launcher: None,
             sign_in: SignIn::None,
+            terminal: None,
         }]
     );
-}
-
-/// Deep Agents Code's terminal has no port or token: apply reports its launcher
-/// for the current runtime, which a person runs with `openshell sandbox exec`.
-#[tokio::test]
-async fn apply_reports_a_terminal_interface_with_its_launcher() {
-    let mut value = crate::support::fixture("local.yaml");
-    value["spec"]["sandboxes"]["assistant"]["harness"] = json!({
-        "kind": "nvidia.fabric.langchain.deepagents-code",
-        "settings": {"approval_mode": "auto", "interfaces": {"terminal": {}}}});
-    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let launcher =
-        "/sandbox/artifacts/.fabric/deepagents-code/runtimes/rt-dcode-1/interfaces/terminal";
-    let result = apply(&document, &[("assistant", "rt-dcode-1")]).await;
-    assert_eq!(
-        result.interfaces,
-        [InterfaceAccess {
-            sandbox: "assistant".into(),
-            interface: "terminal".into(),
-            port: None,
-            token_path: None,
-            launcher: Some(launcher.into()),
-            sign_in: SignIn::SandboxExec,
-        }]
-    );
-    let json = serde_json::to_value(&result).unwrap();
-    assert_eq!(
-        json["interfaces"],
-        json!([{"sandbox": "assistant", "interface": "terminal", "launcher": launcher, "signIn": "sandbox_exec"}])
-    );
-
-    // A disabled terminal is not reported.
-    value["spec"]["sandboxes"]["assistant"]["harness"]["settings"]["interfaces"]["terminal"] =
-        json!({"enabled": false});
-    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    assert!(
-        apply(&document, &[("assistant", "rt-dcode-1")])
-            .await
-            .interfaces
-            .is_empty()
-    );
-}
-
-/// Without a runtime ID in the state, the launcher's path isn't known.
-#[tokio::test]
-async fn a_terminal_without_a_recorded_runtime_reports_no_launcher() {
-    let mut value = crate::support::fixture("local.yaml");
-    value["spec"]["sandboxes"]["assistant"]["harness"] = json!({
-        "kind": "nvidia.fabric.langchain.deepagents-code",
-        "settings": {"approval_mode": "yolo", "interfaces": {"terminal": {"enabled": true}}}});
-    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let result = apply(&document, &[("assistant", "")]).await;
-    assert_eq!(result.interfaces.len(), 1);
-    assert_eq!(result.interfaces[0].launcher, None);
-    assert_eq!(result.interfaces[0].sign_in, SignIn::SandboxExec);
 }
 
 /// Without interfaces, the result has none and its JSON omits the key.
@@ -229,26 +183,15 @@ async fn a_deployment_without_interfaces_reports_none() {
 /// adapter's kept-state token remains in its agent directory.
 #[tokio::test]
 async fn apply_reports_current_runtime_access_after_binding_changes() {
-    let mut value = serde_json::to_value(document()).unwrap();
-    let mut coder = value["spec"]["sandboxes"]["assistant"].clone();
-    coder["harness"] = json!({
-        "kind": "nvidia.fabric.langchain.deepagents-code",
-        "settings": {"interfaces": {"terminal": {}}}
-    });
-    value["spec"]["sandboxes"]["coder"] = coder;
-    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
-    let scripted = Scripted::new();
+    let document = document();
+    let scripted = Arc::new(Scripted::new());
     let declared = compile::targets(&document, &placeholder_generations()).unwrap();
     scripted.set("root.apply.plan", plan_json(&declared, "create"));
-    let old = agents_state(&[
-        ("assistant", "openclaw-old"),
-        ("reviewer", "hermes-old"),
-        ("coder", "code-old"),
-    ]);
+    let old = agents_state(&[("assistant", "openclaw-old"), ("reviewer", "hermes-old")]);
     scripted.set("root.state", &old);
     let deployment = scripted.deployment(&scripted.path("unused-kubeconfig"));
     let cancel = CancellationToken::new();
-    let before = deployment.apply(&document, &cancel).await.unwrap();
+    deployment.apply(&document, &cancel).await.unwrap();
     let access = |result: &nemoclaw_sdk::OperationResult, sandbox: &str| {
         result
             .interfaces
@@ -257,30 +200,13 @@ async fn apply_reports_current_runtime_access_after_binding_changes() {
             .unwrap()
             .clone()
     };
-    assert!(
-        access(&before, "assistant")
-            .token_path
-            .unwrap()
-            .contains("openclaw-old")
-    );
-    assert!(
-        access(&before, "coder")
-            .launcher
-            .unwrap()
-            .contains("code-old")
-    );
-
     let declared = compile::targets(&document, &scripted.generations()).unwrap();
     scripted.set("root.apply.plan", plan_json(&declared, "no-op"));
-    let state = scripted.path("control").join("root.state");
-    let replacement = agents_state(&[
-        ("assistant", "openclaw-new"),
-        ("reviewer", "hermes-new"),
-        ("coder", "code-new"),
-    ]);
+    let updating = Arc::clone(&scripted);
+    let replacement = agents_state(&[("assistant", "openclaw-new"), ("reviewer", "hermes-new")]);
     let replacing = deployment.with_progress(Arc::new(move |event| {
         if event == Progress::Applying {
-            std::fs::write(&state, &replacement).unwrap();
+            updating.set("root.state", &replacement);
         }
     }));
     let after = replacing.apply(&document, &cancel).await.unwrap();
@@ -290,14 +216,6 @@ async fn apply_reports_current_runtime_access_after_binding_changes() {
         Some(
             "/sandbox/artifacts/.fabric/openclaw/runtimes/openclaw-new/interfaces/dashboard.token"
         )
-    );
-    assert_eq!(
-        access(&after, "coder").launcher.as_deref(),
-        Some("/sandbox/artifacts/.fabric/deepagents-code/runtimes/code-new/interfaces/terminal")
-    );
-    assert_eq!(
-        access(&after, "reviewer").token_path,
-        access(&before, "reviewer").token_path
     );
     assert_eq!(
         access(&after, "reviewer").token_path.as_deref(),

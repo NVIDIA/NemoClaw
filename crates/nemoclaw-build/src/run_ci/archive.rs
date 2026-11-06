@@ -66,9 +66,9 @@ pub(super) fn selected_binaries(
     }
 
     let profiles: &[&str] = if platform.starts_with("linux_") {
-        &["lifecycle", "live-docker", "live-kind"]
+        &["contract", "integration", "live-docker", "live-kind"]
     } else {
-        &["lifecycle"]
+        &["contract", "integration"]
     };
     let mut binaries = BTreeSet::new();
     for profile in profiles {
@@ -109,7 +109,7 @@ pub(super) fn selected_binaries(
         );
     }
     if binaries.is_empty() {
-        return Err("no lifecycle test binaries were selected".into());
+        return Err("no contract or integration test binaries were selected".into());
     }
     Ok(binaries.into_iter().collect::<Vec<_>>().join(" | "))
 }

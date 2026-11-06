@@ -15,7 +15,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The format of the intent record this release reads and writes: its version
+/// and the SHA-256 fingerprint of its JSON Schema, which a unit test checks.
+/// When the format changes, raise the version with the fingerprint, so that a
+/// release refuses state another release wrote instead of misreading it.
+pub(crate) const RECORD_FORMAT: (u32, &str) = (
+    16,
+    "b40093ab7cb47d39a3b0c8c1ceccbda929f0faad702e4b0763e4cadea5474367",
+);
+pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub(crate) struct Record {
     pub version: u32,
@@ -96,7 +106,7 @@ impl Record {
         let mut generations = Generations::new();
         allocate_missing_generation_values(&mut generations, &document)?;
         Ok(Self {
-            version: 15,
+            version: RECORD_VERSION,
             digest: document.digest(),
             document,
             generations,
@@ -235,10 +245,11 @@ impl Record {
         self.destroyed
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 15 {
-            return Err(Error::State(
-                "deployment predates openshell_inference; retain state and use the original NemoClaw version for recovery or teardown",
-            ));
+        if self.version != RECORD_VERSION {
+            return Err(Error::StateFromOtherRelease {
+                recorded: self.version.into(),
+                supported: RECORD_VERSION,
+            });
         }
         let generations_valid = required_generation_kinds(&self.document).is_ok_and(|kinds| {
             kinds
@@ -442,9 +453,19 @@ impl Store {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(Error::State("cannot read deployment intent")),
         };
-        let record: Record = serde_json::from_slice(&bytes).map_err(|_| {
-            Error::State("deployment intent record is corrupt; retain it for recovery")
-        })?;
+        let corrupt =
+            || Error::State("deployment intent record is corrupt; retain it for recovery");
+        let record: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+        // Check the version before the rest: another release's record can
+        // hold what this release can't read.
+        let version = record["version"].as_u64().ok_or_else(corrupt)?;
+        if version != u64::from(RECORD_VERSION) {
+            return Err(Error::StateFromOtherRelease {
+                recorded: version,
+                supported: RECORD_VERSION,
+            });
+        }
+        let record: Record = serde_json::from_value(record).map_err(|_| corrupt())?;
         record.validate()?;
         Ok(Some(record))
     }

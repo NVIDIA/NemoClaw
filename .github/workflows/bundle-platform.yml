@@ -15,36 +15,56 @@ on:
         type: boolean
         default: true
       lifecycle:
-        description: Run contract and system tests when their inputs are affected.
+        description: Run contract and integration tests when their inputs are affected.
         type: boolean
         default: true
-      lifecycle-shards:
-        description: JSON list of lifecycle shard numbers; its length is the partition count.
+      partitions:
+        description: JSON list of the contract and integration partitions, each {layer, shard, shards}.
         type: string
-        default: "[1, 2]"
-      live:
-        description: Also run the Docker and Kubernetes live suites, which need a Linux runner.
+        default: >-
+          [{"layer": "contract", "shard": 1, "shards": 1},
+          {"layer": "integration", "shard": 1, "shards": 2},
+          {"layer": "integration", "shard": 2, "shards": 2}]
+      e2e:
+        description: Run the Docker and Kubernetes live suites, which need a Linux runner.
         type: boolean
         default: false
       live-images-commit:
         description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
         type: string
         default: ""
+      hcl:
+        description: With e2e, also run the HCL E2E cases that use NVIDIA hosted inference; the caller passes the inference secret.
+        type: boolean
+        default: false
+      hcl-gpu:
+        description: Run the HCL E2E cases on the NVIDIA GPU runner, which refuses pull request jobs; the caller passes the inference secret.
+        type: boolean
+        default: false
+      hcl-cases:
+        description: The validation plan's live HCL case selection, by where each case runs; required with e2e.
+        type: string
+        default: ""
+# The live suites read the per-commit image package for images to reuse.
 permissions:
   contents: read
+  packages: read
 defaults:
   run:
     shell: bash
 env:
   TEST_PLATFORM: ${{ inputs.platform }}
   CARGO_INCREMENTAL: "0"
-# Build and test, and Build bundle, run in parallel on separate runners; the
-# lifecycle shards start when both have uploaded their artifacts. Artifact names
-# carry the run attempt, and consumers read them from the producers' outputs, so
-# rerunning a failed shard reuses an earlier attempt's artifacts.
+# Each job's name starts with its test layer: Unit, Contract, Integration, or
+# E2E. Unit build and test, and Build bundle, run in parallel on separate
+# runners; the contract, integration, and live jobs start when both have
+# uploaded their artifacts. Artifact names carry the run attempt, and consumers
+# read them from the producers' outputs, so rerunning a failed shard reuses an
+# earlier attempt's artifacts. The caller's Test / PLATFORM check requires every
+# job here that runs; a job the plan does not select is skipped.
 jobs:
   build:
-    name: Build and test
+    name: Unit build and test
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -67,7 +87,7 @@ jobs:
         run: cargo ci build
       - name: Upload workspace build timings
         if: always() && steps.timings.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-workspace-${{ inputs.platform }}-${{ github.run_attempt }}
           path: target/cargo-timings/*.html
@@ -77,7 +97,7 @@ jobs:
         run: cargo ci test
       - name: Upload test timings
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-${{ inputs.platform }}-${{ github.run_attempt }}
           path: target/nextest/ci/test.xml
@@ -86,15 +106,15 @@ jobs:
       - name: Check generated configuration schema and reference
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
-        if: inputs.lifecycle || inputs.live
+        if: inputs.lifecycle || inputs.e2e
         run: cargo ci archive
       - name: Identify lifecycle artifact
-        if: inputs.lifecycle || inputs.live
+        if: inputs.lifecycle || inputs.e2e
         id: identity
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload lifecycle inputs
-        if: inputs.lifecycle || inputs.live
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: inputs.lifecycle || inputs.e2e
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: |
@@ -107,7 +127,7 @@ jobs:
 
   bundle:
     name: Build bundle
-    if: inputs.bundle || inputs.lifecycle || inputs.live
+    if: inputs.bundle || inputs.lifecycle || inputs.e2e
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -129,7 +149,7 @@ jobs:
         run: cargo ci bundle
       - name: Upload release bundle build timings
         if: always() && steps.timings.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-bundle-${{ inputs.platform }}-${{ github.run_attempt }}
           path: target/cargo-timings/*.html
@@ -144,7 +164,7 @@ jobs:
         id: identity
         run: echo "artifact=bundle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.identity.outputs.artifact }}
           path: .build/ci/bundle.tar
@@ -153,60 +173,59 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  lifecycle:
-    name: Lifecycle / ${{ matrix.shard }}
-    # The bundle job runs whenever lifecycle tests do.
+  tests:
+    name: ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} tests ${{ matrix.shard }} of ${{ matrix.shards }}
+    # The bundle job runs whenever contract and integration tests do.
     if: inputs.lifecycle && needs.bundle.result == 'success'
     needs: [build, bundle]
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.lifecycle-shards) }}
+        include: ${{ fromJSON(inputs.partitions) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: .build/ci
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.bundle.outputs.artifact }}
           path: .build/ci
-      - name: Extract lifecycle inputs and bundle
+      - name: Extract test inputs and bundle
         run: |
           tar -xf .build/ci/lifecycle-inputs.tar
           tar -xf .build/ci/bundle.tar
-      # Slices deal the platform's sorted lifecycle tests round-robin, so the
-      # slow e2e scenarios, which sort next to each other, split evenly. Hash
-      # buckets left one Linux partition about 50 s slower than the other.
-      # A slice depends on the selected test list: adding a test moves later
-      # tests to other partitions.
-      - name: Execute lifecycle partition without compiling
+      # Slices deal the platform's sorted tests round-robin, so slow tests that
+      # sort next to each other split evenly. A slice depends on the selected
+      # test list: adding a test moves later tests to other partitions.
+      - name: Execute the partition without compiling
         env:
-          LIFECYCLE_SHARD: ${{ matrix.shard }}
-          LIFECYCLE_SHARDS: ${{ strategy.job-total }}
+          LAYER: ${{ matrix.layer }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
           # The tofu test integration scenarios record each result and a failed
           # scenario's redacted evidence here.
           NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration
         run: >-
-          .build/ci/nemoclaw-build ci lifecycle
-          --partition "slice:${LIFECYCLE_SHARD}/${LIFECYCLE_SHARDS}"
+          .build/ci/nemoclaw-build ci "$LAYER"
+          --partition "slice:${SHARD}/${SHARDS}"
           --archive-file .build/ci/lifecycle.tar.zst
-      - name: Upload lifecycle timings
+      - name: Upload timings
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: lifecycle-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: target/nextest/lifecycle/lifecycle.xml
+          name: ${{ matrix.layer }}-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: target/nextest/${{ matrix.layer }}/${{ matrix.layer }}.xml
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
       - name: Summarize integration scenarios
-        if: always()
+        if: always() && matrix.layer == 'integration'
         env:
           RESULTS: ${{ runner.temp }}/hcl-integration/results.tsv
         run: |
@@ -219,23 +238,27 @@ jobs:
           fi
       # Fixture credentials are redacted; the evidence holds only fixture data.
       - name: Upload failed integration scenarios' evidence
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure() && matrix.layer == 'integration'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hcl-integration-evidence-${{ inputs.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/hcl-integration
           if-no-files-found: ignore
           retention-days: 7
 
-  # Each partition reports and enforces its own budget; this job reports the
-  # platform's whole lifecycle suite in its summary, from the partitions'
-  # uploaded timings, including failed partitions'. A test binary's tests span
-  # partitions, so this job enforces the binary budgets: on Linux, a binary
-  # over its budget fails the platform.
-  lifecycle-timing:
-    name: Lifecycle timing
-    needs: [build, lifecycle]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.lifecycle.result != 'skipped' }}
+  # Each partition reports and enforces its own budget; this job reports each
+  # layer's whole suite in its summary, from the partitions' uploaded timings,
+  # including failed partitions'. A test binary's tests span partitions, so this
+  # job enforces the binary budgets: on Linux, a binary over its budget fails
+  # the platform's Test check.
+  timing:
+    name: ${{ matrix.layer == 'contract' && 'Contract' || 'Integration' }} timing report
+    needs: [build, tests]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.tests.result != 'skipped' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: [contract, integration]
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     steps:
@@ -243,118 +266,54 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The build tool comes from the lifecycle inputs; this job compiles nothing.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      # The build tool comes from the test inputs; this job compiles nothing.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: .build/ci
       # Every attempt's timings; the report reads each shard's latest attempt.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: lifecycle-${{ inputs.platform }}-*
+          pattern: ${{ matrix.layer }}-${{ inputs.platform }}-*
           path: .build/ci/timings
-      - name: Report the whole lifecycle suite
+      - name: Report the whole suite
         env:
-          SHARDS: ${{ inputs.lifecycle-shards }}
+          LAYER: ${{ matrix.layer }}
+          PARTITIONS: ${{ inputs.partitions }}
         run: |
           tool=.build/ci/nemoclaw-build
           if [ "$RUNNER_OS" = Windows ]; then tool="$tool.exe"; fi
           tar -xf .build/ci/lifecycle-inputs.tar "$tool"
-          "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
+          shards=$(jq -c --arg layer "$LAYER" '[.[] | select(.layer == $layer) | .shard]' <<< "$PARTITIONS")
+          "$tool" suite-timing "$LAYER" .build/ci/timings --platform "$TEST_PLATFORM" --shards "$shards"
 
-  # The live suites' images, built once per platform alongside the build and
-  # bundle jobs; both live jobs load them instead of building their own. When
-  # no image input changed since a v1 commit that pushed them, the live jobs
-  # pull that commit's images instead.
-  live-images:
-    name: Build live images
-    if: inputs.live && inputs.live-images-commit == ''
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
-    outputs:
-      artifact: ${{ steps.identity.outputs.artifact }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-        with:
-          platform: ${{ inputs.platform }}
-          save-cache: "false"
-      - uses: ./.github/actions/containerd-store
-      - name: Build and save the live images
-        run: cargo ci live-images
-      - name: Identify live images artifact
-        id: identity
-        run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-      - name: Upload live images
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: .build/ci/live-images.tar.zst
-          include-hidden-files: true
-          # Already zstd-compressed.
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
+  # The Docker and Kubernetes live suites, from this platform's test archive and
+  # bundle.
+  e2e:
+    name: E2E
+    needs: [build, bundle]
+    if: ${{ !cancelled() && inputs.e2e && needs.build.result == 'success' && needs.bundle.result == 'success' }}
+    uses: ./.github/workflows/e2e-platform.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      tests: ${{ needs.build.outputs.artifact }}
+      bundle: ${{ needs.bundle.outputs.artifact }}
+      live-images-commit: ${{ inputs.live-images-commit }}
+      hcl: ${{ inputs.hcl }}
+      hcl-cases: ${{ inputs.hcl-cases }}
+    # The HCL cases read NVIDIA_API_KEY.
+    secrets: inherit
 
-  # Like the lifecycle shards, the live suites run this platform's archived test
-  # executables and bundle, load its live images, compile nothing, and count
-  # toward the platform's required Test / PLATFORM check.
-  live-docker:
-    name: Live / Docker
-    needs: [build, bundle, live-images]
-    # Runs after Build live images, or in its place when the plan names a v1
-    # commit's images. Its result decides the platform's Test check, so it
-    # must not be skipped when its images are pulled.
-    if: >-
-      ${{ !cancelled() && inputs.live &&
-      needs.build.result == 'success' && needs.bundle.result == 'success' &&
-      (needs.live-images.result == 'success' ||
-      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/live-suite
-        with:
-          platform: ${{ inputs.platform }}
-          suite: live-docker
-          tests: ${{ needs.build.outputs.artifact }}
-          bundle: ${{ needs.bundle.outputs.artifact }}
-          images: ${{ needs.live-images.outputs.artifact }}
-          images-commit: ${{ inputs.live-images-commit }}
-
-  live-kind:
-    name: Live / Kind
-    needs: [build, bundle, live-images]
-    # Runs after Build live images, or in its place when the plan names a v1
-    # commit's images. Its result decides the platform's Test check, so it
-    # must not be skipped when its images are pulled.
-    if: >-
-      ${{ !cancelled() && inputs.live &&
-      needs.build.result == 'success' && needs.bundle.result == 'success' &&
-      (needs.live-images.result == 'success' ||
-      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/live-suite
-        with:
-          platform: ${{ inputs.platform }}
-          suite: live-kind
-          tests: ${{ needs.build.outputs.artifact }}
-          bundle: ${{ needs.bundle.outputs.artifact }}
-          images: ${{ needs.live-images.outputs.artifact }}
-          images-commit: ${{ inputs.live-images-commit }}
+  # The HCL E2E cases on the NVIDIA GPU runner, which refuses pull request
+  # jobs. Live / HCL builds them a candidate against an older glibc, which the
+  # runner can run.
+  gpu:
+    name: E2E GPU
+    if: inputs.hcl-gpu
+    uses: ./.github/workflows/hcl-e2e.yml
+    with:
+      hosted: false
+      cases: ${{ inputs.hcl-cases }}
+    # The Ollama case reads NVIDIA_API_KEY.
+    secrets: inherit

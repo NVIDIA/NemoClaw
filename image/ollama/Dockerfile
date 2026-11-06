@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Bake supplies the supervisor context from image/supervisor/Dockerfile.
-FROM ollama/ollama@sha256:dea72d1e22270fe095b68fdf756d2b489d615643c5a2eaebbc5f569181e322d8
+FROM ollama/ollama@sha256:ebaef4f4c5d93660e1f25f8ad085a112f51ccfb0e8458073e71793959dba91c9
 COPY --from=supervisor /nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
 COPY --from=supervisor /supervisor-source.tar.gz /opt/nemoclaw/source/
 COPY --from=supervisor /Cargo.lock /opt/nemoclaw/source/supervisor/Cargo.lock

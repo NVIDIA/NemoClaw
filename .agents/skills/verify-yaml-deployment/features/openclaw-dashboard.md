@@ -3,7 +3,7 @@
 
 # OpenClaw Dashboard
 
-The author declares the Control UI under `harness.settings.interfaces.dashboard`, as [docs/interfaces.md](../../../../docs/interfaces.md#reach-an-agent-interface) documents.
+The author declares the Control UI under `harness.settings.interfaces.dashboard`, as [docs/agents-inference/interfaces.md](../../../../docs/agents-inference/interfaces.md#reach-an-agent-interface) documents.
 Apply then prints how to forward it, the command that reads its sign-in token, and the sign-in URL; with a service exposure on the same port, it also lists the URL the gateway serves it at.
 A browser at the forwarded loopback address signs in with the token and chats with the agent.
 The adapter accepts only loopback browser origins ([NVIDIA/NeMo-Fabric#573](https://github.com/NVIDIA/NeMo-Fabric/pull/573)), so a browser at the exposure's URL can't sign in; the exposure is checked with curl only.
@@ -71,12 +71,16 @@ URL=http://$HOST:$GATEWAY_PORT
    curl -s -m 10 -H "Authorization: Bearer $TOKEN" http://127.0.0.1:43000/control-ui-config.json | jq -c '{basePath: has("basePath")}' | tee "$EVIDENCE/forward-with-token.txt"
    ```
    Result: `401` twice, then `{"basePath":true}`.
-5. **DB5:** with Playwright's Chromium installed outside the checkout, open the forwarded page with the token in the URL fragment, send a prompt with a new word, save a screenshot, then stop the forward:
+5. **DB5:** in Playwright's Chromium, open the forwarded page with the token in the URL fragment, send a prompt with a new word, save a screenshot, then stop the forward.
+   The browser and this script run inside Playwright's image, pinned by digest, never on the host; on the host network, the page's origin is loopback, as the adapter requires.
+   The token reaches the container in its environment, not its arguments; with `sudo`, run `sudo --preserve-env=TOKEN docker`:
    ```sh
-   mkdir -p "$RUN_DIR/pw" && cd "$RUN_DIR/pw" && npm init -y > /dev/null && npm i playwright > /dev/null && npx playwright install chromium > /dev/null
-   cat > ui.mjs <<'JS'
+   PLAYWRIGHT=mcr.microsoft.com/playwright@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f # v1.64.1-noble
+   mkdir -p "$RUN_DIR/pw"
+   cat > "$RUN_DIR/pw/ui.mjs" <<'JS'
    import { chromium } from "playwright";
-   const [url, token, word, shot] = process.argv.slice(2);
+   const [url, word, shot] = process.argv.slice(2);
+   const token = process.env.TOKEN;
    const b = await chromium.launch();
    const p = await (await b.newContext({ viewport: { width: 1000, height: 600 } })).newPage();
    await p.goto(url + "/#token=" + token, { waitUntil: "load" });
@@ -92,8 +96,10 @@ URL=http://$HOST:$GATEWAY_PORT
    await b.close();
    JS
    WORD=DASH_$(date +%s)
-   node ui.mjs http://127.0.0.1:43000 "$TOKEN" "$WORD" "$EVIDENCE/dashboard-$WORD.png" | tee "$EVIDENCE/dashboard.txt"
-   cd - > /dev/null
+   TOKEN="$TOKEN" docker run --rm --init --ipc=host --network host --user "$(id -u):$(id -g)" \
+     -e TOKEN -e HOME=/tmp -v "$RUN_DIR/pw:/pw:ro" -v "$EVIDENCE:/evidence" -w /tmp "$PLAYWRIGHT" \
+     sh -c 'npm init -y > /dev/null && npm i --no-audit --no-fund playwright@1.64.1 > /dev/null && cp /pw/ui.mjs . && node ui.mjs "$@"' sh \
+     http://127.0.0.1:43000 "$WORD" "/evidence/dashboard-$WORD.png" | tee "$EVIDENCE/dashboard.txt"
    kill "$FORWARD"
    unset TOKEN
    ```
@@ -110,3 +116,5 @@ URL=http://$HOST:$GATEWAY_PORT
 - With `BEARER_PASSTHROUGH`, the avatar and workspace-icon requests return 404; they don't affect the feature.
 - After a sandbox replacement, use a new screenshot file name and a fresh browser context: a cached page can show the previous conversation.
 - Snap Firefox can't use a profile outside `~/snap` and has captured blank pages before rendering; use Chromium.
+- DB5's script is the one exception to Rust tooling in this skill ([#14182](https://github.com/NVIDIA/NemoClaw/issues/14182)): Playwright drives the browser, and Node and Chromium run only inside its pinned image, as `AGENTS.md` keeps Python inside images whose workload runs on it.
+  When you update the image, install the `playwright` package at the same version as the image's tag; another version looks for browsers the image doesn't have.

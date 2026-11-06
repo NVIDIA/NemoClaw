@@ -39,14 +39,18 @@ pub(crate) async fn run(
     overrides: &BTreeMap<String, String>,
     cancel: &CancellationToken,
 ) -> Result<Vec<u8>, Error> {
-    run_with_progress(directory, binary, args, overrides, cancel, None).await
+    run_with_progress(directory, binary, args, overrides, cancel, None, None).await
 }
+/// Runs `binary` until it exits or `cancel` is cancelled. A cancelled command
+/// is interrupted; see the cancellation branch for how long it may take to
+/// stop, which `force_stop` cuts short.
 pub(crate) async fn run_with_progress(
     directory: &Path,
     binary: &Path,
     args: &[&str],
     overrides: &BTreeMap<String, String>,
     cancel: &CancellationToken,
+    force_stop: Option<&CancellationToken>,
     progress: Option<std::sync::Arc<dyn Fn(crate::Progress) + Send + Sync>>,
 ) -> Result<Vec<u8>, Error> {
     if cancel.is_cancelled() {
@@ -113,7 +117,7 @@ pub(crate) async fn run_with_progress(
     // This SDK fact is independent of optional child UI/download events and
     // their redaction or transport. A failed spawn cannot have changed resources.
     if args.first() == Some(&"apply")
-        && let Some(callback) = mutation_progress
+        && let Some(callback) = &mutation_progress
     {
         callback(crate::Progress::MutationStarted);
     }
@@ -132,9 +136,40 @@ pub(crate) async fn run_with_progress(
         ()=cancel.cancelled()=>{
             #[cfg(unix)] {let _=child.signal(2);}
             #[cfg(windows)] {let _=child.start_kill();}
-            let _=tokio::time::timeout(Duration::from_secs(5),child.wait()).await;
+            // An interrupted OpenTofu apply starts no further resource
+            // operations and saves the state once those in progress finish,
+            // which takes as long as the slowest of them. Ending it sooner can
+            // leave a resource without a binding, so an apply gets as long as
+            // it needs unless the caller stops it now. Other commands get 5 s.
+            let apply = cfg!(unix) && args.first() == Some(&"apply");
+            if apply && let Some(callback) = &mutation_progress {
+                callback(crate::Progress::Stopping);
+            }
+            let force_stop = async {
+                match force_stop {
+                    Some(token) => token.cancelled().await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            let exited = tokio::select! {
+                exited = async {
+                    if apply {
+                        child.wait().await.is_ok()
+                    } else {
+                        tokio::time::timeout(Duration::from_secs(5), child.wait()).await.is_ok()
+                    }
+                } => exited,
+                () = force_stop => false,
+            };
             let _=child.start_kill();
-            stdout.abort();stderr.abort();
+            let _=tokio::time::timeout(Duration::from_secs(5),child.wait()).await;
+            if exited {
+                // Deliver the events OpenTofu printed while it stopped.
+                let _=tokio::time::timeout(Duration::from_secs(5), async {
+                    let _=stdout.await;
+                    let _=stderr.await;
+                }).await;
+            }
             return Err(Error::Cancelled);
         }
     };
@@ -494,6 +529,7 @@ exit "$3"
             &["apply", "-json", exit],
             &BTreeMap::new(),
             &CancellationToken::new(),
+            None,
             Some(std::sync::Arc::new(|_| {})),
         )
         .await
@@ -577,6 +613,7 @@ mod tests {
                 &[operation],
                 &[("CUSTOM_CREDENTIAL".into(), "a".into())].into(),
                 &token,
+                None,
                 Some(std::sync::Arc::new(move |event| {
                     captured.lock().unwrap().push(event)
                 })),
@@ -628,6 +665,64 @@ mod tests {
             .await,
             Err(crate::Error::Cancelled)
         ));
+    }
+
+    /// An interrupted apply waits until OpenTofu exits by itself, which takes
+    /// as long as the resource operations in progress, and reports that it is
+    /// stopping.
+    ///
+    /// Catches an SDK that kills OpenTofu after a fixed grace period: a Helm
+    /// install in progress then stays `pending-install`, and resources already
+    /// created can be missing from the state.
+    #[tokio::test]
+    async fn an_interrupted_apply_waits_until_opentofu_exits() {
+        let directory = tempfile::tempdir().unwrap();
+        // `sh apply` runs this script from the working directory. On an
+        // interrupt it takes 5.2 s, longer than the former 5 s grace, to
+        // finish. It waits in short foreground sleeps: a shell that waits for a
+        // background child can miss the interrupt. The wait ends after 30 s,
+        // because a shell started with interrupts ignored cannot trap them.
+        std::fs::write(
+            directory.path().join("apply"),
+            "trap 'sleep 5.2; : > finished; exit 1' INT\n: > ready\n\
+             i=0; while [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n",
+        )
+        .unwrap();
+        let token = CancellationToken::new();
+        let interrupt = token.clone();
+        let ready = directory.path().join("ready");
+        tokio::spawn(async move {
+            for _ in 0..300 {
+                if ready.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            interrupt.cancel();
+        });
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = events.clone();
+        let result = run_with_progress(
+            directory.path(),
+            Path::new("/bin/sh"),
+            &["apply", "-json"],
+            &Default::default(),
+            &token,
+            None,
+            Some(std::sync::Arc::new(move |event| {
+                recorded.lock().unwrap().push(event)
+            })),
+        )
+        .await;
+        assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+        assert!(
+            directory.path().join("finished").exists(),
+            "OpenTofu was stopped before it finished the operations in progress"
+        );
+        assert!(
+            events.lock().unwrap().contains(&crate::Progress::Stopping),
+            "the caller was not told that the apply is stopping"
+        );
     }
 }
 
@@ -698,7 +793,7 @@ async fn progress_arrives_before_exit_and_cancellation_still_works() {
     let task = tokio::spawn(async move {
         run_with_progress(directory.path(), Path::new("/bin/sh"),
             &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox"},"action":"create"}}'; exec sleep 100"#],
-            &Default::default(), &stop, Some(progress)).await
+            &Default::default(), &stop, None, Some(progress)).await
     });
     let event = tokio::time::timeout(Duration::from_secs(2), receive.recv()).await;
     token.cancel();
@@ -720,7 +815,7 @@ async fn json_diagnostics_preserve_failures_and_redact_credentials() {
     let error = run_with_progress(directory.path(), Path::new("/bin/sh"),
         &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"diagnostic","diagnostic":{"summary":"provider failed","detail":"secret-sentinel"}}'; exit 1"#],
         &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
-        &CancellationToken::new(), Some(std::sync::Arc::new(|_| {}))).await.unwrap_err();
+        &CancellationToken::new(), None, Some(std::sync::Arc::new(|_| {}))).await.unwrap_err();
     assert!(error.to_string().contains("provider failed"));
     assert!(error.to_string().contains("[redacted]"));
     assert!(!error.to_string().contains("secret-sentinel"));
@@ -779,6 +874,7 @@ async fn unrelated_credentials_preserve_native_context_through_json_capture() {
         )]
         .into(),
         &CancellationToken::new(),
+        None,
         Some(std::sync::Arc::new(move |event| {
             events.lock().unwrap().push(event)
         })),
@@ -815,6 +911,7 @@ async fn progress_resource_addresses_redact_credentials() {
         &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox","addr":"openshell_sandbox.secret-sentinel"},"action":"create"}}'"#],
         &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
         &CancellationToken::new(),
+        None,
         Some(std::sync::Arc::new(move |event| events.lock().unwrap().push(event))))
         .await.unwrap();
     let events = format!("{:?}", received.lock().unwrap());
@@ -832,6 +929,7 @@ async fn early_failure_keeps_stderr_even_without_a_ui_version() {
         &["-c", "echo launch-failed >&2; exit 1"],
         &Default::default(),
         &CancellationToken::new(),
+        None,
         Some(std::sync::Arc::new(|_| {})),
     )
     .await
@@ -931,7 +1029,7 @@ async fn short_credentials_withhold_child_text_without_preventing_execution() {
         let events = received.clone();
         run_with_progress(directory.path(), Path::new("/bin/sh"),
             &["-c", r#"test -n "$CUSTOM_CREDENTIAL" && printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox","addr":"openshell_sandbox.alpha"},"action":"create"}}'"#],
-            &[("CUSTOM_CREDENTIAL".into(), secret.into())].into(), &CancellationToken::new(),
+            &[("CUSTOM_CREDENTIAL".into(), secret.into())].into(), &CancellationToken::new(), None,
             Some(std::sync::Arc::new(move |event| events.lock().unwrap().push(event)))).await.unwrap();
         assert!(
             received.lock().unwrap().is_empty(),

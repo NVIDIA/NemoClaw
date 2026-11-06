@@ -281,7 +281,7 @@ impl Fixtures {
     /// On Unix, one fixed engine socket gives every scenario the same Docker
     /// provider alias and image addresses, which test files name. Elsewhere
     /// the engine is `ssh://127.0.0.1:PORT`, which the `nemoclaw-fixture-ssh`
-    /// relay that the lifecycle step puts on `PATH` as `ssh` forwards; only
+    /// relay that the integration step puts on `PATH` as `ssh` forwards; only
     /// image reads use it there, because managed Docker gateway storage needs
     /// a local engine socket.
     pub async fn start() -> Self {

@@ -22,9 +22,13 @@ pub enum Step {
     Test,
     Schema,
     Bundle,
-    Lifecycle,
-    /// Package built lifecycle tests, Linux live tests, and their inputs for
-    /// other runners; opt-in.
+    /// Each provider type through the bundle's OpenTofu: the contract tests.
+    Contract,
+    /// The SDK-compiled graph and the SDK and CLI over a bundle, against local
+    /// fixtures: the integration tests.
+    Integration,
+    /// Package built contract, integration, and Linux live tests and their
+    /// inputs for other runners; opt-in.
     Archive,
     /// Docker live tests; opt-in, never part of the default run.
     LiveDocker,
@@ -36,7 +40,7 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 8] = [
+    pub const ALL: [Step; 9] = [
         Step::Tools,
         Step::Fmt,
         Step::Clippy,
@@ -44,8 +48,12 @@ impl Step {
         Step::Test,
         Step::Schema,
         Step::Bundle,
-        Step::Lifecycle,
+        Step::Contract,
+        Step::Integration,
     ];
+
+    /// The steps that need a bundle, run in partitions on CI.
+    pub const BUNDLED: [Step; 2] = [Step::Contract, Step::Integration];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -56,7 +64,8 @@ impl Step {
             Step::Test => "test",
             Step::Schema => "schema",
             Step::Bundle => "bundle",
-            Step::Lifecycle => "lifecycle",
+            Step::Contract => "contract",
+            Step::Integration => "integration",
             Step::Archive => "archive",
             Step::LiveDocker => "live-docker",
             Step::LiveKind => "live-kind",
@@ -82,7 +91,8 @@ impl Step {
     pub fn junit(self) -> Option<(&'static str, &'static str)> {
         match self {
             Step::Test => Some(("ci", "test.xml")),
-            Step::Lifecycle => Some(("lifecycle", "lifecycle.xml")),
+            Step::Contract => Some(("contract", "contract.xml")),
+            Step::Integration => Some(("integration", "integration.xml")),
             Step::LiveDocker => Some(("live-docker", "live-docker.xml")),
             Step::LiveKind => Some(("live-kind", "live-kind.xml")),
             _ => None,
@@ -157,14 +167,25 @@ impl Step {
                 &["test", "--locked", "--workspace", "--doc"],
             ],
             // Keep the package graph identical to the build step so tests are reused.
-            Step::Lifecycle => &[&[
+            Step::Contract => &[&[
                 "nextest",
                 "run",
                 "--locked",
                 "--workspace",
                 "--all-targets",
                 "--profile",
-                "lifecycle",
+                "contract",
+                "--run-ignored",
+                "only",
+            ]],
+            Step::Integration => &[&[
+                "nextest",
+                "run",
+                "--locked",
+                "--workspace",
+                "--all-targets",
+                "--profile",
+                "integration",
                 "--run-ignored",
                 "only",
             ]],
@@ -342,7 +363,7 @@ pub fn planned_steps(plan: Option<&crate::changes::Plan>) -> Vec<Step> {
         .into_iter()
         .filter(|step| match (plan, step) {
             (Some(plan), Step::Bundle) => plan.bundle.run,
-            (Some(plan), Step::Lifecycle) => plan.lifecycle.run,
+            (Some(plan), Step::Contract | Step::Integration) => plan.lifecycle.run,
             _ => true,
         })
         .collect()
@@ -360,13 +381,9 @@ pub const LIVE_AGENT: (&str, &str) = ("openclaw", "nvidia.fabric.openclaw");
 /// OpenClaw's.
 pub const LIVE_HERMES: &str = "hermes";
 
-/// The Deep Agents Code agent image, whose terminal the Docker live suite's
-/// interface test opens.
-pub const LIVE_DEEPAGENTS_CODE: &str = "deepagents-code";
-
 /// The pushed images the live suites can pull instead of building: the agent,
-/// Hermes, Deep Agents Code, and the reference image.
-pub const LIVE_PULLED: [&str; 4] = [LIVE_AGENT.0, LIVE_HERMES, LIVE_DEEPAGENTS_CODE, "dummy"];
+/// Hermes, and the reference image.
+pub const LIVE_PULLED: [&str; 3] = [LIVE_AGENT.0, LIVE_HERMES, "dummy"];
 
 /// The reference `v1` pushed for `name` at `commit` on one Linux architecture.
 pub fn commit_image(name: &str, commit: &str, arch: &str) -> String {

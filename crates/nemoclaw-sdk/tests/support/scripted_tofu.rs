@@ -15,7 +15,7 @@ use nemoclaw_sdk::{
     CancellationToken, Deployment, ObservationError, Progress, Secrets,
     compile::{Generations, Target},
     config::Document,
-    kubernetes::{GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
+    kubernetes::{AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, gateway::ADDRESS as HELM_RELEASE},
 };
 use serde_json::{Value, json};
 use std::{
@@ -26,9 +26,11 @@ use std::{
 };
 
 /// `@CONTROL@` and `@STATE@` become the control directory and the state
-/// directory. Control files are named `root.NAME`: `apply` (`ok`, `fail` or `block`, which sleeps 30 s
-/// unless the SDK interrupts it; it execs `sleep` so that the interrupt reaches
-/// the blocked process, because a shell that waits for a child can lose it),
+/// directory. Control files are named `root.NAME`: `apply` (`ok`, `fail`,
+/// `block`, which sleeps 30 s unless the SDK interrupts it, or `stubborn`, which
+/// ignores interrupts, records its process ID in `root.apply-pid`, and sleeps
+/// 30 s; both exec `sleep` so that an interrupt reaches the sleeping process,
+/// because a shell that waits for a child can lose it),
 /// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
 /// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
 /// prints an empty state or plan. An `apply` that finds the saved record,
@@ -51,11 +53,15 @@ case "$1" in
     if [ -f "$canned" ]; then cat "$canned"; else printf '{"format_version":"1.0"}\n'; fi ;;
   apply)
     if [ -f '@STATE@/intent.json' ]; then : > "$control/$stage.record-at-apply"; fi
-    printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"addr":"openshell_kubernetes_storage.runtime","resource_type":"openshell_kubernetes_storage"},"action":"create"}}'
     mode=ok
     [ -f "$control/$stage.apply" ] && mode=$(cat "$control/$stage.apply")
+    # Handle interrupts before the first event, which tests cancel at.
     case "$mode" in
-      block) exec sleep 30 ;;
+      stubborn) trap '' INT; printf '%s\n' "$$" > "$control/$stage.apply-pid" ;;
+    esac
+    printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"addr":"openshell_kubernetes_storage.runtime","resource_type":"openshell_kubernetes_storage"},"action":"create"}}'
+    case "$mode" in
+      block|stubborn) exec sleep 30 ;;
       fail) printf 'provider failed\n' >&2; exit 1 ;;
       *) printf '{"version":4,"resources":[]}\n' > terraform.tfstate ;;
     esac ;;
@@ -116,6 +122,11 @@ impl Scripted {
     /// Set a control file: `STAGE.apply`, `STAGE.state`, or `STAGE.PLAN`.
     pub fn set(&self, name: &str, text: impl AsRef<[u8]>) {
         fs::write(self.control().join(name), text).unwrap();
+    }
+
+    /// A control file the script wrote, such as `root.apply-pid`, if it exists.
+    pub fn written(&self, name: &str) -> Option<String> {
+        fs::read_to_string(self.control().join(name)).ok()
     }
 
     /// Every call the script received, as `STAGE ARGUMENT...`.
@@ -261,6 +272,29 @@ pub fn plan_json(targets: &[Target], action: &str) -> String {
                 _ => (bound(target), bound(target)),
             };
             change(&target.address, action, before, after)
+        })
+        .collect();
+    json!({"format_version": "1.0", "resource_changes": changes}).to_string()
+}
+
+/// `show -json PLAN` after an apply that bound the targets named in `bound_now`
+/// and then failed or stopped while Helm installed the gateway release: those
+/// targets are no-ops, the authentication resource's refresh observes the
+/// release record, and the other targets are created.
+pub fn leftover_plan_json(targets: &[Target], bound_now: &[&str]) -> String {
+    let changes: Vec<Value> = targets
+        .iter()
+        .map(|target| {
+            if bound_now.contains(&target.address.as_str()) {
+                let mut before = bound(target);
+                if target.kind == AUTH_KIND {
+                    before["release_present"] = json!("true");
+                }
+                change(&target.address, "no-op", before.clone(), before)
+            } else {
+                let after = serde_json::to_value(&target.values).unwrap();
+                change(&target.address, "create", Value::Null, after)
+            }
         })
         .collect();
     json!({"format_version": "1.0", "resource_changes": changes}).to_string()

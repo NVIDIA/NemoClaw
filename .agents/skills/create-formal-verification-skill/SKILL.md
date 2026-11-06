@@ -23,11 +23,11 @@ Answer from the code, and ask the user only what you cannot observe.
 If the user named an area or a bug, start there.
 
 A good target is a promise NemoClaw makes, where a break harms users and tests rarely reach the case that breaks it.
-The [ownership and recovery invariants](../../../docs/design/scope.md#ownership-and-recovery) list the strongest candidates: locked operations, recovery from partial creation and deletion, removing state only on confirmed absence, and retained storage.
+The [ownership and recovery invariants](../../../internal-docs/design/scope.md#ownership-and-recovery) list the strongest candidates: locked operations, recovery from partial creation and deletion, removing state only on confirmed absence, and retained storage.
 Choose the strongest target, not the easiest.
 
 Verify only NemoClaw's own promises.
-When the property belongs to Fabric, OpenShell, or another component, apply the [upstream boundaries](../../../docs/design/scope.md#upstream-boundaries) and tell the user which repository should hold the check.
+When the property belongs to Fabric, OpenShell, or another component, apply the [upstream boundaries](../../../internal-docs/design/scope.md#upstream-boundaries) and tell the user which repository should hold the check.
 
 ## Choose the Tool
 
@@ -41,7 +41,7 @@ Pick the tool that answers the question at the lowest cost, and tell the user wh
 | None of these runs on the code | Property-based tests of the code itself, not a hand model of the function. |
 
 No verifier is a NemoClaw dependency yet.
-A new crate must pass the [dependency policy](../../../docs/contributing/testing.md#dependency-policy), and a new tool in `cargo ci` must be pinned in `versions.json`.
+A new crate must pass the [dependency policy](../../../internal-docs/contributing/testing.md#dependency-policy), and a new tool in `cargo ci` must be pinned in `versions.json`.
 Discuss either with the user before adding it.
 
 ## What Makes It Good

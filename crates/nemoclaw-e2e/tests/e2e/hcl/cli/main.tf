@@ -5,7 +5,7 @@
 # its result. The CLI owns the deployment and its state.
 
 terraform {
-  required_version = "= 1.12.9"
+  required_version = "= 1.12.12"
 }
 
 variable "context" {
@@ -24,6 +24,12 @@ variable "operation" {
     condition     = contains(["plan", "apply", "destroy"], var.operation)
     error_message = "The operation must be plan, apply, or destroy."
   }
+}
+
+variable "empty_path" {
+  description = "Run the CLI with an empty PATH, which shows it needs no program from the host, such as helm."
+  type        = bool
+  default     = false
 }
 
 locals {
@@ -47,7 +53,7 @@ resource "terraform_data" "operation" {
       for credential in "$CREDENTIALS"/*; do
         [ -f "$credential" ] && export "$(basename "$credential")=$(cat "$credential")"
       done
-      "$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
+      ${var.empty_path ? "PATH= " : ""}"$NEMOCLAW" --progress off --state-dir "$STATE" ${join(" ", [for argument in local.arguments : format("'%s'", replace(argument, "'", "'\\''"))])} >stdout 2>stderr
       echo $? >exit
     EOT
     environment = {
@@ -72,8 +78,11 @@ output "exit_code" {
 }
 
 output "error" {
-  description = "The command's standard error, which carries a failure's message."
-  value       = trimspace(file("${local.directory}/stderr"))
+  description = "A failed command's message: with --output json, the CLI reports it, already redacted, in its JSON result on standard output; otherwise standard error."
+  value = local.exit_code == 0 ? "" : try(
+    jsondecode(file("${local.directory}/stdout")).error.message,
+    trimspace(file("${local.directory}/stderr")),
+  )
 }
 
 output "result" {

@@ -20,6 +20,9 @@ on:
       live_images:
         description: The v1 commit whose pushed images the live suites pull instead of building, or empty.
         value: ${{ jobs.plan.outputs.live_images }}
+      hcl_cases:
+        description: With live, the live HCL cases to run, as JSON with the selected cases by where they run and those that read the NVIDIA API key.
+        value: ${{ jobs.plan.outputs.hcl_cases }}
 permissions:
   contents: read
 jobs:
@@ -37,6 +40,7 @@ jobs:
       images: ${{ steps.plan.outputs.images }}
       live: ${{ steps.plan.outputs.live }}
       live_images: ${{ steps.live-images.outputs['live-images'] }}
+      hcl_cases: ${{ steps.cases.outputs.hcl_cases }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +48,6 @@ jobs:
           fetch-depth: 2
       # The planner has no SDK dependency and needs no protoc or nextest.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: ${{ !inputs.full }}
         with:
           prefix-key: validation-plan-v1
           workspaces: . -> target/ci-runner
@@ -67,6 +70,7 @@ jobs:
             push) base=$BEFORE ;;
             *) base= ;;
           esac
+          echo "base=$base" >> "$GITHUB_OUTPUT"
           # A missing or unavailable base makes the planner select every check.
           if [ -n "$base" ] && ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             git fetch --no-tags --depth=1 origin "$base" || true
@@ -76,6 +80,21 @@ jobs:
           jq -er 'to_entries[] | "\(.key)=\(.value.run)"' "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_OUTPUT"
           jq -r 'to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)"' \
             "$RUNNER_TEMP/validation-plan.json" >> "$GITHUB_STEP_SUMMARY"
+      # The live HCL cases to run, and where: on a pull request, those its
+      # changes affect; otherwise every case.
+      - name: Select live HCL cases
+        id: cases
+        if: steps.plan.outputs.live == 'true'
+        env:
+          FULL: ${{ inputs.full }}
+          BASE: ${{ steps.plan.outputs.base }}
+        run: |
+          if [ "$FULL" = true ]; then selection=(--all); else selection=(--base "$BASE"); fi
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes cases "${selection[@]}" > "$RUNNER_TEMP/hcl-cases.json"
+          echo "hcl_cases=$(jq -c '{runners, nvidia_key}' "$RUNNER_TEMP/hcl-cases.json")" >> "$GITHUB_OUTPUT"
+          jq -r '.cases | to_entries[] | "- \(.key): \(if .value.run then "run" else "skip" end) — \(.value.reason)"' \
+            "$RUNNER_TEMP/hcl-cases.json" >> "$GITHUB_STEP_SUMMARY"
       # The live suites pull a v1 commit's pushed images when no image input
       # changed since that commit, instead of building and shipping their own.
       # Any failure here only leaves them to build.
