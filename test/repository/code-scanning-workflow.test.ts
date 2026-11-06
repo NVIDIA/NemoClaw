@@ -182,16 +182,58 @@ describe("Complete CodeQL query partition qualification", () => {
     expect(partitionStep(partitions, "Perform CodeQL analysis").with?.category).toBe(
       "/language:javascript-typescript/partition:${{ matrix.partition }}",
     );
-    expect(partitionAggregate.needs).toEqual(["codeql-javascript"]);
+    expect(partitionAggregate.needs).toEqual(["codeql-javascript", "codeql"]);
     expect(partitionAggregate.if).toBe("${{ always() }}");
     expect(
       partitionStep(partitionAggregate, "Require every query partition to succeed").env,
-    ).toEqual({ PARTITION_RESULT: "${{ needs.codeql-javascript.result }}" });
+    ).toEqual({
+      PARTITION_RESULT: "${{ needs.codeql-javascript.result }}",
+      REPORT_RESULT: "${{ needs.codeql.result }}",
+    });
+    expect(publisher.strategy?.matrix).toEqual({ language: ["javascript-typescript", "python"] });
+    expect(publisher["timeout-minutes"]).toBe(15);
+    expect(partitionAggregate["timeout-minutes"]).toBe(1);
+    expect(publisher.needs).toEqual(["codeql-javascript"]);
+    expect(partitionStep(publisher, "Initialize CodeQL").if).toBe(
+      "${{ matrix.language == 'python' }}",
+    );
+    expect(partitionStep(publisher, "Perform CodeQL analysis").if).toBe(
+      "${{ matrix.language == 'python' }}",
+    );
+    expect(
+      partitionStep(publisher, "Publish complete JavaScript report in the former category").with,
+    ).toEqual({
+      sarif_file: "codeql-sarif",
+      category: legacyCategory.slice(0, -1),
+      matrix: '{"language":"javascript-typescript"}',
+    });
+    expect([
+      partitionStep(publisher, "Download first JavaScript query report").with,
+      partitionStep(publisher, "Download complementary JavaScript query report").with,
+    ]).toEqual([
+      {
+        name: "codeql-javascript-sarif-${{ github.run_id }}-${{ github.run_attempt }}-a-m",
+        path: "codeql-sarif/a-m",
+        "digest-mismatch": "error",
+      },
+      {
+        name: "codeql-javascript-sarif-${{ github.run_id }}-${{ github.run_attempt }}-other",
+        path: "codeql-sarif/other",
+        "digest-mismatch": "error",
+      },
+    ]);
+    expect(
+      partitionStep(
+        workflow.jobs["codeql-javascript"]!,
+        "Retain JavaScript query report for complete publication",
+      ).with?.["if-no-files-found"],
+    ).toBe("error");
   });
 
-  it.each(["success", "failure", "cancelled", "skipped"])(
-    "accepts only a successful complete matrix (%s)",
-    (status) => {
+  const states = ["success", "failure", "cancelled", "skipped"];
+  it.each(states.flatMap((partition) => states.map((report) => ({ partition, report }))))(
+    "requires complete queries and publication ($partition, $report)",
+    ({ partition, report }) => {
       const result = spawnSync(
         "bash",
         [
@@ -200,9 +242,100 @@ describe("Complete CodeQL query partition qualification", () => {
           "-c",
           partitionStep(partitionAggregate, "Require every query partition to succeed").run!,
         ],
-        { encoding: "utf8", env: { PATH: process.env.PATH, PARTITION_RESULT: status } },
+        {
+          encoding: "utf8",
+          env: { PATH: process.env.PATH, PARTITION_RESULT: partition, REPORT_RESULT: report },
+        },
       );
-      expect(result.status).toBe(status === "success" ? 0 : 1);
+      expect(result.status).toBe(partition === "success" && report === "success" ? 0 : 1);
     },
   );
+});
+
+const publisher = workflow.jobs.codeql!;
+const legacyCategory =
+  ".github/workflows/code-scanning.yaml:codeql/language:javascript-typescript/";
+
+function exerciseReportIdentity(modify: (files: string[]) => void = () => {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-codeql-report-"));
+  const original = ["a-m", "other"].map((partition) => ({
+    version: "2.1.0",
+    runs: [
+      {
+        automationDetails: {
+          id: `/language:javascript-typescript/partition:${partition}/`,
+          description: "retain metadata",
+        },
+        tool: { driver: { name: "CodeQL", rules: [{ id: `js/${partition}` }] } },
+        results: [
+          {
+            ruleId: `js/${partition}`,
+            message: { text: "retain this finding" },
+            partialFingerprints: { primaryLocationLineHash: partition },
+          },
+        ],
+        properties: { opaqueMetadata: [1, 2, 3] },
+      },
+    ],
+  }));
+  const files = ["a-m", "other"].map((partition) =>
+    path.join(root, "codeql-sarif", partition, "javascript.sarif"),
+  );
+  try {
+    files.forEach((file, index) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(original[index]));
+    });
+    modify(files);
+    const before = files.map((file) =>
+      fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null,
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-e",
+        "-c",
+        partitionStep(publisher, "Prepare complete JavaScript report identity").run!,
+      ],
+      { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH } },
+    );
+    const after = files.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null));
+    return { result, before, after, original };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("CodeQL complete report compatibility", () => {
+  it("changes only the category while retaining both reports' findings and metadata", () => {
+    const { result, after, original } = exerciseReportIdentity();
+    expect(result.status, result.stderr).toBe(0);
+    original.forEach((report, index) => {
+      const expected = structuredClone(report);
+      expected.runs[0]!.automationDetails.id = legacyCategory;
+      expect(JSON.parse(after[index]!)).toEqual(expected);
+    });
+  });
+
+  it.each([
+    { fault: "missing", modify: (files: string[]) => fs.rmSync(files[1]!) },
+    {
+      fault: "malformed",
+      modify: (files: string[]) => fs.writeFileSync(files[1]!, "{invalid-json"),
+    },
+    {
+      fault: "wrong-category",
+      modify: (files: string[]) => {
+        const report = JSON.parse(fs.readFileSync(files[1]!, "utf8"));
+        report.runs[0].automationDetails.id = "unrelated/";
+        fs.writeFileSync(files[1]!, JSON.stringify(report));
+      },
+    },
+  ])("refuses $fault complementary evidence before changing either report", ({ modify }) => {
+    const { result, before, after } = exerciseReportIdentity(modify);
+    expect(result.status).not.toBe(0);
+    expect(after).toEqual(before);
+  });
 });
