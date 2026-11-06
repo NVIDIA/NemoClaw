@@ -381,9 +381,13 @@ try:
     policy['config'].update(route)
     policy_path.write_text(json.dumps(policy))
     hash_paths = (config_path, Path('/sandbox/.hermes/.env'))
-    Path('/etc/nemoclaw/hermes.config-hash').write_text(''.join(
+    hash_text = ''.join(
         hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path) + '\n'
-        for path in hash_paths))
+        for path in hash_paths)
+    # The image publishes the same config/env digest at both startup anchors.
+    # Keep the compatibility anchor consistent before committing the strict one.
+    for hash_path in (Path('/sandbox/.hermes/.config-hash'), Path('/etc/nemoclaw/hermes.config-hash')):
+        hash_path.write_text(hash_text)
     environment = dict(os.environ, HERMES_NEMO_RELAY_PLUGINS_TOML='${HERMES_RELAY_PLUGINS_FILE}')
     for key in ('NVIDIA_INFERENCE_API_KEY', 'OPENAI_API_KEY'):
         environment[key] = 'xapp-OPENSHELL-RESOLVE-ENV-' + key

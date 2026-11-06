@@ -359,6 +359,18 @@ export function registerSandbox(
   return withLock(() => {
     const data = load();
     const recordedEntry = data.sandboxes[entry.name];
+    if (
+      recordedEntry?.pendingRouteReservation === true &&
+      recordedEntry.hermesSwitchyard !== undefined &&
+      !isDeepStrictEqual(
+        requireSwitchyardBindingForSelection(entry),
+        recordedEntry.hermesSwitchyard,
+      )
+    ) {
+      throw new Error(
+        "Cannot register a sandbox after its recorded Switchyard provider bindings changed",
+      );
+    }
     if (entry.pendingCreateIdentity !== undefined) {
       throw new Error("Cannot publish a caller-supplied pending create identity");
     }

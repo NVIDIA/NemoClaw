@@ -106,6 +106,7 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_SANDBOX_GPU",
       "NEMOCLAW_SANDBOX_GPU_DEVICE",
       "NEMOCLAW_TOOL_DISCLOSURE",
+      "NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64",
     ]);
   });
 });
@@ -172,6 +173,7 @@ describe("isolateAmbientRecreateEnv", () => {
         NEMOCLAW_VLLM_MODEL: "ambient-vllm-model",
         NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '{"ambient":true}',
         NEMOCLAW_FROM_DOCKERFILE: "/tmp/unrelated.Dockerfile",
+        NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64: "unrelated-routing",
         NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
         NEMOCLAW_POLICY_TIER: "permissive",
         NEMOCLAW_POLICY_MODE: "customize",

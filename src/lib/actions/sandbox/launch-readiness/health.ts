@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { validateSwitchyardBindingState } from "../../../hermes-switchyard-routing";
+import {
+  SwitchyardProviderBindingError,
+  validateSwitchyardBindingState,
+} from "../../../hermes-switchyard-routing";
 import { verifySwitchyardProviderBindings } from "../../../onboard/switchyard/bindings";
-import { decodeManagedStartupProfile } from "../../../onboard/managed-startup/profile";
+import {
+  decodeManagedStartupProfile,
+  ManagedStartupProfileError,
+} from "../../../onboard/managed-startup/profile";
 import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
 
 import { normalizeNativeLocalProviderAttachment } from "../../../inference/native-local/contract";
@@ -137,6 +143,7 @@ export function createBoundLaunchReadinessDeps(
     inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
     switchyardProviderAdapter: createCliOpenShellProviderAdapter({
       run: (args, options) => capture(args, options),
+      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
@@ -255,7 +262,14 @@ export async function requireNativeInferenceHealth(input: {
     (input.agentName ?? input.entry.agent) === "hermes" &&
     input.entry.workload?.kind === "managed-image"
   ) {
-    const config = decodeManagedStartupProfile(input.entry.workload.encodedProfile).agentConfig;
+    let config: ReturnType<typeof decodeManagedStartupProfile>["agentConfig"];
+    try {
+      config = decodeManagedStartupProfile(input.entry.workload.encodedProfile).agentConfig;
+    } catch (error) {
+      if (error instanceof ManagedStartupProfileError)
+        throw new LaunchReadinessObservationError("config");
+      throw error;
+    }
     if (config.agent === "hermes" && config.switchyardRouting)
       profileSwitchyard = {
         routing: config.switchyardRouting,
@@ -263,7 +277,14 @@ export async function requireNativeInferenceHealth(input: {
       };
   }
   if (input.entry.hermesSwitchyard || profileSwitchyard) {
-    const state = validateSwitchyardBindingState(input.entry.hermesSwitchyard);
+    let state: ReturnType<typeof validateSwitchyardBindingState>;
+    try {
+      state = validateSwitchyardBindingState(input.entry.hermesSwitchyard);
+    } catch (error) {
+      if (error instanceof SwitchyardProviderBindingError)
+        throw new LaunchReadinessObservationError("config");
+      throw error;
+    }
     if (
       (input.agentName ?? input.entry.agent) !== "hermes" ||
       input.entry.gatewayName !== input.gatewayName ||
@@ -278,7 +299,9 @@ export async function requireNativeInferenceHealth(input: {
       expected: state.bindings,
       sandboxName: input.sandboxName,
       target: { kind: "named", gatewayName: input.gatewayName },
-      adapter: input.deps.switchyardProviderAdapter ?? createCliOpenShellProviderAdapter(),
+      adapter:
+        input.deps.switchyardProviderAdapter ??
+        createCliOpenShellProviderAdapter({ defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS }),
       providerNames: Object.fromEntries(
         state.bindings.providers.map((p) => [p.logicalProvider, p.providerName]),
       ),
@@ -471,6 +494,7 @@ export async function requireLaunchSemanticHealth(
       entry.hermesSwitchyard !== undefined ||
       (agentName === "hermes" && entry.workload?.kind === "managed-image")
     ) {
+      let fallbackToGeneric = false;
       try {
         const native = await requireNativeInferenceHealth({
           sandboxName,
@@ -480,11 +504,13 @@ export async function requireLaunchSemanticHealth(
           deps,
         });
         if (native) return;
+        fallbackToGeneric = true;
       } catch (error) {
         recordLaunchReadinessObservationFailure(deps, "inference-route");
         throw error;
       } finally {
-        recordObservationTiming(deps, "inference-route", inferenceStartedAt);
+        if (!fallbackToGeneric)
+          recordObservationTiming(deps, "inference-route", inferenceStartedAt);
       }
     }
     let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;

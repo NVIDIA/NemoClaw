@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,17 @@ const start = fs.readFileSync(
   path.resolve(import.meta.dirname, "../../../agents/hermes/start.sh"),
   "utf8",
 );
+
+// Match contributor setup: the default python3 may be older than Python 3.11.
+const selectedPython = ["python3", "python3.14", "python3.13", "python3.12", "python3.11"].find(
+  (candidate) =>
+    spawnSync(candidate, ["-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"], {
+      encoding: "utf8",
+      timeout: 5000,
+    }).status === 0,
+);
+assert.ok(selectedPython, "Switchyard qualification tests require Python 3.11 or newer");
+const python: string = selectedPython;
 
 // Native routing stays a packaged-runtime contract. This fake supplies only its public event/API boundary.
 const fixture = String.raw`
@@ -118,7 +130,7 @@ print(json.dumps(state))
 `;
 
 function runFixture(options: Record<string, unknown>) {
-  const result = spawnSync("python3", ["-I", "-c", fixture, qualifier, JSON.stringify(options)], {
+  const result = spawnSync(python, ["-I", "-c", fixture, qualifier, JSON.stringify(options)], {
     encoding: "utf8",
     timeout: 5000,
   });

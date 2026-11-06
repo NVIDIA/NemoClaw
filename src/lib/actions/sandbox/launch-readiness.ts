@@ -829,6 +829,9 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
+  if (entry.hermesSwitchyard !== undefined && inference.kind !== "configured") {
+    throw new ObservationError("config");
+  }
   const nativeProvider =
     Boolean(getNativeProviderAttachment(entry)) ||
     entry.nativeLocalProviderAttachment !== undefined ||

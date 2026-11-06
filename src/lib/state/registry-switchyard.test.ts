@@ -219,6 +219,37 @@ it("retains binding observations across reservation reload and rejects malformed
       }),
     ).toBe(true);
     expect(registry.getSandbox("alpha")?.hermesSwitchyard).toEqual(hermesSwitchyard);
+    const pending = registry.getSandbox("alpha")!;
+    const replacement = {
+      routing,
+      bindings: {
+        ...bindings,
+        providers: bindings.providers.map((provider, index) =>
+          index === 0 ? { ...provider, resourceVersion: 2 } : provider,
+        ),
+      },
+    };
+    const beforeRegistration = await fs.readFile(registry.REGISTRY_FILE, "utf8");
+    expect(() =>
+      registry.registerSandbox({ ...pending, hermesSwitchyard: undefined }, undefined, {
+        pending: true,
+        reservationSessionId: "test-session",
+      }),
+    ).toThrow("recorded Switchyard provider bindings changed");
+    expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(beforeRegistration);
+    expect(() =>
+      registry.registerSandbox({ ...pending, hermesSwitchyard: replacement }, undefined, {
+        pending: true,
+        reservationSessionId: "test-session",
+      }),
+    ).toThrow("recorded Switchyard provider bindings changed");
+    expect(await fs.readFile(registry.REGISTRY_FILE, "utf8")).toBe(beforeRegistration);
+    expect(
+      registry.registerSandbox(pending, undefined, {
+        pending: true,
+        reservationSessionId: "test-session",
+      }).hermesSwitchyard,
+    ).toEqual(hermesSwitchyard);
     registry.registerSandbox({
       name: "registered",
       agent: "hermes",
