@@ -80,7 +80,7 @@ describe("launch-readiness gateway health scope", () => {
 
   it.each([
     ["becomes ready", [null, true], true, 2_000],
-    ["stays unavailable", [null, null], false, 3_000],
+    ["stays unavailable", [null, null], null, 3_000],
   ] as const)(
     "bounds OpenClaw startup when a timed-out health probe %s",
     async (_case, results, expected, elapsed) => {
