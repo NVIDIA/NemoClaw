@@ -46,8 +46,22 @@ function mcpCustomHelpUsage(): Record<string, string> {
   return usage;
 }
 
+/** Commands that render usage through a custom-help boundary instead of a literal `static usage`. */
+const CUSTOM_HELP_COMMANDS = new Set(["sandbox:mcp"]);
+
 /** Read the command's literal `static usage` array from its source file. */
 function staticUsage(commandId: string, subcommand?: string): string[] {
+  // sandbox:mcp renders usage through the custom-help boundary in
+  // mcp-bridge.ts; its `static usage` is a template literal over an imported
+  // constant and cannot be parsed as a source literal. Compare against the
+  // matching renderMcpHelp case text instead.
+  if (CUSTOM_HELP_COMMANDS.has(commandId)) {
+    const help = mcpCustomHelpUsage()[subcommand ?? ""];
+    if (help === undefined) {
+      throw new Error(`No custom-help usage case for ${commandId} subcommand '${subcommand ?? ""}'`);
+    }
+    return [help];
+  }
   const source = fs.readFileSync(commandSourcePath(commandId), "utf8");
   const match = /static usage = (\[[\s\S]*?\]);/u.exec(source);
   if (match === null) throw new Error(`No literal static usage in ${commandId}`);
@@ -69,6 +83,9 @@ function missingUsageFlags(
   documentedFlags: string | undefined,
   subcommand?: string,
 ): string[] {
+  // Custom-help display rows are curated summaries, not the full accepted flag
+  // set; the extra direction still proves every documented flag is real.
+  if (CUSTOM_HELP_COMMANDS.has(commandId)) return [];
   const documented = new Set(flagTokens(documentedFlags ?? ""));
   return flagTokens(staticUsage(commandId, subcommand).join(" ")).filter(
     (token) => !documented.has(token),

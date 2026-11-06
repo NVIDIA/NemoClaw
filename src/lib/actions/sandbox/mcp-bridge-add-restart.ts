@@ -921,6 +921,11 @@ async function addMcpBridgeUnlocked(
     );
   }
   const matchingTrustedPrivateHosts = allTrustedPrivateHosts.filter((host) => host === urlHost);
+  // Validate --require-oauth before any network or source work; the HTTPS
+  // requirement is a precondition of the request, not a post-inspection check.
+  if (options.requireOAuth && !normalizedUrl.startsWith("https://")) {
+    throw new McpBridgeError("--require-oauth requires an HTTPS MCP endpoint.", 2);
+  }
   const sandbox = getSandboxOrThrow(sandboxName);
   const sourceRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const observed = await inspectSourceBridgeState(sandbox, sourceRuntimeSelection);
@@ -1036,13 +1041,6 @@ async function addMcpBridgeUnlocked(
     transport: options.transport ?? transport,
     ...(options.requireOAuth ? { requireOAuth: true } : {}),
   };
-
-  // Enforce HTTPS requirement for --require-oauth at the action boundary.
-  // The CLI parser checks this, but the action boundary must also enforce it
-  // to protect against direct API calls.
-  if (options.requireOAuth && !normalizedUrl.startsWith("https://")) {
-    throw new McpBridgeError("--require-oauth requires an HTTPS MCP endpoint.", 2);
-  }
 
   // A reconstructed entry with a policy conflict must not be reused: its live
   // policy disagrees with the durable registration (invalid selectors or a

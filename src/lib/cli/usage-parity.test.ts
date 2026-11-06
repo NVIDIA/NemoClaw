@@ -7,6 +7,8 @@ import { help } from "../actions/root-help";
 import { visibleCommands } from "./command-registry";
 import { visibleEntries, parseUsageHints, missingUsageFlags, extraUsageFlags } from "./usage-parity-support";
 
+const ANSI_SGR = /\u001b\[[0-9;]*m/g;
+
 const helpOutput = vi.spyOn(console, "log").mockImplementation(() => {});
 help();
 const publicHelp = String(helpOutput.mock.calls[0]?.[0] ?? "");
@@ -33,7 +35,7 @@ describe("public display usage parity", () => {
       expect(usage).toBe(command?.usage);
       const helpLine = publicHelp
         .split("\n")
-        .find((line) => line.trimStart().replace(/\x1b\[[0-9;]*m/g, "").startsWith(usage));
+        .find((line) => line.replace(ANSI_SGR, "").trimStart().startsWith(usage));
       expect(helpLine).toBeDefined();
       expect(helpLine ?? "").toContain(flags ?? "");
     },
