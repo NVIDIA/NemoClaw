@@ -51,6 +51,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
         "Skills",
         "Instruction files",
         "Tool calls",
+        "Tokens",
         "Session window",
         "Compactions",
         "Models",
@@ -77,7 +78,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
         }
     }
     if seen.len() != fields.len() {
-        return Err("include all eight report fields, even when unavailable");
+        return Err("include all report fields, even when unavailable");
     }
     Ok(())
 }
@@ -186,6 +187,7 @@ mod tests {
 | Skills | partial | test-driven-development (complete read) | Earlier context unavailable |\n\
 | Instruction files | partial | AGENTS.md (complete read); WRITING.md (injected) | Full contents retained; earlier injection coverage unavailable |\n\
 | Tool calls | recorded | read: 2; shell: 1 | Recorded invocations, including failed attempts |\n\
+| Tokens | recorded | input: 120; cached input: 80; output: 25 | Last cumulative usage at cutoff |\n\
 | Session window | recorded | 2026-10-27T12:00Z to 2026-10-27T12:10Z; 10 min | First event through report cutoff |\n\
 | Compactions | recorded | 0 | Complete session record through cutoff |\n\
 | Models | unavailable | - | Model metadata absent |\n\
@@ -264,6 +266,28 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(validate(&body).is_err());
+    }
+
+    #[test]
+    fn tokens_are_required_even_when_other_fields_are_complete() {
+        let body = report()
+            .lines()
+            .filter(|line| !line.starts_with("| Tokens |"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(validate(&body).is_err());
+    }
+
+    #[test]
+    fn tokens_accept_recorded_partial_and_unavailable_evidence() {
+        let row = "| Tokens | recorded | input: 120; cached input: 80; output: 25 | Last cumulative usage at cutoff |";
+        for replacement in [
+            row,
+            "| Tokens | partial | input: 120; cached input: 80; output: 25 | Earlier usage is missing; counts are lower bounds |",
+            "| Tokens | unavailable | - | Inspected authoring record has no usage counters |",
+        ] {
+            assert!(validate(&report().replace(row, replacement)).is_ok());
+        }
     }
 
     #[test]
