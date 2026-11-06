@@ -33,16 +33,9 @@ use std::{
 /// because a shell that waits for a child can lose it),
 /// `planning` (`ok` or `fail`, for `plan`), `state` (the `show -json` state), and the name
 /// of a saved plan (the `show -json PLAN` plan). A `show` without a control file
-/// prints an empty state or plan. `apply -refresh-only` fails when the
-/// configuration declares data sources, as OpenTofu fails to read a managed
-/// gateway that a first apply has yet to create; otherwise it creates an empty
-/// state file where there is none, as OpenTofu does, and ends; until the next
-/// `apply`, `show -json` prints that empty state instead of the canned one,
-/// which stands for the state after an apply. An `apply` that finds
-/// the saved record, `intent.json`, creates the control file
-/// `root.record-at-apply`, and one that finds a state file creates
-/// `root.state-at-apply`. Each call saves its environment as
-/// `root.SUBCOMMAND.environment`.
+/// prints an empty state or plan. An `apply` that finds the saved record,
+/// `intent.json`, creates the control file `root.record-at-apply`. Each call
+/// saves its environment as `root.SUBCOMMAND.environment`.
 const SCRIPT: &str = r##"#!/bin/sh
 control='@CONTROL@'
 stage=root
@@ -56,19 +49,10 @@ case "$1" in
     if [ "$planning" = fail ]; then printf 'provider failed\n' >&2; exit 1; fi
     printf '{"type":"version","ui":"1.0"}\n' ;;
   show)
-    if [ -z "$3" ] && [ -f "$control/$stage.refreshed" ]; then printf '{"format_version":"1.0"}\n'; exit 0; fi
     canned="$control/$stage.${3:-state}"
     if [ -f "$canned" ]; then cat "$canned"; else printf '{"format_version":"1.0"}\n'; fi ;;
   apply)
-    if [ "$2" = -refresh-only ]; then
-      if grep -q '"data"' main.tf.json; then printf 'observation transport failed\n' >&2; exit 1; fi
-      [ -f terraform.tfstate ] || printf '{"version":4,"resources":[]}\n' > terraform.tfstate
-      : > "$control/$stage.refreshed"
-      exit 0
-    fi
-    rm -f "$control/$stage.refreshed"
     if [ -f '@STATE@/intent.json' ]; then : > "$control/$stage.record-at-apply"; fi
-    if [ -f terraform.tfstate ]; then : > "$control/$stage.state-at-apply"; fi
     mode=ok
     [ -f "$control/$stage.apply" ] && mode=$(cat "$control/$stage.apply")
     # Handle interrupts before the first event, which tests cancel at.
@@ -152,17 +136,15 @@ impl Scripted {
             .unwrap_or_default()
     }
 
-    /// Every call as `STAGE SUBCOMMAND`, such as `runtime apply`. An
-    /// `apply -refresh-only` changes no resource and appears as `STAGE refresh`.
+    /// Every call as `STAGE SUBCOMMAND`, such as `runtime apply`.
     pub fn commands(&self) -> Vec<String> {
         self.calls()
             .iter()
             .map(|call| {
-                let words: Vec<&str> = call.split_whitespace().collect();
-                match words.as_slice() {
-                    [stage, "apply", "-refresh-only", ..] => format!("{stage} refresh"),
-                    _ => words.iter().take(2).copied().collect::<Vec<_>>().join(" "),
-                }
+                call.split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" ")
             })
             .collect()
     }

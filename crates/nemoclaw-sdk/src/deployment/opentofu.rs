@@ -39,45 +39,6 @@ impl Deployment {
         .await?;
         Ok(())
     }
-    /// Creates OpenTofu's state file before an apply's first plan. OpenTofu
-    /// 1.12.9 keeps an interrupted apply's progress only when the file existed
-    /// before the apply began: without it, the snapshot that OpenTofu saves
-    /// when stopped holds only the last resource it updated (#14155). A
-    /// refresh-only apply writes the file and changes no resource, and creating
-    /// it before the plan keeps the saved plan current. It applies an empty
-    /// configuration: the deployment's data sources read a managed gateway
-    /// that the first apply has yet to create. `initialize` then writes the
-    /// deployment's configuration.
-    pub(super) async fn create_state(
-        &self,
-        bundle: &Bundle,
-        store: &Store,
-        cancel: &CancellationToken,
-    ) -> Result<(), Error> {
-        if store.directory.join("terraform.tfstate").exists() {
-            return Ok(());
-        }
-        self.prepare(bundle, store, &serde_json::json!({}))?;
-        let env = crate::state::schema_environment(&store.directory);
-        self.timed(
-            "tofu.state",
-            crate::process::run(
-                &store.directory,
-                &bundle.tofu(),
-                &[
-                    "apply",
-                    "-refresh-only",
-                    "-auto-approve",
-                    "-input=false",
-                    "-no-color",
-                ],
-                &env,
-                cancel,
-            ),
-        )
-        .await?;
-        Ok(())
-    }
     pub(super) fn prepare(
         &self,
         bundle: &Bundle,
