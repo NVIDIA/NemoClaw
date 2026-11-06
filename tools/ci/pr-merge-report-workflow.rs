@@ -88,8 +88,9 @@ test ! -e "$FIXTURE/writes"
 test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
 grep -Fq 'repos/example/repo/issues/comments/123' "$FIXTURE/requests"
 rm "$FIXTURE/writes"
-SCENARIO=existing "$FIXTURE/reporter" example/repo 1 --post
+SCENARIO=existing "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/existing-report"
 test ! -e "$FIXTURE/writes"
+grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/existing-report"
 for SCENARIO in api_failure unmerged; do
   export SCENARIO
   if "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/output" 2>&1; then
@@ -130,6 +131,7 @@ require 'open3'
 workflow = YAML.safe_load(File.read('.github/workflows/pr-merge-report.yml'))
 parent = 'a' * 40
 head = 'b' * 40
+reporter_source = File.read('tools/ci/pr-merge-report.rs')
 
 def value(text, context)
   return text[1...-1] if text.start_with?("'") && text.end_with?("'")
@@ -155,28 +157,39 @@ def selected(expression, context, failed)
   end
 end
 
-def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed')
+def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', reporter: nil, retrying: false)
+  FileUtils.rm_rf(["#{root}/workspace", "#{root}/temp", "#{root}/artifacts"]) if retrying
+  FileUtils.rm_f(Dir["#{root}/output-*"]) if retrying
   FileUtils.mkdir_p(["#{root}/bin", "#{root}/workspace", "#{root}/temp", "#{root}/artifacts"])
   File.write("#{root}/summary", '')
   File.write("#{root}/comments.json", JSON.generate([
     {id: 10, user: {login: 'author'}, body: '<details><!-- agent-session-report:v1 -->opening</details>'},
     {id: 11, user: {login: 'outsider'}, body: '<!-- nemoclaw-merge-report:v1 -->'}
-  ]))
+  ])) unless retrying
   File.write("#{root}/bin/gh", <<~'SH')
     #!/bin/bash
     set -euo pipefail
-    endpoint=''; query='.'; slurp=false
+    endpoint=''; query='.'; slurp=false; post=false; body=''
     while [ "$#" -gt 0 ]; do
       case "$1" in
         repos/*) endpoint="$1" ;;
         --jq) query="$2"; shift ;;
         --slurp) slurp=true ;;
+        --method) test "$2" != POST || post=true; shift ;;
+        -f) body="${2#body=}"; shift ;;
       esac
       shift
     done
+    if $post; then
+      printf 'POST\n' >> "$FIXTURE/posts"
+      jq --arg body "$body" '. + [{id:123,user:{login:"github-actions[bot]"},body:$body}]' "$FIXTURE/comments.json" > "$FIXTURE/updated.json"
+      mv "$FIXTURE/updated.json" "$FIXTURE/comments.json"
+      printf '123\n'
+      exit 0
+    fi
     case "$endpoint" in
       repos/example/repo) printf '{"allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":false}' ;;
-      repos/example/repo/commits/*)
+      repos/example/repo/commits/dddddddddddddddddddddddddddddddddddddddd)
         case "$SCENARIO" in
           api_failure) exit 42 ;;
           malformed) printf '{"parents":[{"sha":"bad;touch forbidden"}]}' ;;
@@ -188,6 +201,14 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         cat "$FIXTURE/comments.json"
         if $slurp; then printf ']'; fi ;;
       repos/example/repo/pulls/1/files*) printf '[{"filename":"tools/ci/pr-merge-report.rs"}]' ;;
+      repos/example/repo/pulls/1)
+        printf '{"merged":true,"base":{"ref":"main"},"head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"fork-feature","repo":{"id":99}},"created_at":"2026-01-01T00:00:00Z","merged_at":"2026-01-01T00:10:00Z","additions":209,"deletions":10,"changed_files":5}' ;;
+      repos/example/repo/pulls/1/commits*|repos/example/repo/pulls/1/reviews*|repos/example/repo/commits/*/statuses*) printf '[]' ;;
+      repos/example/repo/actions/runs*) printf '{"total_count":0,"workflow_runs":[]}' ;;
+      repos/example/repo/commits/*/check-runs*) printf '{"check_runs":[]}' ;;
+      repos/example/repo/issues/comments/123)
+        test "$SCENARIO" != recovery_failure
+        jq '.[] | select(.id == 123)' "$FIXTURE/comments.json" ;;
       *) printf 'Unexpected API: %s\n' "$endpoint" >&2; exit 43 ;;
     esac | jq -r "$query"
   SH
@@ -195,6 +216,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     #!/bin/bash
     set -euo pipefail
     test -z "${GH_TOKEN:-}"
+    if [ -n "$REAL_REPORTER" ]; then exec "$REAL_RUSTC" "$@"; fi
     cp "$4" "$6"
     chmod +x "$6"
   SH
@@ -235,7 +257,9 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     next unless selected(step['if'], context, failed)
     env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario,
       'RUNNER_TEMP' => "#{root}/temp", 'GITHUB_REPOSITORY' => 'example/repo', 'GITHUB_STEP_SUMMARY' => "#{root}/summary",
-      'GITHUB_WORKFLOW_SHA' => 'e' * 40, 'GITHUB_RUN_ID' => '1234', 'GITHUB_RUN_ATTEMPT' => '1', 'GITHUB_OUTPUT' => "#{root}/output-#{index}"}
+      'GITHUB_WORKFLOW_SHA' => 'e' * 40, 'GITHUB_RUN_ID' => '1234', 'GITHUB_RUN_ATTEMPT' => retrying ? '2' : '1', 'GITHUB_OUTPUT' => "#{root}/output-#{index}"}
+    env['REAL_REPORTER'] = reporter ? 'true' : ''
+    env['REAL_RUSTC'] = ENV.fetch('REAL_RUSTC')
     (step['env'] || {}).each { |key, text| env[key] = interpolate(text, context) }
     case step['uses']
     when /\Aactions\/checkout@/
@@ -245,7 +269,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
       File.write("#{root}/credentials", 'persisted') unless step.fetch('with')['persist-credentials'] == false
       File.write("#{root}/checkout", ref)
       FileUtils.mkdir_p("#{root}/workspace/tools/ci")
-      content = {parent => trusted, head => "#!/bin/bash\nprintf 'PR code' >> \"$FIXTURE/executions\"\nexit 90\n"}.fetch(ref)
+      content = {parent => reporter || trusted, head => "#!/bin/bash\nprintf 'PR code' >> \"$FIXTURE/executions\"\nexit 90\n"}.fetch(ref)
       File.write("#{root}/workspace/tools/ci/pr-merge-report.rs", content) unless scenario == 'installation'
     when /\Aactions\/upload-artifact@/
       interpolate(step.fetch('with').fetch('path'), context).lines.map(&:strip).each do |path|
@@ -271,6 +295,24 @@ report = File.read("#{failure[:root]}/temp/merge-outcomes.md")
 raise 'Report lost after POST' unless report.include?('Full timing rows')
 raise 'Summary lost after POST' unless File.read("#{failure[:root]}/summary").include?(report)
 raise 'Artifact lost after POST' unless File.read("#{failure[:root]}/artifacts/merge-outcomes.md") == report
+first = exercise(workflow, "#{ARGV[0]}/recovery", 'recovery_failure', parent, head, reporter: reporter_source)
+raise 'Real readback failure suppressed' unless first[:failed]
+first_report = File.read("#{first[:root]}/temp/merge-outcomes.md")
+raise 'Failed attempt lost full report' unless first_report.include?('+209 / -10 lines across 5 files')
+raise 'Failed attempt lost artifact' unless File.read("#{first[:root]}/artifacts/merge-outcomes.md") == first_report
+raise 'Failed attempt claimed qualification' if File.exist?("#{first[:root]}/artifacts/merge-outcomes-receipt.json")
+published = JSON.parse(File.read("#{first[:root]}/comments.json"))
+raise 'Failed readback did not follow POST' unless File.read("#{first[:root]}/posts") == "POST\n"
+recovered = exercise(workflow, first[:root], 'recovery', parent, head, reporter: reporter_source, retrying: true)
+raise File.read("#{recovered[:root]}/errors") if recovered[:failed]
+raise 'Recovery published another comment' unless File.read("#{recovered[:root]}/posts") == "POST\n"
+raise 'Recovery changed published comments' unless JSON.parse(File.read("#{recovered[:root]}/comments.json")) == published
+recovered_report = File.read("#{recovered[:root]}/temp/merge-outcomes.md")
+raise 'Recovered attempt lost full report' unless recovered_report.include?('+209 / -10 lines across 5 files')
+raise 'Recovered summary lost report' unless File.read("#{recovered[:root]}/summary").include?(recovered_report)
+raise 'Recovered artifact lost report' unless File.read("#{recovered[:root]}/artifacts/merge-outcomes.md") == recovered_report
+recovered_receipt = JSON.parse(File.read("#{recovered[:root]}/artifacts/merge-outcomes-receipt.json"))
+raise 'Recovered receipt lost revision, attempt or opening report' unless recovered_receipt.values_at('reporter_revision', 'run_attempt', 'opening_report_count') == [parent, '2', 1]
 valid = exercise(workflow, "#{ARGV[0]}/valid", 'valid', parent, head)
 raise File.read("#{valid[:root]}/errors") if valid[:failed]
 raise 'PR source executed' unless File.read("#{valid[:root]}/executions") == "trusted\ntrusted\n"
@@ -290,12 +332,20 @@ raise 'Installation behavior missing' unless File.read("#{installation[:root]}/s
   result = exercise(workflow, "#{ARGV[0]}/ineligible-#{index}", 'valid', parent, head, merged: merged, action: action)
   raise 'Ineligible event published' if result[:failed] || File.exist?("#{result[:root]}/executions")
 end
-puts 'Trusted checkout, denied parents/events, installation, hosted receipt and failed-publication retention passed'
+puts 'Trusted checkout, denied parents/events, installation, fixture receipt and publication recovery passed'
 "##;
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .unwrap();
+    assert!(sysroot.status.success());
+    let compiler = std::path::Path::new(std::str::from_utf8(&sysroot.stdout).unwrap().trim())
+        .join("bin/rustc");
     let output = Command::new("ruby")
         .args(["-", directory.to_str().unwrap()])
         .env_clear()
         .env("PATH", env::var_os("PATH").unwrap())
+        .env("REAL_RUSTC", compiler)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

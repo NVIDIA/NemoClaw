@@ -6,7 +6,8 @@
 The report workflow has two evidence owners. The standalone Rust tests cover
 metadata selection, rendering and publication recovery. The workflow adapter
 test executes the checked-in YAML with controlled API, compiler and checkout
-boundaries. It uses Ruby's standard YAML parser and `jq`.
+boundaries. Its publication-recovery scenario compiles and executes the real
+reporter. It uses Ruby's standard YAML parser and `jq`.
 
 Run the local checks from the repository root:
 
@@ -61,3 +62,6 @@ The API-failure fixtures cover successful POST followed by failed readback.
 Do not inject that failure into the live repository. If it occurs naturally,
 retain the failed run and its full report, inspect the existing bot comment,
 and apply the repository's bounded retry policy before retrying publication.
+A retry regenerates the full report even when the bot comment already exists.
+The publication guard prevents another POST, and successful verification retains
+the recovered attempt's report and receipt.

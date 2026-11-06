@@ -569,10 +569,6 @@ fn execute() -> Result<()> {
         return Err("PR number must be positive".into());
     }
     let pr = api.pr()?;
-    if args.len() == 3 && api.existing()? {
-        eprintln!("Merge report already exists");
-        return Ok(());
-    }
     let report = api.collect(&pr)?;
     let body = render(&report);
     print!("{body}");
