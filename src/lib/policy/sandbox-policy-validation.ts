@@ -10,6 +10,7 @@ import Ajv from "ajv/dist/2020.js";
 import {
   isOpenShellSandboxPolicyCredentialFree,
   parseOpenShellPolicy,
+  stripProviderComposedPolicies,
 } from "../adapters/openshell/policy-boundary";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -101,4 +102,13 @@ export function parseAndValidateSandboxPolicy(content: string): Record<string, u
     );
   }
   return policy;
+}
+
+/**
+ * Validate an OpenShell effective policy. OpenShell composes `_provider_*`
+ * entries outside the sandbox policy schema; an MCP provider entry can carry
+ * only `name`.
+ */
+export function parseAndValidateEffectiveSandboxPolicy(content: string): Record<string, unknown> {
+  return parseAndValidateSandboxPolicy(stripProviderComposedPolicies(content));
 }
