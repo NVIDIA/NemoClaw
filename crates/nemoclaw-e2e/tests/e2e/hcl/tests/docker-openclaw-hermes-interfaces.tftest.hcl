@@ -9,7 +9,8 @@
 # with its session token. The stub refuses requests without the run's key,
 # so the reply also shows NemoClaw sent the configured key. In each sandbox,
 # the agent's user can write and read a file in the agent's workspace, and
-# the key is not in the environment a command sees. In claw, python3 reaches
+# the key is not in the environment a command sees. In hermes, a command can
+# open a pseudo-terminal, as browser chat does. In claw, python3 reaches
 # the stub at a path only the document grants, and OpenShell refuses its
 # connection to the managed gateway, which no grant names. Destroy keeps only
 # the gateway's storage. cargo ci live-docker runs it.
@@ -114,6 +115,10 @@ run "interfaces" {
 # (crates/nemoclaw-openshell/src/profile.rs); the environment must have that
 # variable but not the key itself.
 #
+# Hermes's browser chat runs its terminal UI in a pseudo-terminal, which needs
+# the read-write access to /dev/pts that the Hermes image's default policy
+# grants (image/fabric/Dockerfile's adapters.json).
+#
 # Each sandbox's managed inference grant gives the image's executables,
 # python3 among them, the model's /v1/** paths. Only claw's document also
 # grants python3 the stub's /health; the stub refuses requests without the
@@ -150,6 +155,11 @@ run "commands" {
         command  = ["env"]
         contains = "NEMOCLAW_INFERENCE_MODEL_"
         excludes = var.model_key
+      }
+      hermes_pseudo_terminal = {
+        sandbox  = "hermes"
+        command  = ["python3", "-c", "import os; os.openpty(); print('pty-ok')"]
+        contains = "pty-ok\n"
       }
       claw_granted_endpoint = {
         sandbox = "claw"

@@ -74,6 +74,7 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                         .into()
                 ),
                     sign_in: SignIn::TokenInUrlFragment,
+                terminal: Some("openclaw tui --url ws://127.0.0.1:18789 --token TOKEN".into()),
             },
             InterfaceAccess {
                 sandbox: "reviewer".into(),
@@ -85,6 +86,7 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
                         .into()
                 ),
                     sign_in: SignIn::BearerToken,
+                terminal: None,
             },
         ]
     );
@@ -95,6 +97,10 @@ async fn apply_reports_each_enabled_interface_with_its_token_path_and_sign_in() 
         "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/main/interfaces/api.token"
     );
     assert_eq!(json["interfaces"][1]["signIn"], "bearer_token");
+    assert_eq!(
+        json["interfaces"][0]["terminal"],
+        "openclaw tui --url ws://127.0.0.1:18789 --token TOKEN"
+    );
 }
 
 /// An agent that keeps its state has one token path for every runtime, so it is
@@ -117,6 +123,11 @@ async fn an_agent_that_keeps_its_state_reports_its_token_without_a_runtime_id() 
         .find(|access| access.sandbox == "assistant")
         .unwrap();
     assert_eq!(openclaw.token_path, None);
+    // The terminal command names no token file, so it needs no runtime ID.
+    assert_eq!(
+        openclaw.terminal.as_deref(),
+        Some("openclaw tui --url ws://127.0.0.1:18789 --token TOKEN")
+    );
 }
 
 /// Hermes's dashboard has no token or sign-in: the forward is its access control.
@@ -143,6 +154,7 @@ async fn an_interface_without_a_token_reports_no_token_path() {
             port: Some(9119),
             token_path: None,
             sign_in: SignIn::None,
+            terminal: None,
         }]
     );
 }

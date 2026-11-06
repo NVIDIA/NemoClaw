@@ -631,6 +631,12 @@ fn interface_access(result: &OperationResult, selected: bool) -> String {
             SignIn::None => "    Sign in:  none; anyone who can reach the forward can use it\n".into(),
             SignIn::AdapterDocumented => "    Sign in:  see the adapter's documentation\n".into(),
         });
+        if let Some(command) = &access.terminal {
+            output.push_str(&format!(
+                "    Terminal: openshell sandbox exec -n {sandbox} --tty -- {}, replacing TOKEN with the token\n",
+                terminal_text(command)
+            ));
+        }
     }
     if !result.interfaces.is_empty() {
         output.push_str(
@@ -834,7 +840,8 @@ mod tests {
         json!([
             {"sandbox": "assistant", "interface": "dashboard", "port": 18789,
              "tokenPath": "/sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
-             "signIn": "token_in_url_fragment"},
+             "signIn": "token_in_url_fragment",
+             "terminal": "openclaw tui --url ws://127.0.0.1:18789 --token TOKEN"},
             {"sandbox": "reviewer", "interface": "api", "port": 8642,
              "tokenPath": "/sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
              "signIn": "bearer_token"},
@@ -843,8 +850,9 @@ mod tests {
     }
 
     /// After apply, each enabled interface gets its forward, the command that
-    /// reads its token, and its sign-in, under this deployment's gateway and
-    /// workspace selection. The output names where the token is, never a token.
+    /// reads its token, its sign-in, and the command that opens its terminal UI
+    /// if it has one, under this deployment's gateway and workspace selection.
+    /// The output names where the token is, never a token.
     #[test]
     fn apply_output_tells_how_to_reach_each_interface() {
         let connection = json!({"gatewayEndpoint": "http://127.0.0.1:17671", "workspace": "nc-1234567890abcdef"});
@@ -858,6 +866,7 @@ mod tests {
             "Forward: openshell forward service assistant --target-port 18789 --local 127.0.0.1:18789",
             "Token: openshell sandbox exec -n assistant --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/rt-1/interfaces/dashboard.token",
             "Sign in: open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token",
+            "Terminal: openshell sandbox exec -n assistant --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token",
             "Forward: openshell forward service reviewer --target-port 8642 --local 127.0.0.1:8642",
             "Token: openshell sandbox exec -n reviewer --no-tty -- cat /sandbox/artifacts/.fabric/hermes/runtimes/rt-2/interfaces/api.token",
             "Sign in: send the header Authorization: Bearer TOKEN, replacing TOKEN with the token",
@@ -871,8 +880,10 @@ mod tests {
                 "missing {expected:?}:\n{text}"
             );
         }
-        // Only the two interfaces with a token get a command that reads one.
-        assert_eq!(text.matches("sandbox exec").count(), 2, "{text}");
+        // Only the two interfaces with a token get a command that reads one,
+        // and only OpenClaw's dashboard a terminal command.
+        assert_eq!(text.matches("--no-tty -- cat").count(), 2, "{text}");
+        assert_eq!(text.matches("Terminal:").count(), 1, "{text}");
         assert!(
             text.contains("reach these ports; see docs/agents-inference/interfaces.md."),
             "{text}"
