@@ -13,7 +13,7 @@ Teardown removes the deployment's compute and leaves the caller volumes, model d
 - `retention`: the seeded workspace and artifacts markers and the supplied `capability-probe` skill keep their seeded hashes on the same caller volumes, without reseeding. Phases: Initial, After stop/start, After recreate, After config change, After restore.
 - `extension-runtime-restart`: stopping only the managed Fabric runtime through `fabric-agent-ctl stop`, then an unchanged plan/apply, gives the same sandbox and container a new runtime that answers. Phases: Runtime restart.
 - `stop-start`: stopping the sandbox through OpenShell's supported control stops it and access to it, starting it brings back the same sandbox and container, and after an unchanged plan/apply its runtime answers. Phases: Stop/start.
-- `recreate`: destroying the deployment through NemoClaw keeps the state and caller volumes, and plan/apply of the baseline YAML creates a new sandbox with only the planned changes. Phases: Recreate.
+- `recreate`: destroying the deployment through NemoClaw keeps the state and caller volumes, and plan/apply of the baseline YAML creates a new sandbox. Phases: Recreate.
 - `change`: a YAML edit to only the agent's shell restriction shows in plan, applies, and leaves the model resources alone. Phases: Config change.
 - `restore`: reapplying the exact baseline YAML reverses the change, and the runtime answers. Phases: Restore.
 - `teardown`: NemoClaw's destroy removes the deployment's compute, and the caller volumes, model data, and evidence remain and are listed. Phases: Teardown.
@@ -132,7 +132,8 @@ Each transition uses steps 3, 4, and 5 around its own commands.
    ```
 
    Result: `old-gone` and `new-sandbox`.
-   Pass when the plan's listed creations match what apply created, the destroy removed what `destroy-plan.txt` listed, and the request in step 4 succeeds; the markers are checked by `retention` in the next phase.
+   Pass when the request in step 4 succeeds; the markers are checked by `retention` in the next phase.
+   The integration test [`destroy_matches_preview_and_reapply_creates_a_new_sandbox_and_runtime`](../../../../crates/nemoclaw-e2e/tests/integration/rust/fabric_deployment.rs) checks plan/apply agreement for destroy and recreation. The SDK test [`caller_volumes_remain_external_through_changes_restore_and_recreation`](../../../../crates/nemoclaw-sdk/tests/runtime_compile.rs) checks that caller volumes stay outside the managed graph. Keep the live volume and marker checks: the fixtures cannot prove that OpenShell's Docker driver preserves the volumes or their bytes.
    Then run step 5 with `PHASE=after-recreate`.
 9. **`change`:** with `PHASE=config-change` and `CASE=change`, run step 3 and confirm that the YAML is still the baseline, with the same `sha256sum` comparison as step 8.
    Edit `$RUN_DIR/deployment.yaml` by hand to remove only the shell-launch tool from the tool allow-list that the launch added, as `bindings.md` records it, then save the change:

@@ -386,6 +386,90 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
 }
 
 #[test]
+fn caller_volumes_remain_external_through_changes_restore_and_recreation() {
+    let baseline =
+        Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
+    let mounts = json!({"docker": {"mounts": [
+        {"type": "volume", "source": "caller-workspace", "target": "/sandbox/workspace", "read_only": false},
+        {"type": "volume", "source": "caller-artifacts", "target": "/sandbox/artifacts", "read_only": false}
+    ]}});
+    let mut value = serde_json::to_value(baseline).unwrap();
+    value["spec"]["sandboxes"]["assistant"]["driverConfig"] = mounts.clone();
+    let baseline = Document::parse(value.to_string().as_bytes()).unwrap();
+    value["spec"]["sandboxes"]["assistant"]["agent"]["tools"] = json!({"allow": ["fixture-shell"]});
+    let changed = Document::parse(value.to_string().as_bytes()).unwrap();
+
+    for (phase, document, generation) in [
+        ("baseline", &baseline, "a"),
+        ("configuration change", &changed, "a"),
+        ("restore", &baseline, "a"),
+        ("recreation", &baseline, "b"),
+    ] {
+        let generations: Generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), generation.repeat(32)))
+        .into();
+        let mut graph = nemoclaw_sdk::compile::compile(document, &generations, "0.1.0").unwrap();
+        let established = graph["resource"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .flat_map(|(kind, instances)| {
+                instances
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(move |name| format!("{kind}.{name}"))
+            })
+            .collect();
+        let teardown =
+            nemoclaw_sdk::compile::compile_teardown(document, &generations, "0.1.0", &established)
+                .unwrap();
+        let driver_config = graph["resource"]["openshell_sandbox"]["assistant"]
+            .as_object_mut()
+            .unwrap()
+            .remove("driver_config")
+            .unwrap();
+        let decoded: Value = match driver_config.as_str() {
+            Some(text) => serde_json::from_str(text).unwrap(),
+            None => driver_config,
+        };
+        assert_eq!(
+            decoded, mounts,
+            "{phase}: caller mounts reach only the sandbox driver"
+        );
+        for volume in ["caller-workspace", "caller-artifacts"] {
+            assert!(
+                !graph["resource"].to_string().contains(volume),
+                "{phase}: {volume} entered another graph binding"
+            );
+            assert!(
+                !serde_json::to_string(&runtime_targets(document, &generations).unwrap())
+                    .unwrap()
+                    .contains(volume),
+                "{phase}: {volume} became managed runtime storage"
+            );
+            assert!(
+                !teardown.graph.to_string().contains(volume),
+                "{phase}: {volume} entered teardown"
+            );
+            assert!(
+                teardown
+                    .retained
+                    .iter()
+                    .all(|address| !address.contains(volume)),
+                "{phase}: {volume} became retained managed storage"
+            );
+        }
+    }
+}
+
+#[test]
 fn remote_service_is_independent_of_the_external_sandbox_gateway() {
     let document =
         Document::parse(include_bytes!("fixtures/config/spark.yaml").as_slice()).unwrap();
