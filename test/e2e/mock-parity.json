@@ -212,6 +212,8 @@
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
+        "src/lib/inference/local-vllm-auth.test.ts",
+        "src/lib/inference/serving/vllm-host-local-probe.test.ts",
         "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/agents/deepagents/langchain-deepagents-code-config.test.ts",
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
@@ -1101,6 +1103,9 @@
     {
       "live": "test/e2e/live/dgx-express.test.ts",
       "fast": [
+        "src/lib/inference/vllm.test.ts",
+        "src/lib/inference/vllm-configured-port.test.ts",
+        "test/e2e/support/spark-express-vllm-safety.test.ts",
         "src/lib/inference/vllm-runtime-selection.test.ts",
         "test/e2e/support/dgx-station-express.test.ts",
         "test/e2e/support/live-vitest-invocation.test.ts",
