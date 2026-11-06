@@ -860,6 +860,23 @@ describe("startSandbox native lifecycle", () => {
     },
   );
 
+  it.each([true, false, undefined])(
+    "waits through unavailable OpenClaw startup with stop intent %s (#12280)",
+    async (stopped) => {
+      const probeGatewayProcess = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(true);
+      const h = harness({ probeGatewayProcess });
+      h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped }));
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+      expect(probeGatewayProcess).toHaveBeenCalledTimes(2);
+      expect(probeGatewayProcess.mock.invocationCallOrder[1]).toBeLessThan(
+        h.verifyGateway.mock.invocationCallOrder[0]!,
+      );
+      expect(h.startOpenShellSandbox).toHaveBeenCalledOnce();
+    },
+  );
+
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(
       async () =>

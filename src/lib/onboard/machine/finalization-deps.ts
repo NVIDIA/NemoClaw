@@ -552,7 +552,7 @@ export const finalizationHandlerDeps = {
         "openclaw",
         target.gatewayName,
       );
-      if (startup === false) {
+      if (startup !== true) {
         console.error(
           `  OpenClaw startup did not settle for '${name}' on gateway '${target.gatewayName}'.`,
         );

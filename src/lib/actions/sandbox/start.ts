@@ -331,7 +331,7 @@ async function startSandboxWithinLifecycleFence(
     deps,
     log,
   );
-  if (readiness.gatewayProcess !== false) {
+  if (readiness.gatewayProcess !== false && readiness.gatewayProcess !== null) {
     log("  Checking gateway health and host forwards…");
     if (deps.verifyGateway) {
       await deps.verifyGateway(sandboxName);
@@ -353,7 +353,7 @@ async function startSandboxWithinLifecycleFence(
       log,
     );
   }
-  if (readiness.gatewayProcess === false) {
+  if (readiness.gatewayProcess === false || readiness.gatewayProcess === null) {
     log(
       "  The sandbox started but its native agent gateway did not become responsive before the startup settlement window expired.",
     );

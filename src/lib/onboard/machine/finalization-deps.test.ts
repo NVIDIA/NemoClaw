@@ -1230,24 +1230,27 @@ describe("finalization process-recovery refusal propagation", () => {
     );
   });
 
-  it("pauses before recovery when initial OpenClaw startup does not settle", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const recover = vi.fn();
-    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
-      resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
-    } as never);
-    vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
-      checkAndRecoverSandboxProcesses: recover,
-      waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
-      waitForStartedNativeGatewayProcess: vi.fn(async () => false),
-    });
+  it.each([false, null])(
+    "pauses before recovery when initial OpenClaw startup is %s",
+    async (startup) => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const recover = vi.fn();
+      vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+        resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
+      } as never);
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: recover,
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+        waitForStartedNativeGatewayProcess: vi.fn(async () => startup),
+      });
 
-    await expect(
-      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(false);
-    expect(recover).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
-  });
+      await expect(
+        finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
+      ).resolves.toBe(false);
+      expect(recover).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
+    },
+  );
 
   it("reports bounded redacted recovery failure details even in quiet onboarding", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

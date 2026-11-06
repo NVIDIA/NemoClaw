@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { type DockerCommandResult, DockerProbe, resultText } from "../fixtures/docker-probe.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { HERMES_SWITCHYARD_PACKAGE_PROBE } from "../fixtures/hermes-switchyard-package.ts";
+import { captureHermesCrash, hermesCrashCaptureArgs } from "../fixtures/hermes-crash-capture.ts";
 
 // real Docker/root-entrypoint smoke: it builds the Hermes image when no prebuilt
 // NEMOCLAW_HERMES_TEST_IMAGE is supplied, starts /usr/local/bin/nemoclaw-start
@@ -102,8 +103,10 @@ async function expectContainerSh(
   container: string,
   message: string,
   script: string,
+  capture?: (result: DockerCommandResult) => Promise<void>,
 ): Promise<DockerCommandResult> {
   const result = await dockerExecSh(probe, container, script, message);
+  await capture?.(result);
   expect(result.exitCode, `${container}: ${message}\n${resultText(result)}`).toBe(0);
   return result;
 }
@@ -328,7 +331,9 @@ async function runCleanVariant(
   image: string,
   runId: string,
   containers: string[],
+  diagnostics: Pick<E2ETargetFixtures, "shellProbe" | "artifacts">,
 ): Promise<void> {
+  const captureArgs = hermesCrashCaptureArgs();
   const container = `nemoclaw-hermes-root-clean-${runId}`;
   containers.push(container);
   await probe.expect(
@@ -341,6 +346,7 @@ async function runCleanVariant(
       container,
       "--env",
       "HERMES_KANBAN_DISPATCH_IN_GATEWAY=1",
+      ...captureArgs,
       "--user",
       "root",
       image,
@@ -354,6 +360,16 @@ async function runCleanVariant(
     container,
     "switchyard-package-contract",
     HERMES_SWITCHYARD_PACKAGE_PROBE,
+    captureArgs.length
+      ? (result) =>
+          captureHermesCrash({
+            docker: probe,
+            shell: diagnostics.shellProbe,
+            artifacts: diagnostics.artifacts,
+            container,
+            result,
+          })
+      : undefined,
   );
   await assertImageCapabilitiesAndStageRecovery(probe, container);
 
@@ -678,7 +694,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+  async ({ artifacts, cleanup, progress, secrets, signal, skip, shellProbe }) => {
     const context = { artifacts, cleanup, progress, secrets, signal, skip };
     await runRootEntrypointScenario(
       context,
@@ -707,7 +723,7 @@ test(
       },
       async ({ containers, image, probe, runId }) => {
         context.progress.phase("validate clean Hermes root-entrypoint readiness");
-        await runCleanVariant(probe, image, runId, containers);
+        await runCleanVariant(probe, image, runId, containers, { artifacts, shellProbe });
       },
     );
   },

@@ -1745,6 +1745,7 @@ export async function isSandboxGatewayRunningForStatus(
 
 const HERMES_GATEWAY_PROCESS_SETTLEMENT_DELAYS_MS = [2_000, 2_000, 2_000, 2_000, 2_000] as const;
 const NATIVE_GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
+export const OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS = 120;
 
 /** Require one positive Hermes gateway observation after startup within the bounded window. */
 export async function waitForStartedHermesGatewayProcess(
@@ -1785,6 +1786,8 @@ export async function waitForStartedHermesGatewayProcess(
 /**
  * Wait for the native agent process after the sandbox runtime becomes Ready.
  * OpenShell Ready proves the supervisor session, not the agent's HTTP listener.
+ * At the OpenClaw deadline, null means the last observation was unavailable;
+ * false means no positive observation was accepted within the wait window.
  */
 export async function waitForStartedNativeGatewayProcess(
   sandboxName: string,
@@ -1819,10 +1822,11 @@ export async function waitForStartedNativeGatewayProcess(
       options.environment ?? process.env,
     ) *
       1_000;
+  let running: boolean | null = false;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;
-    const running = await probe(sandboxName, gatewayName, {
+    running = await probe(sandboxName, gatewayName, {
       startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
     });
     if (now() >= deadline) break;
@@ -1832,7 +1836,7 @@ export async function waitForStartedNativeGatewayProcess(
     log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
     await delay(delayMs);
   }
-  return false;
+  return running === null ? null : false;
 }
 
 export async function isSandboxGatewayHttpReachableForStatus(
