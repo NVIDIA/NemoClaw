@@ -952,7 +952,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; native NVIDIA Endpoints provider",
     profile: "nvidia-api",
-    timeoutMinutes: 55,
+    timeoutMinutes: 85,
     installMode: "authenticated",
     installNonInteractive: true,
     restoreCli: true,
@@ -974,6 +974,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod",
       NEMOCLAW_SWITCH_MODEL: "nvidia/nemotron-3.5-super-vl-120b-a12b",
       NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
+      // Reserve the added damaged-state rebuild and keep ten minutes for job cleanup.
+      NEMOCLAW_TEST_TIMEOUT: String(75 * 60_000),
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
@@ -1492,6 +1494,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     owningPaths: [
+      "src/lib/actions/sandbox/connect.ts",
+      "src/lib/actions/sandbox/process-recovery.ts",
+      "src/lib/actions/sandbox/start.ts",
       "src/lib/actions/sandbox/gateway-state.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "tools/e2e/sandbox-survival-timeout-contract.mts",

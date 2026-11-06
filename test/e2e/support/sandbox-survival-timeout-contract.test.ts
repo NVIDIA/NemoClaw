@@ -34,6 +34,17 @@ import { SANDBOX_MARKER_COMMAND_TIMEOUT_MS } from "../fixtures/phases/state-vali
 const MINUTE_MS = 60_000;
 
 describe("sandbox-survival timeout contract", () => {
+  it.each([
+    "src/lib/actions/sandbox/connect.ts",
+    "src/lib/actions/sandbox/process-recovery.ts",
+    "src/lib/actions/sandbox/start.ts",
+  ])("selects both native runtime variants for changes to %s", (file) => {
+    const target = catalogueTargetsForChangedFiles([file]).find(
+      (candidate) => candidate.id === "sandbox-survival",
+    );
+    expect(target?.gatewayRuntimes).toEqual(["docker", "podman"]);
+  });
+
   it("contains every bounded phase and leaves explicit test headroom", () => {
     expect(SANDBOX_SURVIVAL_PREPARATION_WORST_CASE_MS).toBeGreaterThanOrEqual(
       SANDBOX_SURVIVAL_INSTALL_TIMEOUT_MS,

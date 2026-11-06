@@ -113,27 +113,30 @@ describe("Discord enrollment in live-test children", () => {
       ).toEqual({ active: true, disabled: false, fallbackUrls: [] });
       return success;
     };
+    const proveStoredEnrollment: HostCliClient["command"] = async (_binary, _args, options) =>
+      proveEnrollment(
+        options?.env,
+        COMPILER_PROBE.replace(
+          "common: { log() {} }",
+          'common: { log() {}, getCredential: (key) => key === "DISCORD_BOT_TOKEN" ? "test-fake-discord-token-hermes-e2e" : null }',
+        ),
+      );
+    const status = {
+      ...success,
+      stdout: JSON.stringify({
+        provider: "nvidia-prod",
+        inferenceHealth: { ok: true, probed: true },
+      }),
+    };
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockImplementationOnce(async (_binary, _args, options) =>
         proveEnrollment(options?.env, COMPILER_PROBE),
       )
-      .mockImplementationOnce(async (_binary, _args, options) =>
-        proveEnrollment(
-          options?.env,
-          COMPILER_PROBE.replace(
-            "common: { log() {} }",
-            'common: { log() {}, getCredential: (key) => key === "DISCORD_BOT_TOKEN" ? "test-fake-discord-token-hermes-e2e" : null }',
-          ),
-        ),
-      )
-      .mockResolvedValue({
-        ...success,
-        stdout: JSON.stringify({
-          provider: "nvidia-prod",
-          inferenceHealth: { ok: true, probed: true },
-        }),
-      });
+      .mockImplementationOnce(proveStoredEnrollment)
+      .mockResolvedValueOnce(status)
+      .mockImplementationOnce(proveStoredEnrollment)
+      .mockResolvedValueOnce(status);
     await runHermesNvidiaDiscordRebuild({
       host: { command },
       sandbox: {
@@ -144,12 +147,19 @@ describe("Discord enrollment in live-test children", () => {
           timedOut: false,
           stdout: args.includes("-z")
             ? "PROBE_OK"
-            : JSON.stringify({
-                enabled: true,
-                requireMention: true,
-                guildIds: "1491590992753590594",
-                allowedUsers: "1005536447329222676",
-              }),
+            : args.includes("seed") || args.includes("verify")
+              ? JSON.stringify({
+                  state: args.includes("seed") ? "stripped" : "recovered",
+                  credentials: [true, true, true],
+                  configFingerprint: "a".repeat(64),
+                  userState: true,
+                })
+              : JSON.stringify({
+                  enabled: true,
+                  requireMention: true,
+                  guildIds: "1491590992753590594",
+                  allowedUsers: "1005536447329222676",
+                }),
           stderr: "",
           artifacts: { stdout: "", stderr: "", result: "" },
         })),
@@ -160,6 +170,9 @@ describe("Discord enrollment in live-test children", () => {
     });
     expect(command.mock.calls[1]![2]!.env).not.toHaveProperty("DISCORD_BOT_TOKEN");
     expect(command.mock.calls[1]![2]!.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(command.mock.calls[3]![1]).toContain("rebuild");
+    expect(command.mock.calls[3]![2]!.env).not.toHaveProperty("DISCORD_BOT_TOKEN");
+    expect(command.mock.calls[3]![2]!.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   });
 
   it.each<[string, NodeJS.ProcessEnv]>([

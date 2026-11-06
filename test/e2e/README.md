@@ -5,6 +5,15 @@
 
 Direct E2E coverage runs through Vitest.
 
+The `sandbox-survival` target retains the raw OpenShell stop/start proof and
+also checks cold public OpenClaw recovery on Docker and native Podman. After
+public `stop`, it invokes `recover` once without warming the command transport
+or listener. One-shot native and forwarded HTTP health probes must succeed,
+and the sandbox and container IDs must remain unchanged. The existing artifact
+sink records the candidate revision, runtime, identities, command results and
+health status. Startup polling and zero-wait policy remain in deterministic
+source tests. The added lifecycle commands fit the existing target timeout.
+
 Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
 switching, and token-rotation targets use a
 test-only Node preload for their synthetic Discord enrollment tokens. The
@@ -413,6 +422,41 @@ records, controller protocols, permissions, and unsupported platforms still need
 their own review. Historical upgrade fixtures keep their historical versions.
 Pi retains its separate candidate contract and qualification receipts below;
 selecting a shipped-agent catalog does not qualify Pi.
+
+### Hermes NVIDIA Stripped-State Recovery
+
+The native NVIDIA branch of `live/hermes-inference-switch.test.ts` owns the real registered rebuild boundary for #14094.
+Its catalogue entry provides a 75-minute test budget and an 85-minute workflow budget.
+The extra test time covers the second rebuild and its probes; ten minutes remain for workflow setup, diagnostics, and cleanup.
+It keeps the healthy Discord-state rebuild, then tests a separate damaged-state rebuild in the same disposable sandbox.
+The missing coverage dimension is recovery when all three managed NVIDIA credential fields already contain `[STRIPPED_BY_MIGRATION]`.
+
+`fixtures/hermes-nvidia-recovery.ts` seeds only those three fields through the sandbox owner's mutable config.
+It checks the route, regular-file ownership, links, and size, compares file metadata around the write, and reopens the config to verify the exact damaged input.
+These snapshot checks detect observed changes; they do not exclude concurrent writers.
+It does not alter config permissions, guard hashes, supervisor state, or credential stores.
+The public rebuild must recover three agreeing issued references, retain the noncredential config fingerprint and a test-owned user-state file, preserve Discord settings, report healthy NVIDIA inference, and return `PROBE_OK` from a real Hermes request.
+Neither rebuild sets `NVIDIA_INFERENCE_API_KEY` or `DISCORD_BOT_TOKEN`.
+The test-only enrollment transport receives the synthetic token through `NEMOCLAW_E2E_DISCORD_TOKEN`.
+The synthetic Discord enrollment transport does not establish real Discord delivery.
+Existing terminal cleanup still owns the disposable resources; the fixture adds no mutation retry or backup deletion.
+
+Source caller tests and the integration tests in `test/agents/hermes/hermes-nvidia-restore-validation.test.ts` and `hermes-restart-config-seal-write-lock.test.ts` own recovery eligibility and transaction refusal.
+`support/hermes-nvidia-recovery.test.ts` executes the fixture against local files and owns its mutation, refusal, and diagnostic-output contracts.
+`support/hermes-discord-rebuild-contract.test.ts` owns evidence sequencing and rejection.
+These deterministic tests do not qualify the installed guard.
+
+The live assertion count decreases by two. The Discord-state reader must exit successfully before its exact settings comparison; support tests reject valid output followed by a failed read after either rebuild. Each removed check has a separate disposition:
+
+| Removed check | Retained owner or reason |
+| --- | --- |
+| Repeated native-turn exit, PONG, and model checks | `runHermesPongWithRetry` already rejects these failures. `support/hermes-inference-switch-command-shape.test.ts` tests that rejection; live authenticated-request evidence remains. |
+| Diagnostic config-export exit | The diagnostic export is removed because it has no separate product outcome. Live config integrity and inference checks remain. |
+| Proxy fixture's OpenShell metadata readback | Support tests own fixture arguments. Live route readback and Hermes CLI inference prove the resulting NemoClaw route; mock-backed runs also retain authenticated request evidence. The Anthropic metadata check remains. |
+| Repeated recovery-probe output shape | The fixture tests own constant diagnostic fields and fingerprint format. Live seed/verify command success and the cross-rebuild fingerprint comparison remain. No checks move into the Python probe. |
+
+Live evidence must identify the exact CLI revision and matching immutable managed-image digest through the candidate image authority above.
+If fixture seeding, rebuild preflight, or installed readiness refuses the damaged state, stop and retain the failure evidence; do not update guard anchors or bypass readiness.
 
 ### Candidate OpenShell release admission
 
