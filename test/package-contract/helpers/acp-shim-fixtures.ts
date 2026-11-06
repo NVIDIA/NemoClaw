@@ -29,6 +29,73 @@ export function runInstallerFunction(
   });
 }
 
+export function runAcpPrefixMigrationScenario(
+  scenario: { tmp: string; fakeBin: string; prefixBin: string; oldPrefix: string },
+  prefix: "unchanged" | "migrated",
+  replacement: "missing" | "existing",
+) {
+  const home = path.join(scenario.tmp, "home");
+  const shimPath = path.join(home, ".local", "bin", "nemoclaw-acp");
+  const oldCli = createManagedSourceNemoClawAcp(home, scenario.oldPrefix);
+  writeInstallerGeneratedAcpShim(shimPath, scenario.fakeBin, oldCli);
+  const oldContents = fs.readFileSync(shimPath);
+  const executedOldTarget = path.join(scenario.tmp, "old-target-executed");
+  fs.writeFileSync(
+    fs.realpathSync(oldCli),
+    `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(executedOldTarget)}, "executed");\n`,
+  );
+  fs.chmodSync(scenario.oldPrefix, prefix === "migrated" ? 0o775 : 0o755);
+  const activePrefix = prefix === "migrated" ? path.join(home, ".npm-global") : scenario.oldPrefix;
+  const activeCli = path.join(activePrefix, "bin", "nemoclaw-acp");
+  if (prefix === "migrated" && replacement === "existing") {
+    fs.mkdirSync(path.dirname(activeCli), { recursive: true });
+    writeExecutable(activeCli, "#!/usr/bin/env bash\nprintf replacement\n");
+  }
+  writeExecutable(path.join(scenario.fakeBin, "uname"), "#!/bin/sh\nprintf Linux\n");
+  writeExecutable(
+    path.join(scenario.fakeBin, "npm"),
+    `#!/usr/bin/env bash
+case "$1 $2 $3" in
+  "config get prefix") printf '%s\\n' "\${NPM_CONFIG_PREFIX:-$ACTIVE_NPM_PREFIX}" ;;
+  "config set prefix") exit 0 ;;
+  *) exit 99 ;;
+esac
+`,
+  );
+  const result = runInstallerFunction(
+    scenario,
+    {
+      HOME: home,
+      ACTIVE_NPM_PREFIX: scenario.oldPrefix,
+      NPM_CONFIG_PREFIX: "",
+      npm_config_prefix: "",
+    },
+    `fix_npm_permissions
+preflight_nemoclaw_acp_shim
+if [[ "$ACTIVE_NPM_PREFIX" != "${activePrefix}" ]]; then
+  mkdir -p "${path.dirname(activeCli)}"
+  printf '%s\\n' '#!/usr/bin/env bash' 'printf replacement' > "${activeCli}"
+  chmod 755 "${activeCli}"
+fi
+ensure_cli_shim "nemoclaw-acp"`,
+  );
+  const executed =
+    prefix === "migrated" && result.status === 0
+      ? spawnSync(shimPath, [], {
+          encoding: "utf8",
+          env: { PATH: [scenario.fakeBin, TEST_SYSTEM_PATH].join(path.delimiter) },
+        })
+      : null;
+  return {
+    result,
+    execution: executed ? { status: executed.status, stdout: executed.stdout } : null,
+    activeCli,
+    oldContents,
+    contents: fs.readFileSync(shimPath),
+    oldTargetExecuted: fs.existsSync(executedOldTarget),
+  };
+}
+
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
@@ -69,6 +136,7 @@ exit 99
   return { fakeBin, prefixBin };
 }
 
+// v0.0.123, v0.0.140, and v0.0.141 emit the same wrapper format.
 export function writeInstallerGeneratedAcpShim(
   shimPath: string,
   fakeBin: string,

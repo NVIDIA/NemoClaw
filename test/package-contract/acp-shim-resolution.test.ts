@@ -18,6 +18,7 @@ import {
   linkSourceCheckoutWorktree,
   redirectSourceCheckoutWorkTree,
   runInstallerFunction,
+  runAcpPrefixMigrationScenario,
   writeInstallerGeneratedAcpShim,
 } from "./helpers/acp-shim-fixtures.js";
 
@@ -62,21 +63,33 @@ function expectRejectedUnchanged(
 }
 
 describe("installer recognition of stale NemoClaw ACP shims (#12738)", () => {
-  it.skipIf(process.platform === "win32")(
-    "refreshes a prior managed-source ACP wrapper after the active CLI path changes",
-    () => {
-      const scenario = createScenario("old-source-shim");
-      const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
-      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
-      const oldContents = fs.readFileSync(scenario.shimPath);
-
-      const result = runInstallerFunction(scenario);
-
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(fs.readFileSync(scenario.shimPath)).not.toEqual(oldContents);
-      expect(fs.readFileSync(scenario.shimPath, "utf-8")).toContain(
-        path.join(scenario.prefixBin, "nemoclaw-acp"),
+  it.skipIf(process.platform === "win32").each([
+    { prefix: "unchanged", replacement: "existing", preservesWrapper: true, execution: null },
+    {
+      prefix: "migrated",
+      replacement: "missing",
+      preservesWrapper: false,
+      execution: { status: 0, stdout: "replacement" },
+    },
+    {
+      prefix: "migrated",
+      replacement: "existing",
+      preservesWrapper: false,
+      execution: { status: 0, stdout: "replacement" },
+    },
+  ] as const)(
+    "refreshes a verified ACP wrapper with a $prefix npm prefix and $replacement replacement (#14268)",
+    ({ prefix, replacement, preservesWrapper, execution }) => {
+      const evidence = runAcpPrefixMigrationScenario(
+        createScenario("prefix-migration"),
+        prefix,
+        replacement,
       );
+      expect(evidence.result.status, `${evidence.result.stdout}${evidence.result.stderr}`).toBe(0);
+      expect(evidence.oldTargetExecuted).toBe(false);
+      expect(evidence.execution).toEqual(execution);
+      expect(evidence.contents.toString("utf8")).toContain(evidence.activeCli);
+      expect(evidence.contents.equals(evidence.oldContents)).toBe(preservesWrapper);
     },
   );
 
@@ -192,32 +205,6 @@ ensure_cli_shim "nemoclaw-acp"`,
         scenario,
         {},
         'preflight_nemoclaw_acp_shim; ensure_cli_shim "nemoclaw-acp"',
-      );
-
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(fs.readFileSync(scenario.shimPath)).not.toEqual(oldContents);
-      expect(fs.readFileSync(scenario.shimPath, "utf-8")).toContain(
-        path.join(scenario.prefixBin, "nemoclaw-acp"),
-      );
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "refreshes a verified stale source wrapper after creating the active CLI",
-    () => {
-      const scenario = createScenario("empty-prefix-stale-source");
-      const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
-      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
-      const oldContents = fs.readFileSync(scenario.shimPath);
-      fs.rmSync(path.join(scenario.prefixBin, "nemoclaw-acp"));
-
-      const result = runInstallerFunction(
-        scenario,
-        {},
-        `preflight_nemoclaw_acp_shim
-printf '%s\\n' '#!/usr/bin/env bash' 'echo nemoclaw-acp v0.1.0' > "$ACTIVE_NPM_PREFIX/bin/nemoclaw-acp"
-chmod 755 "$ACTIVE_NPM_PREFIX/bin/nemoclaw-acp"
-ensure_cli_shim "nemoclaw-acp"`,
       );
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
