@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { catalogueTargetsForChangedFiles } from "../../../tools/e2e/target-catalogue.mts";
 import { resolveModelRouterLogPath } from "../../../src/lib/onboard/model-router.ts";
 import { DEFAULT_GATEWAY_PORT } from "../../../src/lib/core/ports.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -26,6 +27,23 @@ vi.mock("../../../src/lib/core/ports.ts", async (importOriginal) => ({
 }));
 
 describe("Model Router provider-routed live support", () => {
+  it.each([
+    "nemoclaw-blueprint/router/pool-config.yaml",
+    "nemoclaw-blueprint/router/rules.py",
+    "nemoclaw-blueprint/router/model-router",
+    "src/lib/onboard/model-router-command.ts",
+    "scripts/generate-openclaw-config.mts",
+    "src/lib/onboard/inference-input-capability.ts",
+    "src/lib/actions/sandbox/destroy-preflight.ts",
+    "src/lib/onboard/model-router-process.ts",
+    "src/lib/onboard/model-router.ts",
+    "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
+  ])("selects the Model Router target when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "model-router-provider-routed-inference",
+    );
+  });
+
   it("builds the routed onboard environment with both NVIDIA credential names", () => {
     expect(buildProviderRoutedEnv("nvapi-public-test-key", "e2e-router", {})).toMatchObject({
       NVIDIA_INFERENCE_API_KEY: "nvapi-public-test-key",

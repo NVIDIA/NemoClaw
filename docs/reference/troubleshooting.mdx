@@ -2863,16 +2863,20 @@ Check whether vLLM is a bring-your-own server or the NemoClaw managed Spark prof
 Inspect the running containers, current memory, and kernel evidence:
 
 ```bash
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+docker --context default ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
 free -h
 journalctl -k --since "24 hours ago" --no-pager | grep -Ei 'NVRM|OOM|out of memory|lockup|watchdog'
 ```
 
-For a NemoClaw-managed Spark profile, derive the host port from the managed container's fixed `8000/tcp` mapping. Bearer-protected profiles publish two bindings with the same host port, while bearerless profiles publish one all-interface binding.
+For a NemoClaw-managed Spark profile, derive the host port from the managed container's fixed `8000/tcp` mapping.
+New containers publish that host port on `127.0.0.1` and the private `openshell-docker` bridge gateway, independently of bearer authentication.
+Existing containers keep their published bindings until they are recreated.
+Managed route recovery rejects owned bearerless containers with unsafe bindings.
+To recreate the container, follow [Handle a Running vLLM Server](../inference/local-inference/set-up-vllm#handle-a-running-vllm-server) with the original model and port settings.
 
 ```bash
 VLLM_HOST_PORT="$(
-  docker port nemoclaw-vllm 8000/tcp |
+  docker --context default port nemoclaw-vllm 8000/tcp |
     sed -n 's/^.*:\([0-9][0-9]*\)$/\1/p' |
     sort -u
 )"

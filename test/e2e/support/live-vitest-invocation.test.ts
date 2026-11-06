@@ -357,13 +357,15 @@ it.each([
   ["spark-express-vllm", "^spark-express-vllm:"],
   ["dgx-station-express", "^dgx-station-express:"],
 ])(
-  "collects exactly the %s live case without executing hardware operations",
+  "collects exactly the %s live case without loading hardware runtime modules",
   (target, selector) => {
     const result = spawnSync(
       process.execPath,
       [
         path.resolve("node_modules/vitest/vitest.mjs"),
         "list",
+        "--config",
+        "test/e2e/support/fixtures/dgx-collection.config.ts",
         "--project",
         "e2e-live",
         DGX_EXPRESS_TEST_PATH,
