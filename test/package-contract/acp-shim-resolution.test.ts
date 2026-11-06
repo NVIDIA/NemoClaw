@@ -80,36 +80,35 @@ describe("installer recognition of stale NemoClaw ACP shims (#12738)", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
-    "preserves a managed ACP wrapper when Git target verification cannot complete",
-    () => {
-      const scenario = createScenario("incomplete-git-verification");
-      const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
-      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
-      const originalContents = fs.readFileSync(scenario.shimPath);
-      expect(runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim").status).toBe(0);
-      fs.writeFileSync(path.join(scenario.fakeBin, "git"), "#!/bin/sh\nexit 73\n", {
-        mode: 0o755,
-      });
-
-      for (const command of [
-        "preflight_nemoclaw_acp_shim",
+  it.skipIf(process.platform === "win32").each([
+    { phase: "preflight", command: "preflight_nemoclaw_acp_shim" },
+    {
+      phase: "replacement",
+      command:
         'assert_nemoclaw_acp_shim_replaceable "nemoclaw-acp" "$ACTIVE_NPM_PREFIX/bin/nemoclaw-acp"',
-      ]) {
-        const result = runInstallerFunction(scenario, {}, command);
-        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
-        expect(fs.readFileSync(scenario.shimPath)).toEqual(originalContents);
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          "ACP target Git verification did not complete at repository directory",
-        );
-        expect(`${result.stdout}${result.stderr}`).toContain(
-          "ACP target ownership verification did not complete",
-        );
-        expect(`${result.stdout}${result.stderr}`).not.toContain("not a NemoClaw-managed shim");
-        expect(`${result.stdout}${result.stderr}`).not.toContain("Move or remove that path");
-      }
     },
-  );
+  ])("preserves a managed ACP wrapper when Git verification fails during $phase", ({ command }) => {
+    const scenario = createScenario("incomplete-git-verification");
+    const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
+    writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+    const originalContents = fs.readFileSync(scenario.shimPath);
+    expect(runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim").status).toBe(0);
+    fs.writeFileSync(path.join(scenario.fakeBin, "git"), "#!/bin/sh\nexit 73\n", {
+      mode: 0o755,
+    });
+
+    const result = runInstallerFunction(scenario, {}, command);
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+    expect(fs.readFileSync(scenario.shimPath)).toEqual(originalContents);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "ACP target Git verification did not complete at repository directory",
+    );
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "ACP target ownership verification did not complete",
+    );
+    expect(`${result.stdout}${result.stderr}`).not.toContain("not a NemoClaw-managed shim");
+    expect(`${result.stdout}${result.stderr}`).not.toContain("Move or remove that path");
+  });
 
   it.skipIf(process.platform === "win32")(
     "rejects a generated-shaped wrapper naming a missing future active path before and during replacement",
