@@ -75,8 +75,7 @@ Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image bui
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
 Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.14.10 base without pip.
-Only OpenClaw, Hermes, Pi, and Deep Agents Code add Node.js 24.22.2 LTS: OpenClaw's CLI and the Pi and Deep Agents Code adapters run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
-The Deep Agents Code image also installs `dcode` in its own Python 3.14 environment, `/opt/deepagents-code`, from [its lock](https://github.com/NVIDIA/NemoClaw/blob/86b8d94273a76a696e06b300dc29f7035b163667/image/fabric/deepagents-code/uv.lock).
+Only OpenClaw, Hermes, and Pi add Node.js 24.22.2 LTS: OpenClaw's CLI and the Pi adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.

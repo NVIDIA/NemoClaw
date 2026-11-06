@@ -228,7 +228,7 @@ Reports hold status codes; tokens and response bodies stay in the run's private 
 Then the `tests/e2e/hcl/command` module runs two commands in each sandbox: one writes a marker file in `/sandbox/workspace`, the workspace that the SDK's Fabric configuration sets, and reads it back as the agent image's user, UID 10001; the other lists the environment, which must include the variable that the sandbox reads the model registration's key from, `NEMOCLAW_INFERENCE_MODEL_..._KEY`, but not the run's model key.
 The stub's reply does not establish inference; `docker-openclaw-nvidia` covers hosted inference.
 
-The Deep Agents Code terminal and Hermes's browser chat need a pseudo-terminal, and are not checked live.
+Hermes's browser chat needs a pseudo-terminal, and is not checked live.
 Rejected interfaces, refused tokens, a killed dashboard process, and tokens kept out of output and state are integration checks ([#14060](https://github.com/NVIDIA/NemoClaw/issues/14060)).
 
 ## Docker Gateway Isolation

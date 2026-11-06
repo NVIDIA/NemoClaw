@@ -244,10 +244,9 @@ fn gateway_documents_parse_as_current_configuration() {
     );
 }
 
-/// The interface live test's document: OpenClaw's dashboard, Hermes's API
-/// server and dashboard, and Deep Agents Code's terminal on one gateway, with a
-/// model endpoint on the gateway network's host address and a key the test
-/// supplies. Every sandbox takes its image's default policy, which lets
+/// The interface live test's document: OpenClaw's dashboard and Hermes's API
+/// server and dashboard on one gateway, with a model endpoint on the gateway
+/// network's host address and a key the test supplies. Every sandbox takes its image's default policy, which lets
 /// Hermes's browser chat open a terminal.
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));

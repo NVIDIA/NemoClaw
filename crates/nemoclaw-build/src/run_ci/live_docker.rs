@@ -233,7 +233,6 @@ fn prepare(
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_hermes(platform, &prefix)?;
-            live_images::build_deepagents_code(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
         }
     }
