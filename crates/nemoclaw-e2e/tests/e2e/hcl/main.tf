@@ -15,6 +15,7 @@ variable "context" {
     openshell        = string
     work_dir         = string
     evidence_dir     = string
+    versions         = string
   })
 }
 
