@@ -385,13 +385,13 @@ function renderMcpHelp(subcommand: string): void {
   switch (subcommand) {
     case "add":
       console.log(`USAGE
-  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse] [--no-probe]
+  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ... | --allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse] [--no-probe]
 
 FLAGS
   --url URL                 MCP Streamable HTTP endpoint
   --env KEY                 Required host credential reference registered with OpenShell
-  --deny-tool TOOL          Deny an exact tool name or glob at the OpenShell MCP proxy; repeatable
-  --allow-tool TOOL         Allow only this exact tool name (deny-by-default mode); repeatable
+  --deny-tool TOOL          Deny an exact tool name or glob at the OpenShell MCP proxy; exclusive with --allow-tool; repeatable
+  --allow-tool TOOL         Allow only this exact tool name (deny-by-default mode); exclusive with --deny-tool; repeatable
   --trusted-private-host HOST
                             Trust the exact URL host when it resolves only to routed private addresses
   --server-identity DIGEST  Operator-supplied pin for supply-chain tracking (format: sha256:...)
@@ -481,7 +481,7 @@ export async function dispatchMcpBridgeCommand(
         const { probe, rest: addRest } = parseProbeFlags(rest);
         if (probe === true)
           throw new McpBridgeError(
-            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse] [--no-probe]",
+            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ... | --allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse] [--no-probe]",
             2,
           );
         const options = parseMcpAddArgs(addRest);
