@@ -745,10 +745,12 @@
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/hermes-nvidia-recovery.ts",
         "test/e2e/live/hermes-inference-switch-helpers.ts",
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-nvidia-recovery.test.ts",
         "src/lib/onboard/hermes/initial-inference-route.test.ts",
         "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
         "test/e2e/support/hermes-native-local-evidence.test.ts",

@@ -331,11 +331,6 @@ describe("Hermes inference switch command shape", () => {
     const command = vi
       .fn()
       .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "created" })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stderr: "",
-        stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
-      })
       .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
 
     await prepareProxyResolutionRoute({
@@ -356,7 +351,7 @@ describe("Hermes inference switch command shape", () => {
         "NVIDIA_INFERENCE_API_KEY",
       ]),
     );
-    expect(command.mock.calls[2]?.[1]).toEqual(
+    expect(command.mock.calls[1]?.[1]).toEqual(
       expect.arrayContaining(["--provider", PROXY_RESOLUTION_PROVIDER]),
     );
   });
