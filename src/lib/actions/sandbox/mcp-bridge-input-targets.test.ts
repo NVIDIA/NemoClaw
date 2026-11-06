@@ -19,13 +19,6 @@ import {
   preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-url-validation";
 
-// Standalone source-test runs do not restore CI's compiled catalog artifact.
-await vi.hoisted(async () => {
-  const { ensureTestServingCatalog } =
-    await import("../../../../test/helpers/managed-inference-catalog");
-  ensureTestServingCatalog(process.cwd());
-});
-
 describe("MCP URL target validation", () => {
   it("sorts and deduplicates public DNS pins deterministically", async () => {
     const lookup = vi.spyOn(dns, "lookup").mockResolvedValue([
