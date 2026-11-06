@@ -33,6 +33,21 @@ jobs require it before exporting their validated image contracts. Their architec
 artifacts retain the probe results, including failures. Both architectures must pass for
 Switchyard release qualification; a startup-hold result alone does not qualify the package.
 
+The PR Hermes amd64 job enables passive crash diagnostics for the isolated package probe
+only after preparation succeeds. If debugger package installation fails, qualification runs
+without crash capture. Core-setting and cleanup failures still fail the job.
+Python's fault handler records Python stacks; the probe records executable identity and memory
+mappings before and after native shutdown. Only that probe raises its core soft limit, to 256 MiB.
+On exit 134 or 139, host GDB reads the core against the still-running container's executable and
+libraries. Debugger auto-loading and network symbol lookup are disabled. Artifacts contain bounded,
+redacted stack and mapping text, without frame arguments, locals, or raw memory. Missing symbols,
+unloaded libraries, or the core size limit can prevent a complete stack.
+The raw core stays in the container and a private runner temporary directory, never the artifact
+root. The collector removes its temporary copy; the workflow's always-step restores the original
+core pattern and removes remaining diagnostic containers and copies before artifact upload.
+This capture does not retry the probe, change its exit status, or establish a repair when it passes
+without crashing. Other architectures and release jobs retain the existing qualification behavior.
+
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
 Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
