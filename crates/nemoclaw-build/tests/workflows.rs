@@ -95,13 +95,12 @@ fn jobs_say_what_happens_when_a_job_they_need_is_skipped() {
 
 /// The SSH probe uses Linux shell and filesystem semantics on a shared runner group.
 #[test]
-fn ssh_probe_requires_authorization_and_linux_from_the_shared_runner_group() {
+fn ssh_probe_selects_linux_from_the_shared_runner_group() {
     let workflows = definitions(&repository());
     let (_, workflow) = workflows
         .iter()
         .find(|(path, _)| path == ".github/workflows/colossus-connectivity.yml")
         .expect("SSH connectivity workflow");
-    assert_eq!(needs(&workflow["jobs"]["probe"]), ["authorize"]);
     let labels = workflow["jobs"]["probe"]["runs-on"]["labels"]
         .as_array()
         .expect("explicit runner labels");

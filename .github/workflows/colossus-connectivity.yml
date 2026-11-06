@@ -26,48 +26,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Test authorization and output boundaries
+      - name: Test probe output boundaries
         shell: bash
         run: |
           rustfmt --edition 2024 --check tools/ci/colossus-connectivity-workflow.rs
           rustc --edition=2024 -D warnings --test tools/ci/colossus-connectivity-workflow.rs -o "$RUNNER_TEMP/connectivity-tests"
           "$RUNNER_TEMP/connectivity-tests"
-  authorize:
-    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    permissions:
-      contents: read
-    steps:
-      - name: Authorize dispatch
-        env:
-          ACTOR: ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set +x
-          set -euo pipefail
-          for checked_actor in "$ACTOR" "$TRIGGERING_ACTOR"; do
-            if [[ ! "$checked_actor" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
-              echo 'Authorization failed.'
-              exit 1
-            fi
-            if ! role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${checked_actor}/permission" --jq .role_name 2>/dev/null)"; then
-              echo 'Authorization failed.'
-              exit 1
-            fi
-            case "$role" in
-              maintain | admin) ;;
-              *)
-                echo 'Authorization failed.'
-                exit 1
-                ;;
-            esac
-          done
   probe:
-    needs: authorize
-    if: needs.authorize.result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
     runs-on:
       group: nv-cpu-general
       labels: [linux, x64]
@@ -76,33 +42,6 @@ jobs:
     permissions:
       contents: read
     steps:
-      # A failed-job rerun can reuse the first job's result with a different actor.
-      - name: Authorize probe
-        env:
-          ACTOR: ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set +x
-          set -euo pipefail
-          for checked_actor in "$ACTOR" "$TRIGGERING_ACTOR"; do
-            if [[ ! "$checked_actor" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
-              echo 'Authorization failed.'
-              exit 1
-            fi
-            if ! role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${checked_actor}/permission" --jq .role_name 2>/dev/null)"; then
-              echo 'Authorization failed.'
-              exit 1
-            fi
-            case "$role" in
-              maintain | admin) ;;
-              *)
-                echo 'Authorization failed.'
-                exit 1
-                ;;
-            esac
-          done
       - name: Verify SSH connectivity
         env:
           PROBE_HOST: ${{ secrets.COLOSSUS_SSH_HOST }}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Run shell boundaries with synthetic inputs, fake permission responses, and no network.
+//! Run shell boundaries with synthetic inputs and no network.
 use std::{
     fs,
     process::Command,
@@ -36,54 +36,6 @@ fn script(step: &str) -> String {
         .map(|line| line.get(indent..).unwrap_or(""))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-#[test]
-/// Both jobs reject either actor when permission lookup fails or grants insufficient access.
-fn authorizes_both_actors_and_fails_closed_in_each_job() {
-    let scripts = [script("Authorize dispatch"), script("Authorize probe")];
-    for script in scripts {
-        for (scenario, original, rerunner, allowed) in [
-            ("maintain", "owner", "operator", true),
-            ("admin", "owner", "operator", true),
-            ("write", "owner", "operator", false),
-            ("read", "owner", "operator", false),
-            ("api_failure", "owner", "operator", false),
-            ("denied_original", "writer", "operator", false),
-            ("denied_rerunner", "owner", "writer", false),
-            ("malformed", "owner", "operator", false),
-            ("maintain", "-invalid", "operator", false),
-        ] {
-            let shell = format!(
-                r#"
-gh() {{
-  case "$scenario" in
-    api_failure) echo 'synthetic-secret' >&2; return 1 ;;
-    denied_original|denied_rerunner)
-      if [[ "$*" == *'/writer/'* ]]; then echo write; else echo maintain; fi ;;
-    malformed) printf 'maintain\nwrite\n' ;;
-    *) printf '%s\n' "$scenario" ;;
-  esac
-}}
-{script}
-"#
-            );
-            let output = Command::new("bash")
-                .args(["-c", &shell])
-                .env("scenario", scenario)
-                .env("ACTOR", original)
-                .env("TRIGGERING_ACTOR", rerunner)
-                .env("GITHUB_REPOSITORY", "NVIDIA/NemoClaw")
-                .output()
-                .unwrap();
-            assert_eq!(
-                output.status.success(),
-                allowed,
-                "permission scenario {scenario}"
-            );
-            assert!(!String::from_utf8_lossy(&output.stderr).contains("synthetic-secret"));
-        }
-    }
 }
 
 #[test]
