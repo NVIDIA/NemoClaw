@@ -83,8 +83,14 @@ The evidence cell names the counters, cutoff, and any excluded activity.
 
 - **Codex:** use the last actual cumulative usage snapshot in `event_msg` / `token_count` events' `info.total_token_usage` at or before the cutoff.
   Map `input_tokens`, `cached_input_tokens`, and `output_tokens` to the three counts.
-  Skip context-limit placeholders that set only `total_tokens` and zero the category counters; retain earlier actual counters as `partial` when later usage is unrecorded, or use `unavailable` if none exist.
-  Do not sum running totals, add `last_token_usage` to them, or add `reasoning_output_tokens` to output again.
+  Check the recorded version's accounting before treating that snapshot as complete.
+  In [Codex 0.160.0, remote compaction v2](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/core/src/compact_remote_v2.rs) records response usage separately without adding it to these cumulative counters.
+  Reconcile response-level usage once per response ID when the records establish coverage, adding only usage not already included in the cumulative counters.
+  If compaction usage cannot be reconciled, report known counts as `partial` and explain the gap; use `unavailable` if no usable counters exist.
+  Skip context-limit placeholders that set only `total_tokens` and zero the category counters.
+  [A placeholder resets the counters](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/protocol/src/protocol.rs), so later snapshots can omit earlier usage.
+  Reconcile disjoint segments on both sides of each reset when the record supports it; otherwise report a known lower bound as `partial`, even when later actual counters exist, or `unavailable` if none exist.
+  Do not sum running totals within a segment, add `last_token_usage` to them, or add `reasoning_output_tokens` to output again.
 - **Claude Code:** read assistant `message.usage` from the session JSONL.
   Count each API response once, using `message.id` and `requestId` when present to identify repeated streaming records; use its final usage snapshot through the cutoff.
   Sum `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` for input, `cache_read_input_tokens` for cached input, and `output_tokens` for output.
