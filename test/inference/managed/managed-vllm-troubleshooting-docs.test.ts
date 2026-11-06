@@ -24,7 +24,7 @@ describe("managed vLLM troubleshooting documentation", () => {
   it("derives the managed host port and uses the authentication-independent health route (#684)", () => {
     const section = managedSparkMemorySection();
 
-    expect(section).toContain("docker port nemoclaw-vllm 8000/tcp");
+    expect(section).toContain("docker --context default port nemoclaw-vllm 8000/tcp");
     expect(section).toContain("sort -u");
     expect(section).toContain("${NEMOCLAW_VLLM_PORT:?Set NEMOCLAW_VLLM_PORT");
     expect(section).toContain("http://127.0.0.1:${VLLM_HOST_PORT}/health");

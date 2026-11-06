@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
 import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
-import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
+import { buildLocalManagedVllmDockerEnv } from "../../../src/lib/inference/vllm-docker-env.ts";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
@@ -21,12 +21,12 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { runStationExpressSmoke, STATION_SMOKE_PHASES } from "../support/dgx-station-express.ts";
 import {
   assertLocalDockerEnvironment,
   classifyDockerContainerInspection,
   inspectSandboxIdentity,
   listedSandboxNames,
+  vllmPublicationProbeUrls,
 } from "../support/spark-express-vllm-safety.ts";
 import {
   cleanupSandbox,
@@ -38,6 +38,21 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const VLLM_CONTAINER = "nemoclaw-vllm";
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const ONBOARD_TIMEOUT_MS = 55 * 60_000;
+
+const VLLM_PUBLICATION_CURL_ARGS = [
+  "-q",
+  "--noproxy",
+  "*",
+  "--globoff",
+  "--silent",
+  "--show-error",
+  "--connect-timeout",
+  "3",
+  "--max-time",
+  "5",
+  "--write-out",
+  "%{exitcode} %{http_code}\n",
+];
 
 interface VllmContainerInspection {
   readonly Id: string;
@@ -51,7 +66,6 @@ interface VllmContainerInspection {
     readonly DeviceRequests: Array<{ Count: number; Capabilities: string[][] }>;
     readonly IpcMode: string;
     readonly NetworkMode: string;
-    readonly PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
     readonly ShmSize: number;
   };
   readonly Mounts: Array<{ Destination: string; RW: boolean; Type: string }>;
@@ -231,6 +245,7 @@ test(
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     validateSandboxName(SANDBOX_NAME);
     assertLocalDockerEnvironment(process.env);
+    const { detectVllmProfile } = await import("../../../src/lib/inference/vllm.ts");
     const plan = vllmProfilePlan();
     const baseProfile = detectVllmProfile({ platform: "spark" });
     assert(baseProfile, "the DGX Spark vLLM base profile is unavailable");
@@ -370,19 +385,6 @@ test(
     expect(inspection.HostConfig.NetworkMode).toBe(plan.recipe.spec.runtime.networkMode);
     expect(inspection.HostConfig.IpcMode).toBe(plan.recipe.spec.runtime.ipcMode);
     expect(inspection.HostConfig.ShmSize).toBe(plan.recipe.spec.runtime.sharedMemoryBytes);
-    const portBindings = inspection.HostConfig.PortBindings["8000/tcp"];
-    expect(portBindings).toHaveLength(2);
-    expect(portBindings).toContainEqual({ HostIp: "127.0.0.1", HostPort: "8000" });
-    expect(portBindings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          HostIp: expect.stringMatching(/^(?!127\.0\.0\.1$)(?!0\.0\.0\.0$).+/u),
-          HostPort: "8000",
-        }),
-      ]),
-    );
-    const bridgeBinding = portBindings.find(({ HostIp }) => HostIp !== "127.0.0.1");
-    expect(bridgeBinding?.HostIp).toBe(resolveManagedVllmBridgeHost());
     expect(inspection.HostConfig.DeviceRequests).toEqual(
       expect.arrayContaining([expect.objectContaining({ Count: -1, Capabilities: [["gpu"]] })]),
     );
@@ -395,6 +397,40 @@ test(
         }),
       ]),
     );
+
+    const publicationEnv = e2eEnv();
+    const probes = vllmPublicationProbeUrls(
+      resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, publicationEnv)),
+    );
+    await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
+    const allowed = await host.command(
+      "curl",
+      [
+        ...VLLM_PUBLICATION_CURL_ARGS,
+        ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url]),
+      ],
+      {
+        artifactName: "spark-express-vllm-publication-allowed",
+        env: publicationEnv,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(allowed.exitCode, resultText(allowed)).toBe(0);
+    expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
+    const refused = await host.command(
+      "curl",
+      [
+        ...VLLM_PUBLICATION_CURL_ARGS,
+        ...probes.denied.flatMap((url) => ["--output", "/dev/null", url]),
+      ],
+      {
+        artifactName: "spark-express-vllm-publication-denied",
+        env: publicationEnv,
+        timeoutMs: 60_000,
+      },
+    );
+    expect(refused.exitCode, resultText(refused)).toBe(7);
+    expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
 
     progress.phase("prove sandbox inference and unrelated egress denial");
     await expectOpenAiChatThroughSandbox(
@@ -424,9 +460,18 @@ test(
   "dgx-station-express: Station Express installs cached Super VL vLLM and NemoClaw, routes inference, and cleans up runtime",
   {
     timeout: 48 * 60_000,
-    meta: { e2ePhases: STATION_SMOKE_PHASES, e2eCleanupTimeoutMs: 6 * 60_000 },
+    meta: {
+      e2ePhases: [
+        "inspect the prepared Station",
+        "install Station Express from the candidate checkout",
+        "assert managed Super VL and routed inference",
+        "clean up the job runtime",
+      ],
+      e2eCleanupTimeoutMs: 6 * 60_000,
+    },
   },
   async ({ host, sandbox, artifacts, progress, cleanup }) => {
+    const { runStationExpressSmoke } = await import("../support/dgx-station-express.ts");
     await artifacts.target.declare({
       id: "dgx-station-express",
       contract: [
@@ -446,6 +491,40 @@ test(
         install: () => progress.phase("install Station Express from the candidate checkout"),
         assert: () => progress.phase("assert managed Super VL and routed inference"),
         cleanup: () => progress.phase("clean up the job runtime"),
+      },
+      verifyPublication: async (env) => {
+        const probes = vllmPublicationProbeUrls(
+          resolveManagedVllmBridgeHost(undefined, buildLocalManagedVllmDockerEnv({}, env)),
+        );
+        await artifacts.writeJson("station-express-vllm-publication-probes", probes);
+        const allowed = await host.command(
+          "curl",
+          [
+            ...VLLM_PUBLICATION_CURL_ARGS,
+            ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url]),
+          ],
+          {
+            artifactName: "station-express-vllm-publication-allowed",
+            env,
+            timeoutMs: 30_000,
+          },
+        );
+        expect(allowed.exitCode, resultText(allowed)).toBe(0);
+        expect(allowed.stdout.trim().split("\n")).toEqual(["0 200", "0 200"]);
+        const refused = await host.command(
+          "curl",
+          [
+            ...VLLM_PUBLICATION_CURL_ARGS,
+            ...probes.denied.flatMap((url) => ["--output", "/dev/null", url]),
+          ],
+          {
+            artifactName: "station-express-vllm-publication-denied",
+            env,
+            timeoutMs: 60_000,
+          },
+        );
+        expect(refused.exitCode, resultText(refused)).toBe(7);
+        expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
       },
       writeEvidence: (name, value) => artifacts.writeJson(name, value),
     });

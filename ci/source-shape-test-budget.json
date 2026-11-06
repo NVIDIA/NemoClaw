@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "test/repository/colossus-connectivity-registration.test.ts",
+      "test": "keeps default-branch SSH registration non-executing",
+      "category": "security"
+    },
+    {
       "file": "test/repository/dockerignore-security-contract.test.ts",
       "test": "excludes secret-bearing names at every directory depth",
       "category": "security"

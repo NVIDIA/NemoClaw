@@ -3194,10 +3194,8 @@ install_nodejs() {
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Fix npm permissions for global installs (Linux only).
-# If the npm global prefix points to a system directory (e.g. /usr or
-# /usr/local) the user likely lacks write permissions and npm link will fail
-# with EACCES.  Redirect the prefix to ~/.npm-global so the install succeeds
-# without sudo.
+# Redirect an unsafe or unwritable system npm prefix to ~/.npm-global.
+# Do not change shared toolchain permissions or weaken publication checks.
 # ---------------------------------------------------------------------------
 fix_npm_permissions() {
   if [[ "$(uname -s)" != "Linux" ]]; then
@@ -3211,26 +3209,31 @@ fix_npm_permissions() {
   fi
   assert_user_local_npm_prefix_safe "$npm_prefix"
 
-  if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]]; then
+  if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]] \
+    && (assert_npm_executable_prefix_safe "$npm_prefix" >/dev/null 2>&1); then
     return 0
   fi
 
-  info "npm global prefix '${npm_prefix}' is not writable — configuring user-local installs"
+  info "npm global prefix '${npm_prefix}' is unsafe or not writable — configuring user-local installs"
   assert_user_local_npm_prefix_safe "$HOME/.npm-global"
   (umask g-w,o-w && mkdir -p "$HOME/.npm-global") \
     || error "Could not create the user-local npm directory $HOME/.npm-global."
   assert_user_local_npm_prefix_safe "$HOME/.npm-global"
   npm config set prefix "$HOME/.npm-global"
+  # Keep source .npmrc files and inherited prefix overrides from selecting
+  # the rejected toolchain again in later installer subprocesses.
+  export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+  export npm_config_prefix="$NPM_CONFIG_PREFIX"
 
   # shellcheck disable=SC2016
   local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    if [[ -f "$rc" ]] && ! grep -q ".npm-global" "$rc"; then
+    if [[ -f "$rc" ]] && [[ "$(tail -n 1 "$rc")" != "$path_line" ]]; then
       printf '\n# Added by NemoClaw installer\n%s\n' "$path_line" >>"$rc"
     fi
   done
 
-  if [[ ":$PATH:" != *":$HOME/.npm-global/bin:"* ]]; then
+  if [[ "$PATH" != "$HOME/.npm-global/bin" && "$PATH" != "$HOME/.npm-global/bin:"* ]]; then
     export PATH="$HOME/.npm-global/bin:$PATH"
   fi
   ok "npm configured for user-local installs (~/.npm-global)"
