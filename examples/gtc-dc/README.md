@@ -110,7 +110,7 @@ Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../.
 Model requests can incur cloud inference charges.
 Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
 Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
-Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS.
+Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS, and can open pseudo-terminals in `/dev/pts`, which its [browser chat](../../docs/agents-inference/interfaces.md#hermess-browser-chat) needs.
 
 Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/build-deploy/kubernetes.md#use-an-existing-gateway).
 Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.

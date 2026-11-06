@@ -152,6 +152,7 @@ Agent interfaces:
     Forward:  openshell forward service claw --target-port 18789 --local 127.0.0.1:18789
     Token:    openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token
     Sign in:  open http://127.0.0.1:18789/#token=TOKEN, replacing TOKEN with the token
+    Terminal: openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token TOKEN, replacing TOKEN with the token
 ```
 
 JSON results carry the same facts under `interfaces`.
@@ -181,6 +182,25 @@ The interface's location and authentication determine which actors can reach it.
 
 Configuration changed through an interface isn't kept: the adapter regenerates the harness's configuration at each start.
 Conversations in an interface aren't promised to share history with requests sent through `fabric-agent-ctl invoke`.
+
+### OpenClaw's Terminal UI
+
+OpenClaw's terminal UI, `openclaw tui`, is a client of the Gateway that serves the Control UI, so it needs the `dashboard` interface and signs in with its token.
+Apply prints the command that opens it on the dashboard's `Terminal` line, and JSON results carry the command it runs in the sandbox as `terminal`.
+Run it from a terminal on the client host with the gateway and workspace selected; it needs no forward.
+To keep the token out of your shell history, read it into a variable with the `Token` command:
+
+```sh
+TOKEN=$(openshell sandbox exec -n claw --no-tty -- cat /sandbox/artifacts/.fabric/openclaw/runtimes/RUNTIME_ID/interfaces/dashboard.token)
+openshell sandbox exec -n claw --tty -- openclaw tui --url ws://127.0.0.1:18789 --token "$TOKEN"
+unset TOKEN
+```
+
+Press Ctrl-D to quit. Opening it again reconnects to the same session and shows its history.
+The token changes each time the runtime starts, so read it again after a restart.
+The agent's own tools can read the token, as [Who Can Use an Interface](#who-can-use-an-interface) describes.
+
+OpenShell opens the pseudo-terminal of `openshell sandbox exec --tty` and hands it to the command, so the terminal UI works without `/dev/pts` in the sandbox's filesystem policy. Hermes's browser chat opens its own pseudo-terminal, so it needs `/dev/pts`, as the next section describes.
 
 ### Hermes's Browser Chat
 

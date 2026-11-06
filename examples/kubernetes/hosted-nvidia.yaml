@@ -96,6 +96,8 @@ spec:
                 - /etc/ssl/certs/ca-certificates.crt
               read_write:
                 - /sandbox
+                # Hermes's browser chat opens pseudo-terminals in /dev/pts.
+                - /dev/pts
       agent:
         name: hermes
         inferenceRef: chat
