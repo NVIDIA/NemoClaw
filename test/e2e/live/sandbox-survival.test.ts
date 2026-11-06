@@ -117,6 +117,7 @@ test(
   }) => {
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
+    const sandboxEnv = { ...sandboxAccessEnv(), OPENSHELL_GATEWAY: "nemoclaw" };
 
     await artifacts.target.declare({
       id: "sandbox-survival",
@@ -146,7 +147,7 @@ test(
       ],
       {
         artifactName: "pre-cleanup-openshell-delete-sandbox-survival",
-        env: buildAvailabilityProbeEnv(),
+        env: sandboxEnv,
         timeoutMs: SANDBOX_SURVIVAL_OPENSHELL_DELETE_TIMEOUT_MS,
       },
     );
@@ -192,6 +193,7 @@ test(
     );
     const sandboxCleanupOptions = {
       artifactName: "cleanup-openshell-delete-sandbox-survival",
+      env: sandboxEnv,
       redactionValues: [apiKey],
     };
     let sandboxDeleted = false;
@@ -202,7 +204,7 @@ test(
             host,
             {
               artifactName: "cleanup-probe-openshell-sandbox-survival",
-              env: buildAvailabilityProbeEnv(),
+              env: sandboxCleanupOptions.env,
               redactionValues: sandboxCleanupOptions.redactionValues,
               timeoutMs: 30_000,
             },
@@ -235,7 +237,7 @@ test(
     const execShell = (script: string, artifactName: string) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
-        env: sandboxAccessEnv(),
+        env: sandboxEnv,
         timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
       });
 
@@ -256,7 +258,7 @@ test(
     progress.phase("stop the sandbox through OpenShell");
     const stop = await sandbox.openshell(["sandbox", "stop", "-g", "nemoclaw", SANDBOX_NAME], {
       artifactName: "openshell-stop-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
     });
     assertExitZero(stop, "OpenShell sandbox stop");
@@ -264,7 +266,7 @@ test(
     progress.phase("start the sandbox through OpenShell");
     const start = await sandbox.openshell(["sandbox", "start", "-g", "nemoclaw", SANDBOX_NAME], {
       artifactName: "openshell-start-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_SANDBOX_LIFECYCLE_TIMEOUT_MS,
     });
     assertExitZero(start, "OpenShell sandbox start");
@@ -272,6 +274,7 @@ test(
     progress.phase("recheck native agent readiness, state, and plugin execution");
     await lifecycle.waitForSandboxReadyAfterGatewayRestart(instance, {
       artifactNamePrefix: "post-openshell-start-ready",
+      env: sandboxEnv,
       attempts: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.attempts,
       delayMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.delayMs,
       timeoutMs: SANDBOX_SURVIVAL_LIFECYCLE_READINESS.timeoutMs,
@@ -282,19 +285,12 @@ test(
       markers,
       "post-openshell-start-marker-read",
     );
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      SANDBOX_NAME,
-      { ...buildAvailabilityProbeEnv(), ...hosted.env },
-      [apiKey],
-      false,
-    );
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, sandboxEnv, [apiKey], false);
     const pluginOutcome = await nativePluginAgentInvocationOutcome(sandbox, {
       sandboxName: SANDBOX_NAME,
       version: "v1",
       artifactName: "post-openshell-start-native-plugin-invoke",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       turnTimeoutMs: SANDBOX_SURVIVAL_NATIVE_PLUGIN_TURN_TIMEOUT_MS,
       audit: SANDBOX_SURVIVAL_NATIVE_PLUGIN_AUDIT,
     });
@@ -305,7 +301,7 @@ test(
     progress.phase("recover a cold sandbox through the public CLI");
     const beforeRecovery = await sandbox.openshell(
       ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
-      { artifactName: "cold-recovery-source-sandbox", env: sandboxAccessEnv(), timeoutMs: 10_000 },
+      { artifactName: "cold-recovery-source-sandbox", env: sandboxEnv, timeoutMs: 10_000 },
     );
     assertExitZero(beforeRecovery, "record the cold-recovery source sandbox");
     const sourceRows = (
@@ -364,7 +360,7 @@ test(
     ];
     const nativeHealth = await sandbox.exec(SANDBOX_NAME, ["curl", ...healthArgs], {
       artifactName: "cold-recovery-native-health",
-      env: sandboxAccessEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_NATIVE_READINESS.timeoutMs,
     });
     assertExitZero(nativeHealth, "probe native OpenClaw immediately after recover");
@@ -381,7 +377,7 @@ test(
       ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
       {
         artifactName: "cold-recovery-retained-sandbox",
-        env: sandboxAccessEnv(),
+        env: sandboxEnv,
         timeoutMs: 10_000,
       },
     );
@@ -399,13 +395,13 @@ test(
     progress.phase("destroy the sandbox");
     await sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "final-openshell-delete-sandbox-survival",
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
     });
     sandboxDeleted = true;
     const postDestroyList = await sandbox.list({
       artifactName: "post-destroy-openshell-sandbox-list",
-      env: buildAvailabilityProbeEnv(),
+      env: sandboxEnv,
       timeoutMs: SANDBOX_SURVIVAL_POST_DESTROY_LIST_TIMEOUT_MS,
     });
     const destroyedAtEnd = !outputContainsSandbox(postDestroyList, SANDBOX_NAME);

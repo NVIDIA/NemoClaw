@@ -31,6 +31,31 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     expect(scopeGatewayOpenshellArgs(input, GATEWAY)).toEqual(expected);
   });
 
+  it.each(["list", "get"])("binds global policy %s to the named gateway", (verb) => {
+    const command = ["policy", verb, "--global", "--output", "json"];
+    const expected = ["policy", verb, "-g", GATEWAY, "--global", "--output", "json"];
+    const run = vi.fn(() => ({ status: 0 }));
+    createGatewayScopedOpenshellRunner(run, GATEWAY)(command);
+    expect(run).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(command).toEqual(["policy", verb, "--global", "--output", "json"]);
+    expect(scopeGatewayOpenshellArgs(expected, GATEWAY)).toEqual(expected);
+    expect(() =>
+      scopeGatewayOpenshellArgs(["policy", verb, "--gateway", "other", "--global"], GATEWAY),
+    ).toThrow(/instead of 'nemoclaw-9090'/);
+    expect(() => scopeGatewayOpenshellArgs([...expected, "--gateway", GATEWAY], GATEWAY)).toThrow(
+      /multiple gateway targets/,
+    );
+    expect(() => scopeGatewayOpenshellArgs(["policy", verb, "-g"], GATEWAY)).toThrow(
+      /instead of 'nemoclaw-9090'/,
+    );
+    expect(() =>
+      scopeGatewayOpenshellArgs(
+        [...command, "--gateway-endpoint=https://other.example.test"],
+        GATEWAY,
+      ),
+    ).toThrow(/--gateway-endpoint may bypass the gateway recorded/);
+  });
+
   it("targets sandbox execution at the same gateway", () => {
     expect(
       scopeGatewayOpenshellArgs(["sandbox", "exec", "-n", "alpha", "--", "true"], GATEWAY),

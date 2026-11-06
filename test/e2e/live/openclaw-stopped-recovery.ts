@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { waitUntilAsync } from "../../../src/lib/core/wait.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -35,7 +36,7 @@ export async function proveStoppedDockerAgentRecovery(
   }
   assert(sandboxName.startsWith("e2e-"), "Container disruption requires a test-owned sandbox name");
   const gateway = process.env.OPENSHELL_GATEWAY ?? "nemoclaw";
-  const env = buildAvailabilityProbeEnv();
+  const env = { ...buildAvailabilityProbeEnv(), OPENSHELL_GATEWAY: gateway };
   let observation = 0;
   const readSource = async (): Promise<{ id: string; phase: string }> => {
     const result = await sandbox.openshell(["sandbox", "list", "-g", gateway, "-o", "json"], {
@@ -44,13 +45,13 @@ export async function proveStoppedDockerAgentRecovery(
       timeoutMs: 10_000,
     });
     assertExitZero(result, "observe the test-owned sandbox lifecycle");
-    const rows = JSON.parse(result.stdout) as Array<{ id: string; name: string; phase: string }>;
+    const rows = parseStrictOpenShellSandboxListJson(result.stdout);
+    assert(rows, "Stopped recovery requires a complete, valid sandbox inventory");
     const selected = rows.filter((row) => row.name === sandboxName);
     assert.equal(selected.length, 1);
     return selected[0]!;
   };
   const source = await readSource();
-  assert(typeof source.id === "string" && /^[A-Za-z0-9._-]{1,512}$/u.test(source.id));
   assert.equal(source.phase, "Ready");
   const container = await runtime.resolveSandboxResourceHandle(sandboxName, {
     artifactName: `${prefix}-stopped-source-container`,
@@ -84,25 +85,19 @@ export async function proveStoppedDockerAgentRecovery(
   const writeMarkers = `umask 077; printf '%s' ${shellQuote(marker)} > ${shellQuote(markerPath)} && printf '%s' ${shellQuote(unknownRootMarker)} > ${shellQuote(unknownRootMarkerPath)}`;
   // #11165: retain agent-owned state while the managed login profile is broken.
   // The ordinary healthy rebuild above this proof remains a separate control.
-  const prepared =
+  const breakProfile =
     agentName === "langchain-deepagents-code"
-      ? await runtime.execSandboxAsRoot(
-          sandboxName,
-          [
-            "/bin/sh",
-            "-c",
-            `${writeMarkers} && chown --reference=/sandbox/.deepagents/.state ${shellQuote(markerPath)} ${shellQuote(unknownRootMarkerPath)} && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile && sync`,
-          ],
-          {
-            artifactName: `${prefix}-stopped-source-write-marker`,
-            sanitizeEnvironment: true,
-            timeoutMs: 10_000,
-          },
-        )
-      : await sandbox.exec(sandboxName, ["sh", "-c", `${writeMarkers} && sync`], {
-          artifactName: `${prefix}-stopped-source-write-marker`,
-          env,
-        });
+      ? " && rm -f /sandbox/.bash_profile && ln -s /sandbox/hostile-env.sh /sandbox/.bash_profile"
+      : "";
+  const prepared = await sandbox.exec(
+    sandboxName,
+    ["sh", "-c", `${writeMarkers}${breakProfile} && sync`],
+    {
+      artifactName: `${prefix}-stopped-source-write-marker`,
+      env,
+      ...(agentName === "langchain-deepagents-code" ? { timeoutMs: 10_000 } : {}),
+    },
+  );
   assertExitZero(prepared, "prepare the stopped-recovery source and marker");
   assertExitZero(
     await runtime.command(["kill", container], {

@@ -577,6 +577,7 @@ describe("install.sh run_onboard — _CLI_PATH precedence (#3276)", () => {
 
 type DeferredOnboardingMainOptions = {
   agent?: string;
+  cliPath?: string;
   deferEnv?: boolean;
   deferFlag?: boolean;
   inferenceKey?: string;
@@ -591,6 +592,7 @@ type DeferredOnboardingMainOptions = {
 function runDeferredOnboardingMain(options: DeferredOnboardingMainOptions = {}) {
   const registeredSandboxCount = options.registeredSandboxCount ?? 0;
   const agent = options.agent ?? "hermes";
+  const cliPath = options.cliPath ?? path.resolve(import.meta.dirname, "../../bin/nemoclaw.js");
   const result = runInstallerSourcedBody(
     `
 set -e
@@ -611,7 +613,7 @@ fix_npm_permissions() { :; }
 preinstall_backup_and_retire_legacy_gateway() { :; }
 install_nemoclaw() { record install-nemoclaw; }
 verify_nemoclaw() {
-  _CLI_PATH=${JSON.stringify(path.resolve(import.meta.dirname, "../../bin/nemoclaw.js"))}
+  _CLI_PATH="$TEST_CLI_PATH"
   NEMOCLAW_READY_NOW=true
 }
 require_reportable_openshell_version() { :; }
@@ -646,6 +648,7 @@ main --non-interactive --yes-i-accept-third-party-software ${options.deferFlag ?
         NEMOCLAW_PROVIDER_KEY: options.providerKey ?? "",
         ONBOARD_STATUS: String(options.onboardStatus ?? 0),
         REGISTERED_SANDBOX_COUNT: String(registeredSandboxCount),
+        TEST_CLI_PATH: cliPath,
       },
       includeNodeOnPath: true,
       timeoutMs: 15_000,
@@ -664,6 +667,20 @@ main --non-interactive --yes-i-accept-third-party-software ${options.deferFlag ?
 }
 
 describe("deferred onboarding", () => {
+  it("treats the resolved CLI path as shell data", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cli-path-"));
+    const marker = path.join(tempRoot, "executed");
+    onTestFinished(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+    const result = runDeferredOnboardingMain({
+      cliPath: `$(touch ${marker})`,
+      deferFlag: true,
+    });
+
+    expect(result.result.status, result.output).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
   it("lists the installer option and environment setting (#10288)", () => {
     const result = runInstallerSourcedBody("usage", {
       extraEnv: { NEMOCLAW_AGENT: "hermes" },

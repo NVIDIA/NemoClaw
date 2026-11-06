@@ -35,13 +35,21 @@ export const HERMES_MCP_RESPONSE_FILE_BYTES = 65_536;
 
 export interface HermesMcpCommandResult {
   exitCode: number | null;
-  signal?: NodeJS.Signals | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
   stdout: string;
   stderr: string;
 }
 
 export function isHermesGatewayDrainingResponse(result: HermesMcpCommandResult): boolean {
-  if (result.exitCode !== 0 || parseHttpStatus(result.stderr) !== 503) return false;
+  if (
+    result.exitCode !== 0 ||
+    result.signal !== null ||
+    result.timedOut ||
+    parseHttpStatus(result.stderr) !== 503
+  ) {
+    return false;
+  }
   try {
     const body = JSON.parse(result.stdout) as { error?: { code?: unknown } };
     return body.error?.code === "gateway_draining";
@@ -126,10 +134,12 @@ export function assertHermesMcpHttpResponse(
   explicitRedactionValues: Iterable<string>,
 ): void {
   const status = parseHttpStatus(result.stderr);
-  if (result.exitCode !== 0) {
-    const transport = result.signal
-      ? `signal=${result.signal}`
-      : `exit=${result.exitCode ?? "unknown"}`;
+  if (result.exitCode !== 0 || result.signal !== null || result.timedOut) {
+    const transport = result.timedOut
+      ? "timeout"
+      : result.signal
+        ? `signal=${result.signal}`
+        : `exit=${result.exitCode ?? "unknown"}`;
     const detail = sanitizedPreview([result.stdout, result.stderr].filter(Boolean).join("\n"), [
       ...explicitRedactionValues,
     ]);

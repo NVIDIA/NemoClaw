@@ -215,7 +215,10 @@ export function cleanupDockerEngine27ReceiptDaemon(daemonName: string): void {
     inspected.stdout.trim() === daemonName,
     "refusing to remove a Docker Engine 27 daemon with mismatched ownership",
   );
-  requireSuccess(runDocker(["rm", "-f", daemonName], "cleanup"), "remove Docker Engine 27 daemon");
+  requireSuccess(
+    runDocker(["rm", "-f", "--volumes", daemonName], "cleanup"),
+    "remove Docker Engine 27 daemon",
+  );
   requireDockerResourceAbsent(
     runDocker(["container", "inspect", daemonName], "cleanup"),
     "Docker Engine 27 daemon",

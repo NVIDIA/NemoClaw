@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import {
+  isModelRouterProvider,
+  nativeModelRouterEndpoint,
+} from "../../../inference/native-local/model-router";
+import { createRegisteredSandboxIdentityRevalidation } from "../../sandbox-recreate-transaction";
 import { createManagedProviderAdapter } from "../../../adapters/openshell/managed-provider-adapter";
 import { runOpenshellProviderCommand } from "../../../adapters/openshell/provider-command";
 import { ensureNativeLocalProviderAttached } from "../../../inference/native-local/profile";
@@ -471,4 +477,61 @@ export function reserveSandboxResumeRoute(
       { cause: error },
     );
   }
+}
+
+/** Caller holds the sandbox and gateway locks until reuse is complete. */
+export async function restoreNativeRouterAttachment(input: {
+  sandboxName: string | null;
+  provider: string;
+  endpointUrl: string | null;
+  readRegistration: (name: string) => SandboxEntry | null;
+  observe: Parameters<typeof createRegisteredSandboxIdentityRevalidation>[1]["observe"];
+  acceptsReservation(entry: SandboxEntry, sandboxName: string): boolean;
+  assertGatewayRouteCompatible(sandboxName: string): void;
+  adapter?: Parameters<typeof ensureResumedNativeLocalProviderAttached>[0]["adapter"];
+}): Promise<void> {
+  const { sandboxName } = input;
+  if (!isModelRouterProvider(input.provider)) return;
+  const entry = sandboxName ? input.readRegistration(sandboxName) : null;
+  const expected = entry?.nativeLocalProviderAttachment
+    ? structuredClone(entry.nativeLocalProviderAttachment)
+    : undefined;
+  if (
+    !sandboxName ||
+    !entry ||
+    entry.name !== sandboxName ||
+    !expected ||
+    !input.acceptsReservation(entry, sandboxName) ||
+    expected.endpointUrl !== input.endpointUrl ||
+    !nativeModelRouterEndpoint(input.provider, expected.endpointUrl)
+  ) {
+    throw new Error(
+      "Native Model Router resume requires its recorded sandbox attachment authority.",
+    );
+  }
+  const revalidateIdentity = createRegisteredSandboxIdentityRevalidation(entry, {
+    readRegistration: input.readRegistration,
+    observe: input.observe,
+  });
+  if (!revalidateIdentity) {
+    throw new Error(
+      "Native Model Router resume requires a verified sandbox identity. Recreate this sandbox.",
+    );
+  }
+  const revalidateSandboxIdentity = (operation: string): void => {
+    revalidateIdentity(operation);
+    input.assertGatewayRouteCompatible(sandboxName);
+    const current = input.readRegistration(sandboxName);
+    if (!isDeepStrictEqual(current?.nativeLocalProviderAttachment, expected)) {
+      throw new Error("Native Model Router attachment authority changed during resume.");
+    }
+  };
+  revalidateSandboxIdentity("restore native Model Router attachment");
+  await ensureResumedNativeLocalProviderAttached({
+    adapter: input.adapter,
+    sandboxName,
+    expected,
+    revalidateSandboxIdentity,
+  });
+  revalidateSandboxIdentity("complete native Model Router attachment recovery");
 }

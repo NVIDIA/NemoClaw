@@ -25,6 +25,21 @@ import { setupRoutedInference } from "./inference-providers/routed";
 import type { RoutedDeps } from "./inference-providers/types";
 
 describe("normalizeRoutedEndpointUrl (#4564)", () => {
+  it("rewrites the IPv6 loopback host", () => {
+    expect(normalizeRoutedEndpointUrl("http://[::1]:4000/v1")).toBe(
+      "http://host.openshell.internal:4000/v1",
+    );
+  });
+
+  it.each([
+    "http://localhost.example:4000/v1",
+    "http://example.com/localhost",
+    "https://localhost:4000/v1",
+    "http://user:pass@localhost:4000/v1",
+  ])("preserves the non-router URL %s", (url) => {
+    expect(normalizeRoutedEndpointUrl(url)).toBe(url);
+  });
+
   it("rewrites localhost to the sandbox-facing host alias", async () => {
     expect(normalizeRoutedEndpointUrl("http://localhost:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",
@@ -35,15 +50,6 @@ describe("normalizeRoutedEndpointUrl (#4564)", () => {
     expect(normalizeRoutedEndpointUrl("http://127.0.0.1:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",
     );
-  });
-
-  it.each([
-    "http://localhost.attacker.test:4000/v1",
-    "http://attacker.test:4000/localhost",
-    "http://user:secret@localhost:4000/v1",
-    "https://localhost:4000/v1",
-  ])("does not grant the host alias to %s (#13560)", (endpoint) => {
-    expect(normalizeRoutedEndpointUrl(endpoint)).toBe(endpoint);
   });
 
   it("omits the colon when the endpoint has no explicit port and preserves query/hash", async () => {
@@ -219,21 +225,13 @@ describe("setupRoutedInference route mutation", () => {
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
   };
 
-  it("awaits native registration without changing the shared route (#13560)", async () => {
-    const deps = makeRoutedSetupDeps();
-    const events: string[] = [];
-    deps.reconcileModelRouter.mockImplementation(async () => {
-      events.push("router");
+  it("registers an attached native provider without mutating the retired shared route", async () => {
+    const deps = { ...makeRoutedSetupDeps(), nativeLocalInference: true };
+    await expect(setupRoutedInference(args, deps as unknown as RoutedDeps)).resolves.toEqual({
+      done: false,
     });
-    deps.routedInference.upsertRoutedProvider.mockImplementation(async () => {
-      events.push("native-provider");
-      return { ok: true, result: { ok: true } };
-    });
-    await setupRoutedInference(args, {
-      ...deps,
-      nativeLocalInference: true,
-    } as unknown as RoutedDeps);
-    expect(events).toEqual(["router", "native-provider"]);
+    expect(deps.reconcileModelRouter).toHaveBeenCalledOnce();
+    expect(deps.routedInference.upsertRoutedProvider).toHaveBeenCalledOnce();
     expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
   });
 

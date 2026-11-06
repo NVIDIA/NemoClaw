@@ -11,11 +11,16 @@ import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
+import { OPERATOR_SWITCH_API_KEY } from "../fixtures/registered-inference.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
+  createOpenClawInferenceSwitchCleanup,
+  readOpenClawBootId,
   getRouteOutput,
   readOpenClawConfig,
+  httpStatusFromResponse,
+  httpBodyFromResponse,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -27,6 +32,84 @@ import {
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+describe("OpenClaw authenticated restart identity", () => {
+  const bootId = "0ad13a83-485c-427c-a6ba-a64e7d86621a";
+  const valid = {
+    exitCode: 0,
+    timedOut: false,
+    signal: null,
+    stderr: "",
+    stdout: JSON.stringify({ rpc: { ok: true, kind: "read", server: { bootId } } }),
+  };
+
+  it.each([
+    [valid, bootId],
+    [{ ...valid, exitCode: 1 }, null],
+    [{ ...valid, timedOut: true }, null],
+    [{ ...valid, signal: "SIGTERM" }, null],
+    [{ ...valid, stderr: "[sandbox-safety-net] loaded (launcher)\n" }, bootId],
+    [{ ...valid, exitCode: 1, stderr: "observation failed" }, null],
+    [{ ...valid, stdout: "{}" }, null],
+    [{ ...valid, stdout: "null" }, null],
+    [
+      {
+        ...valid,
+        stdout: JSON.stringify({ rpc: { ok: false, kind: "read", server: { bootId } } }),
+      },
+      null,
+    ],
+    [
+      {
+        ...valid,
+        stdout: JSON.stringify({ rpc: { ok: true, kind: "connect", server: { bootId } } }),
+      },
+      null,
+    ],
+    [
+      {
+        ...valid,
+        stdout: JSON.stringify({ rpc: { ok: true, kind: "read", server: { bootId: 42 } } }),
+      },
+      null,
+    ],
+    [
+      {
+        ...valid,
+        stdout: '{"rpc":{"ok":true,"kind":"read","server":{"bootId":"untrusted text"}}}',
+      },
+      null,
+    ],
+    [{ ...valid, stdout: "not json" }, null],
+  ])("accepts only a successful, complete boot observation %#", async (result, expected) => {
+    const exec = vi.fn().mockResolvedValue(result);
+    await expect(
+      readOpenClawBootId({ exec } as never, "alpha", {
+        env: { HOME: "/private-home" },
+        artifactName: "boot-before",
+      }),
+    ).resolves.toBe(expected);
+    expect(exec).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "openclaw",
+        "gateway",
+        "status",
+        "--port",
+        "18789",
+        "--require-rpc",
+        "--json",
+        "--timeout",
+        "10000",
+      ],
+      {
+        env: { HOME: "/private-home" },
+        artifactName: "boot-before",
+        timeoutMs: 20_000,
+      },
+    );
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {
@@ -237,54 +320,70 @@ describe("openclaw-inference-switch gateway model-run output", () => {
 });
 
 describe("openclaw-inference-switch mock-Anthropic baseline", () => {
-  it("serves authenticated PONG replies for the lifecycle gateway checks", async () => {
-    const progress = startTestProgress("OpenClaw baseline", ["serve baseline", "verify baseline"], {
-      logLine: () => undefined,
-    });
-    const baseline = await startMockOpenClawBaselineProvider(progress);
-    try {
-      const endpoint = new URL(`${baseline.baseUrl}/chat/completions`);
-      expect(endpoint.hostname).toBe("host.openshell.internal");
-      endpoint.hostname = "127.0.0.1";
-      const payload = {
-        model: MOCK_BASELINE_MODEL,
-        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-        stream: true,
-      };
-      const denied = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      expect(denied.status).toBe(401);
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${MOCK_BASELINE_API_KEY}`,
-          "Content-Type": "application/json",
+  it.each([undefined, OPERATOR_SWITCH_API_KEY])(
+    "serves authenticated PONG replies using the selected fixture credential: %s",
+    async (apiKey) => {
+      const progress = startTestProgress(
+        "OpenClaw baseline",
+        ["serve baseline", "verify baseline"],
+        {
+          logLine: () => undefined,
         },
-        body: JSON.stringify(payload),
-      });
-      expect(response.status).toBe(200);
-      const chunks = (await response.text())
-        .split("\n\n")
-        .filter((chunk) => chunk.startsWith("data: {"))
-        .map((chunk) => JSON.parse(chunk.slice("data: ".length)));
-      expect(chunks.map((chunk) => chunk.choices[0].delta.content ?? "").join("")).toBe("PONG");
-      expect(baseline.requests()).toContainEqual(
-        expect.objectContaining({
-          auth: "ok",
-          method: "POST",
-          path: "/v1/chat/completions",
-          model: MOCK_BASELINE_MODEL,
-          stream: true,
-        }),
       );
-    } finally {
-      await baseline.close();
-      progress.stop();
-    }
-  });
+      const baseline = await startMockOpenClawBaselineProvider(progress, undefined, apiKey);
+      try {
+        const endpoint = new URL(`${baseline.baseUrl}/chat/completions`);
+        expect(endpoint.hostname).toBe("host.openshell.internal");
+        endpoint.hostname = "127.0.0.1";
+        const payload = {
+          model: MOCK_BASELINE_MODEL,
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          stream: true,
+        };
+        const denied = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        expect(denied.status).toBe(401);
+        const wrongCredential = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey ? MOCK_BASELINE_API_KEY : OPERATOR_SWITCH_API_KEY}`,
+          },
+          body: JSON.stringify(payload),
+        });
+        expect(wrongCredential.status).toBe(401);
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey ?? MOCK_BASELINE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        expect(response.status).toBe(200);
+        const chunks = (await response.text())
+          .split("\n\n")
+          .filter((chunk) => chunk.startsWith("data: {"))
+          .map((chunk) => JSON.parse(chunk.slice("data: ".length)));
+        expect(chunks.map((chunk) => chunk.choices[0].delta.content ?? "").join("")).toBe("PONG");
+        expect(baseline.requests()).toContainEqual(
+          expect.objectContaining({
+            auth: "ok",
+            method: "POST",
+            path: "/v1/chat/completions",
+            model: MOCK_BASELINE_MODEL,
+            stream: true,
+          }),
+        );
+      } finally {
+        await baseline.close();
+        progress.stop();
+      }
+    },
+  );
 
   it("uses an authenticated local baseline with the compatible env wiring", () => {
     expect(mockBaselineInference("http://127.0.0.1:34567/v1")).toEqual({
@@ -390,6 +489,7 @@ function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
             env: {
               ...process.env,
               NVIDIA_INFERENCE_API_KEY: handle,
+              NEMOCLAW_E2E_OPERATOR_TOKEN: handle,
               COMPATIBLE_ANTHROPIC_API_KEY: handle,
               COMPATIBLE_API_KEY: handle,
             },
@@ -402,18 +502,25 @@ function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
   };
 }
 
-it("checks the actual switched native model budget with a materialized handle", async () => {
-  const model = PUBLIC_NVIDIA_SWITCH_MODEL;
-  const config: any = {};
-  patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
-  config.models.providers.inference.apiKey = scopedNativeHandle;
-  await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
-    model,
-    inferenceApi: "openai-completions",
-    artifactName: "switched-native-config",
-    nativeNvidia: true,
-  });
-});
+it.each([
+  scopedNativeHandle,
+  "openshell:resolve:env:v2_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+])(
+  "checks the native model budget with a scoped handle from any retained revision: %s",
+  async (handle) => {
+    const model = PUBLIC_NVIDIA_SWITCH_MODEL;
+    const config: any = {};
+    patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
+    config.models.providers.inference.apiKey = handle;
+    await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+      model,
+      inferenceApi: "openai-completions",
+      artifactName: "switched-native-config",
+      nativeNvidia: true,
+    });
+  },
+);
 
 it("checks the actual switched Anthropic model budget", async () => {
   const model = "mock-anthropic-model";
@@ -486,7 +593,7 @@ it.each([
   "native",
   "${OTHER_API_KEY}",
   "${NVIDIA_INFERENCE_API_KEY}",
-  "openshell:resolve:env:v2_NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v2_OTHER_API_KEY",
   "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
   null,
 ])("rejects an incorrect native OpenClaw credential value after redaction: %s", async (value) => {
@@ -521,3 +628,119 @@ it.each(["", "nvapi-fixture-secret", "openshell:resolve:env:NVIDIA_INFERENCE_API
     ).rejects.toThrow();
   },
 );
+
+it.each([
+  "openshell:resolve:env:v7_NEMOCLAW_E2E_OPERATOR_TOKEN",
+  "raw-key",
+  "openshell:resolve:env:v7_OTHER_TOKEN",
+])(
+  "reads registered OpenClaw configuration only with the matching scoped credential: %s",
+  async (handle) => {
+    const sandbox = sandboxForOpenClawConfig(
+      { models: { providers: { "operator-prod": { apiKey: handle } } } },
+      handle,
+    );
+    const operation = readOpenClawConfig(sandbox as never, "switch-test", {
+      artifactName: "registered-config",
+      env: {},
+      timeoutMs: 1000,
+      registeredProvider: "operator-prod",
+      credentialEnv: "NEMOCLAW_E2E_OPERATOR_TOKEN",
+    });
+    const outcome = await operation.then(
+      (result) => JSON.parse(result.stdout),
+      () => "rejected",
+    );
+    expect(outcome).toEqual(
+      handle.startsWith("openshell:resolve:env:v7_NEMOCLAW_")
+        ? { models: { providers: { "operator-prod": {} } } }
+        : "rejected",
+    );
+  },
+);
+
+it("reads the final curl status while preserving only the response body", () => {
+  const response =
+    '{"model":"selected"}\n__NEMOCLAW_HTTP_STATUS__=100\n__NEMOCLAW_HTTP_STATUS__=200';
+  expect(httpStatusFromResponse(response)).toBe("200");
+  expect(httpBodyFromResponse(response)).toBe('{"model":"selected"}');
+  expect(httpStatusFromResponse("no status")).toBe("");
+});
+
+function switchCleanupFixture() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "switch-cleanup-"));
+  disposables.push(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, "ownership-record"), "retained fixture state");
+  const cleanupSandbox = vi.fn().mockResolvedValue(undefined);
+  const verifyGatewayRemoved = vi.fn().mockResolvedValue(undefined);
+  return {
+    home,
+    cleanupSandbox,
+    verifyGatewayRemoved,
+    input: {
+      host: { cleanupSandbox } as unknown as HostCliClient,
+      verifyGatewayRemoved,
+      home,
+      sandboxName: "switch-owner",
+      env: { HOME: home },
+      retain: false,
+    },
+  };
+}
+
+it("removes private state only after owned destroy and gateway absence, once", async () => {
+  const fixture = switchCleanupFixture();
+  fixture.verifyGatewayRemoved.mockImplementation(async () => {
+    expect(fs.existsSync(path.join(fixture.home, "ownership-record"))).toBe(true);
+  });
+  const cleanup = createOpenClawInferenceSwitchCleanup(fixture.input);
+  await cleanup();
+  await cleanup();
+  expect(fixture.cleanupSandbox).toHaveBeenCalledExactlyOnceWith("switch-owner", {
+    cleanupGateway: true,
+    artifactName: "cleanup-inference-switch-sandbox-and-gateway",
+    env: { HOME: fixture.home },
+    timeoutMs: 120_000,
+  });
+  expect(fixture.verifyGatewayRemoved).toHaveBeenCalledOnce();
+  expect(fs.existsSync(fixture.home)).toBe(false);
+});
+
+it.each([
+  "failed before registry publication",
+  "ownership record is incomplete",
+  "owned destroy failed after onboarding",
+])("preserves partial-onboard state after %s without raw-name fallback", async (message) => {
+  const fixture = switchCleanupFixture();
+  fixture.cleanupSandbox.mockRejectedValue(new Error(message));
+  const cleanup = createOpenClawInferenceSwitchCleanup(fixture.input);
+  await expect(cleanup()).rejects.toThrow(message);
+  await expect(cleanup()).rejects.toThrow(message);
+  expect(fixture.cleanupSandbox).toHaveBeenCalledOnce();
+  expect(fixture.verifyGatewayRemoved).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(fixture.home, "ownership-record"), "utf8")).toBe(
+    "retained fixture state",
+  );
+});
+
+it.each(["status remains connected", "listener still exists", "runtime observation failed"])(
+  "preserves private state when the gateway proof rejects: %s",
+  async (message) => {
+    const fixture = switchCleanupFixture();
+    fixture.verifyGatewayRemoved.mockRejectedValue(new Error(message));
+    const cleanup = createOpenClawInferenceSwitchCleanup(fixture.input);
+    await expect(cleanup()).rejects.toThrow(message);
+    await expect(cleanup()).rejects.toThrow(message);
+    expect(fixture.cleanupSandbox).toHaveBeenCalledOnce();
+    expect(fixture.verifyGatewayRemoved).toHaveBeenCalledOnce();
+    expect(fs.existsSync(path.join(fixture.home, "ownership-record"))).toBe(true);
+  },
+);
+
+it("retains the owned runtime and private state when sandbox retention is requested", async () => {
+  const fixture = switchCleanupFixture();
+  await createOpenClawInferenceSwitchCleanup({ ...fixture.input, retain: true })();
+  expect(fixture.cleanupSandbox).not.toHaveBeenCalled();
+  expect(fixture.verifyGatewayRemoved).not.toHaveBeenCalled();
+  expect(fs.existsSync(fixture.home)).toBe(true);
+});

@@ -10,6 +10,7 @@ import type {
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import {
+  recordedRegisteredInferenceProviderAttachment,
   getLlamaCppRouteDetails,
   sanitizeRouteValueForDisplay,
   type LlamaCppRouteDetails,
@@ -316,6 +317,9 @@ export async function runInferenceGet(
   const selectedSandbox = selectedSandboxName
     ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
     : null;
+  const registeredAttachment = selectedSandbox
+    ? recordedRegisteredInferenceProviderAttachment(selectedSandbox)
+    : undefined;
   const nativeAttachment =
     selectedSandbox &&
     selectedSandbox.nativeLocalProviderAttachment === undefined &&
@@ -343,10 +347,13 @@ export async function runInferenceGet(
     }
     return payload;
   }
-  if (selectedSandbox?.nativeLocalProviderAttachment !== undefined) {
-    const attachment = normalizeNativeLocalProviderAttachment(
-      selectedSandbox.nativeLocalProviderAttachment,
-    );
+  if (
+    selectedSandbox &&
+    (registeredAttachment || selectedSandbox.nativeLocalProviderAttachment !== undefined)
+  ) {
+    const attachment =
+      registeredAttachment ??
+      normalizeNativeLocalProviderAttachment(selectedSandbox.nativeLocalProviderAttachment);
     let recordedGatewayName: string | undefined;
     try {
       recordedGatewayName = getPersistedSandboxTargetGatewayName(selectedSandbox);
@@ -362,21 +369,26 @@ export async function runInferenceGet(
       attachment.sandboxName !== selectedSandbox.name ||
       attachment.gatewayName !== recordedGatewayName ||
       attachment.gatewayName !== selectedSandbox.gatewayName ||
-      attachment.provider !== selectedSandbox.provider ||
-      attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV ||
+      (!registeredAttachment &&
+        (!("provider" in attachment) ||
+          attachment.provider !== selectedSandbox.provider ||
+          attachment.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV)) ||
       typeof selectedSandbox.model !== "string" ||
       !selectedSandbox.model.trim() ||
-      !(selectedSandbox.agent === "langchain-deepagents-code"
-        ? attachment.agent === undefined
-        : selectedSandbox.agent === "hermes"
-          ? attachment.agent === "hermes"
-          : selectedSandbox.agent === "openclaw" &&
-            attachment.agent === "openclaw" &&
-            isLocalInferenceProvider(selectedSandbox.provider) &&
-            !selectedSandbox.nimContainer)
+      (!registeredAttachment &&
+        !(selectedSandbox.agent === "langchain-deepagents-code"
+          ? !("agent" in attachment) || attachment.agent === undefined
+          : selectedSandbox.agent === "hermes" || selectedSandbox.agent === "pi"
+            ? "agent" in attachment && attachment.agent === selectedSandbox.agent
+            : selectedSandbox.agent === "openclaw" &&
+              "agent" in attachment &&
+              attachment.agent === "openclaw" &&
+              isLocalInferenceProvider(selectedSandbox.provider)))
     ) {
       throw new InferenceGetError(
-        "Invalid native local provider attachment for the recorded inference selection",
+        registeredAttachment
+          ? "Invalid registered provider attachment for the recorded inference selection"
+          : "Invalid native local provider attachment for the recorded inference selection",
       );
     }
     const endpoint =
@@ -385,7 +397,7 @@ export async function runInferenceGet(
         ? { endpointUrl: attachment.endpointUrl }
         : endpointOmission("withheld");
     const payload: InferenceGetResult = {
-      provider: selectedSandbox.provider,
+      provider: selectedSandbox.provider ?? null,
       model: selectedSandbox.model,
       ...endpoint,
     };

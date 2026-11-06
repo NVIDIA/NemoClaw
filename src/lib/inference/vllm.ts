@@ -47,12 +47,10 @@ import {
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
-  resolveManagedVllmBridgeHost,
   resolveNvidiaSmiCommand,
   resolveVllmInstallModel,
   runtimeAuthFingerprint,
   tryInstallManagedClusterManagedVllm,
-  validateManagedVllmBridgeHost,
 } from "./serving/vllm-managed-support";
 import {
   assertGatedModelAccess,
@@ -787,7 +785,6 @@ export function buildVllmRunArgs(
   model: VllmModelDef,
   runFlags: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
-  managedBridgeHost?: string,
 ): string[] {
   assertVllmRegistryDigestRef(profile.image);
   const image = validateDockerArg(profile.image, "vLLM image");
@@ -797,7 +794,6 @@ export function buildVllmRunArgs(
   if (model.managedBearerAuth && !/^[a-f0-9]{64}$/.test(managedApiKey)) {
     throw new Error("Managed host-local vLLM requires a valid host-global API key");
   }
-  const managedPublishHost = validateManagedVllmBridgeHost(managedBridgeHost ?? "");
   return [
     "--pull=never",
     "--init",
@@ -830,8 +826,6 @@ export function buildVllmRunArgs(
       : []),
     "-p",
     `127.0.0.1:${String(VLLM_PORT)}:8000`,
-    "-p",
-    `${managedPublishHost}:${String(VLLM_PORT)}:8000`,
     "--name",
     containerName,
     "--entrypoint",
@@ -1208,31 +1202,10 @@ export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<Pers
   }
 }
 
-function preflightHostLocalVllmContainer(
-  profile: VllmProfile,
-  dockerEnv: Record<string, string>,
-  resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
-    resolveManagedVllmBridgeHost(dockerCapture, env),
-  expectedReplacementContainerId?: string,
-): { ok: true } | { ok: false; reason: string } {
-  try {
-    validateManagedVllmBridgeHost(resolveBridgeHost(dockerEnv));
-  } catch (error) {
-    return { ok: false, reason: (error as Error).message };
-  }
-  return vllmContainerReplacementTarget(
-    profile.containerName,
-    dockerEnv,
-    expectedReplacementContainerId,
-  );
-}
-
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
   dockerEnv: Record<string, string>,
-  resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
-    resolveManagedVllmBridgeHost(dockerCapture, env),
   expectedReplacementContainerId?: string,
 ): { ok: true; containerId: string } | { ok: false; reason: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
@@ -1249,13 +1222,7 @@ function startContainer(
         ? {}
         : { [VLLM_EXTRA_ARGS_ENV]: process.env[VLLM_EXTRA_ARGS_ENV] }),
     };
-    runArgs = buildVllmRunArgs(
-      profile,
-      model,
-      resolvedFlags,
-      commandEnv,
-      resolveBridgeHost(dockerEnv),
-    );
+    runArgs = buildVllmRunArgs(profile, model, resolvedFlags, commandEnv);
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
@@ -1811,7 +1778,6 @@ export interface InstallVllmOptions {
   checkpointInstallIntent?: (modelId: string) => void;
   /** Secret-free model restored from an unfinished onboarding checkpoint. */
   modelIntent?: string;
-  resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
   /** Reuse an already-collected readiness snapshot instead of probing the host again. */
   readinessReports?: readonly ManagedInferenceReadinessSource[];
   /**
@@ -2496,10 +2462,9 @@ async function runVllmInstall(
       return { ok: false };
     }
   } else {
-    const preflight = preflightHostLocalVllmContainer(
-      runtimeProfile,
+    const preflight = vllmContainerReplacementTarget(
+      runtimeProfile.containerName,
       localDockerEnv,
-      opts.resolveManagedBridgeHost,
       recoveredHostLocalContainerId,
     );
     if (!preflight.ok) {
@@ -2783,7 +2748,6 @@ async function runVllmInstall(
     runtimeProfile,
     model,
     localDockerEnv,
-    opts.resolveManagedBridgeHost,
     recoveredHostLocalContainerId,
   );
   if (!start.ok) {

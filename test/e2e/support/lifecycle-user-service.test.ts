@@ -183,13 +183,13 @@ function writeMacServiceStubs(
 }
 
 describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
-  it("stages, enables, and removes the repository service without installer cleanup", () => {
+  it("stages, enables, and removes the repository service with configured binary and config directories", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-installer-lifecycle-stage-service-"),
     );
     const home = path.join(root, "home");
     const configHome = path.join(root, "config");
-    const bin = path.join(home, ".local", "bin");
+    const bin = path.join(root, "installed-bin");
     const log = path.join(root, "systemctl.log");
     const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
     const installerCleanupSentinel = path.join(root, "installer-cleanup-sentinel");
@@ -213,6 +213,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       const env = buildAvailabilityProbeEnv({
         HOME: home,
         PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        XDG_BIN_HOME: bin,
         XDG_CONFIG_HOME: configHome,
       });
       env.NEMOCLAW_INSTALLER_STAGED = installerCleanupSentinel;

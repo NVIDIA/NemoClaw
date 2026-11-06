@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as routerProfile from "../../../core/model-router-port";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as managedProviderAdapter from "../../../adapters/openshell/managed-provider-adapter";
 import * as providerCommand from "../../../adapters/openshell/provider-command";
@@ -19,10 +20,14 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
-function routerResumeHarness(attached = false) {
+function routerResumeHarness(
+  attached = false,
+  agent: "openclaw" | "hermes" | "pi" | "langchain-deepagents-code" = "openclaw",
+  provider = "nvidia-router",
+) {
   const expected = nativeLocalSetupReceipt({
-    agent: "openclaw",
-    provider: "nvidia-router",
+    ...(agent === "langchain-deepagents-code" ? {} : { agent }),
+    provider,
     sandboxName: "saved",
     gatewayName: "nemoclaw",
     endpointUrl: "http://host.openshell.internal:4000/v1",
@@ -30,8 +35,8 @@ function routerResumeHarness(attached = false) {
   });
   const entry: SandboxEntry = {
     name: "saved",
-    agent: "openclaw",
-    provider: "nvidia-router",
+    agent,
+    provider,
     model: "model",
     endpointUrl: expected.endpointUrl,
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
@@ -41,8 +46,9 @@ function routerResumeHarness(attached = false) {
     lifecycleGeneration: "generation-1",
     lifecycleLiveIdentityFingerprint: "live-1",
     toolDisclosure: "progressive",
+    observabilityEnabled: false,
   };
-  const session = createSession({ sandboxName: "saved" });
+  const session = createSession({ sandboxName: "saved", agent });
   session.steps.sandbox.status = "complete";
   const native = createNativeLocalSetupHarness();
   native.seed(expected);
@@ -101,8 +107,8 @@ function routerResumeHarness(attached = false) {
         ...baseOptions(deps, session),
         resume: true,
         sandboxName: "saved",
-        agent: { name: "openclaw" },
-        provider: "nvidia-router",
+        agent: { name: agent },
+        provider,
         endpointUrl: expected.endpointUrl,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       }),
@@ -124,21 +130,30 @@ function routerResumeHarness(attached = false) {
 
 describe("native Model Router sandbox resume", () => {
   afterEach(() => vi.restoreAllMocks());
-  it("restores the recorded attachment before completing Ready sandbox reuse (#13560)", async () => {
-    const h = routerResumeHarness();
-    await expect(h.run()).resolves.toMatchObject({ sandboxName: "saved" });
-    expect(h.isAttached()).toBe(true);
-    expect(h.native.adapter.attachProvider).toHaveBeenCalledExactlyOnceWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      sandboxName: "saved",
-      providerName: h.expected.providerName,
-    });
-    expect(h.calls.createSandbox).not.toHaveBeenCalled();
-    expect(h.calls.recordSkip).toHaveBeenCalledOnce();
-    expect(h.calls.recordSkip.mock.invocationCallOrder[0]).toBeGreaterThan(
-      h.native.adapter.attachProvider.mock.invocationCallOrder[0]!,
-    );
-  });
+  it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"] as const)(
+    "restores the recorded %s attachment before completing Ready sandbox reuse (#13560)",
+    async (agent) => {
+      vi.spyOn(routerProfile, "loadBlueprintProfile").mockReturnValue({
+        model: "nvidia-routed",
+        provider_name: "team-router",
+        endpoint: "http://localhost:4000/v1",
+        router: { enabled: true, port: 4000 },
+      });
+      const h = routerResumeHarness(false, agent, "team-router");
+      await expect(h.run()).resolves.toMatchObject({ sandboxName: "saved" });
+      expect(h.isAttached()).toBe(true);
+      expect(h.native.adapter.attachProvider).toHaveBeenCalledExactlyOnceWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "saved",
+        providerName: h.expected.providerName,
+      });
+      expect(h.calls.createSandbox).not.toHaveBeenCalled();
+      expect(h.calls.recordSkip).toHaveBeenCalledOnce();
+      expect(h.calls.recordSkip.mock.invocationCallOrder[0]).toBeGreaterThan(
+        h.native.adapter.attachProvider.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
 
   it("verifies an already-attached provider without attaching it again (#13560)", async () => {
     const h = routerResumeHarness(true);
@@ -161,11 +176,14 @@ describe("native Model Router sandbox resume", () => {
 
   it("refuses a changed native endpoint boundary before attachment (#13560)", async () => {
     const h = routerResumeHarness();
-    h.entry.nativeLocalProviderAttachment = nativeLocalSetupReceipt({
+    h.entry.nativeLocalProviderAttachment = {
       ...h.expected,
       endpointUrl: "http://host.openshell.internal:5000/v1",
-    });
-    await expect(h.run()).rejects.toThrow("recorded sandbox attachment authority");
+    };
+    await expect(h.run()).rejects.toThrow("exit 1");
+    expect(h.calls.error).toHaveBeenCalledWith(
+      expect.stringContaining("native local inference reservation"),
+    );
     expect(h.native.adapter.attachProvider).not.toHaveBeenCalled();
     expect(h.calls.recordSkip).not.toHaveBeenCalled();
   });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { validateRebuildHostInferenceCredential } from "./rebuild-provider-preflight";
+import { validateRebuildHostInferenceCredential } from "./rebuild/host-credential-preflight";
 
 const target = {
   provider: "compatible-endpoint",

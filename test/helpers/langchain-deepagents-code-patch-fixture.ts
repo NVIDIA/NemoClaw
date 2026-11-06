@@ -720,7 +720,86 @@ def _get_provider_kwargs(provider, *, model_name=None):
     `
 from __future__ import annotations
 
+import contextlib
+import ipaddress
+import threading
 from urllib.parse import urljoin, urlparse
+
+_dns_pin_lock = threading.Lock()
+
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True if \`ip\` belongs to a non-publicly-routable range.
+
+    Rejects: private (RFC1918/ULA), loopback, link-local (including cloud
+    IMDS at \`169.254.169.254\`), reserved, multicast, unspecified
+    (\`0.0.0.0\`/\`::\`), and anything \`ipaddress\` does not consider globally
+    routable (catches benchmarking, documentation, and similar ranges the
+    explicit predicates miss).
+
+    IPv4-mapped IPv6 (\`::ffff:a.b.c.d\`) and 6to4 (\`2002::/16\`) are unwrapped
+    to their underlying IPv4 address before the checks so that private
+    space tunneled inside an IPv6 wrapper is still caught — e.g.,
+    \`::ffff:127.0.0.1\` and \`2002:a9fe:a9fe::1\` (6to4 over IMDS) both
+    evaluate as blocked.
+    """
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        elif ip.sixtofour is not None:
+            ip = ip.sixtofour
+    return (
+        not ip.is_global
+        or ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+@contextlib.contextmanager
+def _pinned_dns(hostname: str, allowed_ips: list[str]) -> Iterator[None]:
+    """Force outgoing urllib3 connections for \`hostname\` to use \`allowed_ips\`.
+
+    Patches \`urllib3.util.connection.create_connection\` for the duration of
+    the context so that \`requests\` cannot re-resolve \`hostname\` to a
+    different IP than the one \`_validate_url\` vetted (defends against DNS
+    rebinding TOCTOU). The patch is process-global, so the module lock
+    serializes concurrent fetches.
+
+    Args:
+        hostname: The exact hostname (already IDNA-encoded by the caller)
+            whose resolution must be pinned.
+        allowed_ips: The IPs \`_validate_url\` confirmed are safe to connect
+            to. Tried in order; the first that accepts the connection wins.
+    """
+    from urllib3.util import connection as urllib3_connection
+
+    with _dns_pin_lock:
+        original = urllib3_connection.create_connection
+
+        def patched(
+            address: tuple[str, int], *args: Any, **kwargs: Any
+        ) -> socket.socket:
+            host, port = address[0], address[1]
+            if host != hostname:
+                return original(address, *args, **kwargs)
+            last_exc: OSError | None = None
+            for ip in allowed_ips:
+                try:
+                    return original((ip, port), *args, **kwargs)
+                except OSError as exc:
+                    last_exc = exc
+            assert last_exc is not None  # noqa: S101  # loop body guarantees this
+            raise last_exc
+
+        urllib3_connection.create_connection = patched  # ty: ignore[invalid-assignment]  # signature matches at runtime
+        try:
+            yield
+        finally:
+            urllib3_connection.create_connection = original
+
 
 _ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
 _MAX_FETCH_REDIRECTS = 5

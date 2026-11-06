@@ -6,6 +6,7 @@ import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider/current";
 import type { RuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/contract";
 import { removeManagedAgentStateVolumes } from "../../onboard/sandbox-provider-cleanup";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 
 export type { ManagedAgentStateVolumeContext };
 
@@ -58,6 +59,7 @@ export function removeManagedAgentStateVolumesForUninstall(
 ): boolean {
   for (const context of contexts) {
     const results = removeManagedAgentStateVolumes(context, {
+      workspace: runtime.env.OPENSHELL_WORKSPACE ?? OPENSHELL_DEFAULT_WORKSPACE,
       runtimeProviders: runtime.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
       runDocker: (args, options) =>
         runtime.runDocker(["volume", ...args], {

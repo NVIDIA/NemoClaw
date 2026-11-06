@@ -30,6 +30,7 @@ import {
 } from "./contract";
 
 export { normalizeNativeLocalProviderAttachment, nativeLocalIdentity };
+export { NativeProviderCredentialExpiredError } from "../native-provider/lifecycle";
 export type { NativeLocalProviderAttachment };
 
 export function prepareNativeLocalProfile(input: NativeLocalBinding) {
@@ -75,7 +76,12 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
             : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", ...(dualStack ? ["fc00::/7"] : [])],
           rules: [
             { allow: { method: "GET", path: `${endpoint.pathname}/models` } },
-            { allow: { method: "POST", path: `${endpoint.pathname}/chat/completions` } },
+            {
+              allow: {
+                method: "POST",
+                path: `${endpoint.pathname}/${binding.api === "openai-responses" ? "responses" : "chat/completions"}`,
+              },
+            },
           ],
         },
       ],
@@ -193,7 +199,11 @@ export async function verifyRecordedNativeLocalProviderAttachment(input: {
     (input.gatewayName !== undefined && expected.gatewayName !== input.gatewayName)
   )
     throw new Error("Native local provider authority does not match the rebuild target.");
-  return verifyNativeLocalProviderAttachment({ ...input, expected });
+  return verifyNativeLocalProviderAttachment({
+    ...input,
+    expected,
+    requireUnexpiredCredential: true,
+  });
 }
 
 export async function ensureNativeLocalProviderAttached(input: AttachmentInput) {

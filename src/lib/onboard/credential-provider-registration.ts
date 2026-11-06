@@ -12,7 +12,9 @@ import {
 import {
   buildMessagingProviderApplication,
   hasNemoClawOwnedMessagingProviderProfile,
+  messagingProviderProfileForType,
 } from "../messaging/applier/provider-application";
+import { credentialFamilyProfileContract } from "../messaging/applier/credential-family-profile";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
@@ -377,12 +379,8 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
   ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
-    const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
-      binding.type,
-      { root: deps.root, runOpenshell },
-    );
-    if (profileMatches === false) return { kind: "indeterminate" };
-    const observed = await createCliOpenShellProviderAdapter({ run: runOpenshell }).getProvider({
+    const adapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+    const observed = await adapter.getProvider({
       target: { kind: "selected" },
       providerName: binding.name,
     });
@@ -391,13 +389,44 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         ? { kind: "missing" }
         : { kind: "indeterminate" };
     }
-    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(observed.value, {
-      name: binding.name,
-      type: binding.type,
-      credentialKey: binding.credentialEnv,
-    })
-      ? { kind: "exact" }
-      : { kind: "collision" };
+    if (
+      !gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(observed.value, {
+        name: binding.name,
+        type: binding.type,
+        credentialKey: binding.credentialEnv,
+      })
+    )
+      return { kind: "collision" };
+    if (observed.value.type === binding.type) {
+      const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
+        binding.type,
+        { root: deps.root, runOpenshell },
+      );
+      return profileMatches === false ? { kind: "indeterminate" } : { kind: "exact" };
+    }
+    const profile = messagingProviderProfileForType(
+      deps.root,
+      binding.type,
+      messagingBridgeProvider
+        .listMessagingBridgeProfiles({ root: deps.root })
+        .find((entry) => entry.profileId === binding.type),
+    );
+    if (!profile) return { kind: "collision" };
+    try {
+      const expectedProfile = credentialFamilyProfileContract(
+        profile.profilePath,
+        binding.credentialEnv,
+        observed.value.credentialKeys,
+      );
+      const verified = await adapter.inspectProviderProfile({
+        target: { kind: "selected" },
+        profileType: expectedProfile.profileId,
+        expectedProfile,
+      });
+      return verified.ok ? { kind: "exact" } : { kind: "indeterminate" };
+    } catch {
+      return { kind: "indeterminate" };
+    }
   }
 
   async function inspectGatewayCredential(

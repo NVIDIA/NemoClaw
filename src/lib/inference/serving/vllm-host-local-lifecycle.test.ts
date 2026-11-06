@@ -23,20 +23,6 @@ import {
   recoverHostLocalManagedVllmEndpoint,
 } from "./vllm-host-local-lifecycle";
 
-const networkMocks = vi.hoisted(() => ({
-  resolveBridgeHost: vi.fn(
-    (
-      _capture: NonNullable<RecoverHostLocalManagedVllmOptions["dockerCapture"]>,
-      _dockerEnv?: Record<string, string>,
-    ) => "172.18.0.1",
-  ),
-}));
-
-vi.mock("./vllm-host-local-network", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./vllm-host-local-network")>()),
-  resolveManagedVllmBridgeHost: networkMocks.resolveBridgeHost,
-}));
-
 const API_KEY = "b".repeat(64);
 const IDENTITY = {
   catalogDigest: `sha256:${"1".repeat(64)}`,
@@ -62,7 +48,6 @@ function stateDir(): string {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  networkMocks.resolveBridgeHost.mockClear();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -72,7 +57,7 @@ function inspect(
   key = API_KEY,
   fingerprint = runtimeAuthFingerprint(key),
   labels: Record<string, string> = {},
-  bridgeHost = "172.18.0.1",
+  bridgeHost = "127.0.0.1",
   hostPort = "8000",
 ) {
   return JSON.stringify([
@@ -92,7 +77,7 @@ function inspect(
         Ports: {
           "8000/tcp": [
             { HostIp: "127.0.0.1", HostPort: hostPort },
-            { HostIp: bridgeHost, HostPort: hostPort },
+            ...(bridgeHost === "127.0.0.1" ? [] : [{ HostIp: bridgeHost, HostPort: hostPort }]),
           ],
         },
       },
@@ -101,7 +86,7 @@ function inspect(
 }
 
 describe("host-local managed vLLM recovery", () => {
-  it("pins inspection and bridge discovery to the physical default Docker daemon", () => {
+  it("pins inspection to the physical default Docker daemon", () => {
     vi.stubEnv("DOCKER_CONTEXT", "remote-context");
     vi.stubEnv("DOCKER_HOST", "tcp://remote.example:2376");
     vi.stubEnv("DOCKER_CONFIG", "/tmp/remote-docker-config");
@@ -126,11 +111,9 @@ describe("host-local managed vLLM recovery", () => {
     expect(dockerOptions?.env).toMatchObject({ DOCKER_CONTEXT: "default" });
     expect(dockerOptions?.env).not.toHaveProperty("DOCKER_HOST");
     expect(dockerOptions?.env).not.toHaveProperty("DOCKER_CONFIG");
-    expect(networkMocks.resolveBridgeHost).toHaveBeenCalledWith(capture, dockerOptions?.env);
-    expect(networkMocks.resolveBridgeHost.mock.calls[0]?.[1]).toBe(dockerOptions?.env);
   });
 
-  it("recovers one owned endpoint with loopback and current OpenShell bridge bindings", () => {
+  it("recovers one owned endpoint with one loopback binding", () => {
     const observed = vi.fn();
     expect(
       recoverHostLocalManagedVllmEndpoint({
@@ -150,7 +133,7 @@ describe("host-local managed vLLM recovery", () => {
     expect(
       recoverHostLocalManagedVllmEndpoint({
         dockerInspect: () =>
-          inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", "19000"),
+          inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "127.0.0.1", "19000"),
         loadApiKey: () => API_KEY,
       }),
     ).toEqual({
@@ -166,7 +149,7 @@ describe("host-local managed vLLM recovery", () => {
       expect(() =>
         recoverHostLocalManagedVllmEndpoint({
           dockerInspect: () =>
-            inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", hostPort),
+            inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "127.0.0.1", hostPort),
           loadApiKey: () => API_KEY,
         }),
       ).toThrow("unsafe or incomplete");
@@ -182,7 +165,7 @@ describe("host-local managed vLLM recovery", () => {
     ).toThrow("missing or mismatched");
   });
 
-  it("rejects a private binding that is not the current OpenShell bridge (#8379)", () => {
+  it("rejects an additional private binding (#8379)", () => {
     expect(() =>
       recoverHostLocalManagedVllmEndpoint({
         dockerInspect: () => inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.19.0.1"),

@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure Corporate Certificate Authority Trust"
 sidebar-title: "Configure Corporate CA Trust"
-description: "Import a bounded corporate proxy CA chain into NemoClaw sandbox runtime trust and supported build-time flows."
-description-agent: "Configures corporate proxy CA trust for runtime TLS and supported build-time operations. Use when a corporate MITM proxy re-signs external TLS or certificate verification fails behind an enterprise proxy."
+description: "Configure corporate CA trust for sandbox TLS clients, supervisor destinations, and supported build-time flows."
+description-agent: "Configures corporate CA trust for sandbox TLS clients, supervisor destinations, and supported build-time operations. Use when an enterprise proxy re-signs TLS or a managed endpoint uses a private CA."
 keywords: ["nemoclaw corporate ca", "corporate proxy tls", "certificate verification"]
 content:
   type: "how_to"
@@ -17,6 +17,13 @@ NemoClaw imports a bounded corporate CA chain without replacing the OpenShell tr
 ## Provide the Corporate CA Explicitly
 
 Point NemoClaw at a PEM bundle that contains your corporate root and any required intermediates.
+
+<Warning>
+With OpenShell `0.1.7`, NemoClaw also configures these roots for destination TLS verification by the gateway's network supervisors.
+This trust applies across that gateway, rather than only to one MCP endpoint or sandbox.
+Import only CA roots approved for every sandbox that uses the gateway.
+Network policy, destination pins, and TLS hostname checks still apply.
+</Warning>
 
 ```bash
 export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
@@ -32,7 +39,11 @@ For an existing sandbox, use the [explicit recreation command `NEMOCLAW_CORPORAT
 NemoClaw validates the selected bundle and bakes it into the sandbox image as `NEMOCLAW_CORPORATE_CA_B64`.
 The managed Dockerfile decodes it to the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`.
 It also installs each validated certificate as a separate operating-system trust anchor and refreshes the OS trust bundle.
-This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream connection to an HTTPS inference, MCP, or custom-policy endpoint signed by that CA.
+Sandbox TLS clients can use these anchors.
+OpenShell verifies destination TLS in a separate network supervisor.
+Installing a CA in the workload image alone does not establish supervisor trust.
+For OpenShell `0.1.7`, NemoClaw supplies the validated bundle through `openshell.supervisor.network.additional_ca_bundle` in the managed gateway configuration.
+Private-CA MCP runtime qualification remains pending.
 
 <AgentOnly variant="openclaw">
 
@@ -40,7 +51,7 @@ When onboarding supplies a corporate CA, the Dockerfile sets `NODE_EXTRA_CA_CERT
 This includes registry-backed npm remediation and runtime dependency installation that cross a TLS-inspecting proxy.
 The build does not retain either variable in the image configuration.
 
-NemoClaw keeps `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` for OpenShell 0.0.116.
+NemoClaw keeps `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox` when it imports a corporate CA into the managed OpenClaw image.
 The OpenClaw managed startup runtime creates `/tmp/nemoclaw-managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it releases the sandbox-user startup command.
 The `sandbox` user can read the merged bundle but cannot modify or replace it.
 Sandboxes still using the staged legacy direct-start path create `/tmp/nemoclaw-ca-bundle.pem` with mode `0444` as the same `sandbox` identity that runs the entrypoint and agent, so that compatibility path is read-only by mode but is not a privilege boundary.
@@ -70,6 +81,29 @@ This supports cold builds on hosts where the base image is not cached.
 
 For sandbox child processes, NemoClaw also appends the corporate CA to the OpenShell client trust bundle instead of replacing it.
 It points `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node.js trust both roots.
+
+## Understand Supervisor Destination Trust
+
+NemoClaw stores the validated public certificates under `network-trust/additional-ca-<sha256>.pem` in the managed gateway state directory.
+The gateway owner controls the directory with mode `0700`; each certificate snapshot has mode `0444`.
+The snapshot contains certificates only, never a private key or provider credential.
+NemoClaw checks its ownership, permissions, contents, and digest before reuse.
+A missing, changed, or unsafe saved snapshot stops gateway configuration instead of silently dropping the requested trust.
+
+The destination bundle augments the supervisor's trust roots.
+It does not change the mutual TLS credentials or trust used to authenticate gateway clients.
+
+When no CA source resolves during later gateway preparation, NemoClaw preserves the saved snapshot.
+Selecting another validated bundle creates another generation and updates the gateway configuration.
+NemoClaw retains previous generations because a running supervisor can still use them.
+They remain in the gateway state until that owned state is removed.
+Do not remove them manually while the gateway or its sandboxes are running.
+
+Changing gateway configuration does not prove that existing supervisors or workload images use the new CA.
+For an existing sandbox, follow the [explicit recreation procedure](../reference/commands#--resume-and--fresh) and its state-preservation limits.
+After recreation, verify the required HTTPS operation from the affected sandbox.
+For managed MCP, require a verified credential-resolution result from `$$nemoclaw <sandbox> mcp status <server>`.
+An inconclusive result does not establish TLS connectivity or credential replacement.
 
 ## Understand Automatic Source Selection
 
@@ -101,7 +135,9 @@ If no selection message appears, no source passed validation.
 
 Managed NemoClaw Dockerfiles implement the corporate CA build contract automatically.
 A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64`, validate and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem`, install each certificate as an individual OS trust anchor, and refresh the OS trust bundle.
-Decoding only the application bundle is insufficient for OpenShell-inspected HTTPS because the proxy verifies the upstream TLS connection itself.
+Decoding only the application bundle does not establish trust for OpenShell-inspected HTTPS because the supervisor verifies the upstream TLS connection.
+NemoClaw configures supervisor destination trust independently of the custom Dockerfile.
+Skipping image CA import does not skip gateway destination trust.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
 <AgentOnly variant="openclaw">
@@ -111,14 +147,14 @@ Dockerfile instruction keywords are case-insensitive, but the argument name must
 Before the final entrypoint, the stage must set `USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}`.
 The final entrypoint must use the trusted exec form `ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]`.
 NemoClaw preserves `sandbox` when it bakes the corporate CA; managed startup creates the root-owned merged bundle before it releases the entrypoint.
-Automatic fallback and host-store sources are a no-op unless the Dockerfile declares `NEMOCLAW_CORPORATE_CA_B64` and meets this startup contract.
+NemoClaw skips image CA import from automatic fallback and host-store sources unless the Dockerfile declares `NEMOCLAW_CORPORATE_CA_B64` and meets this startup contract.
 The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding if either condition is not met.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes,deepagents">
 
-Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits `NEMOCLAW_CORPORATE_CA_B64`.
+NemoClaw skips image CA import from automatic fallback and host-store sources when a custom Dockerfile omits `NEMOCLAW_CORPORATE_CA_B64`.
 The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when that argument is absent so the requested trust change cannot silently disappear.
 
 </AgentOnly>
@@ -129,7 +165,10 @@ Every imported source must be a regular, readable, non-symlink PEM file that is 
 The file must be non-empty, stay within the corporate-chain size and certificate-count limits, and contain only certificates that parse as X.509 CA certificates with `basicConstraints CA:TRUE`.
 NemoClaw rejects or skips a source that would widen trust to a full operating-system bundle instead of truncating it.
 
-Set `NEMOCLAW_CORPORATE_CA_IMPORT=0` to disable corporate CA import entirely.
+Set `NEMOCLAW_CORPORATE_CA_IMPORT=0` to disable corporate CA import.
+During the next managed gateway preparation, this explicit setting also removes the additional destination bundle from the gateway configuration.
+It retains saved certificate generations and does not remove CA material from existing images or running supervisors.
+Recreate affected sandboxes before relying on removal, then verify that the disallowed private-CA connection fails TLS validation.
 
 ## Related Topics
 

@@ -18,7 +18,7 @@ it("uses an opaque native Model Router credential without serializing the key (#
     NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-router",
     NEMOCLAW_INFERENCE_BASE_URL: endpoint,
     NVIDIA_INFERENCE_API_KEY: "test-only-secret",
-    NEMOCLAW_LOCAL_INFERENCE_TOKEN: "test-only-secret",
+    NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
   });
   expect(config.models.providers.inference.baseUrl).toBe(endpoint);
   expect(config.models.providers.inference.apiKey).toBe(

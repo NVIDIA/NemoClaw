@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -142,7 +143,16 @@ helper_path = Path(
 spec = importlib.util.spec_from_file_location("nemoclaw_admin_pairing_state", helper_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-records, _metadata = module.read_openclaw_pairing_state(str(state_root), timeout=1)
+retryable_state_error = getattr(module, "OpenClawPairingStateRetryableError", ())
+for attempt in range(3):
+    try:
+        records, _metadata = module.read_openclaw_pairing_state(str(state_root), timeout=1)
+        break
+    except retryable_state_error:
+        if attempt == 2:
+            raise
+        # Discard the raced snapshot; the next read repeats all file-identity checks.
+        time.sleep(0.05)
 identity = records.get("identity")
 if not isinstance(identity, dict):
     raise SystemExit("local CLI identity must be an object")

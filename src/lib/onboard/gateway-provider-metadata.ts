@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { reportsExactProviderNotFound } from "../adapters/openshell/provider-diagnostic-cli";
+import { matchesCredentialFamilyProfileType } from "../messaging/applier/credential-family-profile";
 import type { OpenShellProviderMetadata } from "../adapters/openshell/provider-adapter";
 import {
   isValidCliOpenShellProviderIdentifier,
@@ -76,7 +77,12 @@ export function matchesGatewayCredentialFamilyProviderBinding(
   return Boolean(
     metadata &&
     metadata.name === expected.name &&
-    metadata.type === expected.type &&
+    matchesCredentialFamilyProfileType(
+      metadata.type,
+      expected.type,
+      expected.credentialKey,
+      metadata.credentialKeys,
+    ) &&
     metadata.configKeys.length === 0 &&
     metadata.credentialKeys.includes(expected.credentialKey) &&
     metadata.credentialKeys.every(

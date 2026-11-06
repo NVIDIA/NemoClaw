@@ -368,7 +368,7 @@ describe("live E2E target gating", () => {
     {
       file: "openshell-gateway-upgrade.test.ts",
       testName:
-        "openshell-gateway-upgrade: restores gateway registration and all sandbox state (#11898)",
+        "openshell-gateway-upgrade: refuses the 0.1.x cutover and preserves registered sandboxes (#12558)",
     },
   ] as const)(
     "applies the Linux gate to $file at real Vitest collection",

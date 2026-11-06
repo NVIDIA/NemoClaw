@@ -13,7 +13,7 @@ import {
 } from "./model-router-provider-routed-inference-helpers.ts";
 
 // Focused direct CLI/sandbox test: the contract is the real provider-routed
-// onboard boundary plus one ordinary sandbox inference.local completion.
+// onboard boundary plus one ordinary sandbox native provider completion.
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-model-router";
 const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
@@ -21,14 +21,14 @@ const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 test(
-  "model-router provider-routed onboard returns an inference.local completion",
+  "model-router provider-routed onboard returns a native provider completion",
   {
     meta: {
       e2ePhases: [
         "confirm routed-provider prerequisites",
         "clear the previous routed-provider sandbox",
         "onboard the routed provider",
-        "request a routed inference.local completion",
+        "request a routed native provider completion",
         "record the routed inference contract result",
       ],
     },
@@ -49,7 +49,7 @@ test(
         "the selected runtime is available before onboarding",
         "NVIDIA_API_KEY is present and nvapi-prefixed, then staged for the router's NVIDIA_INFERENCE_API_KEY credential",
         "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
-        "sandbox inference.local returns a valid chat completion through the routed provider",
+        "the attached native provider returns a valid chat completion through the routed provider",
       ],
     });
 
@@ -90,17 +90,18 @@ test(
     await host.recordSandboxContainerDiscoveryOnFailure(SANDBOX_NAME, onboard.exitCode, [apiKey]);
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
-    progress.phase("request a routed inference.local completion");
+    progress.phase("request a routed native provider completion");
     await runtime.expectInferenceLocalChatCompletion(
       { sandboxName: SANDBOX_NAME },
       {
-        artifactName: "sandbox-inference-local-routed-completion",
-        curlMaxTimeSeconds: 90,
-        maxTokens: 128,
+        modelRouter: true,
         model: "nvidia-routed",
         prompt: "Reply with a short greeting.",
-        redactionValues: [apiKey],
+        maxTokens: 128,
+        curlMaxTimeSeconds: 90,
         timeoutMs: 120_000,
+        redactionValues: [apiKey],
+        artifactName: "sandbox-native-routed-completion",
       },
     );
 

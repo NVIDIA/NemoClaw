@@ -28,6 +28,7 @@ trap cleanup EXIT
 download() {
   local url="$1"
   local output="$2"
+  printf 'Downloading %s\n' "${url}" >&2
   curl --proto '=https' --tlsv1.2 -fsSL \
     --retry 5 --retry-all-errors --retry-delay 2 \
     --connect-timeout 15 --max-time 120 \
@@ -243,6 +244,7 @@ build_libssh2_package() {
 build_zlib_package() {
   local architecture="$1"
   local original_sha256
+  local original_snapshot_file
   local debian_version="1:1.3.dfsg+really1.3.1-1+b1"
   local package_version="${debian_version}+nemoclaw1"
   local source_dir="${build_root}/zlib-source"
@@ -251,8 +253,14 @@ build_zlib_package() {
   local multiarch
 
   case "${architecture}" in
-    amd64) original_sha256="015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d" ;;
-    arm64) original_sha256="209aa5cf671e97b9eb0410844fa6df4cae2e75b0c72e7802ab6c8ece13e6ddef" ;;
+    amd64)
+      original_sha256="015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d"
+      original_snapshot_file="6521c4fb859cda27142c655d2aa30c9d31e40ff7"
+      ;;
+    arm64)
+      original_sha256="209aa5cf671e97b9eb0410844fa6df4cae2e75b0c72e7802ab6c8ece13e6ddef"
+      original_snapshot_file="37dbdb01f106b4b2246e8b4e2a09988081baae4d"
+      ;;
     *) return 64 ;;
   esac
   download \
@@ -281,7 +289,7 @@ build_zlib_package() {
     ./write-error-test
   )
   download \
-    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/z/zlib/zlib1g_1.3.dfsg%2Breally1.3.1-1%2Bb1_${architecture}.deb" \
+    "https://snapshot.debian.org/file/${original_snapshot_file}" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   test "$(dpkg-deb -f "${original_deb}" Package)" = zlib1g
@@ -309,6 +317,7 @@ build_zlib_package() {
 build_python_fix_package() {
   local architecture="$1"
   local original_sha256
+  local original_snapshot_file
   local original_deb="${build_root}/python-stdlib-original.deb"
   local original_root="${build_root}/python-stdlib-original"
   local package_root="${build_root}/python-htmlparser-fix"
@@ -317,9 +326,11 @@ build_python_fix_package() {
   case "${architecture}" in
     amd64)
       original_sha256="db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84"
+      original_snapshot_file="c8d9cc73aab111fac7dc1b26c6e2ffda7af08f04"
       ;;
     arm64)
       original_sha256="d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0"
+      original_snapshot_file="35cc8669f33410e90648c1dee9ed1395920b9b9e"
       ;;
     *)
       printf 'Unsupported architecture: %s\n' "${architecture}" >&2
@@ -328,7 +339,7 @@ build_python_fix_package() {
   esac
 
   download \
-    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://snapshot.debian.org/file/${original_snapshot_file}" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -x "${original_deb}" "${original_root}"

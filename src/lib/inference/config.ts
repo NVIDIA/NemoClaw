@@ -6,7 +6,8 @@
  * All functions are pure.
  */
 
-import { nativeLocalCredentialReference } from "./native-local/agent-config";
+import type { RegisteredInferenceProviderAttachment } from "./native-provider/registered";
+import { nativeLocalCredentialReference } from "./native-local/model-router";
 import {
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
@@ -43,7 +44,10 @@ export {
   isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
 } from "./native-local/contract";
-export { hasLegacySharedLocalInferenceRoute } from "./selection";
+export {
+  hasLegacySharedLocalInferenceRoute,
+  hasLegacySharedCustomInferenceRoute,
+} from "./selection";
 export type { NativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
@@ -358,7 +362,19 @@ export function getSandboxInferenceConfig(
   nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
   agentName?: string | null,
+  registered?: RegisteredInferenceProviderAttachment,
 ): SandboxInferenceConfig {
+  if (registered) {
+    if (registered.providerName !== provider)
+      throw new Error("Registered inference provider does not match selection");
+    return {
+      providerKey: registered.providerName,
+      primaryModelRef: `${registered.providerName}/${model}`,
+      inferenceBaseUrl: registered.endpointUrl,
+      inferenceApi: registered.inferenceApi,
+      inferenceCompat: null,
+    };
+  }
   const nativeCustom =
     nativeProvider === true &&
     isCustomHostedProvider(provider) &&
@@ -474,7 +490,10 @@ export function getSandboxInferenceConfig(
     nativeLocalCredentialReference(provider, nativeEndpointUrl, agentName)
   ) {
     inferenceBaseUrl = nativeEndpointUrl;
-    inferenceApi = "openai-completions";
+    inferenceApi =
+      (agentName === "openclaw" || agentName === "hermes") && provider === "compatible-endpoint"
+        ? selectedApi || "openai-completions"
+        : "openai-completions";
   }
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
@@ -567,3 +586,10 @@ export function formatInferenceRouteDriftForDisplay(
     warning: `gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route ${owner} (${recordedRoute}).`,
   };
 }
+
+export {
+  recordedRegisteredInferenceProviderAttachment,
+  normalizeRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+} from "./native-provider/registered";
+export type { RegisteredInferenceProviderAttachment } from "./native-provider/registered";

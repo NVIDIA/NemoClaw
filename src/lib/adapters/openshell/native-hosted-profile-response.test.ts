@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi, onTestFinished } from "vitest";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import {
   hostedNativeProvider,
@@ -10,6 +12,7 @@ import {
   type HostedProviderDefinition,
 } from "../../inference/native-provider/hosted";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
+import { boundHermesNativeProfile } from "../../inference/native-provider/hermes-profile";
 import {
   customNativeProvider,
   boundCustomNativeProfile,
@@ -22,14 +25,15 @@ function response(definition: HostedProviderDefinition) {
   const contract = parseCheckedInProviderProfileContract(
     definition.custom
       ? boundCustomNativeProfile(definition, profilePath)
-      : fs.readFileSync(profilePath, "utf8"),
+      : definition.endpointUrl
+        ? boundHermesNativeProfile(definition)
+        : fs.readFileSync(profilePath, "utf8"),
   )!;
   const base = managedBraveProfile();
   const credential = contract.boundary.credentials[0];
   const endpoint = contract.boundary.endpoints[0] as {
     host: string;
     port: number;
-    tls?: string;
     allowed_ips?: string[];
     rules: { allow: { method: string; path: string } }[];
   };
@@ -51,9 +55,9 @@ function response(definition: HostedProviderDefinition) {
           ...base.endpoints[0],
           host: endpoint.host,
           port: endpoint.port,
-          tls: endpoint.tls ?? "",
+          tls: 0,
           allowedIps: endpoint.allowed_ips ?? [],
-          access: "",
+          access: 0,
           rules: endpoint.rules.map((rule) => ({
             allow: {
               ...rule.allow,
@@ -77,6 +81,33 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (d
     const value = response(definition);
     expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBe(value);
   });
+  it.each([
+    ["disabled TLS inspection", { tls: 1 }],
+    ["removed explicit TLS termination", { tls: 2 }],
+    ["removed TLS passthrough", { tls: 3 }],
+    ["audit-only enforcement", { enforcement: 2 }],
+    ["unspecified enforcement", { enforcement: 0 }],
+    ["unrestricted read-write access", { access: 2 }],
+    ["an unknown access preset", { access: 999 }],
+    ["legacy string enums", { tls: "", enforcement: "enforce", access: "" }],
+  ])("rejects %s", (_label, mutation) => {
+    const value = response(definition);
+    const profile = {
+      ...value.profile,
+      endpoints: [{ ...value.profile.endpoints[0], ...mutation }],
+    };
+    expect(isManagedNativeHostedProfileResponse({ profile }, definition.profileId)).toBeUndefined();
+  });
+  it.each(["/usr/bin/python3*", "/usr/bin/python3.12", "/unapproved"])(
+    "rejects replacing the Hermes interpreter with %s",
+    (path) => {
+      const value = response(definition);
+      value.profile.binaries = value.profile.binaries.map((binary) =>
+        binary.path === "/usr/bin/python3.13" ? { path } : binary,
+      );
+      expect(isManagedNativeHostedProfileResponse(value, definition.profileId)).toBeUndefined();
+    },
+  );
   it("rejects extra egress or executable access", () => {
     const value = response(definition);
     expect(
@@ -165,7 +196,7 @@ it.each([
           endpoints: [
             {
               ...value.profile.endpoints[0],
-              tls: endpointUrl.startsWith("https:") ? "" : "terminate",
+              tls: 1,
             },
           ],
         },
@@ -233,3 +264,54 @@ it("requires the exact public IP restriction on a Hermes bound profile", () => {
     isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, ["10.0.0.1"]),
   ).toBeUndefined();
 });
+
+it.each([
+  { endpointUrl: "http://8.8.8.8/team/v1", allowedIps: ["8.8.8.8"] },
+  { endpointUrl: "https://[2001:4860:4860::8888]/team/v1", allowedIps: ["2001:4860:4860::8888"] },
+  { endpointUrl: "http://host.openshell.internal:42103/team/v1", allowedIps: undefined },
+])(
+  "validates the runtime response for retained Hermes $endpointUrl",
+  ({ endpointUrl, allowedIps }) => {
+    const definition = { ...hostedNativeProvider("hermes-provider", endpointUrl)!, allowedIps };
+    const value = response(definition);
+    expect(
+      isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, allowedIps),
+    ).toBe(value);
+    expect(
+      isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, ["1.1.1.1"]),
+    ).toBeUndefined();
+    value.profile.endpoints[0].port += 1;
+    expect(
+      isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, allowedIps),
+    ).toBeUndefined();
+  },
+);
+
+it.each([
+  { service: "gateway", directory: ".nemoclaw/gateways/42103", routerPort: null },
+  { service: "Model Router", directory: ".nemoclaw", routerPort: 42103 },
+])(
+  "rejects a retained Hermes response after its port is reserved for $service",
+  ({ directory, routerPort }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-response-port-"));
+    onTestFinished(() => fs.rmSync(home, { recursive: true, force: true }));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "");
+    vi.stubEnv("NEMOCLAW_MODEL_ROUTER_PORT", "");
+    const endpointUrl = "http://host.openshell.internal:42103/team/v1";
+    const definition = hostedNativeProvider("hermes-provider", endpointUrl)!;
+    const value = response(definition);
+    expect(isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl)).toBe(
+      value,
+    );
+    const root = path.join(home, directory);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "onboard-session.json"),
+      JSON.stringify({ routerPort, routerPid: null, routerCredentialHash: null }),
+    );
+    expect(
+      isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl),
+    ).toBeUndefined();
+  },
+);

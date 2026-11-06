@@ -4,7 +4,7 @@
 import {
   normalizeNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia";
+} from "../../inference/native-nvidia/contract";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
 import {

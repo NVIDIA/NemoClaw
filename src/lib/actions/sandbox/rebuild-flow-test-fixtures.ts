@@ -5,6 +5,35 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fixedNativeProvider } from "../../inference/native-provider/fixed";
+import { customNativeProvider } from "../../inference/native-provider/custom";
+
+export function customProviderRebuildEntry(
+  endpointUrl = "https://inference-api.nvidia.com/v1",
+  api: "openai-completions" | "openai-responses" = "openai-completions",
+) {
+  const definition = customNativeProvider({
+    provider: "compatible-endpoint",
+    endpointUrl,
+    api,
+    credentialEnv: "COMPATIBLE_API_KEY",
+    allowedIps: ["8.8.8.8"],
+  });
+  return {
+    provider: definition.logicalProvider,
+    endpointUrl,
+    credentialEnv: definition.custom.credentialEnv,
+    preferredInferenceApi: api,
+    nativeHostedProviderAttachment: {
+      schemaVersion: 1 as const,
+      providerName: definition.providerName,
+      profileId: definition.profileId,
+      providerId: "11111111-2222-4333-8444-555555555555",
+      endpointUrl: definition.endpointUrl,
+      allowedIps: definition.allowedIps,
+      custom: definition.custom,
+    },
+  };
+}
 
 export function makeActiveTeamsMessagingPlan() {
   return {
@@ -164,13 +193,16 @@ export function nativeProviderRebuildScenario(replaced: boolean, provider = "nvi
           "Resource version: 1",
         ].join("\n");
       } else if (args[1] === "list") {
-        stdout = JSON.stringify([
-          {
-            name: providerName,
-            credential_keys: [definition.credentialEnv],
-            credential_expires_at_ms: {},
-          },
-        ]);
+        stdout = JSON.stringify({
+          providers: [
+            {
+              name: providerName,
+              credential_keys: [definition.credentialEnv],
+              credential_expires_at_ms: {},
+            },
+          ],
+          next_page_token: "",
+        });
       } else return undefined;
       return { status: 0, stdout, output: stdout, stderr: "" };
     },

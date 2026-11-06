@@ -1287,13 +1287,10 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   return normalizePersonalOpenInternetPolicy(YAML.stringify(output));
 }
 
-/**
- * An attached custom provider adds an exact endpoint on port 443 that NemoClaw
- * cannot remove. OpenShell rejects Personal's hostless web rule beside it
- * (NVIDIA/OpenShell#4662), so Personal cannot be applied to such a sandbox.
- */
-export function hasNativeCustomProvider(sandboxName: string): boolean {
-  return Boolean(registry.getSandbox(sandboxName)?.nativeHostedProviderAttachment?.custom);
+/** Read the custom provider attachment used by onboarding policy selection. */
+export function getNativeCustomProviderAttachment(sandboxName: string) {
+  const attachment = registry.getSandbox(sandboxName)?.nativeHostedProviderAttachment;
+  return attachment?.custom ? attachment : undefined;
 }
 
 /**

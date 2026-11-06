@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
 } from "../../inference/native-provider/hosted";
 import { createRequire } from "node:module";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -1002,4 +1004,90 @@ describe("fixed hosted rebuild authority", () => {
       ),
     ).toThrow(/native|Native/);
   });
+});
+
+it.each([
+  { agent: "openclaw" as const, api: "openai-completions" as const },
+  { agent: "openclaw" as const, api: "openai-responses" as const },
+  { agent: "hermes" as const, api: "openai-completions" as const },
+  { agent: "hermes" as const, api: "openai-responses" as const },
+])(
+  "preserves the compatible $agent $api attachment and proxy owner across rebuild handoff",
+  ({ agent, api }) => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+    const binding = {
+      agent,
+      provider: "compatible-endpoint" as const,
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      ...(api === "openai-responses" ? { api } : {}),
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-provider",
+    };
+    const result = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        agent,
+        provider: "compatible-endpoint",
+        model: "served-model",
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: api,
+        nativeLocalProviderAttachment: attachment,
+      }),
+      agent,
+      noopLog,
+      throwingBail,
+    );
+    expect(result).toMatchObject({
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      preferredInferenceApi: api,
+      nativeLocalProviderAttachment: attachment,
+    });
+  },
+);
+
+it("retains the external inference binding without borrowing an unrelated resume session", () => {
+  const f = registeredInferenceFixture();
+  vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+    sandboxName: "other",
+    provider: "openai-api",
+    model: "other",
+    endpointUrl: "https://other.example/v1",
+  });
+  const selected = entry({
+    gatewayName: f.binding.gatewayName,
+    provider: f.binding.providerName,
+    model: "model-a",
+    endpointUrl: f.binding.endpointUrl,
+    credentialEnv: f.binding.credentialEnv,
+    preferredInferenceApi: f.binding.inferenceApi,
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  expect(
+    prepareRebuildResumeConfig("alpha", selected, "openclaw", noopLog, throwingBail),
+  ).toMatchObject({
+    provider: f.binding.providerName,
+    endpointUrl: f.binding.endpointUrl,
+    credentialEnv: f.binding.credentialEnv,
+    preferredInferenceApi: f.binding.inferenceApi,
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  expect(() =>
+    prepareRebuildResumeConfig(
+      "alpha",
+      { ...selected, endpointUrl: "https://other.example/v1" },
+      "openclaw",
+      noopLog,
+      throwingBail,
+    ),
+  ).toThrow("sandbox is untouched");
 });

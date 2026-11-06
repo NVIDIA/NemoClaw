@@ -48,7 +48,7 @@ function executableAuthorityHarness() {
     resolve: (env) => env.NEMOCLAW_OPENSHELL_BIN ?? AUTHORITY_BINARY,
     runVersion: () => ({
       status: 0,
-      stdout: "openshell 0.0.116\n",
+      stdout: "openshell 0.1.7\n",
       stderr: "",
     }),
   };
@@ -213,7 +213,7 @@ describe("Hermes portable OpenShell executable authority", () => {
       fs.writeFileSync(executablePath, "openshell-binary", { mode: 0o755 });
       const runVersion = vi.fn(() => ({
         status: 0,
-        stdout: "openshell 0.0.116\n",
+        stdout: "openshell 0.1.7\n",
         stderr: "",
       }));
       const lstat = (filePath: string): PodmanExecutableStat => {
@@ -348,7 +348,7 @@ describe("Hermes portable OpenShell executable authority", () => {
     },
   );
 
-  it("captures and reuses the exact canonical OpenShell 0.0.116 generation (#9211)", () => {
+  it("captures and reuses the canonical OpenShell 0.1.7 generation (#9211)", () => {
     const harness = executableAuthorityHarness();
     const authority = captureHermesPortableOpenShellExecutableAuthority(
       AUTHORITY_BINARY,
@@ -357,7 +357,7 @@ describe("Hermes portable OpenShell executable authority", () => {
       harness.deps,
     );
 
-    expect(authority.version).toBe("0.0.116");
+    expect(authority.version).toBe("0.1.7");
     expect(authority.executable.executablePath).toBe(AUTHORITY_BINARY);
     expect(
       assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, harness.deps),
@@ -434,27 +434,30 @@ describe("Hermes portable OpenShell executable authority", () => {
     ).toThrow("executable generation changed after reservation");
   });
 
-  it("rejects OpenShell 0.0.101 before authority capture or reuse (#9211)", () => {
-    const harness = executableAuthorityHarness();
-    expect(() =>
-      captureHermesPortableOpenShellExecutableAuthority(AUTHORITY_BINARY, childEnv, childEnv, {
-        ...harness.deps,
-        runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
-      }),
-    ).toThrow("requires OpenShell 0.0.116");
+  it.each(["0.0.101", "0.1.5", "0.1.6", "0.1.8"])(
+    "rejects OpenShell %s before authority capture or reuse (#9211)",
+    (version) => {
+      const harness = executableAuthorityHarness();
+      expect(() =>
+        captureHermesPortableOpenShellExecutableAuthority(AUTHORITY_BINARY, childEnv, childEnv, {
+          ...harness.deps,
+          runVersion: () => ({ status: 0, stdout: `openshell ${version}\n`, stderr: "" }),
+        }),
+      ).toThrow("requires OpenShell 0.1.7");
 
-    const reuseHarness = executableAuthorityHarness();
-    const authority = captureHermesPortableOpenShellExecutableAuthority(
-      AUTHORITY_BINARY,
-      childEnv,
-      childEnv,
-      reuseHarness.deps,
-    );
-    expect(() =>
-      assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, {
-        ...reuseHarness.deps,
-        runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
-      }),
-    ).toThrow("requires OpenShell 0.0.116");
-  });
+      const reuseHarness = executableAuthorityHarness();
+      const authority = captureHermesPortableOpenShellExecutableAuthority(
+        AUTHORITY_BINARY,
+        childEnv,
+        childEnv,
+        reuseHarness.deps,
+      );
+      expect(() =>
+        assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, {
+          ...reuseHarness.deps,
+          runVersion: () => ({ status: 0, stdout: `openshell ${version}\n`, stderr: "" }),
+        }),
+      ).toThrow("requires OpenShell 0.1.7");
+    },
+  );
 });

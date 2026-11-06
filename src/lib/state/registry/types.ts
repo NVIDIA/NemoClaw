@@ -3,6 +3,7 @@
 
 import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
+import type { RegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 import type { NativeHostedProviderAuthorities } from "./native-provider-authority-state";
 import type { InferenceSelection } from "../../inference/selection";
 import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
@@ -154,6 +155,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   /** Exact selected fixed hosted provider identity; separate from gateway ownership. */
   nativeHostedProviderAttachment?: NativeProviderAttachment;
+  /** Selected operator provider; this receipt grants no provider ownership. */
+  registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */

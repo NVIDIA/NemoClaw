@@ -302,7 +302,7 @@ function scopeHermesPortableCreatedIdentityArgs(
     args[4] !== "--selector" ||
     args[6] !== "--output" ||
     args[7] !== "json" ||
-    args[8] !== "--limit" ||
+    args[8] !== "--page-size" ||
     args[9] !== "2"
   ) {
     return null;
@@ -322,7 +322,7 @@ function scopeHermesPortableCreatedIdentityArgs(
     `${CREATE_ATTEMPT_SELECTOR_PREFIX}${nonce}`,
     "--output",
     "json",
-    "--limit",
+    "--page-size",
     "2",
   ];
 }

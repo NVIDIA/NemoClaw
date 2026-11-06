@@ -21,7 +21,6 @@ export type NativeProfileBoundary<Id extends string = string> = Readonly<{
   headerName: string;
   host: string;
   port?: number;
-  tls?: "terminate";
   allowedIps?: readonly string[];
   binaries?: readonly string[];
   rules: readonly Readonly<{ method: "GET" | "POST"; path: string }>[];
@@ -104,9 +103,9 @@ function nativeEndpoint(value: unknown, expected: NativeProfileBoundary): boolea
     endpoint.port === (expected.port ?? 443) &&
     emptyArray(endpoint.ports) &&
     endpoint.protocol === "rest" &&
-    endpoint.tls === (expected.tls ?? "") &&
-    endpoint.enforcement === "enforce" &&
-    endpoint.access === "" &&
+    endpoint.tls === 0 &&
+    endpoint.enforcement === 1 &&
+    endpoint.access === 0 &&
     Array.isArray(rules) &&
     rules.length === expected.rules.length &&
     expected.rules.every((rule, index) => nativeRule(rules[index], rule.method, rule.path)) &&
@@ -139,6 +138,7 @@ function nativeBinaries(value: unknown, expected?: readonly string[]): boolean {
       "/usr/bin/node",
       "/opt/hermes/.venv/bin/python",
       "/opt/hermes/.venv/bin/python3",
+      "/usr/bin/python3.13",
       "/opt/venv/bin/python3",
       "/usr/local/bin/curl",
       "/usr/bin/curl",

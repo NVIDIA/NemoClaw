@@ -60,6 +60,7 @@ function sandboxCreateArgs(): string[] {
     "--policy",
     path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml"),
     "--no-tty",
+    "--detach",
     "--",
     "/bin/sh",
     "-lc",

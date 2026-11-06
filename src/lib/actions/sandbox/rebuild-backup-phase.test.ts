@@ -15,8 +15,13 @@ const mocks = vi.hoisted(() => ({
   retireOpenClawPostRestoreDoctorForDelete: vi.fn(),
   recordRebuildRecoveryBackup: vi.fn(),
   secureTempFile: vi.fn(),
+  nativeRestoreTransportError: vi.fn(),
 }));
 
+vi.mock("../../state/sandbox", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/sandbox")>()),
+  nativeRestoreTransportError: mocks.nativeRestoreTransportError,
+}));
 vi.mock("../../policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../policy")>()),
   captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
@@ -46,6 +51,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
+  mocks.nativeRestoreTransportError.mockReset().mockReturnValue(null);
   mocks.abortOpenClawPostRestoreDoctor.mockReset().mockResolvedValue({ ok: true });
   mocks.beginOpenClawBackupQuiesce.mockReset().mockResolvedValue({
     ok: true,
@@ -98,6 +104,20 @@ describe("rebuild policy handoff", () => {
     expect(mocks.retireOpenClawPostRestoreDoctorForDelete).toHaveBeenCalledExactlyOnceWith(window);
     expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mocks.finishOpenClawBackupQuiesce).not.toHaveBeenCalled();
+  });
+
+  it("preserves the source when the SFTP client is unavailable", async () => {
+    mocks.nativeRestoreTransportError.mockReturnValue("Install the OpenSSH client tools");
+    const backup = vi.fn();
+
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow(
+      "Install the OpenSSH client tools",
+    );
+
+    expect(backup).not.toHaveBeenCalled();
+    expect(mocks.beginOpenClawBackupQuiesce).not.toHaveBeenCalled();
+    expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(mocks.recordRebuildRecoveryBackup).not.toHaveBeenCalled();
   });
 
   it("releases an unchanged source backup without requesting doctor", async () => {

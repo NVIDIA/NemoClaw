@@ -208,7 +208,7 @@ export function resolveGpuSandboxInferenceRoute(
   const nativeExpected =
     usesNativeLocalInferenceForAgent(agentName, provider, selection.endpointUrl, localNim) &&
     !isPersistedPiSharedLocalInferenceRoute(entry, selection);
-  if (localNim || (!nativeExpected && entry.nativeLocalProviderAttachment === undefined)) {
+  if (!nativeExpected && entry.nativeLocalProviderAttachment === undefined) {
     return { kind: "shared", gatewayName };
   }
   const attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);

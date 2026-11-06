@@ -13,6 +13,10 @@ import {
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import {
@@ -53,6 +57,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   readonly nativeHostedProviderAttachment?: NativeProviderAttachment;
   readonly agent: string | null;
@@ -107,7 +112,9 @@ export function prepareRebuildResumeConfig(
   bail: (msg: string, code?: number) => never,
 ): RebuildResumeConfig | null {
   let nativeAttachment;
+  let registeredInferenceProviderAttachment;
   try {
+    registeredInferenceProviderAttachment = recordedRegisteredInferenceProviderAttachment(sb);
     nativeAttachment = recordedNativeProviderAttachment({ ...sb, provider: sb.provider });
   } catch {
     bail("Malformed native provider attachment; sandbox is untouched");
@@ -212,6 +219,7 @@ export function prepareRebuildResumeConfig(
     !isLocalInferenceProvider(trustedSelection.provider) &&
     trustedSelection.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
     !rebuildEndpoint.known &&
+    !registeredInferenceProviderAttachment &&
     !explicitTargetEndpoint
   ) {
     console.error("");
@@ -238,7 +246,9 @@ export function prepareRebuildResumeConfig(
   //    not this sandbox, after exact sandbox/provider/model checks and URL
   //    canonicalization.
   // 3. The target sandbox's own matching session endpoint, validated below.
-  let endpointUrl = rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : explicitTargetEndpoint;
+  let endpointUrl =
+    registeredInferenceProviderAttachment?.endpointUrl ??
+    (rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : explicitTargetEndpoint);
   if (
     !endpointUrl &&
     !rebuildEndpoint.known &&
@@ -285,6 +295,7 @@ export function prepareRebuildResumeConfig(
     return null;
   }
   const credentialEnv =
+    registeredInferenceProviderAttachment?.credentialEnv ??
     hostedDefinition?.custom?.credentialEnv ??
     hostedDefinition?.credentialEnv ??
     getRebuildCredentialEnvFromRegistry(
@@ -294,6 +305,7 @@ export function prepareRebuildResumeConfig(
     );
 
   return {
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     agent: rebuildAgent,

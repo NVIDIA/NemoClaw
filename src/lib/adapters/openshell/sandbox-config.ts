@@ -7,6 +7,7 @@ import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { SandboxConfiguration } from "../../domain/sandbox/configuration";
 import type { OpenShellSandboxPolicyRead } from "./sandbox-policy";
+import { createSandboxes } from "./sandboxes";
 import {
   PolicyJsonSchema,
   SandboxConfigResponseSchema,
@@ -31,20 +32,31 @@ export function createSandboxConfig(
 ) {
   return {
     get: (
-      request: ReadRequest & Readonly<{ sandboxId: string }>,
+      request: ReadRequest & Readonly<{ sandboxId: string; name: string }>,
     ): Promise<SandboxConfiguration & { readonly policy: OpenShellSandboxPolicyRead }> =>
       readOpenShell(request, async () => {
         const sandboxId = text(request.sandboxId);
+        const name = text(request.name);
         const client = await connect(request.target);
         request.signal.throwIfAborted();
-        // sandbox.getConfig(name) performs a new name lookup and omits workspace identity.
+        // OpenShell 0.1.3 selects configuration by workspace and public name.
         const config = readValue(
           SandboxConfigResponseSchema,
-          await client.raw.getSandboxConfig({ sandboxId }, { signal: request.signal }),
+          await client.raw.getSandboxConfig(
+            {
+              name,
+              workspaceScope: { selection: { case: "workspace", value: request.workspace } },
+            },
+            { signal: request.signal },
+          ),
         );
         if (config.workspace !== request.workspace) {
           throw new OpenShellReadError("schema");
         }
+        request.signal.throwIfAborted();
+        // Reject replacement under the same name before associating policy with the observed ID.
+        const confirmed = await createSandboxes(async () => client).get(request);
+        if (confirmed?.id !== sandboxId) throw new OpenShellReadError("schema");
         request.signal.throwIfAborted();
         const document = await serializePolicy(config.policy, request.signal);
         request.signal.throwIfAborted();
@@ -147,8 +159,44 @@ function compactEndpointPorts(endpoint: PolicyDocument, ports: PolicyEndpointJso
   }
 }
 
+const POLICY_ENDPOINT_MODES = {
+  tls: {
+    NETWORK_TLS_MODE_UNSPECIFIED: "",
+    NETWORK_TLS_MODE_SKIP: "skip",
+  },
+  enforcement: {
+    NETWORK_ENFORCEMENT_MODE_UNSPECIFIED: "",
+    NETWORK_ENFORCEMENT_MODE_ENFORCE: "enforce",
+    NETWORK_ENFORCEMENT_MODE_AUDIT: "audit",
+  },
+  access: {
+    NETWORK_ACCESS_PRESET_UNSPECIFIED: "",
+    NETWORK_ACCESS_PRESET_READ_ONLY: "read-only",
+    NETWORK_ACCESS_PRESET_READ_WRITE: "read-write",
+    NETWORK_ACCESS_PRESET_FULL: "full",
+  },
+} as const;
+
+function convertEndpointModes(endpoint: PolicyDocument): void {
+  for (const [field, values] of Object.entries(POLICY_ENDPOINT_MODES)) {
+    const value = endpoint[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || !Object.hasOwn(values, value)) {
+      throw new OpenShellReadError("schema");
+    }
+    const authored = (values as Readonly<Record<string, string>>)[value];
+    if (authored === "") delete endpoint[field];
+    else endpoint[field] = authored;
+  }
+}
+
 function convertEndpoint(value: PolicyEndpointJson): PolicyDocument {
   const endpoint: PolicyDocument = { ...value };
+  // Match OpenShell's authored policy projection; the gateway owns these markers.
+  delete endpoint.advisor_proposed;
+  delete endpoint.provider_credentialed;
+  delete endpoint.token_grant_owner;
+  convertEndpointModes(endpoint);
   const mcp = value.protocol?.toLowerCase() === "mcp";
   const options: NonNullable<PolicyEndpointJson["mcp"]> & { max_body_bytes?: number } = {
     ...value.mcp,

@@ -78,6 +78,7 @@ export type CreatedSandboxFinalizationOptions = {
   preferredInferenceApi: string | null;
   endpointUrl?: string | null;
   nativeProvider?: boolean;
+  registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
 };
 
 export type CreatedSandboxFinalizationDeps = {
@@ -125,6 +126,7 @@ type RegistrationSeed = Omit<
 >;
 
 export interface CreatedSandboxCompletionOptions {
+  readonly onRegistered?: () => void;
   readonly finalization: CreatedSandboxFinalizationOptions;
   readonly registration: RegistrationSeed;
   readonly policy: {
@@ -579,6 +581,7 @@ export function createCreatedSandboxCompletionActions(
                   prepared,
                 )
               : (deps.registerCreatedSandbox ?? registerCreatedSandbox)(input);
+            options.onRegistered?.();
             // Reservation is too early: the former sandbox may still need its provider.
             // Retirement failure retains the committed selection and cleanup authority.
             await retireUnselectedCreatedSandboxProviders(
@@ -636,6 +639,7 @@ type OnboardCreateIntent = {
   readonly observabilityEnabled?: boolean;
 } | null;
 type OnboardResolvedCreateIntent = {
+  readonly registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
@@ -647,6 +651,8 @@ type OnboardResolvedCreateIntent = {
 type OnboardCreateContext = {
   readonly createIntent: OnboardCreateIntent;
   readonly resolvedCreateIntent: OnboardResolvedCreateIntent;
+  readonly getRegisteredInferenceProviderAttachment?: () => SandboxEntry["registeredInferenceProviderAttachment"];
+  readonly onRegistered?: () => void;
   readonly reconcileOpenClawInference?: boolean;
 };
 type OnboardAgentFlags = {
@@ -779,8 +785,10 @@ export function createOnboardCreatedSandboxCompletion(
   }
   return createCreatedSandboxCompletionActions(
     {
+      onRegistered: createContext.onRegistered,
       finalization: {
         sandboxName,
+        gatewayName: gateway.gatewayName,
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         previousEntry,
@@ -792,7 +800,14 @@ export function createOnboardCreatedSandboxCompletion(
         model,
         preferredInferenceApi,
         endpointUrl: resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl ?? endpointUrl,
+        get registeredInferenceProviderAttachment() {
+          return (
+            createContext.getRegisteredInferenceProviderAttachment?.() ??
+            resolvedCreateIntent.registeredInferenceProviderAttachment
+          );
+        },
         nativeProvider: Boolean(
+          resolvedCreateIntent.registeredInferenceProviderAttachment ||
           resolvedCreateIntent.nativeLocalProviderAttachment ||
           resolvedCreateIntent.nativeHostedProviderAttachment ||
           resolvedCreateIntent.nativeNvidiaProviderAttachment,
@@ -800,6 +815,12 @@ export function createOnboardCreatedSandboxCompletion(
       },
       registration: {
         sandboxName,
+        get registeredInferenceProviderAttachment() {
+          return (
+            createContext.getRegisteredInferenceProviderAttachment?.() ??
+            resolvedCreateIntent.registeredInferenceProviderAttachment
+          );
+        },
         inferenceSelection: selection(
           sandboxName,
           provider,
@@ -1033,7 +1054,11 @@ export async function finalizeCreatedSandbox(
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
     }
-    if (openClawRestoreWindow && options.reconcileOpenClawInference && !options.customImage) {
+    if (
+      openClawRestoreWindow &&
+      (options.reconcileOpenClawInference || options.registeredInferenceProviderAttachment) &&
+      !options.customImage
+    ) {
       try {
         preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
         if (!options.gatewayName)
@@ -1045,7 +1070,16 @@ export async function finalizeCreatedSandbox(
           options.preferredInferenceApi,
           options.gatewayName,
           deps.revalidateSandboxIdentity,
-          { endpointUrl: options.endpointUrl, nativeProvider: options.nativeProvider ?? false },
+          {
+            endpointUrl: options.endpointUrl,
+            nativeProvider: options.nativeProvider ?? false,
+            ...(options.registeredInferenceProviderAttachment
+              ? {
+                  registeredInferenceProviderAttachment:
+                    options.registeredInferenceProviderAttachment,
+                }
+              : {}),
+          },
         );
       } catch (error) {
         await abortOpenClawRestoreWindow();

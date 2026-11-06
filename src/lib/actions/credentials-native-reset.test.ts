@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
@@ -26,6 +27,28 @@ describe("native NVIDIA credential reset ownership", () => {
   });
 
   afterEach(() => setGlobalCliActionRuntimeHooksForTest({}));
+
+  it("refuses reset while an external provider remains a recorded selection", async () => {
+    const f = registeredInferenceFixture(true);
+    const binding = { ...f.binding, gatewayName: "nemoclaw" };
+    const result = await runCredentialsResetAction(
+      { provider: binding.providerName, confirmed: true },
+      {
+        providerAdapter: f.adapter,
+        listRegisteredInferenceProviderAttachmentSandboxNames: (gateway, provider) =>
+          gateway === binding.gatewayName && provider === binding.providerName
+            ? [binding.sandboxName]
+            : [],
+        withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join(" ")).toContain(
+      "Switch those sandboxes to another provider or destroy them",
+    );
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["present", { ok: true as const }],

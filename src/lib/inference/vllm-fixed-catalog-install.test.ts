@@ -262,12 +262,12 @@ describe("fixed catalog vLLM installs", () => {
     );
   });
 
-  it("rejects an unsafe bridge before downloads or container replacement (#14083)", async () => {
+  it("rejects unreadable ownership before downloads or container replacement (#14083)", async () => {
     const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
     mockSuccessfulVllmInstall(mocks, profile.containerName);
     const capture = mocks.dockerCapture.getMockImplementation()!;
     mocks.dockerCapture.mockImplementation((args, ...rest) =>
-      args[0] === "network" ? JSON.stringify([{ Gateway: "0.0.0.0" }]) : capture(args, ...rest),
+      args[0] === "container" && args[1] === "ls" ? "invalid inspection" : capture(args, ...rest),
     );
 
     const result = await installVllm(profile, {
@@ -283,17 +283,17 @@ describe("fixed catalog vLLM installs", () => {
     expect(mocks.dockerForceRm).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
     expect(spies.errSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "requires one private OpenShell bridge address",
+      "Could not verify ownership",
     );
   });
 
-  it("rechecks the bridge after downloads before replacing a host-local container", async () => {
+  it("rechecks ownership after downloads before replacing a host-local container", async () => {
     const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
     mockSuccessfulVllmInstall(mocks, profile.containerName);
     const capture = mocks.dockerCapture.getMockImplementation()!;
-    const bridge = vi.fn().mockReturnValueOnce("172.18.0.1").mockReturnValue("0.0.0.0");
+    const inspection = vi.fn().mockReturnValueOnce("").mockReturnValue("invalid inspection");
     mocks.dockerCapture.mockImplementation((args, ...rest) =>
-      args[0] === "network" ? JSON.stringify([{ Gateway: bridge() }]) : capture(args, ...rest),
+      args[0] === "container" && args[1] === "ls" ? inspection() : capture(args, ...rest),
     );
 
     const result = await installVllm(profile, {
@@ -407,7 +407,6 @@ describe("fixed catalog vLLM installs", () => {
         nonInteractive: true,
         promptFn: vi.fn(),
         readinessReports,
-        resolveManagedBridgeHost: () => "172.18.0.1",
       });
 
       expect(spies.errSpy).not.toHaveBeenCalledWith(
@@ -441,7 +440,6 @@ describe("fixed catalog vLLM installs", () => {
       nonInteractive: true,
       promptFn: vi.fn(),
       readinessReports,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });
@@ -481,7 +479,6 @@ describe("fixed catalog vLLM installs", () => {
         promptFn: vi.fn(),
         modelIntent: checkpointModel,
         readinessReports,
-        resolveManagedBridgeHost: () => "172.18.0.1",
       });
       expect(result, spies.errSpy.mock.calls.flat().join("\n")).toEqual({ ok: true });
       const [args, options] = mocks.dockerRunDetached.mock.calls[0]!;
@@ -579,7 +576,6 @@ describe("fixed catalog vLLM installs", () => {
       modelIntent,
       readinessReports,
       beforeInstall,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(spies.errSpy).not.toHaveBeenCalledWith(
@@ -737,7 +733,6 @@ describe("fixed catalog vLLM installs", () => {
       nonInteractive: false,
       promptFn,
       readinessReports,
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });
@@ -775,7 +770,6 @@ describe("fixed catalog vLLM installs", () => {
       nonInteractive: true,
       promptFn: vi.fn(),
       readinessReports: vllmInstallTestReadiness(profile, modelIntent),
-      resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });

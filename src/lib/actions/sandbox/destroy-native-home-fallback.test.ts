@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 vi.mock("./mcp-bridge", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge")>()),
@@ -51,7 +55,7 @@ describe("native-home destroy fallback", () => {
     ),
   )(
     "completes $agent cleanup as the sandbox owner after $initial",
-    ({ openshellResult, agent }) => {
+    ({ agent, openshellResult }) => {
       const runOpenshell = vi.fn(() => openshellResult);
       const runPrivileged = vi.fn((_command: readonly string[]) => ({
         status: 1,
@@ -208,15 +212,27 @@ describe("native-home destroy fallback", () => {
   });
 
   it.each([
-    { agent: "langchain-deepagents-code", sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER },
-    { agent: "openclaw", sandboxUser: "998:998" },
-    { agent: "hermes", sandboxUser: "998:999" },
-    { agent: undefined, sandboxUser: "998:998" },
-    { agent: null, sandboxUser: "998:998" },
-    { agent: "", sandboxUser: "998:998" },
+    {
+      agent: "langchain-deepagents-code",
+      sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+      state: "registered",
+      openshellDriver: "mxc",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+      state: "pending",
+      openshellDriver: undefined,
+    },
+    { agent: "hermes", sandboxUser: "998:999", state: "registered", openshellDriver: "mxc" },
+    { agent: "openclaw", sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: undefined, sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: null, sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: "", sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: "hermes", sandboxUser: "998:999", state: "pending", openshellDriver: undefined },
   ])(
-    "destroys $agent through the pinned sandbox user after both cleanup passes fail",
-    async ({ agent, sandboxUser }) => {
+    "destroys a $state $agent sandbox through its provider's pinned sandbox user",
+    async ({ agent, sandboxUser, openshellDriver }) => {
       const events: string[] = [];
       const base = createInMemoryRuntimeProviderBundle({
         providerId: "mxc",
@@ -245,7 +261,11 @@ describe("native-home destroy fallback", () => {
       };
       const bundle = {
         ...base,
-        cleanup: { ...base.cleanup, captureDestroyIdentity: () => identity },
+        cleanup: {
+          ...base.cleanup,
+          captureDestroyIdentity: () => identity,
+          captureDestroyIdentityByName: () => identity,
+        },
         lifecycle: {
           ...base.lifecycle,
           privilegedSandboxControl: { ...control, execute, executeAsSandboxUser },
@@ -254,7 +274,8 @@ describe("native-home destroy fallback", () => {
       const sandbox: SandboxEntry = {
         name: "alpha",
         agent,
-        openshellDriver: "mxc",
+        openshellDriver,
+        ...(openshellDriver === undefined ? { pendingRouteReservation: true as const } : {}),
         gatewayName: "nemoclaw",
         lifecycleGeneration: "alpha-generation-1",
       };
@@ -278,8 +299,10 @@ describe("native-home destroy fallback", () => {
       const runOpenshell = vi.fn(
         (args: string[]) => handlers[`${String(args[0])}:${String(args[1])}`]?.() ?? ok,
       );
+      const stopInferenceResources = vi.fn();
+      const onMutationStarted = vi.fn();
 
-      await executeSandboxDestroy({
+      const result = await executeSandboxDestroy({
         force: false,
         deleteGatewayName: "nemoclaw",
         getSandbox: () => current,
@@ -288,13 +311,15 @@ describe("native-home destroy fallback", () => {
         sandbox,
         sandboxConfirmedAbsent: false,
         sandboxName: "alpha",
-        stopInferenceResources: vi.fn(),
-        onMutationStarted: vi.fn(),
+        stopInferenceResources,
+        onMutationStarted,
         runtimeProviders: { mxc: bundle },
         expectedRuntimeProviderIdentity: identity,
         deps: { deleteConvergence: { now: () => 0, sleep: () => undefined } },
       });
 
+      expect(result.ok, result.deleteOutput).toBe(true);
+      expect(sandbox.openshellDriver).toBe(openshellDriver);
       expect(events.slice(0, 4)).toEqual([
         "openshell-exec",
         "privileged",
@@ -311,4 +336,159 @@ describe("native-home destroy fallback", () => {
       );
     },
   );
+
+  it.each([
+    { condition: "provider changed", observe: () => ({ providerId: "other" }) },
+    { condition: "resource changed", observe: () => ({ resourceHandle: "replacement" }) },
+    { condition: "ownership changed", observe: () => ({ ownershipSha256: "replacement" }) },
+    {
+      condition: "probe failed",
+      observe: () => {
+        throw new Error("runtime identity probe unavailable");
+      },
+    },
+  ])(
+    "preserves a pending sandbox without mutation when its identity $condition",
+    async ({ observe }) => {
+      const identity = {
+        schemaVersion: 1 as const,
+        providerId: "mxc",
+        resourceHandle: "in-memory:alpha",
+        ownershipSha256: null,
+      };
+      const base = createInMemoryRuntimeProviderBundle({
+        providerId: "mxc",
+        workloadProfile: {
+          support: null,
+          hostArchitectures: ["x64"],
+          managedImageSelectionPolicy: "prefer-managed",
+          legacyDockerfileBuilds: false,
+        },
+      });
+      const captureDestroyIdentityByName = vi.fn(() => ({ ...identity, ...observe() }));
+      const sandbox: SandboxEntry = Object.freeze({ name: "alpha", pendingRouteReservation: true });
+      const runOpenshell = vi.fn();
+      const stopInferenceResources = vi.fn();
+      const onMutationStarted = vi.fn();
+      const result = await executeSandboxDestroy({
+        force: false,
+        deleteGatewayName: "nemoclaw",
+        getSandbox: () => sandbox,
+        runOpenshell,
+        sandbox,
+        sandboxConfirmedAbsent: false,
+        sandboxName: "alpha",
+        stopInferenceResources,
+        onMutationStarted,
+        runtimeProviders: {
+          mxc: { ...base, cleanup: { ...base.cleanup, captureDestroyIdentityByName } },
+        },
+        expectedRuntimeProviderIdentity: identity,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.deleteOutput).toContain("before destroy preparation");
+      expect(captureDestroyIdentityByName).toHaveBeenCalledExactlyOnceWith("alpha");
+      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(stopInferenceResources).not.toHaveBeenCalled();
+      expect(onMutationStarted).not.toHaveBeenCalled();
+    },
+  );
+});
+
+function cleanupFixture() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-home-script-"));
+  onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const root = path.join(directory, "sandbox");
+  fs.mkdirSync(root);
+  let command: readonly string[] = [];
+  wipeAgentNativeHome(
+    "alpha",
+    "langchain-deepagents-code",
+    (args) => {
+      command = args.slice(args.indexOf("--") + 1);
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    undefined,
+  );
+  // Execute the production shell with only its filesystem root relocated.
+  const script = command[2]!.replace("root='/sandbox'", 'root="$NATIVE_HOME_FIXTURE"');
+  const protectedPaths = command.slice(4).map((entry) => entry.replace("/sandbox", root));
+  const run = (rmMode = "normal") =>
+    spawnSync(
+      "sh",
+      [
+        "-c",
+        [
+          "rm() {",
+          '  case "$3" in',
+          '    */.a-denied) case "$NATIVE_HOME_RM_MODE" in denied) return 1;; retained) return 0;; esac;;',
+          "  esac",
+          '  /bin/rm "$@"',
+          "}",
+          script,
+        ].join("\n"),
+        command[3]!,
+        ...protectedPaths,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 5_000,
+        env: { ...process.env, NATIVE_HOME_FIXTURE: root, NATIVE_HOME_RM_MODE: rmMode },
+      },
+    );
+  return { directory, root, run };
+}
+
+describe("native-home cleanup shell", () => {
+  it.each([
+    { mode: "normal", status: 0, remains: false },
+    { mode: "denied", status: 1, remains: true },
+    { mode: "retained", status: 22, remains: true },
+  ])("finishes eligible entries and verifies remaining state after $mode removal", (testCase) => {
+    const { root, run } = cleanupFixture();
+    fs.mkdirSync(path.join(root, ".deepagents"));
+    const protectedFile = path.join(root, ".deepagents", ".env");
+    fs.writeFileSync(protectedFile, "synthetic protected configuration");
+    fs.writeFileSync(path.join(root, ".a-denied"), "first entry");
+    fs.writeFileSync(path.join(root, "z-owned"), "later entry");
+
+    const result = run(testCase.mode);
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(testCase.status);
+    expect(fs.existsSync(path.join(root, "z-owned"))).toBe(false);
+    expect(fs.existsSync(path.join(root, ".a-denied"))).toBe(testCase.remains);
+    expect(fs.readFileSync(protectedFile, "utf8")).toBe("synthetic protected configuration");
+    expect(run().status).toBe(0);
+    expect(fs.existsSync(path.join(root, ".a-denied"))).toBe(false);
+    expect(fs.readFileSync(protectedFile, "utf8")).toBe("synthetic protected configuration");
+  });
+
+  it.each([
+    {
+      target: "root",
+      status: 20,
+      linkPath: (root: string) => {
+        fs.rmdirSync(root);
+        return root;
+      },
+    },
+    {
+      target: "protected ancestor",
+      status: 21,
+      linkPath: (root: string) => path.join(root, ".deepagents"),
+    },
+  ])("refuses a symlink at the $target without following it", ({ linkPath, status }) => {
+    const { directory, root, run } = cleanupFixture();
+    const outside = path.join(directory, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "retained"), "outside state");
+    fs.symlinkSync(outside, linkPath(root));
+
+    const result = run();
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(status);
+    expect(fs.readFileSync(path.join(outside, "retained"), "utf8")).toBe("outside state");
+  });
 });

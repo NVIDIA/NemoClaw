@@ -346,7 +346,6 @@ export function createDeps(options: {
     captureOpenshell: ReturnType<typeof vi.fn>;
     setOpenClawConfigValues: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
-    recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
     readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
@@ -386,7 +385,6 @@ export function createDeps(options: {
     ),
     setOpenClawConfigValues: vi.fn(),
     writeSandboxConfig: vi.fn(),
-    recomputeSandboxConfigHash: vi.fn(),
     updateSandbox: vi.fn(options.updateSandbox ?? (() => true)),
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -548,7 +546,6 @@ export function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     setOpenClawConfigValues: calls.setOpenClawConfigValues,
     writeSandboxConfig: calls.writeSandboxConfig,
-    recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     prepareRunOpenshell: calls.prepareRunOpenshell,
     inferenceRouteMutator,
     inferenceRouteObserver:

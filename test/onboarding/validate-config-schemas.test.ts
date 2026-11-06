@@ -516,8 +516,15 @@ describe("sandbox-policy.schema.json", () => {
     },
   };
 
-  it("accepts a minimal sandbox policy", () => {
-    expectValid(validate, validSandboxPolicy, "minimal sandbox policy");
+  it.each([
+    ["minimal", {}, true],
+    ["hard_requirement", { landlock: { compatibility: "hard_requirement" } }, true],
+    ["best_effort", { landlock: { compatibility: "best_effort" } }, true],
+    ["strict", { landlock: { compatibility: "strict" } }, false],
+    ["unknown", { landlock: { compatibility: "unknown" } }, false],
+  ] as const)("validates the %s sandbox policy variant", (_label, properties, accepted) => {
+    const result = validate({ ...validSandboxPolicy, ...properties });
+    expect(result, JSON.stringify(validate.errors)).toBe(accepted);
   });
 
   it("rejects policy with missing network_policies", () => {

@@ -1,3 +1,4 @@
+import { withNativeInferenceFixture } from "./runner-test-fixtures.js";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -60,7 +61,12 @@ vi.mock("./private-networks.js", async (importOriginal) => ({
     new Set(["0.0.0.0", "10.0.0.1", "127.0.0.1", "169.254.169.254"]).has(host),
 }));
 
-const { actionApply, actionReconcile, actionStatus } = await import("./runner.js");
+const {
+  actionApply: applyWithoutFixture,
+  actionReconcile,
+  actionStatus,
+} = await import("./runner.js");
+const actionApply = withNativeInferenceFixture(applyWithoutFixture);
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
@@ -139,13 +145,24 @@ describe("blueprint policy convenience", () => {
         joined,
       );
       switch (joined) {
+        case "sandbox get test-sandbox":
+          return { exitCode: 1, stdout: "", stderr: "sandbox not found" };
         case "status":
           return gatewayStatusResult();
         case "gateway info -g test-gateway":
           return gatewayInfoResult();
-        case "policy list -g test-gateway --global --limit 1":
+        case "policy list -g test-gateway --global --page-size 1 --output json":
           return globalActive
-            ? { exitCode: 0, stdout: "revision 1", stderr: "" }
+            ? {
+                exitCode: 0,
+                stdout: JSON.stringify({
+                  revisions: [
+                    { scope: "global", version: 1, hash: "sha256:global-policy", status: "loaded" },
+                  ],
+                  next_page_token: "",
+                }),
+                stderr: "",
+              }
             : absentGlobalPolicyHistoryResult();
         case "policy get -g test-gateway --global --full --output json":
           return globalPolicyResult(livePolicy.network_policies as Record<string, unknown>);
@@ -317,13 +334,12 @@ describe("blueprint policy convenience", () => {
         index > policySet &&
         command === "policy get -g test-gateway --full --output json test-sandbox",
     );
-    const providerCreate = commands.findIndex((command) => command.startsWith("provider create "));
-    const inferenceSet = commands.findIndex((command) => command.startsWith("inference set "));
+    const nativeReady = commands.indexOf("forward start 18789 test-sandbox");
 
     expect(policySet).toBeGreaterThanOrEqual(0);
     expect(policyVerification).toBeGreaterThan(policySet);
-    expect(providerCreate).toBeGreaterThan(policyVerification);
-    expect(inferenceSet).toBeGreaterThan(providerCreate);
+    expect(nativeReady).toBeGreaterThan(policyVerification);
+    expect(commands.some((command) => command.startsWith("inference "))).toBe(false);
   });
 
   it("rebases additions when an unrelated host edit races the initial base-policy read", async () => {
@@ -533,7 +549,7 @@ describe("blueprint policy convenience", () => {
     const implementation = mockExeca.getMockImplementation();
     expect(implementation).toBeDefined();
     mockExeca.mockImplementation(async (command: string, args: string[]) =>
-      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+      args.join(" ") === "policy list -g test-gateway --global --page-size 1 --output json"
         ? {
             exitCode: 1,
             stdout: "",
@@ -545,7 +561,9 @@ describe("blueprint policy convenience", () => {
         : implementation!(command, args),
     );
 
-    const failure = await actionApply("default", blueprint()).then(
+    const failure = await actionApply("default", blueprint(), {
+      nativeInferenceObserver: async () => "verified-native-authority",
+    }).then(
       () => null,
       (error: unknown) => error,
     );
@@ -571,7 +589,7 @@ describe("blueprint policy convenience", () => {
     expect(policyCalls).toHaveLength(1);
     expect(policyCalls[0]).toEqual([
       "openshell",
-      ["policy", "list", "-g", "test-gateway", "--global", "--limit", "1"],
+      ["policy", "list", "-g", "test-gateway", "--global", "--page-size", "1", "--output", "json"],
       expect.objectContaining({
         extendEnv: false,
         env: expect.objectContaining({
@@ -598,8 +616,8 @@ describe("blueprint policy convenience", () => {
     expect(implementation).toBeDefined();
     mockExeca.mockImplementation(async (command: string, args: string[]) => {
       const joined = args.join(" ");
-      return joined.startsWith("sandbox create -g test-gateway ")
-        ? { exitCode: 1, stdout: "", stderr: "sandbox already exists" }
+      return joined === "sandbox get test-sandbox"
+        ? { exitCode: 0, stdout: "Name: test-sandbox", stderr: "" }
         : joined === "policy get -g test-gateway --full --output json test-sandbox"
           ? {
               exitCode: 1,
@@ -612,7 +630,9 @@ describe("blueprint policy convenience", () => {
           : implementation!(command, args);
     });
 
-    const failure = await actionApply("default", blueprint()).then(
+    const failure = await actionApply("default", blueprint(), {
+      nativeInferenceObserver: async () => "verified-native-authority",
+    }).then(
       () => null,
       (error: unknown) => error,
     );
@@ -632,9 +652,9 @@ describe("blueprint policy convenience", () => {
     expect(detail!.length).toBeLessThanOrEqual(240);
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands).toContain("policy list -g test-gateway --global --limit 1");
+    expect(commands).toContain("policy list -g test-gateway --global --page-size 1 --output json");
     expect(commands).toContain("policy get -g test-gateway --full --output json test-sandbox");
-    expect(commands.filter((command) => command.startsWith("sandbox create "))).toHaveLength(1);
+    expect(commands.filter((command) => command.startsWith("sandbox create "))).toHaveLength(0);
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
       ["policy", "get", "-g", "test-gateway", "--full", "--output", "json", "test-sandbox"],
@@ -684,7 +704,7 @@ describe("blueprint policy convenience", () => {
     const implementation = mockExeca.getMockImplementation();
     expect(implementation).toBeDefined();
     mockExeca.mockImplementation(async (command: string, args: string[]) =>
-      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+      args.join(" ") === "policy list -g test-gateway --global --page-size 1 --output json"
         ? { exitCode: 0, stdout: "", stderr: "unexpected diagnostic" }
         : implementation!(command, args),
     );

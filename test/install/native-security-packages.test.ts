@@ -67,37 +67,31 @@ function runLibssh2Harness(nestedFailure = false) {
     { mode: 0o700 },
   );
 
-  const result = spawnSync(
-    "bash",
-    [
-      "-c",
-      [
-        "set -euo pipefail",
-        'source "$1"',
-        'calls="$HARNESS_LOG/calls"',
-        'mapfile() { local target="$2" line; eval "$target=()"; while IFS= read -r line; do eval "$target+=(\\"\\$line\\")"; done; }',
-        'chmod() { printf "chmod %s\\n" "$*" >>"$calls"; }',
-        "id() { return 0; }",
-        'useradd() { printf "useradd %s\\n" "$*" >>"$calls"; }',
-        'chpasswd() { cat >/dev/null; printf "chpasswd\\n" >>"$calls"; }',
-        'install() { printf "install %s\\n" "$*" >>"$calls"; }',
-        'sed() { printf "sed %s\\n" "$*" >>"$calls"; }',
-        'make() { printf "make %s\\n" "$*" >>"$calls"; }',
-        'run_libssh2_tests "$2"',
-      ].join("\n"),
-      "libssh2-harness",
-      BUILD_SCRIPT,
-      fixture,
-    ],
-    {
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HARNESS_LOG: harnessLog,
-        NESTED_FAILURE: nestedFailure ? "1" : "0",
-      },
+  const result = spawnSync("bash", ["-s", "--", BUILD_SCRIPT, fixture], {
+    input: [
+      "set -euo pipefail",
+      // Keep the sourced builder's temporary files inside this owned fixture.
+      'mktemp() { command mktemp -d "$HARNESS_LOG/build.XXXXXX"; }',
+      'source "$1"',
+      "unset -f mktemp",
+      'calls="$HARNESS_LOG/calls"',
+      'mapfile() { local target="$2" line; eval "$target=()"; while IFS= read -r line; do eval "$target+=(\\"\\$line\\")"; done; }',
+      'chmod() { printf "chmod %s\\n" "$*" >>"$calls"; }',
+      "id() { return 0; }",
+      'useradd() { printf "useradd %s\\n" "$*" >>"$calls"; }',
+      'chpasswd() { cat >/dev/null; printf "chpasswd\\n" >>"$calls"; }',
+      'install() { printf "install %s\\n" "$*" >>"$calls"; }',
+      'sed() { printf "sed %s\\n" "$*" >>"$calls"; }',
+      'make() { printf "make %s\\n" "$*" >>"$calls"; }',
+      'run_libssh2_tests "$2"',
+    ].join("\n"),
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HARNESS_LOG: harnessLog,
+      NESTED_FAILURE: nestedFailure ? "1" : "0",
     },
-  );
+  });
   return { fixture, harnessLog, result };
 }
 
@@ -117,7 +111,10 @@ function runPythonFixPackageHarness(architecture: "amd64" | "arm64", sourceHashF
         'harness_output="$1"',
         'architecture="$2"',
         'set -- "$harness_output"',
+        // Keep the sourced builder's temporary files inside this owned fixture.
+        'mktemp() { command mktemp -d "$HARNESS_LOG/build.XXXXXX"; }',
         "source scripts/security/build-native-security-packages.sh",
+        "unset -f mktemp",
         'download() { printf "download %s\\n" "$1" >>"$HARNESS_LOG/calls"; : >"$2"; }',
         'verify_sha256() { printf "verify %s %s\\n" "$1" "${2##*/}" >>"$HARNESS_LOG/calls"; if [[ "${FAIL_SOURCE_HASH:-0}" == "1" && "$2" == *python-stdlib-original.deb ]]; then return 1; fi; }',
         "dpkg-deb() {",
@@ -194,11 +191,19 @@ describe("native security package remediation", () => {
   });
 
   it.each([
-    ["amd64", "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84"],
-    ["arm64", "d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0"],
+    [
+      "amd64",
+      "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84",
+      "c8d9cc73aab111fac7dc1b26c6e2ffda7af08f04",
+    ],
+    [
+      "arm64",
+      "d1178d24e4d143cc6c577d9dc0f26dd982efccc2e600d25ce86361f168a22be0",
+      "35cc8669f33410e90648c1dee9ed1395920b9b9e",
+    ],
   ] as const)(
     "builds the Python fix from the reviewed %s snapshot artifact",
-    (architecture, hash) => {
+    (architecture, hash, snapshotFile) => {
       const { fixture, harnessLog, outputDir, result } = runPythonFixPackageHarness(architecture);
       try {
         expect({ status: result.status, stderr: result.stderr }).toEqual({
@@ -206,9 +211,7 @@ describe("native security package remediation", () => {
           stderr: "",
         });
         const calls = fs.readFileSync(path.join(harnessLog, "calls"), "utf-8");
-        expect(calls).toContain(
-          `download https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/p/python3.13/libpython3.13-stdlib_3.13.5-2+deb13u5_${architecture}.deb`,
-        );
+        expect(calls).toContain(`download https://snapshot.debian.org/file/${snapshotFile}`);
         expect(calls).toContain(`verify ${hash} python-stdlib-original.deb`);
         expect(calls).toContain(
           "verify f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9 parser.py",

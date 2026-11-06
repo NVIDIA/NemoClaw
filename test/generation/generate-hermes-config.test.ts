@@ -43,13 +43,7 @@ import {
   withLegacyMessagingPlanEnvDirect,
 } from "../messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(
-  import.meta.dirname,
-  "../..",
-  "agents",
-  "hermes",
-  "generate-config.ts",
-);
+const SCRIPT_PATH = path.resolve(import.meta.dirname, "../../agents/hermes/generate-config.ts");
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "../..", "agents", "hermes", "config");
 
@@ -289,12 +283,8 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(fixtureRoot, nativeConfigDir, "agent-config.ts"),
   );
   fs.copyFileSync(
-    path.join(import.meta.dirname, "../..", nativeConfigDir, "hosted.ts"),
-    path.join(fixtureRoot, nativeConfigDir, "hosted.ts"),
-  );
-  fs.copyFileSync(
-    path.join(import.meta.dirname, "../..", nativeConfigDir, "contract.ts"),
-    path.join(fixtureRoot, nativeConfigDir, "contract.ts"),
+    path.join(import.meta.dirname, "../..", nativeConfigDir, "catalog.ts"),
+    path.join(fixtureRoot, nativeConfigDir, "catalog.ts"),
   );
   const nativeNvidiaConfigDir = path.join("src", "lib", "inference", "native-nvidia");
   fs.mkdirSync(path.join(fixtureRoot, nativeNvidiaConfigDir), { recursive: true });
@@ -1490,4 +1480,16 @@ describe("agents/hermes/generate-config.ts", () => {
       "field 'match' must be a non-empty object",
     );
   });
+});
+
+it("projects the attached Router credential into Hermes without a host blueprint", () => {
+  const { config } = runConfigScript({
+    NEMOCLAW_UPSTREAM_PROVIDER: "team-router",
+    NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:43123/team/v1",
+    NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  });
+  expect(config.model.base_url).toBe("http://host.openshell.internal:43123/team/v1");
+  expect(config.model.api_key).toBe("${NEMOCLAW_LOCAL_INFERENCE_TOKEN}");
+  expect(config.providers["team-router"].api_key).toBe("${NEMOCLAW_LOCAL_INFERENCE_TOKEN}");
+  expect(JSON.stringify(config)).not.toContain("v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN");
 });

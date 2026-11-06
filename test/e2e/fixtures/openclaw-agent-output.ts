@@ -137,7 +137,7 @@ export function nativeStateProcessIdentitiesAreValid(
   const gateways = processes.filter((row) => row[4] === "openclaw-gatewa");
   const gateway = gateways[0];
   const parent = processes.find((row) => row[2] === gateway?.[3]);
-  const supervisor = processes.find((row) => row[2] === "1");
+  const init = processes.find((row) => row[2] === "1");
   return (
     result.timedOut === false &&
     result.exitCode === 0 &&
@@ -151,8 +151,8 @@ export function nativeStateProcessIdentitiesAreValid(
     parent[3] === "1" &&
     gateway?.[0] === parent[0] &&
     gateway?.[1] === parent[1] &&
-    supervisor?.[0] === "0" &&
-    supervisor[1] === "0" &&
-    supervisor[3] === "0"
+    init?.[0] === gateway?.[0] &&
+    init?.[1] === gateway?.[1] &&
+    init?.[3] === "0"
   );
 }

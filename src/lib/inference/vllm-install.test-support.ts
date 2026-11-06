@@ -198,7 +198,6 @@ export function withVllmInstallTestReadiness(
   options: InstallVllmOptions,
 ): InstallVllmOptions {
   return {
-    resolveManagedBridgeHost: () => "172.18.0.1",
     ...options,
     readinessReports: vllmInstallTestReadiness(profile),
   };

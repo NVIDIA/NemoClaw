@@ -51,11 +51,13 @@ describe("compatible Anthropic inference switch setup", () => {
     ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
   });
 
-  it("passes the mock bridge through endpoint validation without DNS rewriting (#9166)", async () => {
+  it("rejects the mock bridge before DNS rewriting (#9166)", async () => {
     const endpointUrl = compatibleAnthropicMockEndpointUrl(18_766);
     const rewrite = vi.fn();
 
-    await expect(normalizeCustomEndpointUrl(endpointUrl, rewrite)).resolves.toBe(endpointUrl);
+    await expect(normalizeCustomEndpointUrl(endpointUrl, rewrite)).rejects.toThrow(
+      "cannot use an unverified OpenShell host bridge endpoint",
+    );
     expect(rewrite).not.toHaveBeenCalled();
   });
 

@@ -121,7 +121,7 @@ Correct the reported precondition, runtime, connection, authentication, protocol
 
 Provider presence and metadata cannot prove that OpenShell rewrites the recorded resolver placeholder when a request leaves the sandbox. `mcp status <server>` requests a differential wire-level credential-resolution probe by default.
 
-Before sending probe traffic, NemoClaw verifies exact generated policy, expected provider attachment, provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one matching credential key. If readiness does not match, it reports `ok: null` with `probe skipped` and sends no request.
+Before sending probe traffic, NemoClaw verifies exact generated policy, expected provider attachment, provider ID, profile type derived from the recorded credential name, valid resource version, and exactly one matching credential key. If readiness does not match, it reports `ok: null` with `probe skipped` and sends no request.
 
 When readiness passes, the probe sends the same idempotent MCP `initialize` request twice from inside the sandbox through the adapter runtime. One request carries the real placeholder header, and the control request carries a deliberately unresolvable literal bearer.
 

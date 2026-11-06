@@ -28,7 +28,6 @@ from pathlib import Path
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
-allowed_raw_secret_keys = set()
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 required_remote_toolsets = {
     "web",
@@ -69,8 +68,6 @@ def env_violations(path: Path) -> list[str]:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
         if key in allowed_nonsecret_keys:
-            continue
-        if key in allowed_raw_secret_keys:
             continue
         if not secret_key_re.search(key):
             continue
@@ -139,9 +136,6 @@ if violations:
 
 toolsets = parse_platform_toolsets(config_path.read_text(encoding="utf-8"))
 api_server_toolsets = set(toolsets.get("api_server", []))
-if not api_server_toolsets:
-    print("platform_toolsets.api_server missing", file=sys.stderr)
-    sys.exit(1)
 missing = sorted(required_remote_toolsets - api_server_toolsets)
 if missing:
     print(f"platform_toolsets.api_server missing expected Hermes toolsets: {missing}", file=sys.stderr)

@@ -117,6 +117,7 @@ describe("export config builder", () => {
 
   it.each([
     { compatibility: "strict", expected: "hard_requirement" },
+    { compatibility: "hard_requirement", expected: "hard_requirement" },
     { compatibility: "best_effort", expected: "best_effort" },
   ])(
     "exports Landlock $compatibility as $expected without changing source policy",

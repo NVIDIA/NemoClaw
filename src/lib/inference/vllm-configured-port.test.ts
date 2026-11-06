@@ -8,27 +8,11 @@ vi.mock("../core/ports", async (importOriginal) => ({
   VLLM_PORT: 19_000,
 }));
 
-import { buildVllmRunArgs, detectVllmProfile } from "./vllm";
+import { buildVllmRunArgs } from "./vllm";
 
 describe("managed vLLM configured host port", () => {
-  it.each([undefined, "0.0.0.0", "::", "203.0.113.1"])(
-    "rejects bridge address %s without managed bearer authentication (#14083)",
-    (bridgeHost) => {
-      const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
-      expect(() =>
-        buildVllmRunArgs(
-          profile,
-          { ...profile.defaultModel, managedBearerAuth: undefined },
-          profile.dockerRunFlags,
-          {},
-          bridgeHost,
-        ),
-      ).toThrow("requires one private OpenShell bridge address");
-    },
-  );
-
   it.each([undefined, true] as const)(
-    "publishes the configured port on loopback and the OpenShell bridge when managed bearer authentication is %s (#14083)",
+    "publishes the configured port only on loopback when managed bearer authentication is %s (#14083)",
     (managedBearerAuth) => {
       const model = {
         id: "test/model",
@@ -55,16 +39,11 @@ describe("managed vLLM configured host port", () => {
         loadTimeoutSec: 60,
       };
 
-      const args = buildVllmRunArgs(
-        profile,
-        model,
-        profile.dockerRunFlags,
-        { VLLM_API_KEY: "a".repeat(64) },
-        "172.18.0.1",
-      );
+      const args = buildVllmRunArgs(profile, model, profile.dockerRunFlags, {
+        VLLM_API_KEY: "a".repeat(64),
+      });
       expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
         "127.0.0.1:19000:8000",
-        "172.18.0.1:19000:8000",
       ]);
     },
   );

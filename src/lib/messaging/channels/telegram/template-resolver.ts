@@ -14,8 +14,6 @@ import {
   stateValue,
 } from "../template-resolver-utils";
 
-const DEFAULT_PROXY_HOST = "10.200.0.1";
-const DEFAULT_PROXY_PORT = "3128";
 const DEFAULT_TELEGRAM_GROUP_POLICY = "open";
 const TELEGRAM_GROUP_POLICIES = new Set(["open", "allowlist", "disabled"]);
 
@@ -23,7 +21,6 @@ export const resolveTelegramTemplateReference: BuiltInRenderTemplateResolver = (
   reference,
   context,
 ) => {
-  if (reference === "proxyUrl") return resolvedRenderTemplateReference(proxyUrl(context.env));
   if (reference === "telegramConfig.groupPolicy") {
     return resolvedRenderTemplateReference(telegramGroupPolicy(context));
   }
@@ -50,12 +47,6 @@ export const resolveTelegramTemplateReference: BuiltInRenderTemplateResolver = (
       return undefined;
   }
 };
-
-function proxyUrl(env: RenderTemplateContext["env"]): string {
-  const host = nonEmptyString(env?.NEMOCLAW_PROXY_HOST) ?? DEFAULT_PROXY_HOST;
-  const port = nonEmptyString(env?.NEMOCLAW_PROXY_PORT) ?? DEFAULT_PROXY_PORT;
-  return `http://${host}:${port}`;
-}
 
 function telegramGroupPolicy(context: RenderTemplateContext): string {
   const value = nonEmptyString(stateValue(context, "telegramConfig.groupPolicy"));

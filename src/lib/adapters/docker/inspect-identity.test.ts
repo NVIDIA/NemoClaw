@@ -9,13 +9,15 @@ const LABELS = {
   managedBy: "openshell.ai/managed-by",
   workspace: "openshell.ai/sandbox-workspace",
   sandboxId: "openshell.ai/sandbox-id",
+  namespace: "openshell.ai/sandbox-namespace",
+  isolationRole: "openshell.ai/isolation-role",
 };
 
 describe("inspectDockerSandboxIdentities", () => {
   it("queries only the sandbox-name label and parses one exact row", () => {
     const inspect = vi.fn((_args: readonly string[]) => ({
       status: 0,
-      stdout: "aaaa000000000000\topenshell\tdefault\tsb-real",
+      stdout: "aaaa000000000000\topenshell\tdefault\tsb-real\t\t",
     }));
 
     expect(
@@ -44,7 +46,7 @@ describe("inspectDockerSandboxIdentities", () => {
     expect(
       inspectDockerSandboxIdentities("openshell.ai/sandbox-name=alpha", LABELS, () => ({
         status: 0,
-        stdout: `aaaa000000000000\t${managedBy}\tdefault\tsb-real`,
+        stdout: `aaaa000000000000\t${managedBy}\tdefault\tsb-real\t\t`,
       })),
     ).toEqual({ status: "observed", rows: [], malformedRows: 1 });
   });

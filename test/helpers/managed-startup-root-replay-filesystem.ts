@@ -55,7 +55,12 @@ export function mockRootReplayFilesystem(
   runtimeWrites: string[],
   seededFiles: ReadonlyMap<
     string,
-    { readonly contents: string | Buffer; readonly mode: number }
+    {
+      readonly contents: string | Buffer;
+      readonly mode: number;
+      readonly uid?: number;
+      readonly gid?: number;
+    }
   > = new Map(),
 ): {
   readonly beforeRename: (callback: ((source: string, target: string) => void) | null) => void;
@@ -87,7 +92,10 @@ export function mockRootReplayFilesystem(
     "/var/lib",
     "/var/lib/nemoclaw",
   ]);
-  const fixtureFiles = new Map([
+  const fixtureFiles = new Map<
+    string,
+    { contents: string | Buffer; mode: number; uid?: number; gid?: number }
+  >([
     [
       "/usr/sbin/update-ca-certificates",
       { contents: "managed startup test executable", mode: 0o555 },
@@ -112,9 +120,12 @@ export function mockRootReplayFilesystem(
   const fileModes = new Map([...fixtureFiles].map(([target, file]) => [target, file.mode]));
   let nextFileInode = 2n;
   const fileInodes = new Map<string, bigint>();
+  const fileOwners = new Map<bigint, { uid: number; gid: number }>();
   const fileCtimes = new Map<string, bigint>();
   for (const target of files.keys()) {
     fileInodes.set(target, nextFileInode);
+    const seed = fixtureFiles.get(target);
+    fileOwners.set(nextFileInode, { uid: seed?.uid ?? 0, gid: seed?.gid ?? 0 });
     fileCtimes.set(target, 1n);
     nextFileInode += 1n;
   }
@@ -185,7 +196,7 @@ export function mockRootReplayFilesystem(
     ({
       ctimeNs,
       dev: 1n,
-      gid: 0n,
+      gid: BigInt(fileOwners.get(ino)?.gid ?? 0),
       ino,
       isDirectory: () => false,
       isFile: () => true,
@@ -194,7 +205,7 @@ export function mockRootReplayFilesystem(
       mtimeNs: 1n,
       nlink,
       size: BigInt(bytes.length),
-      uid: 0n,
+      uid: BigInt(fileOwners.get(ino)?.uid ?? 0),
     }) as fs.BigIntStats;
   const missing = (): never => {
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
@@ -243,7 +254,12 @@ export function mockRootReplayFilesystem(
               fileCtimes.get(resolved) ?? missing(),
               fileLinkCount(fileInodes.get(resolved) ?? missing()),
             )
-          : stat("file", mode);
+          : stat(
+              "file",
+              mode,
+              fileOwners.get(fileInodes.get(resolved)!)?.uid ?? 0,
+              fileOwners.get(fileInodes.get(resolved)!)?.gid ?? 0,
+            );
   }) as typeof fs.lstatSync);
   vi.spyOn(fs, "mkdirSync").mockImplementation(((
     target: fs.PathLike,

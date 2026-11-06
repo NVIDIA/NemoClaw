@@ -439,6 +439,7 @@ export async function startModelRouter(
   const startupDeadline = deps.now() + ROUTER_STARTUP_TIMEOUT_MS;
   let healthAttempts = 0;
   let lastSnapshot: RouterHealthSnapshot | null = null;
+  let lastCompletedSnapshot: RouterHealthSnapshot | null = null;
   while (healthAttempts < ROUTER_HEALTH_RETRIES && deps.now() < startupDeadline) {
     const delayMs = Math.min(ROUTER_HEALTH_INTERVAL_MS, startupDeadline - deps.now());
     await deps.sleep(delayMs);
@@ -462,6 +463,7 @@ export async function startModelRouter(
     }
     healthAttempts += 1;
     lastSnapshot = observation.snapshot;
+    if (lastSnapshot.outcome === "complete") lastCompletedSnapshot = lastSnapshot;
     const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
@@ -476,7 +478,9 @@ export async function startModelRouter(
   } catch {
     // already dead
   }
-  const lastHealthError = firstUnhealthyEndpointError(lastSnapshot?.body ?? null);
+  const lastHealthError = firstUnhealthyEndpointError(
+    lastCompletedSnapshot?.body ?? lastSnapshot?.body ?? null,
+  );
   const lastHealthObservation = formatHealthObservation(lastSnapshot);
   const logTail = routerLog === null ? "" : deps.readRouterLogTail(logPath, routerLog.startOffset);
   throw new Error(
@@ -582,26 +586,18 @@ export function isRoutedInferenceProvider(provider: string | null | undefined): 
 
 const MODEL_ROUTER_SERVICE_LABEL = "Model Router";
 
-/**
- * Verify the host Model Router is reachable from the OpenShell Docker network.
- *
- * A healthy /health answer only proves the router responds on the host loopback. On
- * Linux Docker-driver hosts with UFW default-deny, a sandbox container can
- * still fail to reach `host.openshell.internal:<routerPort>` even though the
- * host curl succeeds (#4564). This mirrors the Ollama auth-proxy probe: on a
- * `tcp_failed` result print the concrete `ufw allow` remediation and fail so
- * onboarding does not declare an unreachable router healthy. A
- * `probe_unavailable` result (Docker Desktop, missing network during fresh
- * setup before the sandbox network exists, DNS) is non-fatal.
- */
+/** Probe the selected runtime path; native Linux Docker uses the supervisor network. */
 async function verifyModelRouterSandboxReachability(routerPort: number): Promise<void> {
-  const reachability = await probeHostServiceSandboxReachability({ port: routerPort });
+  const options = { port: routerPort, nativeSupervisorNetwork: true };
+  const reachability = await probeHostServiceSandboxReachability(options);
   if (!reachability.ok && reachability.reason === "tcp_failed") {
     console.error(
-      formatHostServiceUnreachableMessage(reachability, {
-        serviceLabel: MODEL_ROUTER_SERVICE_LABEL,
-        port: routerPort,
-      }),
+      reachability.networkName === "host"
+        ? `  Check that Model Router listens on 127.0.0.1:${routerPort} for the native supervisor.`
+        : formatHostServiceUnreachableMessage(reachability, {
+            serviceLabel: MODEL_ROUTER_SERVICE_LABEL,
+            port: routerPort,
+          }),
     );
     throw new Error(
       `Sandbox containers cannot reach the Model Router at host.openshell.internal:${routerPort}.`,
@@ -691,4 +687,19 @@ export async function reconcileModelRouter(): Promise<void> {
     return current;
   });
   await verifyModelRouterSandboxReachability(routerPort);
+}
+
+/** Verify the retained router before reusing its sandbox provider. */
+export function assertNativeModelRouterOwner(endpoint: string, credentialValue: string): void {
+  const port = Number(new URL(endpoint).port);
+  const session = onboardSession.loadSession();
+  if (
+    !credentialValue ||
+    !session ||
+    session.routerPort !== port ||
+    session.routerCredentialHash !== hashCredential(credentialValue) ||
+    !doesModelRouterProcessOwnPort(session.routerPid ?? null, port)
+  ) {
+    throw new Error("Model Router process and credential ownership could not be verified.");
+  }
 }

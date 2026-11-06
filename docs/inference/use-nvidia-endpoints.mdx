@@ -45,6 +45,8 @@ If the live catalog is unavailable or does not contain safe model IDs, the wizar
 <Note>
 Sandboxes created by an earlier release used the shared `inference.local` route and do not have the attached NVIDIA provider receipt.
 NemoClaw does not migrate these beta sandboxes automatically.
+For a retained `nvidia-nim` record, `rebuild` stops before backup or deletion unless OpenShell reports a complete `0.0.x` version.
+An unknown OpenShell version also blocks this legacy rebuild path.
 <AgentOnly variant="openclaw,hermes">
 For these sandboxes, `inference set` refuses a same-provider NVIDIA model change with exit status `2`.
 </AgentOnly>
@@ -54,6 +56,7 @@ Recreate the sandbox during onboarding to use the native provider path.
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
+
 </Note>
 
 ## Validation

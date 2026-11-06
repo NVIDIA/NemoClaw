@@ -223,6 +223,30 @@ describe("reviewed candidate MCP runtime evidence", () => {
     });
   });
 
+  it("binds OpenShell 0.1.7 to the verified upstream release artifacts", () => {
+    expect(reviewedOpenShellMcpRuntime("0.1.7")).toEqual({
+      supervisorImage:
+        "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
+      provenance: {
+        schemaVersion: 1,
+        sourceRepository: "NVIDIA/OpenShell",
+        releaseTag: "v0.1.7",
+        sourceSha: "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c",
+        artifacts: {
+          cli: {
+            binarySha256: "718f40674738206a84bc3a967966225ff47dfed9ba5738099d56777faa4af793",
+          },
+          gateway: {
+            binarySha256: "0b7cb54fd8558bfad4c57f556f7fc1a20ef8cd94ebb11f4f40a9a90b74b4ad17",
+          },
+          standaloneSandbox: {
+            binarySha256: "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21",
+          },
+        },
+      },
+    });
+  });
+
   it.each(
     [
       ["0.0.116", "mcp-bridge", "mcp-bridge-deepagents"],
@@ -237,6 +261,8 @@ describe("reviewed candidate MCP runtime evidence", () => {
       ["0.1.3", "openshell-credential-generation-window", "openshell-credential-generation-window"],
       ["0.1.5", "mcp-bridge", "mcp-bridge-deepagents"],
       ["0.1.5", "openshell-credential-generation-window", "openshell-credential-generation-window"],
+      ["0.1.7", "mcp-bridge", "mcp-bridge-deepagents"],
+      ["0.1.7", "openshell-credential-generation-window", "openshell-credential-generation-window"],
     ].flatMap(([version, job, artifact]) => [
       [version, job, artifact, "local"],
       [version, job, artifact, "path"],
@@ -287,7 +313,7 @@ describe("reviewed candidate MCP runtime evidence", () => {
     (job, artifact, role, binary) => {
       const directory = mkdtempSync(join(tmpdir(), "nemoclaw-mcp-provenance-"));
       try {
-        const fixture = prepareRuntimeFixture(directory, "0.1.5", job);
+        const fixture = prepareRuntimeFixture(directory, "0.1.7", job);
         writeFileSync(join(fixture.bin, binary), "altered binary");
         const result = fixture.run();
         expect(result.status).not.toBe(0);

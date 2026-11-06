@@ -113,7 +113,7 @@ test(
     expectExitZero(provider, "Discord provider exists");
 
     const configScript =
-      "import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); account=(cfg.get('channels',{}).get('discord',{}).get('accounts',{}).get('default') or {}); proxy=cfg.get('proxy') or {}; print(json.dumps({'hasToken': 'token' in account, 'dmPolicy': account.get('dmPolicy',''), 'allowFrom': account.get('allowFrom', []), 'accountProxy': account.get('proxy',''), 'managedProxy': proxy.get('proxyUrl','')}))";
+      "import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); account=(cfg.get('channels',{}).get('discord',{}).get('accounts',{}).get('default') or {}); print(json.dumps({'hasToken': 'token' in account, 'dmPolicy': account.get('dmPolicy',''), 'allowFrom': account.get('allowFrom', []), 'hasAccountProxy': 'proxy' in account, 'hasGlobalProxy': 'proxy' in cfg}))";
     const config = await sandboxSh(
       sandbox,
       SANDBOX_NAME,
@@ -128,13 +128,13 @@ test(
       hasToken: boolean;
       dmPolicy: string;
       allowFrom: string[];
-      accountProxy: string;
-      managedProxy: string;
+      hasAccountProxy: boolean;
+      hasGlobalProxy: boolean;
     };
     expect(configSummary.hasToken, "Discord config must omit the token field").toBe(false);
     expect(configSummary.dmPolicy).not.toBe("allowlist");
-    expect(configSummary.accountProxy, "Discord account proxy").toBe("");
-    expect(configSummary.managedProxy, "OpenClaw managed proxy").toMatch(/^http:\/\//);
+    expect(configSummary.hasAccountProxy, "Discord config must omit the account proxy").toBe(false);
+    expect(configSummary.hasGlobalProxy, "OpenClaw config must omit the global proxy").toBe(false);
 
     await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "discord", redactions);
 

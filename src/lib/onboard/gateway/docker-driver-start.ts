@@ -317,29 +317,18 @@ export function createDockerDriverGatewayStart(
           !creation()
         )
           throw new Error("Fresh gateway configuration changed before policy initialization.");
-        const policy = await (
-          deps.initializeNativeProviderPolicy ?? initializeNativeProviderPolicy
-        )(creationGatewayName, (args) =>
-          captureSanitizedResolvedOpenshellAsync(args, {
-            ...runtimeOptions,
-            ignoreError: true,
-            includeStreams: true,
-            includeStderr: true,
-            timeout: 30_000,
-            outputLimitBytes: 65_536,
-          }),
+        await (deps.initializeNativeProviderPolicy ?? initializeNativeProviderPolicy)(
+          creationGatewayName,
+          (args) =>
+            captureSanitizedResolvedOpenshellAsync(args, {
+              ...runtimeOptions,
+              ignoreError: true,
+              includeStreams: true,
+              includeStderr: true,
+              timeout: 30_000,
+              outputLimitBytes: 65_536,
+            }),
         );
-        if (policy === "disabled") {
-          if (
-            deps.gatewayName() !== creationGatewayName ||
-            deps.gatewayPort() !== creationGatewayPort ||
-            !creation()
-          )
-            throw new Error("Fresh gateway configuration changed during policy initialization.");
-          (output?.warn ?? console.warn)(
-            "Native local inference is unavailable because provider composition remains disabled. Hosted provider onboarding can continue.",
-          );
-        }
       };
       const servicePortOwnership = deps.createGatewayServicePortOwnership(initialPortCheck, {
         exitOnFailure,

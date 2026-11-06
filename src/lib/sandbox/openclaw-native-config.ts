@@ -4,6 +4,9 @@
 
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
 import type { ConfigValue } from "../security/credential-filter";
+import { nativeLocalCredentialReference } from "../inference/native-local/model-router";
+import { usesNativeLocalInference } from "../inference/native-local/eligibility";
+import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../inference/native-local/agent-config";
 const {
   buildSelectedOpenShellSubprocessEnv,
   captureOpenshellCommand,
@@ -12,7 +15,6 @@ const {
 const {
   OPENSHELL_OPERATION_TIMEOUT_MS,
 }: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
-const { shellQuote }: typeof import("../core/shell-quote") = require("../core/shell-quote");
 const {
   NVIDIA_INFERENCE_PLACEHOLDER,
 }: typeof import("../inference-credential") = require("../inference-credential");
@@ -137,7 +139,9 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
       typeof provider === "string" &&
       (Boolean(fixedNativeProvider(provider)) ||
         (typeof value.baseUrl === "string" &&
-          Boolean(nativeHostedAgentConfig(provider, value.baseUrl))))
+          (Boolean(nativeHostedAgentConfig(provider, value.baseUrl)) ||
+            (usesNativeLocalInference(provider, value.baseUrl) &&
+              Boolean(nativeLocalCredentialReference(provider, value.baseUrl))))))
     );
   });
   if (matching.length === 0) return undefined;
@@ -146,15 +150,23 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
   if (!isConfigObject(value)) throw new Error("Invalid native provider config update");
   const headers = isConfigObject(value.headers) ? value.headers : {};
   const provider = headers["X-NemoClaw-Upstream-Provider"];
+  const local =
+    typeof provider === "string" &&
+    typeof value.baseUrl === "string" &&
+    usesNativeLocalInference(provider, value.baseUrl)
+      ? nativeLocalCredentialReference(provider, value.baseUrl)
+      : null;
   const native =
     value.apiKey === NVIDIA_INFERENCE_PLACEHOLDER
       ? {
           credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
           apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
         }
-      : typeof provider === "string" && typeof value.baseUrl === "string"
-        ? nativeHostedAgentConfig(provider, value.baseUrl)
-        : undefined;
+      : local
+        ? { credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV, apiKey: local }
+        : typeof provider === "string" && typeof value.baseUrl === "string"
+          ? nativeHostedAgentConfig(provider, value.baseUrl)
+          : undefined;
   if (!native) {
     throw new Error("Native provider identity does not match its credential placeholder");
   }
@@ -180,10 +192,9 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
       : typeof provider === "string"
         ? provider
         : null;
-  const providerKey = nativeOpenClawProviderKey(
-    logicalProvider,
-    typeof value.api === "string" ? value.api : null,
-  );
+  const providerKey = local
+    ? "inference"
+    : nativeOpenClawProviderKey(logicalProvider, typeof value.api === "string" ? value.api : null);
   if (!providerKey)
     throw new Error("Native provider identity does not match its credential placeholder");
   const expectedPath = `models.providers.${providerKey}`;
@@ -205,7 +216,7 @@ export function buildOpenClawNativeConfigBatchInvocation(
 ) {
   const nativeHandleUpdate = nativeProviderHandleUpdate(updates);
   const materializeCommand = nativeHandleUpdate
-    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(nativeHandleUpdate.credentialEnv)} ${shellQuote(nativeHandleUpdate.endpoint)} ${shellQuote(nativeHandleUpdate.placeholder)} ${shellQuote(nativeHandleUpdate.providerPath)} || exit $?; `
+    ? 'python3 -c "$1" "$file" "$2" "$3" "$4" "$5" || exit $?; '
     : "";
   return {
     nativeHandleUpdate: Boolean(nativeHandleUpdate),
@@ -228,6 +239,15 @@ export function buildOpenClawNativeConfigBatchInvocation(
       "-c",
       `umask 077; file=$(mktemp /tmp/nemoclaw-openclaw-config.XXXXXX) || exit $?; trap 'rm -f "$file"' EXIT; cat >"$file" || exit $?; ${materializeCommand}openclaw config set --batch-file "$file"`,
       "nemoclaw-openclaw-config-set-batch",
+      ...(nativeHandleUpdate
+        ? [
+            materializeNativeProviderHandle,
+            nativeHandleUpdate.credentialEnv,
+            nativeHandleUpdate.endpoint,
+            nativeHandleUpdate.placeholder,
+            nativeHandleUpdate.providerPath,
+          ]
+        : []),
     ],
     input: JSON.stringify(updates.map(({ dotpath, value }) => ({ path: dotpath, value }))),
   };

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import {
   DCODE_MANAGED_EXEC_LAUNCHER,
@@ -582,4 +582,277 @@ it("offers conditional recreation guidance when the legacy route cannot be reach
   );
   expect(health.ok).toBe(false);
   expect(health.detail).toContain("If this legacy route is no longer available");
+});
+
+vi.mock("../../inference/native-local/profile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../inference/native-local/profile")>()),
+  verifyRecordedNativeLocalProviderAttachment: vi.fn(async () => undefined),
+}));
+vi.mock("../../adapters/openshell/provider-adapter-cli", () => ({
+  createCliOpenShellProviderAdapter: vi.fn(() => ({})),
+}));
+vi.mock("../../state/registry/cross-port", () => ({ findSandboxAcrossGatewayRoots: vi.fn() }));
+vi.mock("../../onboard/sandbox-recreate-probe", () => ({ observeSandboxOnGateway: vi.fn() }));
+vi.mock("../../sandbox/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox/config")>()),
+  readSandboxConfig: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+  setOpenClawConfigValues: vi.fn(),
+}));
+
+const { nativeLocalIdentity } = await import("../../inference/native-local/contract");
+const { verifyRecordedNativeLocalProviderAttachment } =
+  await import("../../inference/native-local/profile");
+const { findSandboxAcrossGatewayRoots } = await import("../../state/registry/cross-port");
+const { observeSandboxOnGateway } = await import("../../onboard/sandbox-recreate-probe");
+const { observeBlueprintNativeInference, prepareBlueprintNativeInference } =
+  await import("../../blueprint-runner");
+const { readSandboxConfig, resolveAgentConfig, setOpenClawConfigValues } =
+  await import("../../sandbox/config");
+const localBinding = {
+  provider: "compatible-endpoint",
+  agent: "openclaw" as const,
+  endpointUrl: "http://host.openshell.internal:8000/v1",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  authMode: "authenticated" as const,
+  gatewayName: "nemoclaw",
+  sandboxName: "alpha",
+};
+const nativeEntry = {
+  name: "alpha",
+  agent: "openclaw" as const,
+  gatewayName: "nemoclaw",
+  provider: "compatible-endpoint",
+  model: "test-model",
+  preferredInferenceApi: "openai-completions",
+  endpointUrl: "http://localhost:8000/v1",
+  credentialEnv: "COMPATIBLE_API_KEY",
+  lifecycleGeneration: "generation-one",
+  lifecycleLiveIdentityFingerprint: "identity-one",
+  nativeLocalProviderAttachment: {
+    ...localBinding,
+    ...nativeLocalIdentity(localBinding),
+    schemaVersion: 1 as const,
+    providerId: "provider-id",
+  },
+};
+const nativeRequest = {
+  gatewayName: "nemoclaw",
+  sandboxName: "alpha",
+  provider: "compatible-endpoint",
+  model: "test-model",
+  api: "openai-completions",
+};
+
+describe("blueprint native inference authority", () => {
+  beforeEach(() => {
+    vi.mocked(verifyRecordedNativeLocalProviderAttachment)
+      .mockReset()
+      .mockResolvedValue(nativeEntry.nativeLocalProviderAttachment);
+    vi.mocked(findSandboxAcrossGatewayRoots)
+      .mockReset()
+      .mockReturnValue({
+        entry: nativeEntry,
+        registryFile: "/test-state/sandboxes.json",
+        gatewayPort: 8080,
+      } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+    vi.mocked(observeSandboxOnGateway)
+      .mockReset()
+      .mockReturnValue({ state: "ready", liveIdentityFingerprint: "identity-one" });
+    vi.mocked(resolveAgentConfig).mockReturnValue({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      configFile: "openclaw.json",
+      format: "json",
+    });
+    vi.mocked(readSandboxConfig).mockReturnValue({
+      agents: { defaults: { model: { primary: "inference/test-model" } } },
+      models: { providers: { inference: { api: "openai-completions", timeoutSeconds: 180 } } },
+    });
+  });
+
+  it("updates the selected timeout while registered sandbox authority still matches", async () => {
+    await prepareBlueprintNativeInference({ ...nativeRequest, timeoutSeconds: 300 });
+    expect(setOpenClawConfigValues).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      [{ dotpath: "models.providers.inference.timeoutSeconds", value: 300 }],
+      "nemoclaw",
+    );
+  });
+
+  it.each([
+    {
+      name: "registration",
+      replace: () => {
+        vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+          entry: { ...nativeEntry, lifecycleGeneration: "replacement" },
+          registryFile: "/test-state/sandboxes.json",
+          gatewayPort: 8080,
+        } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+      },
+    },
+    {
+      name: "live sandbox",
+      replace: () => {
+        vi.mocked(observeSandboxOnGateway).mockReturnValue({
+          state: "ready",
+          liveIdentityFingerprint: "replacement",
+        });
+      },
+    },
+  ])(
+    "refuses a timeout write after $name replacement at the final observer return",
+    async ({ replace }) => {
+      let replaced = false;
+      const original = { state: "ready" as const, liveIdentityFingerprint: "identity-one" };
+      // Each observer checks live authority three times; replacement follows the second observer.
+      vi.mocked(observeSandboxOnGateway)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockReturnValueOnce(original)
+        .mockImplementationOnce(() => {
+          queueMicrotask(() => {
+            replaced = true;
+            replace();
+          });
+          return original;
+        });
+      await expect(
+        prepareBlueprintNativeInference({ ...nativeRequest, timeoutSeconds: 300 }),
+      ).rejects.toThrow(/identity.*changed/);
+      expect(replaced).toBe(true);
+      expect(setOpenClawConfigValues).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "http://localhost:8000/v1",
+    "http://127.0.0.1:8000/v1/",
+    "http://[::1]:8000/v1",
+    "http://host.openshell.internal:8000/v1",
+  ])("verifies the recorded native attachment for selected URL %s", async (endpointUrl) => {
+    vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+      entry: { ...nativeEntry, endpointUrl },
+      registryFile: "/test-state/sandboxes.json",
+      gatewayPort: 8080,
+    } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+    const identity = await observeBlueprintNativeInference(nativeRequest);
+    expect(JSON.parse(identity)).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "test-model",
+      attachment: { providerId: "provider-id" },
+    });
+    expect(verifyRecordedNativeLocalProviderAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        expected: nativeEntry.nativeLocalProviderAttachment,
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+      }),
+    );
+    expect(observeSandboxOnGateway).toHaveBeenCalledWith(
+      { sandboxName: "alpha", gatewayName: "nemoclaw" },
+      undefined,
+      undefined,
+      15_000,
+    );
+  });
+
+  it.each([
+    { gatewayName: "other" },
+    { provider: "other" },
+    { model: "other" },
+    { api: "openai-responses" },
+    { endpointUrl: "http://host.openshell.internal:9000/v1" },
+  ])("refuses a changed requested selection %j before attachment lookup", async (change) => {
+    await expect(observeBlueprintNativeInference({ ...nativeRequest, ...change })).rejects.toThrow(
+      /matching registered native inference/,
+    );
+    expect(verifyRecordedNativeLocalProviderAttachment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { nativeLocalProviderAttachment: undefined },
+    {
+      nativeLocalProviderAttachment: {
+        ...nativeEntry.nativeLocalProviderAttachment,
+        providerName: "forged",
+      },
+    },
+    { nativeHostedProviderAttachment: {} },
+    { agent: "hermes" },
+    { endpointUrl: "http://host.openshell.internal:9000/v1" },
+    {
+      nativeLocalProviderAttachment: {
+        ...nativeEntry.nativeLocalProviderAttachment,
+        credentialEnv: "OTHER_KEY",
+        ...nativeLocalIdentity({ ...localBinding, credentialEnv: "OTHER_KEY" }),
+      },
+    },
+    {
+      nativeLocalProviderAttachment: {
+        ...nativeEntry.nativeLocalProviderAttachment,
+        api: "openai-responses",
+        ...nativeLocalIdentity({ ...localBinding, api: "openai-responses" }),
+      },
+    },
+  ])("refuses invalid recorded native authority %j", async (change) => {
+    vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+      entry: { ...nativeEntry, ...change },
+      registryFile: "/test-state/sandboxes.json",
+      gatewayPort: 8080,
+    } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+    await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
+      /matching registered native inference/,
+    );
+    expect(verifyRecordedNativeLocalProviderAttachment).not.toHaveBeenCalled();
+  });
+
+  it("propagates actual provider identity and profile refusal", async () => {
+    vi.mocked(verifyRecordedNativeLocalProviderAttachment).mockRejectedValue(
+      new Error("provider profile or identity changed"),
+    );
+    await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
+      /profile or identity changed/,
+    );
+  });
+
+  it("refuses missing recorded lifecycle authority", async () => {
+    vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue(null);
+    await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
+      /recorded sandbox lifecycle authority/,
+    );
+  });
+
+  it("refuses replacement live sandbox identity", async () => {
+    vi.mocked(observeSandboxOnGateway).mockReturnValue({
+      state: "ready",
+      liveIdentityFingerprint: "replacement",
+    });
+    await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
+      /live identity.*changed/,
+    );
+    expect(verifyRecordedNativeLocalProviderAttachment).not.toHaveBeenCalled();
+  });
+
+  it.each([{ model: "replacement" }, { credentialEnv: "OTHER_KEY" }])(
+    "refuses selection changes during provider verification %j",
+    async (change) => {
+      vi.mocked(verifyRecordedNativeLocalProviderAttachment).mockImplementation(async () => {
+        vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+          entry: { ...nativeEntry, ...change },
+          registryFile: "/test-state/sandboxes.json",
+          gatewayPort: 8080,
+        } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+        return nativeEntry.nativeLocalProviderAttachment;
+      });
+      await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
+        /matching registered native inference|selection changed/,
+      );
+    },
+  );
 });

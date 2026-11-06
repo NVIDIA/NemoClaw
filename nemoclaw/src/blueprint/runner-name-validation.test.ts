@@ -17,6 +17,7 @@ import {
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
 import {
+  createNativeInferenceFixture,
   minimalBlueprint,
   resultWithBlueprintPolicy,
   successResult,
@@ -54,6 +55,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const mockExeca = vi.fn();
+const mockNativeCreator = vi.fn(createNativeInferenceFixture);
 vi.mock("execa", () => ({
   execa: (...args: unknown[]) => mockExeca(...args),
 }));
@@ -123,6 +125,7 @@ describe("blueprint name validation (fail-closed integration)", () => {
 
   beforeEach(() => {
     store.clear();
+    mockNativeCreator.mockReset().mockImplementation(createNativeInferenceFixture);
     addFile(TEST_SANDBOX_POLICY_PATH, TEST_SANDBOX_POLICY);
     vi.stubEnv("OPENSHELL_SANDBOX_POLICY", TEST_SANDBOX_POLICY_PATH);
     stdout.reset();
@@ -144,9 +147,12 @@ describe("blueprint name validation (fail-closed integration)", () => {
       const bp = minimalBlueprint();
       corrupt(bp.components as BlueprintComponents);
 
-      await expect(actionApply("default", bp)).rejects.toThrow(expected);
+      await expect(
+        actionApply("default", bp, { nativeInferenceCreator: mockNativeCreator }),
+      ).rejects.toThrow(expected);
       // Validation runs before any command, so no provider or sandbox command
       // may have executed — not merely no sandbox create.
+      expect(mockNativeCreator).not.toHaveBeenCalled();
       expect(mockExeca).not.toHaveBeenCalled();
       expect(createCalls()).toEqual([]);
     },
@@ -159,12 +165,17 @@ describe("blueprint name validation (fail-closed integration)", () => {
       const components = bp.components as BlueprintComponents;
       components.inference.profiles.default.provider_name = providerName;
 
-      await expect(actionApply("default", bp)).resolves.toBeUndefined();
-      expect(mockExeca).toHaveBeenCalledWith(
-        "openshell",
-        expect.arrayContaining(["provider", "create", "--name", providerName]),
-        expect.any(Object),
+      await expect(
+        actionApply("default", bp, { nativeInferenceCreator: mockNativeCreator }),
+      ).resolves.toBeUndefined();
+      expect(mockNativeCreator).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          gatewayName: "test-gateway",
+          sandboxName: "test-sandbox",
+          provider: providerName,
+        }),
       );
+      expect(createCalls()).toHaveLength(1);
     },
   );
 

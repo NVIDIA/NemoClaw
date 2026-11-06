@@ -16,6 +16,9 @@ import {
 import { createLocalInferenceRouteApplier } from "../../onboard/local-inference-route";
 
 const requireDist = createRequire(import.meta.url);
+const { cliOpenShellInstalledVersionObserver } = requireDist(
+  "../../adapters/openshell/installed-version-cli.js",
+) as typeof import("../../adapters/openshell/installed-version-cli");
 const openshellRuntime = requireDist("../../adapters/openshell/runtime.js") as {
   captureOpenshell(
     args: string[],
@@ -144,14 +147,20 @@ installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
 describe("rebuild local-provider recreation", () => {
   it.each(localProviderScenarios)(
-    "recreates a missing $provider gateway provider through the resumed local setup path",
+    "recreates a missing $provider gateway provider through Pi shared setup on OpenShell 0.0.116",
     async ({ provider, model, baseUrl, credentialEnv, setup }) => {
+      const installedVersion = vi
+        .spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion")
+        .mockReturnValue({
+          ok: true,
+          version: "0.0.116",
+        });
       let sourceDeleted = false;
       let harness!: RebuildFlowHarness;
       let setupResult: SetupResult | undefined;
       const routeApplier = makeRouteApplier();
       harness = createRebuildFlowHarness({
-        // Pi retains the shared-local route exercised here; OpenClaw and Hermes require native attachments.
+        // Retained Pi shared routes remain rebuildable on the legacy runtime.
         sandboxEntry: {
           agent: "pi",
           provider,
@@ -203,6 +212,7 @@ describe("rebuild local-provider recreation", () => {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
+      expect(installedVersion).toHaveBeenCalledOnce();
       const calls = harness.runOpenshellSpy.mock.calls.map((call) => call[0] as string[]);
       const deleteCall = calls.findIndex(
         (args) => args.join(" ") === "sandbox delete -g nemoclaw alpha",

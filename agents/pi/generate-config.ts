@@ -39,6 +39,7 @@ const MANAGED_PROVIDER_ID = "openshell";
 const MANAGED_PROVIDER_API_KEY = "nemoclaw-managed-inference";
 
 type Settings = {
+  nativeLocalCredentialHandle?: string;
   model: string;
   baseUrl: string;
   providerKey: string;
@@ -129,6 +130,7 @@ function readSettings(env: NodeJS.ProcessEnv): Settings {
     "NEMOCLAW_INFERENCE_PROVIDER_ID",
   );
   return {
+    nativeLocalCredentialHandle: env.NEMOCLAW_LOCAL_INFERENCE_TOKEN,
     model: normalizeMetadata(readRequiredEnv(env, "NEMOCLAW_MODEL"), "NEMOCLAW_MODEL"),
     baseUrl: normalizeInferenceBaseUrl(
       env.NEMOCLAW_INFERENCE_BASE_URL || "https://inference.local/v1",
@@ -159,6 +161,7 @@ function buildConfig(settings: Settings): ManagedPiConfig {
     settings.upstreamProvider,
     settings.baseUrl,
     "pi",
+    settings.nativeLocalCredentialHandle,
   );
   const credentialEnv =
     settings.baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT

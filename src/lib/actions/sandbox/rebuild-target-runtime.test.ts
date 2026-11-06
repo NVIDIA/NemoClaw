@@ -305,6 +305,7 @@ describe("authoritative rebuild readiness", () => {
             type: receipt.profileId,
             credentialKeys: [binding.credentialEnv],
             configKeys: [],
+            credentialExpiresAtMs: {},
             revision: { id: "owned", resourceVersion: 1 },
           },
         })),
@@ -353,6 +354,11 @@ describe("authoritative rebuild readiness", () => {
         expect(recreateOptions.rebuildGatewayAuthority).toBe(authority);
         expect(readiness).toHaveBeenCalledOnce();
         expect(route).not.toHaveBeenCalled();
+        expect(providerAdapter.getProvider).toHaveBeenCalledWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          providerName: receipt.providerName,
+          includeCredentialExpirations: true,
+        });
         expect(providerAdapter.getProvider).toHaveBeenCalledWith({
           target: { kind: "named", gatewayName: "nemoclaw" },
           providerName: receipt.providerName,

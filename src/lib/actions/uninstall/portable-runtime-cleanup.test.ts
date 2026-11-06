@@ -901,8 +901,22 @@ describe("portable runtime uninstall cleanup", () => {
     },
   );
 
-  it("removes only exact receipt-owned containers and exact current selector projections (#9189)", async () => {
-    const test = fixture();
+  it.each([
+    { name: "legacy", setup: fixture },
+    {
+      name: "paired",
+      setup: () => {
+        const test = fixture();
+        test.containers.get(ALPHA_ID)!.labels["openshell.ai/isolation-role"] = "sandbox";
+        test.addSandbox("alpha", "sandbox-alpha", BETA_ID, {
+          "openshell.ai/isolation-role": "supervisor",
+        });
+        test.containers.get(BETA_ID)!.name = "openshell-supervisor-sandbox-alpha";
+        return test;
+      },
+    },
+  ])("cleans receipt-owned runtime ($name)", async ({ setup }) => {
+    const test = setup();
 
     expect(hasPortableRuntimeCleanup(test.stateDir)).toBe(true);
     const cleanup = await completeCleanup(test.input, test.deps);
@@ -943,7 +957,9 @@ describe("portable runtime uninstall cleanup", () => {
       sandboxContainersRemoved: 1,
       selectorsRemoved: ["CONTAINERS_CONF", "NETAVARK_FW"],
     });
-    expect(observations()).toBe(4);
+    // Initial read plus one retry, two pre-removal identity checks, and
+    // absence checks in both the removal helper and the transaction.
+    expect(observations()).toBe(6);
     expect(test.containers.has(ALPHA_ID)).toBe(false);
   });
 

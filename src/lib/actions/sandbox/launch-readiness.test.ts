@@ -26,6 +26,8 @@ import {
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 
+import { OpenClawPairingQualificationError } from "./launch-readiness/openclaw-pairing-qualification";
+
 const SANDBOX = "alpha";
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
@@ -363,7 +365,11 @@ describe("launch readiness validation", () => {
       publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
     ).resolves.toEqual({
       kind: "evidence-failed",
-      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+      diagnostic: {
+        stage: "publication-validation",
+        reason: "pairing-observation-failed",
+        pairingFailureCategory: "unclassified",
+      },
     });
     expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
     expect(publishedIdentity).toBeNull();
@@ -1334,7 +1340,24 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
-      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+      diagnostic: {
+        stage: "publication-validation",
+        reason: "pairing-observation-failed",
+        pairingFailureCategory: "unclassified",
+      },
+    });
+
+    const pairingDeadline = deps();
+    pairingDeadline.observeOpenClawPairingQualification = () => {
+      throw new OpenClawPairingQualificationError("deadline-exceeded");
+    };
+    expect(await publishLaunchReadiness(publication, pairingDeadline)).toEqual({
+      kind: "evidence-failed",
+      diagnostic: {
+        stage: "publication-validation",
+        reason: "pairing-observation-failed",
+        pairingFailureCategory: "deadline-exceeded",
+      },
     });
 
     const hashUnavailable = deps();

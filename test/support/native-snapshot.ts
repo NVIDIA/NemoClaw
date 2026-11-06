@@ -49,6 +49,50 @@ process.exit(0);
 
 export function writeFakeSsh(binDir: string): void {
   writeExecutable(
+    path.join(binDir, "sftp"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "-h") process.exit(1);
+const batch = fs.readFileSync(args[args.indexOf("-b") + 1], "utf8");
+const match = /^put [/]dev[/]stdin "(.+)"\\n$/.exec(batch);
+if (!match || args[args.indexOf("-R") + 1] !== "16" || args[args.indexOf("-B") + 1] !== "32768") process.exit(97);
+const remote = match[1].replace(/\\\\([\\\\"])/g, "$1");
+const root = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+const remoteRoot = process.env.NEMOCLAW_TEST_NATIVE_HOME || "/sandbox";
+const target = path.join(root, path.relative(remoteRoot, remote));
+fs.writeFileSync(target, fs.readFileSync(0), { mode: 0o600, flag: "wx" });
+`,
+  );
+  writeExecutable(
+    path.join(binDir, "native-stat"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const target = args.at(-1);
+const fd = /^[/](?:proc[/]self[/]fd|dev[/]fd)[/](\\d+)$/.exec(target);
+const s = fd ? fs.fstatSync(Number(fd[1])) : fs.lstatSync(target);
+process.stdout.write(args[1].replace(/%[udih]/g, (key) => String({ "%u": s.uid, "%d": s.dev, "%i": s.ino, "%h": s.nlink }[key])) + "\\n");
+`,
+  );
+  writeExecutable(path.join(binDir, "stat"), '#!/bin/sh\nexec native-stat "$@"\n');
+  writeExecutable(
+    path.join(binDir, "sha256sum"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+const fd = Number(process.argv.at(-1).split("/").at(-1));
+const hash = crypto.createHash("sha256");
+const block = Buffer.alloc(65536);
+let offset = 0, size;
+while ((size = fs.readSync(fd, block, 0, block.length, offset))) {
+  hash.update(block.subarray(0, size)); offset += size;
+}
+process.stdout.write(hash.digest("hex") + "  " + process.argv.at(-1) + "\\n");
+`,
+  );
+  writeExecutable(
     path.join(binDir, "ssh"),
     `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -90,6 +134,15 @@ if (command.includes("tar -C")) {
   }
   const procRoot = process.env.NEMOCLAW_TEST_NATIVE_PROC;
   if (procRoot) {
+    if (process.env.NEMOCLAW_TEST_NATIVE_INIT_ANCESTOR === "1") {
+      const parentRoot = path.join(procRoot, String(process.pid));
+      const initRoot = path.join(procRoot, "1");
+      fs.mkdirSync(parentRoot, { recursive: true });
+      fs.mkdirSync(path.join(initRoot, "task", "1"), { recursive: true });
+      fs.writeFileSync(path.join(parentRoot, "status"), "PPid:\\t1\\n");
+      fs.writeFileSync(path.join(initRoot, "status"), "PPid:\\t0\\nUid:\\t" + process.getuid() + "\\n");
+      fs.writeFileSync(path.join(initRoot, "task", "1", "status"), "State:\\tS\\n");
+    }
     const prelude = 'kill() { printf "%s\\\\n" "$*" >> "$NEMOCLAW_TEST_SIGNAL_LOG"; }; sleep() { :; }; tar() { command tar -C "$NEMOCLAW_TEST_NATIVE_ROOT" -cf - .; }; ';
     const capture = spawnSync("sh", ["-c", prelude + command.replaceAll("/proc/", procRoot + "/")], {
       stdio: ["ignore", "inherit", "inherit"],
@@ -128,36 +181,10 @@ if (command.includes("tar -C")) {
   }
 }
 if (command.includes("nemoclaw-native-restore")) {
-  if (process.env.NEMOCLAW_TEST_EXECUTE_RESTORE_SCRIPT === "1") {
-    const restored = spawnSync("sh", ["-c", command], {
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    process.exit(restored.status ?? 94);
-  }
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-restore-test-"));
-  try {
-    const extracted = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", stage], { stdio: ["inherit", "inherit", "inherit"] });
-    if (extracted.status !== 0) process.exit(extracted.status ?? 92);
-    const walk = (current) => {
-      for (const name of fs.readdirSync(current)) {
-        const full = path.join(current, name);
-        const stat = fs.lstatSync(full);
-        if (stat.isDirectory()) {
-          walk(full);
-        } else if (stat.isFile() && stat.nlink > 1) {
-          process.exit(21);
-        }
-      }
-    };
-    walk(stage);
-    for (const entry of fs.readdirSync(root)) fs.rmSync(path.join(root, entry), { recursive: true, force: true });
-    for (const entry of fs.readdirSync(stage)) {
-      copyTree(path.join(stage, entry), path.join(root, entry));
-    }
-    process.exit(0);
-  } finally {
-    fs.rmSync(stage, { recursive: true, force: true });
-  }
+  const restored = spawnSync("sh", ["-c", command.replaceAll(remoteRoot, root).replaceAll("/proc/self/fd/", "/dev/fd/")], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  process.exit(restored.status ?? 94);
 }
 process.exit(93);
 `,

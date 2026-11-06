@@ -118,10 +118,7 @@ export function vllmExportFormatFixture(directory: string) {
         ],
         NetworkSettings: {
           Ports: {
-            "8000/tcp": [
-              { HostIp: "127.0.0.1", HostPort: "18000" },
-              { HostIp: "172.18.0.1", HostPort: "18000" },
-            ],
+            "8000/tcp": [{ HostIp: "127.0.0.1", HostPort: "18000" }],
           },
         },
       },

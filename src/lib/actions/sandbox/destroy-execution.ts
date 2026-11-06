@@ -213,6 +213,7 @@ export function wipeAgentNativeHome(
     '  for keep in "$@"; do [ "${keep#"$candidate"/}" = "$keep" ] || return 0; done',
     "  return 1",
     "}",
+    "cleanup_failed=0",
     "clean_dir() {",
     "  local directory entry",
     '  directory="$1"; shift',
@@ -226,7 +227,7 @@ export function wipeAgentNativeHome(
     "      fi",
     '      clean_dir "$entry" "$@"',
     "    else",
-    '      rm -rf -- "$entry"',
+    '      if ! rm -rf -- "$entry"; then cleanup_failed=1; fi',
     "    fi",
     "  done",
     "}",
@@ -245,6 +246,7 @@ export function wipeAgentNativeHome(
     "  done",
     "}",
     'clean_dir "$root" "$@"',
+    'if [ "$cleanup_failed" != 0 ]; then exit 1; fi',
     'if ! verify_dir "$root" "$@"; then',
     '  echo "agent native root retains sandbox-owned state" >&2',
     "  exit 22",
@@ -719,7 +721,10 @@ export async function executeSandboxDestroy({
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
           sandboxName,
-          sandbox,
+          {
+            ...sandbox,
+            openshellDriver: sandbox.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+          },
           runtimeProviders,
         ).provider;
         hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
@@ -1084,7 +1089,7 @@ export async function executeSandboxDestroy({
         return {
           ok: false as const,
           deleteOutput:
-            `OpenShell deleted sandbox '${sandboxName}', but its host forward ports did not release. ` +
+            `OpenShell deleted sandbox '${sandboxName}', but release of its host forward ports could not be proved. ` +
             "The local sandbox record was preserved for recovery.",
           exitCode: 1,
           gatewayUnreachable: false,

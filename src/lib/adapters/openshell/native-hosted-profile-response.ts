@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { requireHermesPublicPins } from "../../inference/native-provider/hermes-pins";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
+import { isProtectedLocalInferencePort } from "../../inference/gateway/local-endpoint-ports";
+import { requireHermesEndpointPins } from "../../inference/native-provider/hermes-pins";
 import {
   customNativeProvider,
   type CustomNativeBinding,
@@ -46,6 +48,12 @@ export function hostedNativeProfileBoundary(
   const definition = hostedNativeProfile(profileId, endpointUrl, custom);
   if (!definition) return undefined;
   const endpoint = new URL(definition.endpoint);
+  if (
+    definition.logicalProvider === "hermes-provider" &&
+    isAllowedOpenShellSandboxBridgeUrl(endpoint) &&
+    isProtectedLocalInferencePort(Number(endpoint.port))
+  )
+    return undefined;
   const base = endpoint.pathname.replace(/\/+$/, "");
   const prefix = definition.api === "anthropic-messages" ? `${custom ? base : ""}/v1` : base;
   let paths = ["chat/completions"];
@@ -54,11 +62,11 @@ export function hostedNativeProfileBoundary(
   else if (definition.logicalProvider === "openai-api") paths.push("responses");
   let pins: readonly string[] | undefined;
   if (custom) pins = definition.allowedIps ?? [];
-  else if (definition.endpointUrl) pins = requireHermesPublicPins(allowedIps);
+  else if (definition.endpointUrl)
+    pins = requireHermesEndpointPins(definition.endpointUrl, allowedIps);
   return {
     profileId: definition.profileId as HostedNativeProfileId,
     ...(pins ? { allowedIps: pins } : {}),
-    ...(custom && endpoint.protocol === "https:" ? { tls: "terminate" as const } : {}),
     credentialEnv: definition.credentialEnv,
     authStyle: definition.api === "anthropic-messages" ? "header" : "bearer",
     headerName: definition.api === "anthropic-messages" ? "x-api-key" : "authorization",

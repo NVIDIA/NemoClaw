@@ -33,6 +33,9 @@ import {
   releaseProviderManagedStartupHold,
 } from "./provider-root-apply";
 import { createManagedStartupRootApplyRequest } from "./root-apply";
+import { buildConfig } from "../../../../scripts/generate-openclaw-config.mts";
+import { mapManagedStartupProfileToAgentEnvironment } from "./agent-environment";
+import { applyManagedStartupCommandEnvironmentPlan } from "./image-runtime";
 
 const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = `sha256:${"b".repeat(64)}`;
@@ -303,6 +306,62 @@ describe("provider-owned managed startup root application", () => {
       );
     },
   );
+
+  it("generates the local compatible reference from the credential-free root apply environment", () => {
+    const { runtimeProvider } = createDockerRootApplyFixture(() => ({
+      resourceHandle: CONTAINER_ID,
+    }));
+    const profile = managedStartupE2eProfile("openclaw", false, true, true);
+    const localProfile = {
+      ...profile,
+      inference: {
+        ...profile.inference!,
+        upstreamProvider: "compatible-endpoint",
+        routedBaseUrl: "http://host.openshell.internal:45173/v1",
+        api: "openai-completions" as const,
+      },
+    };
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(localProfile),
+      corporateCaB64: Buffer.from(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM).toString("base64"),
+    });
+    applyProviderManagedStartupRootRequest({
+      runtimeProvider,
+      sandboxName: SANDBOX_NAME,
+      sandboxId: SANDBOX_ID,
+      bootstrapIdentity: "c".repeat(64),
+      request,
+      environment: {
+        NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        COMPATIBLE_API_KEY: "synthetic-host-secret",
+      },
+    });
+    const command = vi
+      .mocked(runtimeProvider.lifecycle.privilegedSandboxControl.execute)
+      .mock.calls.map(([input]) => input.command)
+      .find((argv) => argv.includes("--apply-root-stdin"))!;
+    expect(command.slice(0, 2)).toEqual(["/usr/bin/env", "-i"]);
+    const rootEnvironment = Object.fromEntries(
+      command.slice(2, command.indexOf("/usr/local/bin/node")).map((entry) => {
+        const separator = entry.indexOf("=");
+        return [entry.slice(0, separator), entry.slice(separator + 1)];
+      }),
+    );
+    const mapped = mapManagedStartupProfileToAgentEnvironment(localProfile, rootEnvironment);
+    const generationEnvironment = applyManagedStartupCommandEnvironmentPlan(
+      { ...rootEnvironment, ...mapped.configurationEnvironment },
+      mapped.applicationRuntime,
+    );
+    expect(generationEnvironment.NEMOCLAW_LOCAL_INFERENCE_TOKEN).toBeUndefined();
+    expect(generationEnvironment.COMPATIBLE_API_KEY).toBeUndefined();
+    const config = buildConfig(generationEnvironment);
+    expect(config.models.providers[localProfile.inference.routeProvider]).toMatchObject({
+      baseUrl: localProfile.inference.routedBaseUrl,
+      api: "openai-completions",
+      apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
+  });
 
   it("rejects a provider without workspace preparation before root application", () => {
     const { request, runtimeProvider } = createDockerRootApplyFixture(() => ({

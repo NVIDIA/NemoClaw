@@ -16,7 +16,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cron-preflight";
 const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 
 test(
-  "native OpenClaw scheduled work reaches inference.local",
+  "native OpenClaw scheduled work reaches its attached inference provider",
   {
     timeout: testTimeout(30 * 60_000),
     meta: {
@@ -47,10 +47,10 @@ test(
 
     await artifacts.target.declare({
       id: "cron-preflight-inference-local",
-      boundary: "native OpenClaw cron add/run through managed inference.local",
+      boundary: "native OpenClaw cron add/run through its attached inference provider",
       contracts: [
         "native OpenClaw creates scheduled work without NemoClaw lifecycle authorization",
-        "native cron run passes its provider preflight and reaches inference.local",
+        "native cron run passes its provider preflight and reaches the selected endpoint",
         "the native command reports a completed or queued run without endpoint-unreachable errors",
       ],
     });
@@ -227,7 +227,7 @@ test(
       status: "passed",
       nativeCronId: cronId,
       nativeRunAccepted: true,
-      inferenceRoute: "https://inference.local/v1",
+      inferenceRoute: hosted.endpointUrl,
     });
   },
 );

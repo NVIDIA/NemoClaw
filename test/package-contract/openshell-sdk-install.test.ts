@@ -45,6 +45,7 @@ function fixture() {
   const env = {
     PATH: process.env.PATH,
     HOME: root,
+    TMPDIR: root,
     NPM_CONFIG_CACHE: path.join(root, "cache"),
     NPM_CONFIG_USERCONFIG: path.join(root, "empty.npmrc"),
     NPM_CONFIG_GLOBALCONFIG: path.join(root, "empty-global.npmrc"),
@@ -125,10 +126,18 @@ describe("required OpenShell SDK installation", () => {
     };
     const packed = spawnSync(
       "npm",
-      ["pack", "--ignore-scripts", "--silent", "--json", "--pack-destination", root],
+      ["pack", "--ignore-scripts", "--silent", "--pack-destination", root],
       { cwd: repositoryRoot, env, encoding: "utf8", timeout: 30_000 },
     );
-    expect(packed.status, packed.stderr).toBe(0);
+    expect(
+      packed.status,
+      JSON.stringify({
+        stdout: packed.stdout,
+        stderr: packed.stderr,
+        error: packed.error?.message,
+        signal: packed.signal,
+      }),
+    ).toBe(0);
     const archives = readdirSync(root).filter((entry) => entry.endsWith(".tgz"));
     expect(archives).toHaveLength(1);
     const archivePath = path.join(root, archives[0]!);
@@ -245,10 +254,7 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
 
   it("rejects a changed archive before creating an npm cache", () => {
     const { root, probe } = fixture();
-    const archive = path.join(
-      root,
-      "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.0.116.tgz",
-    );
+    const archive = path.join(root, "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.7.tgz");
     writeFileSync(archive, "corrupted archive");
     const result = probe("prepare");
     expect(result.status).toBe(1);
@@ -260,7 +266,7 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
     const { root, probe } = fixture();
     const configPath = path.join(root, "ci", "reviewed-npm-audit.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    config.sourceRegistryPackage.integrity = "sha512-reviewed-identity-drift";
+    config.sourceRegistryPackageReplacement.integrity = "sha512-reviewed-identity-drift";
     writeFileSync(configPath, JSON.stringify(config));
 
     const result = probe("prepare");

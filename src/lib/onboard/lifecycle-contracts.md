@@ -12,13 +12,15 @@ Related guides: [`README.md`](README.md) describes package placement, [`machine/
 
 ## Native Model Router resume
 
-Ready OpenClaw Model Router reuse restores the recorded native provider attachment through
-`ensureNativeLocalProviderAttached` before recording sandbox success. The sandbox handler holds
-its existing sandbox and gateway mutation locks, requires matching endpoint and provider authority,
-and revalidates the registered live sandbox identity before provider commands and completion.
+Ready Model Router reuse restores the recorded native provider attachment through `ensureNativeLocalProviderAttached` before recording sandbox success.
+This applies to OpenClaw, Hermes, Deep Agents Code, and Pi with `nvidia-router` or the provider name configured by the routed blueprint.
+`nativeModelRouterEndpoint` verifies the recorded endpoint against that blueprint.
+The sandbox handler holds its existing sandbox and gateway mutation locks and requires matching provider authority.
+It revalidates the registered live sandbox identity before provider commands and completion.
 A changed profile, provider identity, sandbox identity, or attachment receipt stops resume.
-An already-attached provider is verified without another attach command. Fresh creation retains
-its post-create attachment owner. `sandbox-native-router-resume.test.ts` covers this recovery seam.
+An already-attached provider is verified without another attach command.
+Fresh creation retains its post-create attachment owner.
+`sandbox-native-router-resume.test.ts` covers this recovery boundary, including a configured provider name for all four agents.
 
 ## Shared vocabulary
 

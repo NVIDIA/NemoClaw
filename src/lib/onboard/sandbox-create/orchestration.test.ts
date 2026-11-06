@@ -10,11 +10,13 @@ import { describe, expect, it, vi } from "vitest";
 import * as processRecovery from "../../actions/sandbox/process-recovery";
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
+import { managedStartupStateRoots } from "../managed-startup/state-roots";
 import { releaseManagedStartupHoldWithRetry } from "../managed-startup/provider-root-apply";
 import {
   assertApfCreateIntent,
   activateManagedStartupCorporateCaTrustAfterSandboxCreate,
   completeHermesPortableSandboxRegistration,
+  finalizeRecreatedSourceStateVolumes,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
@@ -35,6 +37,76 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
+describe("recreated managed state retention reporting", () => {
+  it.each([
+    [true, () => [{ status: "removed" as const }], ["cleanup", "registry"], null],
+    [
+      true,
+      () => [{ status: "failed" as const, volumeName: "source", detail: "engine unavailable" }],
+      ["cleanup"],
+      expect.stringContaining("engine unavailable"),
+    ],
+    [
+      true,
+      () => {
+        throw new Error("engine unavailable");
+      },
+      ["cleanup"],
+      "engine unavailable",
+    ],
+    [false, () => [{ status: "removed" as const }], [], null],
+  ] as const)(
+    "preserves registry authority for source absence %s and cleanup %j",
+    (sourceConfirmedAbsent, cleanup, expectedEvents, expectedError) => {
+      const events: string[] = [];
+      const targetStateRoots = managedStartupStateRoots({
+        agent: "hermes",
+        sandboxName: "alpha",
+        agentIdentity: { uid: 1000, gid: 1000 },
+      });
+      let error: string | null = null;
+      try {
+        finalizeRecreatedSourceStateVolumes(
+          {
+            sandboxName: "alpha",
+            sourceConfirmedAbsent,
+            targetStateRoots,
+            sourceEntry: {
+              name: "alpha",
+              agent: "openclaw",
+              openshellDriver: "docker",
+              workload: { kind: "managed-image" },
+            } as SandboxEntry,
+          },
+          {
+            normalizeRuntimeProviderIdentity: (driver) => driver ?? "docker",
+            removeManagedAgentStateVolumes: (context) => {
+              expect(context).toEqual({
+                agentName: "openclaw",
+                runtimeProviderId: "docker",
+                sandboxName: "alpha",
+                workloadKind: "managed-image",
+                retainedRoots: targetStateRoots,
+              });
+              events.push("cleanup");
+              return cleanup();
+            },
+            removeSourceRegistryEntry: () => {
+              events.push("registry");
+            },
+            note: vi.fn(),
+            warn: vi.fn(),
+            redact: (message) => message,
+          },
+        );
+      } catch (caught) {
+        error = (caught as Error).message;
+      }
+      expect(error).toEqual(expectedError);
+      expect(events).toEqual(expectedEvents);
+    },
+  );
+});
 describe("managed startup corporate CA onboarding orchestration", () => {
   it("wires the verified create boundary into the corporate CA refresh", async () => {
     const events: string[] = [];
@@ -1254,125 +1326,52 @@ describe("sandbox create identity checks", () => {
     ]);
   });
 
-  it("withholds checkpoint and effects when post-create boundary capture fails (#9833)", async () => {
-    const persistCreateIdentity = vi.fn();
-    const runVerifiedCreateEffects = vi.fn();
-
-    const error = await runSandboxCreateWithIdentityVerification({
-      sandboxName: "alpha",
-      revalidate: vi.fn(),
-      create: async (verifyCreatedSandbox) => {
-        await verifyCreatedSandbox("created");
-        return "created";
-      },
-      captureCreatedSandboxIdentity: () => exactIdentity,
-      persistCreatedSandboxIdentity: vi.fn(),
-      revalidateCreatedSandboxIdentity: vi.fn(),
-      captureVerifiedCreateBoundary: () => {
-        throw new Error("identity boundary capture failed");
-      },
-      persistCreateIdentity,
-      revalidateVerifiedCreateIdentity: vi.fn(),
-      runVerifiedCreateEffects,
-      cleanupTemporarySources: vi.fn(),
-    }).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(AggregateError);
-    expect((error as AggregateError).errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: "identity boundary capture failed",
-        }),
-      ]),
-    );
-    expect(persistCreateIdentity).not.toHaveBeenCalled();
-    expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
-  });
-
-  it("withholds effects when durable checkpoint persistence fails (#9833)", async () => {
-    const revalidateVerifiedCreateIdentity = vi.fn();
-    const runVerifiedCreateEffects = vi.fn();
-
-    await expect(
-      runSandboxCreateWithIdentityVerification({
+  it.each([
+    ["capture", "identity boundary capture failed", [1, 0, 0, 0]],
+    ["persist", "checkpoint persistence failed", [1, 1, 0, 0]],
+    ["reread", "durable checkpoint missing", [1, 1, 1, 0]],
+    ["effects", "provider effect failed", [1, 1, 1, 1]],
+  ] as const)(
+    "retains authority and withholds later effects when %s fails (#9833)",
+    async (failedPhase, message, expectedCalls) => {
+      const steps = {
+        capture: vi.fn(() => "verified"),
+        persist: vi.fn(),
+        reread: vi.fn(),
+        effects: vi.fn(),
+      };
+      steps[failedPhase].mockImplementationOnce(() => {
+        throw new Error(message);
+      });
+      const error = await runSandboxCreateWithIdentityVerification({
         sandboxName: "alpha",
         revalidate: vi.fn(),
         create: async (verifyCreatedSandbox) => {
           await verifyCreatedSandbox("created");
           return "created";
         },
-        captureCreatedSandboxIdentity: () => exactIdentity,
-        persistCreatedSandboxIdentity: vi.fn(),
-        revalidateCreatedSandboxIdentity: vi.fn(),
-        captureVerifiedCreateBoundary: () => "verified",
-        persistCreateIdentity: () => {
-          throw new Error("checkpoint persistence failed");
-        },
-        revalidateVerifiedCreateIdentity,
-        runVerifiedCreateEffects,
-        cleanupTemporarySources: vi.fn(),
-      }),
-    ).rejects.toThrow("automatic sandbox cleanup was not safe");
-
-    expect(revalidateVerifiedCreateIdentity).not.toHaveBeenCalled();
-    expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
-  });
-
-  it("retains the checkpoint and withholds effects when its reread fails (#9833)", async () => {
-    const persistCreateIdentity = vi.fn();
-    const runVerifiedCreateEffects = vi.fn();
-
-    await expect(
-      runSandboxCreateWithIdentityVerification({
-        sandboxName: "alpha",
-        revalidate: vi.fn(),
-        create: async (verifyCreatedSandbox) => {
-          await verifyCreatedSandbox("created");
-          return "created";
-        },
-        captureCreatedSandboxIdentity: () => exactIdentity,
-        persistCreatedSandboxIdentity: vi.fn(),
-        revalidateCreatedSandboxIdentity: vi.fn(),
-        captureVerifiedCreateBoundary: () => "verified",
-        persistCreateIdentity,
-        revalidateVerifiedCreateIdentity: () => {
-          throw new Error("durable checkpoint missing");
-        },
-        runVerifiedCreateEffects,
-        cleanupTemporarySources: vi.fn(),
-      }),
-    ).rejects.toThrow("automatic sandbox cleanup was not safe");
-
-    expect(persistCreateIdentity).toHaveBeenCalledOnce();
-    expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
-  });
-
-  it("retains the durable checkpoint when a deferred effect fails (#9833)", async () => {
-    const persistCreateIdentity = vi.fn();
-
-    await expect(
-      runSandboxCreateWithIdentityVerification({
-        sandboxName: "alpha",
-        revalidate: vi.fn(),
-        create: async (verifyCreatedSandbox) => {
-          await verifyCreatedSandbox("created");
-          return "created";
-        },
-        captureCreatedSandboxIdentity: () => exactIdentity,
-        persistCreatedSandboxIdentity: vi.fn(),
-        revalidateCreatedSandboxIdentity: vi.fn(),
-        captureVerifiedCreateBoundary: () => "verified",
-        persistCreateIdentity,
-        revalidateVerifiedCreateIdentity: vi.fn(),
+        ...exactIdentityBoundary(),
+        captureVerifiedCreateBoundary: steps.capture,
+        persistCreateIdentity: steps.persist,
+        revalidateVerifiedCreateIdentity: steps.reread,
         runVerifiedCreateEffects: async () => {
-          throw new Error("provider effect failed");
+          steps.effects();
         },
         cleanupTemporarySources: vi.fn(),
-      }),
-    ).rejects.toThrow("automatic sandbox cleanup was not safe");
-
-    expect(persistCreateIdentity).toHaveBeenCalledOnce();
-  });
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).message).toContain("automatic sandbox cleanup was not safe");
+      expect((error as AggregateError).errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ message })]),
+      );
+      expect([
+        steps.capture.mock.calls.length,
+        steps.persist.mock.calls.length,
+        steps.reread.mock.calls.length,
+        steps.effects.mock.calls.length,
+      ]).toEqual(expectedCalls);
+    },
+  );
 
   it("refuses continuation when identity changes during boundary capture (#9833)", async () => {
     const continuationEffect = vi.fn();

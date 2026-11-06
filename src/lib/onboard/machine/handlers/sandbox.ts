@@ -103,6 +103,7 @@ import {
 import {
   nativeInferenceCreateIntentFields,
   nativeLocalReservationStatus,
+  retainsNativeLocalProviderAttachment,
   sandboxCreateInferenceSelection,
   withSandboxImageRegistrationFence,
 } from "../../sandbox-registration";
@@ -123,6 +124,7 @@ import {
   assertHermesSwitchyardRoutingReusable,
   decideSandboxResume,
   ensureResumedNativeLocalProviderAttached,
+  restoreNativeRouterAttachment,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
@@ -374,6 +376,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
       nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
@@ -1348,10 +1351,14 @@ class SandboxStateFlow<
   ): SandboxEntry | null {
     const staged = this.options.stagedNativeLocalRecreation;
     if (!staged) return entry;
+    const retainsNativeBinding = retainsNativeLocalProviderAttachment(
+      staged.source,
+      staged.attachment,
+    );
     const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
     if (
       this.options.resume ||
-      !this.options.recreateSandbox(false) ||
+      (!this.options.recreateSandbox(false) && !retainsNativeBinding) ||
       !this.options.session?.sessionId ||
       (agentName !== "langchain-deepagents-code" &&
         agentName !== "openclaw" &&
@@ -1365,7 +1372,7 @@ class SandboxStateFlow<
       !isDeepStrictEqual(entry, staged.source)
     ) {
       throw new Error(
-        `Sandbox '${sandboxName}' legacy route ownership changed before recreation. Retry onboarding.`,
+        `Sandbox '${sandboxName}' recorded route ownership changed before recreation. Retry onboarding.`,
       );
     }
     return { ...staged.source, nativeLocalProviderAttachment: staged.attachment };
@@ -1467,52 +1474,6 @@ class SandboxStateFlow<
     throw new Error("exitProcess returned after messaging channel state changed");
   }
 
-  private async restoreNativeRouterAttachment(sandboxName: string | null): Promise<void> {
-    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
-    if (agentName !== "openclaw" || this.options.provider !== "nvidia-router") return;
-    const entry = sandboxName ? this.deps.getSandboxRegistryEntry(sandboxName) : null;
-    const expected = entry?.nativeLocalProviderAttachment
-      ? structuredClone(entry.nativeLocalProviderAttachment)
-      : undefined;
-    if (
-      !sandboxName ||
-      !entry ||
-      entry.name !== sandboxName ||
-      !expected ||
-      !this.acceptsNativeLocalReservation(entry, sandboxName) ||
-      expected.endpointUrl !== this.options.endpointUrl
-    ) {
-      throw new Error(
-        "Native Model Router resume requires its recorded sandbox attachment authority.",
-      );
-    }
-    const revalidateIdentity = createRegisteredSandboxIdentityRevalidation(entry, {
-      readRegistration: this.deps.getSandboxRegistryEntry,
-      observe: this.deps.getSandboxRecreateObservation,
-    });
-    if (!revalidateIdentity) {
-      throw new Error(
-        "Native Model Router resume requires a verified sandbox identity. Recreate this sandbox.",
-      );
-    }
-    const revalidateSandboxIdentity = (operation: string): void => {
-      revalidateIdentity(operation);
-      this.assertGatewayRouteCompatible(sandboxName);
-      const current = this.deps.getSandboxRegistryEntry(sandboxName);
-      if (!isDeepStrictEqual(current?.nativeLocalProviderAttachment, expected)) {
-        throw new Error("Native Model Router attachment authority changed during resume.");
-      }
-    };
-    revalidateSandboxIdentity("restore native Model Router attachment");
-    await ensureResumedNativeLocalProviderAttached({
-      adapter: this.deps.nativeLocalProviderAdapter,
-      sandboxName,
-      expected,
-      revalidateSandboxIdentity,
-    });
-    revalidateSandboxIdentity("complete native Model Router attachment recovery");
-  }
-
   private async reuseSandbox(
     state: SandboxStepState<WebSearchConfig>,
     note?: string,
@@ -1520,7 +1481,16 @@ class SandboxStateFlow<
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
-      await this.restoreNativeRouterAttachment(state.sandboxName);
+      await restoreNativeRouterAttachment({
+        sandboxName: state.sandboxName,
+        provider: this.options.provider,
+        endpointUrl: this.options.endpointUrl,
+        readRegistration: this.deps.getSandboxRegistryEntry,
+        observe: this.deps.getSandboxRecreateObservation,
+        acceptsReservation: (entry, name) => this.acceptsNativeLocalReservation(entry, name),
+        assertGatewayRouteCompatible: (name) => this.assertGatewayRouteCompatible(name),
+        adapter: this.deps.nativeLocalProviderAdapter,
+      });
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
           state.webSearchConfig as unknown as SharedWebSearchConfig,

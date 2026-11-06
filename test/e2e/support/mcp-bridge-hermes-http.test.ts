@@ -38,6 +38,7 @@ function httpResult(status: number, body = "", result = "") {
   return {
     exitCode: 0,
     signal: null,
+    timedOut: false,
     stdout: body,
     stderr: `${HERMES_MCP_HTTP_STATUS_MARKER}${status}\n${result}`,
   };
@@ -348,7 +349,7 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         "--filter",
         "label=openshell.ai/sandbox-name=owned-hermes",
         "--format",
-        "{{.ID}}",
+        '{{.ID}}\t{{.Label "openshell.ai/isolation-role"}}',
       ]);
     },
   );
@@ -439,6 +440,19 @@ describe("Hermes MCP HTTP failure diagnostics", () => {
         [],
       ),
     ).not.toThrow();
+  });
+
+  it.each([
+    ["times out", { timedOut: true, signal: null }, "timeout"],
+    ["receives SIGTERM", { timedOut: false, signal: "SIGTERM" as const }, "signal=SIGTERM"],
+  ])("rejects a complete HTTP response when the command %s", (_label, interruption, detail) => {
+    const result = {
+      ...httpResult(200, "", `${HERMES_MCP_RESULT_TOKEN_MARKER}present\n`),
+      ...interruption,
+    };
+    expect(() => assertHermesMcpHttpResponse(result, [])).toThrow(
+      `Hermes real MCP tool call transport failed (${detail})`,
+    );
   });
 
   it("classifies only the exact Hermes gateway draining response", () => {

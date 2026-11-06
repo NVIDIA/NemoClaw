@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseOpenClawGatewayModelRun } from "./openclaw-inference-switch-helpers.ts";
+import { registeredCompatibleChatCommand } from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -314,17 +316,7 @@ function expectOnboardFailure(result: RawRunResult, label: string): void {
   expect(result.exitCode, `${label} unexpectedly succeeded\n${redacted}`).not.toBe(0);
 }
 
-function parseJsonBody(body: string, label: string): unknown {
-  try {
-    return JSON.parse(body);
-  } catch (error) {
-    throw new Error(
-      `${label} response was not JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-function openAiContent(json: unknown): string {
+export function openAiContent(json: unknown): string {
   if (!json || typeof json !== "object") return "";
   const choices = (json as { choices?: unknown }).choices;
   if (!Array.isArray(choices)) return "";
@@ -341,33 +333,13 @@ function openAiContent(json: unknown): string {
   return "";
 }
 
-function anthropicContent(json: unknown): string {
-  if (!json || typeof json !== "object") return "";
-  const content = (json as { content?: unknown }).content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (
-          part &&
-          typeof part === "object" &&
-          typeof (part as { text?: unknown }).text === "string"
-        ) {
-          return (part as { text: string }).text;
-        }
-        return "";
-      })
-      .join("")
-      .trim();
-  }
-  return openAiContent(json);
-}
-
 async function expectOpenAiChatThroughSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
   model: string,
   redactionValues: readonly string[],
   artifactName: string,
+  consumer: "curl" | "openclaw-gateway" = "curl",
 ): Promise<void> {
   const payload = JSON.stringify({
     model,
@@ -376,17 +348,18 @@ async function expectOpenAiChatThroughSandbox(
   });
   const response = await sandbox.exec(
     sandboxName,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/chat/completions",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
+    consumer === "openclaw-gateway"
+      ? [
+          "openclaw",
+          "infer",
+          "model",
+          "run",
+          "--gateway",
+          "--json",
+          "--prompt",
+          "Reply with exactly one word: PONG",
+        ]
+      : registeredCompatibleChatCommand(sandboxName, model, payload),
     {
       artifactName,
       env: buildAvailabilityProbeEnv(),
@@ -395,45 +368,16 @@ async function expectOpenAiChatThroughSandbox(
     },
   );
   expect(response.exitCode, resultText(response)).toBe(0);
-  const content = openAiContent(parseJsonBody(response.stdout, artifactName));
-  expect(content, `no chat content in response: ${response.stdout.slice(0, 500)}`).not.toBe("");
-}
-
-async function expectAnthropicMessageThroughSandbox(
-  sandbox: SandboxClient,
-  sandboxName: string,
-  model: string,
-  redactionValues: readonly string[],
-): Promise<void> {
-  const payload = JSON.stringify({
-    model,
-    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-    max_tokens: 50,
-  });
-  const response = await sandbox.exec(
-    sandboxName,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/messages",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
-    {
-      artifactName: "anthropic-inference-local-message",
-      env: buildAvailabilityProbeEnv(),
-      redactionValues: [...redactionValues],
-      timeoutMs: 90_000,
-    },
-  );
-  expect(response.exitCode, resultText(response)).toBe(0);
-  const content = anthropicContent(parseJsonBody(response.stdout, "anthropic inference.local"));
-  expect(content, `no Anthropic content in response: ${response.stdout.slice(0, 500)}`).not.toBe(
-    "",
+  const gatewayRun =
+    consumer === "openclaw-gateway" ? parseOpenClawGatewayModelRun(response.stdout) : null;
+  const content =
+    consumer === "openclaw-gateway"
+      ? gatewayRun?.provider === "inference" && gatewayRun.model === model
+        ? gatewayRun.text
+        : ""
+      : openAiContent(JSON.parse(response.stdout));
+  expect(content, `unexpected chat content in response: ${response.stdout.slice(0, 500)}`).toBe(
+    "PONG",
   );
 }
 
@@ -444,21 +388,6 @@ export function requireProviderSmokeSelected(provider: "openrouter", skip: SkipF
       skip,
       `set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${provider} to run ${label} smoke`,
     );
-  }
-}
-
-export async function verifyProcessListCredentialIsolation(
-  artifacts: ArtifactSink,
-  processList: RawRunResult,
-  apiKey: string,
-): Promise<void> {
-  if (processList.exitCode === 0 && processList.stdout.trim()) {
-    expect(processList.stdout.includes(apiKey), redactedResultText(processList)).toBe(false);
-  } else {
-    await artifacts.writeJson("tc-inf-05-process-list-skipped.json", {
-      reason: "ps not available in hardened sandbox",
-      exitCode: processList.exitCode,
-    });
   }
 }
 
@@ -480,7 +409,6 @@ export async function verifyCredentialPlaceholder(
 export {
   CREDENTIAL_CLASSIFICATION_PATTERN,
   cleanupSandbox,
-  expectAnthropicMessageThroughSandbox,
   expectNoActiveSandbox,
   expectOnboardFailure,
   expectOnboardSuccess,

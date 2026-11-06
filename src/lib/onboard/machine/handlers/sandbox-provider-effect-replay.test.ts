@@ -105,12 +105,12 @@ describe("handleSandboxState provider effect replay", () => {
     const slackAppToken = "xapp-current-token";
     const slackBotBinding = {
       name: "my-assistant-slack-bridge",
-      type: "nemoclaw-mcp-v1",
+      type: "nemoclaw-messaging-v1",
       credentialEnv: "SLACK_BOT_TOKEN",
     };
     const slackAppBinding = {
       name: "my-assistant-slack-app",
-      type: "nemoclaw-mcp-v1",
+      type: "nemoclaw-messaging-v1",
       credentialEnv: "SLACK_APP_TOKEN",
     };
     const slackProviderBindings = [slackBotBinding, slackAppBinding];
@@ -141,7 +141,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const telegramBinding = {
       name: "my-assistant-telegram-bridge",
-      type: "nemoclaw-mcp-v1",
+      type: "nemoclaw-messaging-v1",
       credentialEnv: "TELEGRAM_BOT_TOKEN",
     };
     const session = createSession({
@@ -318,7 +318,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const oldMessagingBinding = {
       name: "my-assistant-telegram-bridge",
-      type: "nemoclaw-mcp-v1",
+      type: "nemoclaw-messaging-v1",
       credentialEnv: "TELEGRAM_BOT_TOKEN",
     };
     const session = createSession({ sandboxName: "my-assistant" });
@@ -465,7 +465,7 @@ describe("handleSandboxState provider effect replay", () => {
     };
     const messagingBinding = {
       name: "my-assistant-telegram-bridge",
-      type: "nemoclaw-mcp-v1",
+      type: "nemoclaw-messaging-v1",
       credentialEnv: "TELEGRAM_BOT_TOKEN",
     };
     const telegramToken = "telegram-current-token";

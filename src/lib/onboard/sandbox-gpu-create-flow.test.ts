@@ -822,42 +822,44 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
-  it("detaches a managed startup hold before post-create setup without waiting for its banner", async () => {
-    const input = createInput();
-    input.sandboxStartupCommand = ["/usr/local/bin/nemoclaw-managed-startup-hold"];
-    input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };
+  it.each([
+    { held: false, startup: {} },
+    {
+      held: true,
+      startup: {
+        startupCommand: [
+          "env",
+          "/usr/local/bin/nemoclaw-managed-startup-hold",
+          "--",
+          "nemoclaw-start",
+        ],
+      },
+    },
+  ])(
+    "gates native startup output only outside a managed hold ($held)",
+    async ({ held, startup }) => {
+      const input = createInput();
+      input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };
+      input.createRequest = { ...input.createRequest, ...startup };
 
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
-      route: "native",
-    });
-    expect(mocks.streamSandboxCreate.mock.calls[0]?.[3]).toEqual(
-      expect.objectContaining({
-        readyCheckOutputPatterns: [],
-        waitForReadyTermination: true,
-      }),
-    );
-  });
+      await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+        route: "native",
+      });
 
-  it("waits for native non-terminal startup output before detaching the create client", async () => {
-    const input = createInput();
-    input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };
-
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
-      route: "native",
-    });
-
-    const streamOptions = mocks.streamSandboxCreate.mock.calls[0]?.[3];
-    expect(streamOptions).toEqual(
-      expect.objectContaining({
-        readyCheckOutputPatterns: [expect.any(RegExp)],
-      }),
-    );
-    expect(
-      streamOptions?.readyCheckOutputPatterns?.some((pattern: RegExp) =>
-        pattern.test("Setting up NemoClaw (Hermes)..."),
-      ),
-    ).toBe(true);
-  });
+      const streamOptions = mocks.streamSandboxCreate.mock.calls[0]?.[3];
+      expect(streamOptions).toEqual(
+        expect.objectContaining({
+          readyCheckOutputPatterns: held ? [] : [expect.any(RegExp)],
+          waitForReadyTermination: held,
+        }),
+      );
+      expect(
+        streamOptions?.readyCheckOutputPatterns?.some((pattern: RegExp) =>
+          pattern.test("Setting up NemoClaw (Hermes)..."),
+        ),
+      ).toBe(!held);
+    },
+  );
 
   it("applies exact required limits while preserving the native GPU route", async () => {
     const input = createInput();

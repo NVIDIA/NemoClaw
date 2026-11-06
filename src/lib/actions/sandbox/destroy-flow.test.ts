@@ -26,7 +26,6 @@ import {
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
-import type { SandboxWorkloadReceipt } from "../../state/registry";
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { createDockerLlamaCppPrivateBridgeController } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
@@ -39,22 +38,6 @@ import {
 } from "../../inference/local-model-profile/cleanup.test-support";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
-
-const managedHermesWorkload = {
-  schemaVersion: 1,
-  kind: "managed-image",
-  reference: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
-  platform: "linux/amd64",
-  release: "v0.0.0",
-  sourceRevision: "a".repeat(40),
-  sourceCohort: "test-cohort",
-  capabilityContractVersion: 1,
-  startupProfileContractVersion: 1,
-  encodedProfile: "e30",
-  startupProfileSha256: "b".repeat(64),
-  credentialProxyReplayRequired: true,
-  shared: true,
-} satisfies SandboxWorkloadReceipt;
 
 describe("destroySandbox flow", () => {
   let exitSpy: MockInstance;
@@ -554,7 +537,7 @@ describe("destroySandbox flow", () => {
 
   it("revalidates schema-4 Portable identity at every destroy checkpoint without Docker preflight (#9189)", async () => {
     const harness = createDestroyHarness({
-      dockerRunResult: { status: 0, stdout: `${"f".repeat(64)}\t\tforeign\t` },
+      dockerRunResult: { status: 0, stdout: `${"f".repeat(64)}\t\tforeign\t\t\t` },
       portableDestroyAuthority: true,
     });
 
@@ -667,78 +650,6 @@ describe("destroySandbox flow", () => {
     expect(errorOutput).toContain("--force cannot discard this ownership state");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
-  });
-
-  it(
-    "removes the owned managed Hermes state volume after confirmed sandbox deletion",
-    { timeout: 30_000 },
-    async () => {
-      const harness = createDestroyHarness({
-        agent: "hermes",
-        openshellDriver: "docker",
-        workload: managedHermesWorkload,
-        managedAgentStateVolumeCleanupResults: [{ status: "removed" }],
-      });
-
-      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-      expect(harness.removeManagedAgentStateVolumesSpy).toHaveBeenCalledWith(
-        {
-          agentName: "hermes",
-          runtimeProviderId: "docker",
-          sandboxName: "alpha",
-          workloadKind: "managed-image",
-        },
-        { runtimeProviders: expect.any(Object) },
-      );
-      expect(harness.removeManagedAgentStateVolumesSpy.mock.invocationCallOrder[0]).toBeLessThan(
-        harness.removeSandboxSpy.mock.invocationCallOrder[0],
-      );
-    },
-  );
-
-  it("preserves the registry when owned managed Hermes state-volume cleanup fails", async () => {
-    const harness = createDestroyHarness({
-      agent: "hermes",
-      openshellDriver: "docker",
-      workload: managedHermesWorkload,
-      managedAgentStateVolumeCleanupResults: [
-        {
-          status: "failed",
-          detail: "volume is still in use",
-          volumeName: "nemoclaw-hermes-state-v1-alpha",
-        },
-      ],
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
-
-    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "volume is still in use",
-    );
-  });
-
-  it("leaves a foreign same-name Hermes volume untouched and completes registry cleanup", async () => {
-    const harness = createDestroyHarness({
-      agent: "hermes",
-      openshellDriver: "docker",
-      workload: managedHermesWorkload,
-      managedAgentStateVolumeCleanupResults: [
-        {
-          status: "not-owned",
-          detail: "the exact NemoClaw ownership labels are absent or changed",
-          volumeName: "nemoclaw-hermes-state-v1-alpha",
-        },
-      ],
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-    expect(harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Left managed state volume 'nemoclaw-hermes-state-v1-alpha' untouched",
-    );
-    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 
   it("runs routed teardown under the gateway and host router-port locks (#9098)", async () => {
@@ -912,8 +823,8 @@ describe("destroySandbox flow", () => {
 
   it("refuses before destructive work when multiple Docker identities share the name", async () => {
     const rows = [
-      "aaaa000000000000\topenshell\tdefault\tsb-real",
-      "ffff000000000000\t\tforeign\t",
+      "aaaa000000000000\topenshell\tdefault\tsb-real\t\t",
+      "ffff000000000000\t\tforeign\t\t\t",
     ].join("\n");
     const harness = createDestroyHarness({
       dockerRunResult: { status: 0, stdout: rows },
@@ -941,8 +852,8 @@ describe("destroySandbox flow", () => {
   });
 
   it("refuses identity drift after read-only destroy preflight (#8999)", async () => {
-    const managed = "aaaa000000000000\topenshell\tdefault\tsb-alpha";
-    const foreign = "ffff000000000000\t\tforeign\t";
+    const managed = "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\t";
+    const foreign = "ffff000000000000\t\tforeign\t\t\t";
     const harness = createDestroyHarness({
       dockerRunResultSequence: [
         { status: 0, stdout: managed },
@@ -971,12 +882,12 @@ describe("destroySandbox flow", () => {
   it.each([
     [
       "a replacement identity",
-      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t\t" },
     ],
     ["container absence", { status: 0, stdout: "" }],
     ["a failed revalidation probe", { status: 1, stderr: "daemon unavailable" }],
   ])("refuses %s before sandbox mutation", async (_scenario, changedIdentity) => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\t" };
     const harness = createDestroyHarness({
       dockerRunResultSequence: [managed, managed, changedIdentity],
     });
@@ -996,7 +907,7 @@ describe("destroySandbox flow", () => {
     const absent = { status: 0, stdout: "" };
     const replacement = {
       status: 0,
-      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t\t",
     };
     const harness = createDestroyHarness({
       sandboxPresent: false,
@@ -1012,10 +923,10 @@ describe("destroySandbox flow", () => {
   });
 
   it("restores MCP preparation when identity changes before wipe", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\t" };
     const replacement = {
       status: 0,
-      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t\t",
     };
     const harness = createDestroyHarness({
       mcpServers: ["github"],
@@ -1061,7 +972,7 @@ describe("destroySandbox flow", () => {
   it.each([
     [
       "a replacement identity",
-      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta" },
+      { status: 0, stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t\t" },
       "Container identity changed after managed inference cleanup",
     ],
     [
@@ -1072,7 +983,7 @@ describe("destroySandbox flow", () => {
   ])(
     "restores MCP preparation and refuses deletion after %s",
     async (_scenario, changedIdentity, expectedMessage) => {
-      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\t" };
       const harness = createDestroyHarness({
         mcpServers: ["github"],
         dockerRunResultSequence: [managed, managed, managed, managed, changedIdentity],
@@ -1094,10 +1005,10 @@ describe("destroySandbox flow", () => {
   );
 
   it("revalidates immediately before delete and reports partial provider preparation", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\t" };
     const replacement = {
       status: 0,
-      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta",
+      stdout: "bbbb000000000000\topenshell\tdefault\tsb-beta\t\t",
     };
     const harness = createDestroyHarness({
       detachedProviders: ["provider-a"],
@@ -1128,7 +1039,7 @@ describe("destroySandbox flow", () => {
   });
 
   it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\t" };
     const trace: string[] = [];
     let identityProbeCalls = 0;
     const harness = createDestroyHarness({
@@ -1258,7 +1169,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanIds: [containerId],
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t\t`,
       },
     });
 
@@ -1271,6 +1182,49 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 
+  it("deletes a sandbox with its verified supervisor and removes both residual IDs", async () => {
+    const workloadId = "a".repeat(64);
+    const supervisorId = "b".repeat(64);
+    const harness = createDestroyHarness({
+      dockerOrphanIds: [supervisorId, workloadId],
+      dockerRunResult: {
+        status: 0,
+        stdout: [
+          `${supervisorId}\topenshell\t\tsb-alpha\tdefault\tsupervisor`,
+          `${workloadId}\topenshell\tdefault\tsb-alpha\tdefault\tsandbox`,
+        ].join("\n"),
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).toContain("delete");
+    expect(
+      harness.dockerRunSpy.mock.calls.filter(([args]) => args[0] === "rm").map(([args]) => args),
+    ).toEqual([
+      ["rm", "-f", workloadId],
+      ["rm", "-f", supervisorId],
+    ]);
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("refuses supervisor identity drift before deleting a paired sandbox", async () => {
+    const workload = `${"a".repeat(64)}\topenshell\tdefault\tsb-alpha\tdefault\tsandbox`;
+    const supervisor = `${"b".repeat(64)}\topenshell\t\tsb-alpha\tdefault\tsupervisor`;
+    const harness = createDestroyHarness({
+      dockerRunResultSequence: [
+        { status: 0, stdout: `${workload}\n${supervisor}` },
+        { status: 0, stdout: `${workload}\n${supervisor.replace("sb-alpha", "sb-other")}` },
+      ],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).not.toContain("delete");
+    expect(harness.dockerRunSpy.mock.calls.filter(([args]) => args[0] === "rm")).toEqual([]);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it("preserves registry state when the absent sandbox has a replacement Docker identity (#9073)", async () => {
     const expectedContainerId = "a".repeat(64);
     const replacementContainerId = "b".repeat(64);
@@ -1279,7 +1233,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanIds: [replacementContainerId],
       dockerRunResult: {
         status: 0,
-        stdout: `${expectedContainerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${expectedContainerId}\topenshell\tdefault\tsb-alpha\t\t`,
       },
     });
 
@@ -1301,7 +1255,7 @@ describe("destroySandbox flow", () => {
       dockerRemoveStatus: 1,
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t\t`,
       },
     };
     const harness = createDestroyHarness(options);
@@ -1330,7 +1284,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanQueryStatus: 1,
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t\t`,
       },
     });
 
@@ -1352,7 +1306,7 @@ describe("destroySandbox flow", () => {
       dockerOrphanIds: [containerId],
       dockerRunResult: {
         status: 0,
-        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha\t\t`,
       },
     });
 

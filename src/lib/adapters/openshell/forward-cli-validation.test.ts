@@ -69,17 +69,21 @@ describe("CLI OpenShell forward command builders", () => {
 });
 
 describe("CLI OpenShell forward list parser", () => {
-  it("parses an ANSI-formatted forward table", () => {
+  it.each([
+    ["legacy", "", "", "default"],
+    ["workspace", "WORKSPACE ", "team-a ", "team-a"],
+  ])("parses an ANSI-formatted %s forward table", (_case, header, row, workspace) => {
     expect(
       parseCliOpenShellForwardList(
-        "\u001b[1mSANDBOX\u001b[0m BIND PORT PID STATUS\n" +
-          "\u001b[32mdemo\u001b[0m     127.0.0.1  18789  4312  running",
+        `${header}\u001b[1mSANDBOX\u001b[0m BIND PORT PID STATUS\n` +
+          `${row}\u001b[32mdemo\u001b[0m     127.0.0.1  18789  4312  running`,
         "",
       ),
     ).toEqual({
       ok: true,
       rows: [
         {
+          workspace,
           sandboxName: "demo",
           bind: "127.0.0.1",
           port: 18_789,
@@ -99,6 +103,12 @@ describe("CLI OpenShell forward list parser", () => {
     ["missing header", "demo 127.0.0.1 18789 4312 running"],
     ["missing column", `${listHeader}\ndemo 127.0.0.1 18789 running`],
     ["extra column", `${listHeader}\ndemo 127.0.0.1 18789 4312 running extra`],
+    ["missing workspace", `WORKSPACE ${listHeader}\ndemo 127.0.0.1 18789 4312 running`],
+    ["invalid workspace", `WORKSPACE ${listHeader}\n../other demo 127.0.0.1 18789 4312 running`],
+    [
+      "duplicate port across workspaces",
+      `WORKSPACE ${listHeader}\ndefault demo 127.0.0.1 18789 4312 running\nother demo 127.0.0.1 18789 9876 running`,
+    ],
     ["invalid bind", `${listHeader}\ndemo localhost 18789 4312 running`],
     ["invalid port", `${listHeader}\ndemo 127.0.0.1 65536 4312 running`],
     ["invalid PID", `${listHeader}\ndemo 127.0.0.1 18789 0 running`],

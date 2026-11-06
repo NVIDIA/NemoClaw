@@ -547,8 +547,11 @@ export async function teardownSandboxDashboardForward(
         "forwards" in release
           ? release.forwards.map((forward) => forward.port)
           : forwards.map((forward) => forward.port);
+      const classification =
+        release.state === "bound" ? "bound" : `indeterminate/${release.error.kind}`;
       console.error(
-        `  ForwardTcp cleanup did not release registered host port(s): ${unreleasedPorts.join(", ")}.`,
+        `  ForwardTcp port release was not verified for registered host port(s): ${unreleasedPorts.join(", ")}. ` +
+          `[forward-release ${classification}]`,
       );
       return false;
     }

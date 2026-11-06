@@ -7,8 +7,10 @@ import {
 } from "../../inference/native-local/contract";
 import {
   verifyNativeLocalStatusAttachment,
+  verifyRegisteredStatusAttachment,
   runSandboxInferenceInvocationProbe,
 } from "./inference-route-health";
+import { recordedRegisteredInferenceProviderAttachment } from "../../inference/native-provider/registered";
 
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProviderForAttachment } from "../../inference/native-provider/hosted-attachment";
@@ -51,6 +53,8 @@ export type DoctorInferenceRoute = {
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   nativeHostedProviderAttachment?: unknown;
   preferredInferenceApi?: string | null;
+  credentialEnv?: string | null;
+  registeredInferenceProviderAttachment?: unknown;
 };
 
 type ManagedLlamaCppDoctorDeps = {
@@ -98,6 +102,7 @@ export function collectManagedLlamaCppDoctorChecks(
 
 type DoctorInferenceDeps = {
   gatewayName?: string | null;
+  verifyRegisteredStatusAttachmentImpl?: typeof verifyRegisteredStatusAttachment;
   verifyNativeHostedStatusAttachmentImpl?: typeof verifyNativeHostedStatusAttachment;
   probeSandboxInferenceInvocationImpl?: typeof probeSandboxInferenceInvocation;
   probeProviderHealthImpl?: typeof probeProviderHealth;
@@ -109,6 +114,71 @@ type DoctorInferenceDeps = {
   /** False for terminal agents that do not have a long-running gateway serving process. */
   includeServingProcessCheck?: boolean;
 };
+
+async function collectRegisteredRouteProbe(
+  sandboxName: string,
+  route: DoctorInferenceRoute,
+  sandboxReachable: boolean,
+  deps: DoctorInferenceDeps,
+): Promise<ProviderHealthStatus> {
+  const failure = (detail: string): ProviderHealthStatus => ({
+    ok: false,
+    probed: false,
+    providerLabel: "Registered native provider",
+    endpoint: "recorded native endpoint",
+    detail,
+    failureLabel: "unreachable",
+  });
+  if (!sandboxReachable)
+    return failure("skipped because the sandbox is not reachable through its named gateway");
+  try {
+    const expected = recordedRegisteredInferenceProviderAttachment({
+      ...route,
+      name: sandboxName,
+      gatewayName: deps.gatewayName,
+      endpointUrl: route.recordedEndpointUrl,
+    });
+    if (!expected || !deps.gatewayName)
+      return failure("Registered provider attachment or gateway binding is missing");
+    await (deps.verifyRegisteredStatusAttachmentImpl ?? verifyRegisteredStatusAttachment)({
+      sandboxName,
+      gatewayName: deps.gatewayName,
+      expected,
+    });
+    const result = await (
+      deps.probeSandboxInferenceInvocationImpl ?? probeSandboxInferenceInvocation
+    )(
+      {
+        sandboxName,
+        gatewayName: deps.gatewayName,
+        provider: route.provider,
+        model: route.model,
+        agentName: route.agentName,
+        preferredInferenceApi: expected.inferenceApi,
+        registeredInferenceProviderAttachment: expected,
+        nativeProvider: true,
+      },
+      {},
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
+    return {
+      ok: result.ok,
+      probed: true,
+      providerLabel: "Registered native provider",
+      endpoint: expected.endpointUrl,
+      detail: result.ok
+        ? "The attached provider served a native inference request."
+        : formatUntrustedProbeDetail(result.detail),
+      ...(result.ok
+        ? {}
+        : { failureLabel: classifyInferenceRouteFailureLabel(result.httpStatus ?? 0) }),
+    };
+  } catch (error) {
+    return failure(
+      formatUntrustedProbeDetail(error instanceof Error ? error.message : String(error)),
+    );
+  }
+}
 
 async function collectNativeLocalRouteProbe(
   sandboxName: string,
@@ -458,26 +528,31 @@ export async function collectInferenceChecks(
   if (effortCheck) checks.push(effortCheck);
   const nativeNvidia = isNativeNvidiaProvider(route.provider);
   const nativeLocal = route.nativeLocalProviderAttachment !== undefined;
-  const routeProbe = nativeLocal
-    ? await collectNativeLocalRouteProbe(sandboxName, route, sandboxReachable, deps)
-    : route.nativeHostedProviderAttachment !== undefined
-      ? await collectNativeHostedRouteProbe(sandboxName, route, sandboxReachable, deps)
-      : nativeNvidia
-        ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
-        : await collectInferenceRouteProbe(
-            sandboxName,
-            sandboxReachable,
-            deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
-            deps.gatewayName,
-          );
-  pushInferenceHealthCheck(checks, routeProbe, {
-    label: nativeLocal
-      ? "Inference route (native local)"
+  const registered = route.registeredInferenceProviderAttachment !== undefined;
+  const routeProbe = registered
+    ? await collectRegisteredRouteProbe(sandboxName, route, sandboxReachable, deps)
+    : nativeLocal
+      ? await collectNativeLocalRouteProbe(sandboxName, route, sandboxReachable, deps)
       : route.nativeHostedProviderAttachment !== undefined
-        ? "Inference route (native hosted)"
+        ? await collectNativeHostedRouteProbe(sandboxName, route, sandboxReachable, deps)
         : nativeNvidia
-          ? "Inference route (native NVIDIA)"
-          : "Inference route (gateway)",
+          ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
+          : await collectInferenceRouteProbe(
+              sandboxName,
+              sandboxReachable,
+              deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
+              deps.gatewayName,
+            );
+  pushInferenceHealthCheck(checks, routeProbe, {
+    label: registered
+      ? "Inference route (registered native)"
+      : nativeLocal
+        ? "Inference route (native local)"
+        : route.nativeHostedProviderAttachment !== undefined
+          ? "Inference route (native hosted)"
+          : nativeNvidia
+            ? "Inference route (native NVIDIA)"
+            : "Inference route (gateway)",
   });
   for (const diagnostic of collectProviderHealthDiagnostics(
     route,

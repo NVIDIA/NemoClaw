@@ -382,6 +382,9 @@ export function createDockerRuntimeProviderBundle(
         processOwnership: "scoped-namespace",
       },
       network: {
+        ...(input.platform === "linux"
+          ? { supervisorNetwork: { name: "host", hostAddress: connectHost } }
+          : {}),
         sandboxSourceCidrs: () => {
           const network = inspectDockerGatewayNetwork(
             resolveDockerDriverNetworkName(input.environment),

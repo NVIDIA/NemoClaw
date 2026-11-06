@@ -28,7 +28,7 @@ vi.mock("../policy", () => ({
   customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
   filterSetupPolicyPresets: vi.fn(),
   getAppliedPresets: vi.fn(() => []),
-  hasNativeCustomProvider: vi.fn(() => false),
+  getNativeCustomProviderAttachment: vi.fn(() => undefined),
   getPersonalSubsumedCustomPresetNames: vi.fn(async () => []),
   listCustomPresets: vi.fn(() => []),
   listSetupPolicyPresets: vi.fn(() => [

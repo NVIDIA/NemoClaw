@@ -102,9 +102,12 @@ describe("CLI OpenShell forward observations", () => {
     },
   );
 
-  it("returns stale only when the legacy inspector owns the listed PID", async () => {
+  it.each([
+    ["legacy", legacyForwardList],
+    ["workspace", "WORKSPACE " + legacyForwardList.replaceAll("\n", "\ndefault ")],
+  ])("returns stale only when the inspector owns the %s table PID", async (_case, output) => {
     const { adapter, inspect, inspectLegacy } = createHarness({
-      run: async () => captured(0, legacyForwardList),
+      run: async () => captured(0, output),
     });
 
     await expect(adapter.observeForwards({ forwards: [forward] })).resolves.toEqual([
@@ -1186,6 +1189,29 @@ describe("CLI OpenShell direct forward start", () => {
 });
 
 describe("CLI OpenShell legacy forward retirement", () => {
+  it.each([
+    ["workspace table", "WORKSPACE " + legacyForwardList.replaceAll("\n", "\nother "), forward],
+    ["legacy table outside default", legacyForwardList, { ...forward, workspace: "other" }],
+  ])(
+    "refuses another workspace in %s without requesting authority or stopping",
+    async (_case, output, requested) => {
+      const authorize = vi.fn(async () => {});
+      const { adapter, run } = createHarness({
+        runtimeSelection: { ...runtimeSelection, workspace: requested.workspace },
+        run: async () => captured(0, output),
+      });
+
+      await expect(adapter.retireLegacyForward({ forward: requested, authorize })).resolves.toEqual(
+        {
+          state: "refused",
+          observation: { state: "foreign", forward: requested },
+        },
+      );
+      expect(authorize).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledOnce();
+    },
+  );
+
   it("omits the workspace flag for legacy CLIs that predate workspace selection", async () => {
     const run = vi.fn<RunCommand>(async (_executable, args) =>
       args.includes("list") ? captured(0, legacyForwardList) : captured(0),
@@ -1203,57 +1229,63 @@ describe("CLI OpenShell legacy forward retirement", () => {
     expect(run.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(1);
   });
 
-  it("checks authority again, stops once, and verifies release", async () => {
-    const operations: string[] = [];
-    const run: RunCommand = async (_executable, args) => {
-      const operation = args.includes("list") ? "list" : "stop";
-      operations.push(operation);
-      return operation === "list" ? captured(0, legacyForwardList) : captured(0);
-    };
-    const inspectLegacy: InspectLegacyListener = async (_identity, expectedPid) => {
-      operations.push(`legacy:${String(expectedPid)}`);
-      return { state: "owned", pid: expectedPid };
-    };
-    const probePort: ProbePort = async () => {
-      operations.push("probe");
-      return { state: "unbound" };
-    };
-    const authorize = vi.fn(async () => {
-      operations.push("authorize");
-    });
-    const { adapter, run: runMock } = createHarness({ inspectLegacy, probePort, run });
+  it.each([
+    ["legacy", legacyForwardList],
+    ["workspace", "WORKSPACE " + legacyForwardList.replaceAll("\n", "\ndefault ")],
+  ])(
+    "checks authority, stops once, and verifies release for the %s table",
+    async (_case, output) => {
+      const operations: string[] = [];
+      const run: RunCommand = async (_executable, args) => {
+        const operation = args.includes("list") ? "list" : "stop";
+        operations.push(operation);
+        return operation === "list" ? captured(0, output) : captured(0);
+      };
+      const inspectLegacy: InspectLegacyListener = async (_identity, expectedPid) => {
+        operations.push(`legacy:${String(expectedPid)}`);
+        return { state: "owned", pid: expectedPid };
+      };
+      const probePort: ProbePort = async () => {
+        operations.push("probe");
+        return { state: "unbound" };
+      };
+      const authorize = vi.fn(async () => {
+        operations.push("authorize");
+      });
+      const { adapter, run: runMock } = createHarness({ inspectLegacy, probePort, run });
 
-    await expect(adapter.retireLegacyForward({ forward, authorize })).resolves.toEqual({
-      state: "retired",
-      forward,
-    });
-    expect(authorize).toHaveBeenCalledTimes(2);
-    expect(authorize).toHaveBeenNthCalledWith(1, forward);
-    expect(authorize).toHaveBeenNthCalledWith(2, forward);
-    expect(operations).toEqual([
-      "list",
-      "legacy:4312",
-      "authorize",
-      "list",
-      "legacy:4312",
-      "authorize",
-      "stop",
-      "probe",
-    ]);
-    expect(runMock.mock.calls.filter(([, args]) => args.includes("stop"))).toEqual([
-      [
-        executable,
-        buildCliOpenShellLegacyForwardStopArgs(forward),
-        expect.objectContaining({
-          environment: {
-            OPENSHELL_GATEWAY: "nemoclaw",
-            OPENSHELL_WORKSPACE: "default",
-          },
-          outputLimitBytes: 64 * 1_024,
-        }),
-      ],
-    ]);
-  });
+      await expect(adapter.retireLegacyForward({ forward, authorize })).resolves.toEqual({
+        state: "retired",
+        forward,
+      });
+      expect(authorize).toHaveBeenCalledTimes(2);
+      expect(authorize).toHaveBeenNthCalledWith(1, forward);
+      expect(authorize).toHaveBeenNthCalledWith(2, forward);
+      expect(operations).toEqual([
+        "list",
+        "legacy:4312",
+        "authorize",
+        "list",
+        "legacy:4312",
+        "authorize",
+        "stop",
+        "probe",
+      ]);
+      expect(runMock.mock.calls.filter(([, args]) => args.includes("stop"))).toEqual([
+        [
+          executable,
+          buildCliOpenShellLegacyForwardStopArgs(forward),
+          expect.objectContaining({
+            environment: {
+              OPENSHELL_GATEWAY: "nemoclaw",
+              OPENSHELL_WORKSPACE: "default",
+            },
+            outputLimitBytes: 64 * 1_024,
+          }),
+        ],
+      ]);
+    },
+  );
 
   it.each([
     ["owned", "not_needed", noActiveForwards, { state: "owned", pid: 4_321 } as const],

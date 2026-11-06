@@ -4,7 +4,7 @@
 import { Buffer } from "node:buffer";
 
 import {
-  hostedNativeProvider,
+  fixedHostedNativeProvider,
   HOSTED_NATIVE_PROVIDERS,
   nativeHostedAgentConfig,
 } from "./inference/native-provider/agent-config.ts";
@@ -279,7 +279,7 @@ function clientProfile(providerId: HermesSwitchyardProvider): SwitchyardClientPr
       extraHeaders: {},
     });
   }
-  const definition = hostedNativeProvider(providerId);
+  const definition = fixedHostedNativeProvider(providerId);
   if (!definition || definition.logicalProvider === "hermes-provider") {
     return fail("provider profile is not supported by Switchyard onboarding");
   }

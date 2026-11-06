@@ -93,7 +93,7 @@ const managedProviderResult = (normalized) => {
         status: 0,
         stdout: [
           "Name: " + providerName,
-          "Type: nemoclaw-mcp-v1",
+          "Type: nemoclaw-messaging-v1",
           "Credential keys: " + credential,
           "Config keys: <none>",
         ].join("\n"),

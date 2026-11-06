@@ -44,18 +44,27 @@ export function nativeLocalCredentialReference(
   provider: string | null | undefined,
   endpointUrl: string,
   agentName?: string | null,
+  runtimeCredentialHandle?: string,
 ): string | null {
+  const scoped = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(
+    runtimeCredentialHandle ?? "",
+  );
+  // The host owns Router admission. Images only project its issued credential
+  // for the canonical managed alias; they cannot read the host blueprint.
+  const issuedRouterCredential =
+    typeof provider === "string" &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(provider) &&
+    scoped !== null &&
+    scoped[0] === runtimeCredentialHandle &&
+    qualifiedNativeLocalEndpointUrl(endpointUrl) !== null &&
+    new URL(endpointUrl).hostname === "host.openshell.internal";
   if (
-    ![
-      "ollama-local",
-      "vllm-local",
-      "llama-cpp-local",
-      "compatible-endpoint",
-      "nvidia-router",
-    ].includes(provider ?? "")
+    !issuedRouterCredential &&
+    !["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
+      provider ?? "",
+    )
   )
     return null;
-  if (provider === "nvidia-router" && agentName !== "openclaw") return null;
   const qualified = qualifiedNativeLocalEndpointUrl(endpointUrl);
   // Canonical custom-hosted selection includes private IP endpoints. Dedicated
   // local providers still use private bridge IPs; compatible local routes use

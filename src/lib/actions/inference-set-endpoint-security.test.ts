@@ -8,15 +8,15 @@ import { normalizeCustomEndpointUrl } from "./inference-set";
 
 describe("custom inference endpoint DNS pinning", () => {
   it.each([1024, 65535])(
-    "allows the exact OpenShell bridge exemption at port %i without DNS rewriting",
+    "rejects an unverified OpenShell bridge at port %i without DNS rewriting",
     async (port) => {
       const rewriteUrl = vi.fn(async () => {
-        throw new Error("bridge exemption unexpectedly reached DNS validation");
+        throw new Error("unverified bridge unexpectedly reached DNS validation");
       });
 
       await expect(
         normalizeCustomEndpointUrl(`http://host.openshell.internal:${port}/v1/`, rewriteUrl),
-      ).resolves.toBe(`http://host.openshell.internal:${port}/v1`);
+      ).rejects.toThrow("cannot use an unverified OpenShell host bridge endpoint");
       expect(rewriteUrl).not.toHaveBeenCalled();
     },
   );

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as routerProfile from "../../../core/model-router-port";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { nativeLocalIdentity } from "../../../inference/native-local/contract";
@@ -70,40 +71,49 @@ describe("native local provider inference resume (#13540)", () => {
     for (const receipt of recorded.splice(0)) clearNativeLocalProviderAuthority(receipt);
   });
 
-  it("reverifies the native Model Router through setup even when the shared route is ready (#13560)", async () => {
-    const session = createSession({
-      agent: "openclaw",
-      sandboxName: "router-probe",
-      provider: "nvidia-router",
-      model: "nvidia-routed",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({
-      isInferenceRouteReady: vi.fn(() => true),
-      hasNativeLocalProviderAuthority: () => true,
-    });
-    calls.complete.mockResolvedValue(session);
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "router-probe",
-      agent: { name: "openclaw" },
-    });
-    expect(calls.setupInference).toHaveBeenCalledWith(
-      "router-probe",
-      "nvidia-routed",
-      "nvidia-router",
-      "http://host.openshell.internal:4000/v1",
-      "NVIDIA_INFERENCE_API_KEY",
-      null,
-      [],
-      expect.objectContaining({ agentName: "openclaw", gatewayName: "nemoclaw" }),
-    );
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-    expect(calls.skipped).not.toHaveBeenCalledWith("inference", "nvidia-router / nvidia-routed");
-  });
+  it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"] as const)(
+    "reverifies %s configured Model Router through setup when the shared route is ready (#13560)",
+    async (agent) => {
+      vi.spyOn(routerProfile, "loadBlueprintProfile").mockReturnValue({
+        model: "nvidia-routed",
+        provider_name: "custom-router",
+        endpoint: "http://localhost:4000/v1",
+        router: { enabled: true, port: 4000 },
+      });
+      const session = createSession({
+        agent,
+        sandboxName: "router-probe",
+        provider: "custom-router",
+        model: "nvidia-routed",
+        endpointUrl: "http://host.openshell.internal:4000/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      });
+      session.steps.provider_selection.status = "complete";
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        hasNativeLocalProviderAuthority: () => true,
+      });
+      calls.complete.mockResolvedValue(session);
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "router-probe",
+        agent: { name: agent },
+      });
+      expect(calls.setupInference).toHaveBeenCalledWith(
+        "router-probe",
+        "nvidia-routed",
+        "custom-router",
+        "http://host.openshell.internal:4000/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        expect.objectContaining({ agentName: agent, gatewayName: "nemoclaw" }),
+      );
+      expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
+      expect(calls.skipped).not.toHaveBeenCalledWith("inference", "custom-router / nvidia-routed");
+    },
+  );
 
   it("requires explicit recreation for an existing shared Model Router sandbox (#13560)", async () => {
     const session = createSession({

@@ -26,6 +26,15 @@ export function recordedNativeProviderAttachment(selection: {
     selection.nativeHostedProviderAttachment,
     selection.provider,
   );
+  if (hosted && selection.provider === "hermes-provider") {
+    const endpoint = hostedNativeProviderForAttachment(hosted)!.endpoint;
+    if (
+      (selection.endpointUrl &&
+        selection.endpointUrl.replace(/\/+$/, "") !== endpoint.replace(/\/+$/, "")) ||
+      (selection.preferredInferenceApi && selection.preferredInferenceApi !== "openai-completions")
+    )
+      throw new Error("Recorded Hermes selection does not match its endpoint or API authority");
+  }
   if (hosted?.custom) {
     const binding = hosted.custom;
     const api =

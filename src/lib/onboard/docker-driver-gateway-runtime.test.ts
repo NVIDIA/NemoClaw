@@ -44,7 +44,7 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
     loadDockerDriverGatewayEnv: createGatewayEnvLoader(dockerDriverGatewayEnv),
     runCapture,
     shouldUseOpenshellDevChannel: () => false,
-    supportedOpenshellFallbackVersion: "0.0.116",
+    supportedOpenshellFallbackVersion: "0.1.7",
     ...overrides,
   };
   return {
@@ -105,7 +105,7 @@ describe("docker-driver gateway runtime helpers", () => {
         },
         () => {
           const { helpers } = makeHelpers({
-            supportedOpenshellFallbackVersion: "0.0.116",
+            supportedOpenshellFallbackVersion: "0.1.7",
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
@@ -119,7 +119,7 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("custom-openshell-docker");
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(path.resolve(sandboxBin));
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-            "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+            "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
           );
           expect(env.OPENSHELL_GATEWAY_CONFIG).toBe(
             path.join(path.resolve(stateDir), "openshell-gateway.toml"),
@@ -209,7 +209,7 @@ describe("docker-driver gateway runtime helpers", () => {
     withTemporaryGatewayState(() => {
       const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
       expect(() => explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")).toThrow(
-        "exact stable OpenShell 0.0.116",
+        "exact stable OpenShell 0.1.7",
       );
 
       const detected = makeHelpers({
@@ -217,25 +217,25 @@ describe("docker-driver gateway runtime helpers", () => {
       });
       expect(() =>
         detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux"),
-      ).toThrow("exact stable OpenShell 0.0.116");
+      ).toThrow("exact stable OpenShell 0.1.7");
     });
   });
 
-  it("pins the stable 0.0.116 supervisor and rejects a foreign override", () => {
+  it("pins the stable 0.1.7 supervisor and rejects a foreign override", () => {
     const image = (fallback: string) =>
       makeHelpers({
-        getBlueprintMaxOpenshellVersion: () => "0.0.116",
+        getBlueprintMaxOpenshellVersion: () => "0.1.7",
         supportedOpenshellFallbackVersion: fallback,
       }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
     const stable = withTemporaryGatewayState(() =>
-      withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.116")),
+      withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.1.7")),
     );
     const qualified =
-      "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+      "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06";
     expect(stable).toBe(qualified);
     expect(
       withTemporaryGatewayState(() =>
-        withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: qualified }, () => image("0.0.116")),
+        withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: qualified }, () => image("0.1.7")),
       ),
     ).toBe(qualified);
     expect(() =>
@@ -244,7 +244,7 @@ describe("docker-driver gateway runtime helpers", () => {
           {
             OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "registry.example.test/supervisor@sha256:override",
           },
-          () => image("0.0.116"),
+          () => image("0.1.7"),
         ),
       ),
     ).toThrow("requires the reviewed Docker supervisor image");
@@ -254,7 +254,7 @@ describe("docker-driver gateway runtime helpers", () => {
     const { helpers } = makeHelpers();
 
     expect(() => helpers.getDockerDriverGatewayEnv("openshell 0.0.106", "linux")).toThrow(
-      "requires exact stable OpenShell 0.0.116; found 0.0.106",
+      "requires exact stable OpenShell 0.1.7; found 0.0.106",
     );
   });
 

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/contract.ts";
 import { parseCliOpenShellProviderMetadata } from "../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
 import { hostedNativeProviderForAttachment } from "../../../src/lib/inference/native-provider/hosted-attachment.ts";
 import { getSandboxInferenceConfig } from "../../../src/lib/inference/config.ts";
@@ -340,20 +344,33 @@ export async function readFullE2eInferenceRoute(input: {
   entry: SandboxEntry | null;
   logicalProvider: string;
   model: string;
+  timeoutMs?: number;
   env: NodeJS.ProcessEnv;
   redactionValues: string[];
 }): Promise<{ ok: boolean; detail: string }> {
-  const receipt = input.entry?.nativeHostedProviderAttachment;
-  if (receipt?.custom) {
-    const definition = hostedNativeProviderForAttachment(receipt);
+  const gateway = input.entry?.gatewayName || input.env.OPENSHELL_GATEWAY || "nemoclaw";
+  const local = normalizeNativeLocalProviderAttachment(input.entry?.nativeLocalProviderAttachment);
+  if (
+    input.entry?.nativeLocalProviderAttachment &&
+    (!local ||
+      local.sandboxName !== input.sandboxName ||
+      local.gatewayName !== gateway ||
+      local.agent !== "openclaw" ||
+      local.provider !== input.logicalProvider ||
+      local.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV)
+  )
+    return { ok: false, detail: "Invalid local native ownership" };
+  const hosted = input.entry?.nativeHostedProviderAttachment;
+  const receipt = local ?? (hosted?.custom ? hosted : undefined);
+  if (receipt) {
+    const definition = local ?? (hosted && hostedNativeProviderForAttachment(hosted));
     if (!definition) return { ok: false, detail: "Invalid custom native ownership" };
     const options = {
       env: input.env,
       redactionValues: input.redactionValues,
-      timeoutMs: 60_000,
+      timeoutMs: input.timeoutMs ?? 60_000,
       captureLimitBytes: 16 * 1024,
     };
-    const gateway = input.entry?.gatewayName || input.env.OPENSHELL_GATEWAY || "nemoclaw";
     const provider = await input.sandbox.openshell(
       ["provider", "get", "-g", gateway, receipt.providerName],
       { ...options, artifactName: "phase-3-native-custom-provider-metadata" },
@@ -367,9 +384,10 @@ export async function readFullE2eInferenceRoute(input: {
     const route = getSandboxInferenceConfig(
       input.model,
       input.logicalProvider,
-      receipt.custom.api,
+      local ? (local.api ?? "openai-completions") : hosted?.custom?.api,
       true,
       receipt.endpointUrl,
+      "openclaw",
     );
     // Inspect the selected agent's real configuration inside the sandbox.
     // Keep credential references out of retained command output.
@@ -415,7 +433,7 @@ export async function readFullE2eInferenceRoute(input: {
       agent.stdout === "selected agent route verified";
     return {
       ok,
-      detail: `Custom native provider ownership, attachment and selected agent route: ${ok ? "verified" : "mismatch"}`,
+      detail: `${local ? "Local" : "Custom"} native provider ownership, attachment and selected agent route: ${ok ? "verified" : "mismatch"}`,
     };
   }
   const native = await readPublicNvidiaSwitchAttachmentEvidence({
@@ -431,7 +449,7 @@ export async function readFullE2eInferenceRoute(input: {
   const route = await input.sandbox.openshell(["inference", "get"], {
     artifactName: "phase-3-openshell-inference-get",
     env: input.env,
-    timeoutMs: 60_000,
+    timeoutMs: input.timeoutMs ?? 60_000,
   });
   return { ok: route.exitCode === 0 && route.stdout.includes(input.model), detail: route.stdout };
 }

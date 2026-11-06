@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import type {
   ContainerEngineCommandCapture,
   ContainerEngineCommandResult,
@@ -170,6 +172,7 @@ export interface PortableGatewayProviderHarness {
   readonly setCredentialEnv: (value: string) => void;
   readonly setLookupFailure: (value: boolean) => void;
   readonly setMalformed: (value: boolean) => void;
+  readonly setIdentity: (name: string, type: string, id?: string) => void;
   readonly setPresent: (value: boolean) => void;
   readonly setProfileState: (value: "exact" | "missing" | "incompatible" | "import-failed") => void;
 }
@@ -178,6 +181,10 @@ export function createPortableGatewayProviderHarness(
   events: string[],
 ): PortableGatewayProviderHarness {
   let present = false;
+  let providerName = "ollama-local";
+  let providerId = "portable-ollama-provider";
+  let providerType = "openai";
+  let profileDocument: Record<string, unknown> | null = null;
   let malformed = false;
   let deleteFailure = false;
   let createTransportAmbiguity = false;
@@ -212,6 +219,11 @@ export function createPortableGatewayProviderHarness(
     setMalformed: (value: boolean) => {
       malformed = value;
     },
+    setIdentity: (name: string, type: string, id = providerId) => {
+      providerName = name;
+      providerType = type;
+      providerId = id;
+    },
     setPresent: (value: boolean) => {
       present = value;
     },
@@ -221,19 +233,36 @@ export function createPortableGatewayProviderHarness(
     run(args: string[], options: Parameters<PortableGatewayProviderHarness["run"]>[1]) {
       calls.push(Object.freeze({ args: Object.freeze([...args]), timeout: options.timeout }));
       events.push(`openshell:${args.join(" ")}`);
+      if (args[0] === "policy" && args[1] === "list")
+        return {
+          status: 0,
+          stdout: JSON.stringify({ revisions: [], next_page_token: "" }),
+          stderr: "",
+        };
       if (args[0] === "provider" && args[1] === "profile" && args[2] === "export") {
-        if (profileState === "missing" || profileState === "import-failed") {
+        if (
+          profileState === "missing" ||
+          profileState === "import-failed" ||
+          (args[3] !== "openai" && !profileDocument)
+        ) {
           return { status: 1, stdout: "", stderr: "provider profile not found" };
         }
         return {
           status: 0,
-          stdout: JSON.stringify({
-            id: "openai",
-            credentials: [],
-            endpoints: profileState === "exact" ? [] : ["https://example.invalid"],
-            binaries: [],
-            inference_capable: true,
-          }),
+          stdout: JSON.stringify(
+            profileDocument
+              ? {
+                  ...profileDocument,
+                  ...(profileState === "incompatible" ? { binaries: ["/bin/sh"] } : {}),
+                }
+              : {
+                  id: "openai",
+                  credentials: [],
+                  endpoints: profileState === "exact" ? [] : ["https://example.invalid"],
+                  binaries: [],
+                  inference_capable: true,
+                },
+          ),
           stderr: "",
         };
       }
@@ -241,6 +270,9 @@ export function createPortableGatewayProviderHarness(
         if (profileState === "import-failed") {
           return { status: 1, stdout: "", stderr: "profile import failed" };
         }
+        const file = args.find((arg) => arg.endsWith("profile.yaml"));
+        if (!file) throw new Error("Missing profile import file");
+        profileDocument = JSON.parse(fs.readFileSync(file, "utf8"));
         profileState = "exact";
         return { status: 0, stdout: "", stderr: "" };
       }
@@ -255,12 +287,12 @@ export function createPortableGatewayProviderHarness(
           ? {
               status: 0,
               stdout: [
-                "\u001b[2mId:\u001b[0m portable-ollama-provider",
+                `\u001b[2mId:\u001b[0m ${providerId}`,
                 `\u001b[2mResource version:\u001b[0m ${String(resourceVersion)}`,
-                "Name: ollama-local",
-                "Type: openai",
+                `Name: ${providerName}`,
+                `Type: ${providerType}`,
                 `Credential keys: ${credentialEnv}`,
-                "Config keys: OPENAI_BASE_URL",
+                `Config keys: ${providerType === "openai" ? "OPENAI_BASE_URL" : "<none>"}`,
               ].join("\n"),
               stderr: "",
             }
@@ -273,6 +305,8 @@ export function createPortableGatewayProviderHarness(
       }
       if (args[0] === "provider" && args[1] === "create") {
         if (present) return { status: 1, stdout: "", stderr: "provider already exists" };
+        providerName = args[args.indexOf("--name") + 1] ?? "ollama-local";
+        providerType = args[args.indexOf("--type") + 1] ?? "openai";
         if (foreignCreateCredentialEnv !== null) {
           credentialEnv = foreignCreateCredentialEnv;
           present = true;

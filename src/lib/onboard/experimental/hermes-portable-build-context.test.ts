@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -126,6 +127,27 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(
       fs.statSync(path.join(inferredContext, "agents/hermes/check-native-credentials.ts")).isFile(),
     ).toBe(true);
+    fs.mkdirSync(path.join(stateDir, ".hermes"));
+    const generated = spawnSync(
+      process.execPath,
+      [path.join(inferredContext, "agents/hermes/generate-config.ts")],
+      {
+        cwd: inferredContext,
+        env: {
+          HOME: stateDir,
+          PATH: process.env.PATH,
+          NEMOCLAW_MODEL: "synthetic-model",
+          NEMOCLAW_UPSTREAM_PROVIDER: "openai-api",
+          NEMOCLAW_INFERENCE_BASE_URL: "https://api.openai.com/v1",
+          NEMOCLAW_INFERENCE_API: "openai-completions",
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(generated.status, generated.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(stateDir, ".hermes/config.yaml"), "utf8")).toContain(
+      "https://api.openai.com/v1",
+    );
     expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);

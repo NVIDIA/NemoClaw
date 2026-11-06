@@ -199,6 +199,7 @@ export type OpenShellMainProcessSpec = Readonly<{
   version: 1;
   command: readonly string[];
   tty: boolean;
+  await_main_process_attachment?: boolean;
 }>;
 
 function exactMainProcessCommand(command: unknown): readonly string[] {
@@ -222,7 +223,7 @@ function exactMainProcessCommand(command: unknown): readonly string[] {
   return Object.freeze(result);
 }
 
-/** Decode the exact Docker-driver main-process transport introduced in OpenShell 0.0.116. */
+/** Decode the Docker main-process transport, including the 0.1.3 attachment flag. */
 export function parseOpenShellMainProcessSpecEnvValue(value: string): OpenShellMainProcessSpec {
   let parsed: unknown;
   try {
@@ -234,21 +235,28 @@ export function parseOpenShellMainProcessSpecEnvValue(value: string): OpenShellM
     throw new Error("OpenShell main-process spec is not an object.");
   }
   const record = parsed as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
+  const keys = Object.keys(record)
+    .filter((key) => key !== "await_main_process_attachment")
+    .sort();
   if (
     keys.length !== 3 ||
     keys[0] !== "command" ||
     keys[1] !== "tty" ||
     keys[2] !== "version" ||
     record.version !== OPENSHELL_MAIN_PROCESS_SPEC_VERSION ||
-    typeof record.tty !== "boolean"
+    typeof record.tty !== "boolean" ||
+    (Object.hasOwn(record, "await_main_process_attachment") &&
+      typeof record.await_main_process_attachment !== "boolean")
   ) {
-    throw new Error("OpenShell main-process spec does not match the 0.0.116 Docker contract.");
+    throw new Error("OpenShell main-process spec does not match the supported Docker contract.");
   }
   return Object.freeze({
     version: OPENSHELL_MAIN_PROCESS_SPEC_VERSION,
     command: exactMainProcessCommand(record.command),
     tty: record.tty,
+    ...(typeof record.await_main_process_attachment === "boolean"
+      ? { await_main_process_attachment: record.await_main_process_attachment }
+      : {}),
   });
 }
 
@@ -265,5 +273,5 @@ export function replaceOpenShellMainProcessSpecCommand(
   command: readonly string[],
 ): string {
   const spec = parseOpenShellMainProcessSpecEnvValue(value);
-  return openshellMainProcessSpecEnvValue(command, spec.tty);
+  return JSON.stringify({ ...spec, command: exactMainProcessCommand(command) });
 }

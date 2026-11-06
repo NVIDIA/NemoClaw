@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import type { spawnSync, SpawnSyncReturns } from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildOpenClawPairingObservationScript,
+  observeOpenClawPairingSettlement,
+  observeOpenClawPairingRepairSettlement,
+  observeOrdinaryOpenClawPairingSettlement,
+  observeOpenClawPairingQualification,
+  OpenClawPairingQualificationError,
+  OpenClawPairingObservationRetryableError,
+  OpenClawPairingIncompatibleError,
   parseOpenClawPairingObservation,
   parseOpenClawPairingRepairObservation,
   parseOpenClawPairingSettlementObservation,
@@ -65,5 +73,92 @@ describe("OpenClaw pairing observation parsing", () => {
 
     expect(script).not.toContain(rawStateDirectory);
     expect(script).toContain(Buffer.from(rawStateDirectory, "utf8").toString("base64"));
+  });
+});
+
+describe.each([
+  observeOpenClawPairingSettlement,
+  observeOpenClawPairingRepairSettlement,
+  observeOrdinaryOpenClawPairingSettlement,
+  observeOpenClawPairingQualification,
+])("pairing observation failure categories: %s", (observe) => {
+  it.each([
+    [
+      "deadline-exceeded",
+      { error: Object.assign(new Error(TOKEN), { code: "ETIMEDOUT" }), signal: "SIGTERM" },
+    ],
+    ["output-limit-exceeded", { error: Object.assign(new Error(TOKEN), { code: "ENOBUFS" }) }],
+    ["child-error", { error: Object.assign(new Error(TOKEN), { code: TOKEN }) }],
+    ["child-signal", { signal: "SIGTERM" }],
+    ["child-exit-failed", { status: 1 }],
+    ["child-exit-failed", { status: null }],
+    ["state-changing", { status: 3 }],
+    ["incompatible-state", { status: 4 }],
+    ["invalid-output", { status: 0 }],
+  ])("reports %s without child output or credentials", (category, overrides) => {
+    const child = vi.fn<typeof spawnSync>().mockReturnValue({
+      pid: 123,
+      status: 0,
+      signal: null,
+      output: [],
+      stdout: TOKEN,
+      stderr: TOKEN,
+      ...overrides,
+    } as SpawnSyncReturns<string>);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    let caught: unknown;
+    try {
+      observe("alpha", "gateway", "2026.9.2", "/sandbox/.openclaw", {
+        getOpenshellBinary: () => "openshell",
+        readApprovalPolicy: () => "test-policy",
+        // This fixture returns UTF-8 output for the observer's fixed encoding.
+        spawnSync: child as unknown as typeof spawnSync,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OpenClawPairingQualificationError);
+    expect(caught).toMatchObject({ failureCategory: category });
+    expect(caught instanceof OpenClawPairingObservationRetryableError).toBe(
+      category === "state-changing",
+    );
+    expect(caught instanceof OpenClawPairingIncompatibleError).toBe(
+      category === "incompatible-state",
+    );
+    expect(
+      `${String(caught)}${JSON.stringify(caught)}${JSON.stringify(log.mock.calls)}`,
+    ).not.toContain(TOKEN);
+    expect(child).toHaveBeenCalledOnce();
+    expect(child.mock.calls[0]?.[2]).toMatchObject({
+      timeout: 3000,
+      maxBuffer: 4096,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+  });
+
+  it("classifies unavailable input before spawning a child", () => {
+    const child = vi.fn();
+    expect(() =>
+      observe("alpha", "gateway", "2026.9.2", "/sandbox/.openclaw", {
+        readApprovalPolicy: () => null,
+        spawnSync: child,
+      }),
+    ).toThrow(expect.objectContaining({ failureCategory: "input-unavailable" }));
+    expect(child).not.toHaveBeenCalled();
+  });
+
+  it("redacts unexpected observer exceptions", () => {
+    expect(() =>
+      observe("alpha", "gateway", "2026.9.2", "/sandbox/.openclaw", {
+        readApprovalPolicy: () => {
+          throw new Error(TOKEN);
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        failureCategory: "unclassified",
+        message: "OpenClaw pairing qualification is unavailable.",
+      }),
+    );
   });
 });

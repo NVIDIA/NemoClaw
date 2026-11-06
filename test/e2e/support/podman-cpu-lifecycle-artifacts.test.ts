@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { ContainerEngine } from "../../../src/lib/adapters/container-engine.ts";
 
 import {
+  PODMAN_ISOLATION_ROLE_LABEL,
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -26,6 +27,7 @@ const SECRET = "nvapi-this-must-not-reach-artifacts";
 function inspectOutput(
   labelOverrides: Readonly<Record<string, string>> = {},
   status = "running",
+  stateOverrides: Readonly<Record<string, unknown>> = {},
 ): string {
   return JSON.stringify([
     {
@@ -38,6 +40,7 @@ function inspectOutput(
         Env: [`NVIDIA_API_KEY=${SECRET}`],
         Labels: {
           [PODMAN_MANAGED_LABEL]: "true",
+          [PODMAN_ISOLATION_ROLE_LABEL]: "sandbox",
           [PODMAN_SANDBOX_ID_LABEL]: "sandbox-id",
           [PODMAN_SANDBOX_NAME_LABEL]: "podman-openclaw",
           [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
@@ -48,10 +51,13 @@ function inspectOutput(
         },
       },
       State: {
+        ExitCode: 0,
+        OOMKilled: false,
         Error: SECRET,
         Paused: false,
         Running: true,
         Status: status,
+        ...stateOverrides,
       },
     },
   ]);
@@ -64,13 +70,14 @@ describe("Podman CPU proof artifact sanitization", () => {
     expect(summary).toEqual({
       labels: {
         [PODMAN_MANAGED_LABEL]: "true",
+        [PODMAN_ISOLATION_ROLE_LABEL]: "sandbox",
         [PODMAN_SANDBOX_ID_LABEL]: "sandbox-id",
         [PODMAN_SANDBOX_NAME_LABEL]: "podman-openclaw",
         [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
         [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
         "nemoclaw.agent": "openclaw",
       },
-      state: { paused: false, running: true, status: "running" },
+      state: { exitCode: 0, oomKilled: false, paused: false, running: true, status: "running" },
     });
     expect(JSON.stringify(summary)).not.toContain(SECRET);
     expect(summary).not.toHaveProperty("Id");
@@ -78,6 +85,41 @@ describe("Podman CPU proof artifact sanitization", () => {
     expect(summary).not.toHaveProperty("Config");
     expect(summary).not.toHaveProperty("LogPath");
   });
+
+  it("distinguishes a failed supervisor from its workload without exposing runtime errors", () => {
+    const summary = sanitizePodmanInspectArtifact(
+      inspectOutput({ [PODMAN_ISOLATION_ROLE_LABEL]: "supervisor" }, "exited", {
+        ExitCode: 137,
+        OOMKilled: true,
+        Running: false,
+      }),
+    );
+    expect(summary.labels[PODMAN_ISOLATION_ROLE_LABEL]).toBe("supervisor");
+    expect(summary.state).toEqual({
+      exitCode: 137,
+      oomKilled: true,
+      paused: false,
+      running: false,
+      status: "exited",
+    });
+    expect(JSON.stringify(summary)).not.toContain(SECRET);
+  });
+
+  it.each([undefined, null, SECRET, "137", -1, 256, 1.5])(
+    "omits invalid diagnostic state values: %s",
+    (value) => {
+      const summary = sanitizePodmanInspectArtifact(
+        inspectOutput({ [PODMAN_ISOLATION_ROLE_LABEL]: SECRET }, "exited", {
+          ExitCode: value,
+          OOMKilled: value,
+        }),
+      );
+      expect(summary.labels[PODMAN_ISOLATION_ROLE_LABEL]).toBeNull();
+      expect(summary.state.exitCode).toBeNull();
+      expect(summary.state.oomKilled).toBeNull();
+      expect(JSON.stringify(summary)).not.toContain(SECRET);
+    },
+  );
 
   it("omits a secret-shaped value even when it occupies an allowlisted label", () => {
     const summary = sanitizePodmanInspectArtifact(

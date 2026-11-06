@@ -29,6 +29,12 @@ For lower-level diagnostics, list OpenShell's legacy and user-managed forwards s
 openshell forward list
 ```
 
+If stop, destroy, or rebuild reports `ForwardTcp port release was not verified`, inspect its classification and listed ports.
+`[forward-release bound]` means the final port check detected a listener.
+`[forward-release indeterminate/<kind>]` means verification could not establish release; `<kind>` names the error category, such as `timeout` or `transport`.
+Neither classification identifies the listener's owner or the original failure's cause.
+Preserve the sandbox registry entry and resolve the reported verification failure before retrying the operation.
+
 </AgentOnly>
 
 ## Run Multiple Sandboxes

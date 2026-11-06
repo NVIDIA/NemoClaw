@@ -318,7 +318,7 @@ export function logContainerizedDockerDriverGatewayLaunch(
     "  Compatibility gateway bind: 127.0.0.1 main listener plus OpenShell Docker-driver bridge reachability.",
   );
   log(
-    "  Gateway auth boundary: host-side OpenShell CLI uses local mTLS; sandbox callbacks use mTLS plus OpenShell gateway JWT.",
+    "  Gateway auth boundary: host-side OpenShell CLI uses local mTLS; sandbox callbacks use server-verified TLS plus OpenShell gateway JWT.",
   );
   prepareContainerizedDockerDriverGatewayLaunch(launch);
 }

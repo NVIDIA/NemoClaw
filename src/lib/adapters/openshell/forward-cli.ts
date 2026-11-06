@@ -244,6 +244,7 @@ export type CliOpenShellForwardAdapterDeps = Readonly<{
 }>;
 
 export type CliOpenShellLegacyForwardRow = Readonly<{
+  workspace: string;
   sandboxName: string;
   bind: "127.0.0.1" | "0.0.0.0";
   port: number;
@@ -260,7 +261,7 @@ function stripTerminalFormatting(value: string): string | null {
   return TERMINAL_CONTROL_RE.test(stripped) ? null : stripped;
 }
 
-/** Parse the complete OpenShell 0.0.116 legacy forward table. */
+/** Parse tracked forwards from OpenShell 0.1.3 and the legacy cleanup CLI. */
 export function parseCliOpenShellForwardList(
   stdout: string,
   stderr: string,
@@ -278,7 +279,9 @@ export function parseCliOpenShellForwardList(
 
   const lines = output.split(/\r?\n/u).map((line) => line.trim());
   if (lines.some((line) => line.length === 0)) return { ok: false, error: SCHEMA_ERROR };
-  if (lines.shift()?.split(/\s+/u).join(" ") !== "SANDBOX BIND PORT PID STATUS") {
+  const header = lines.shift()?.split(/\s+/u).join(" ");
+  const workspaceColumn = header === "WORKSPACE SANDBOX BIND PORT PID STATUS";
+  if (!workspaceColumn && header !== "SANDBOX BIND PORT PID STATUS") {
     return { ok: false, error: SCHEMA_ERROR };
   }
   if (lines.length === 0) return { ok: false, error: SCHEMA_ERROR };
@@ -286,11 +289,15 @@ export function parseCliOpenShellForwardList(
   const occupiedPorts = new Set<number>();
   for (const line of lines) {
     const columns = line.split(/\s+/u);
-    if (columns.length !== 5) return { ok: false, error: SCHEMA_ERROR };
+    if (columns.length !== (workspaceColumn ? 6 : 5)) return { ok: false, error: SCHEMA_ERROR };
+    // The pre-workspace CLI can only own forwards in the default workspace.
+    const workspace = workspaceColumn ? columns.shift() : "default";
     const [sandboxName, bind, portText, pidText, status] = columns;
     const port = Number(portText);
     const pid = Number(pidText);
     if (
+      !workspace ||
+      !isValidName(workspace) ||
       !sandboxName ||
       !isValidName(sandboxName) ||
       (bind !== "127.0.0.1" && bind !== "0.0.0.0") ||
@@ -305,7 +312,7 @@ export function parseCliOpenShellForwardList(
       return { ok: false, error: SCHEMA_ERROR };
     }
     occupiedPorts.add(port);
-    rows.push({ sandboxName, bind, port, pid, status });
+    rows.push({ workspace, sandboxName, bind, port, pid, status });
   }
   return { ok: true, rows };
 }
@@ -1154,7 +1161,10 @@ function classifyRegistry(
 ): CliOpenShellForwardRegistryMatch {
   const samePort = rows.filter((row) => row.port === forward.port);
   const sameTarget = samePort.filter(
-    (row) => row.sandboxName === forward.sandboxName && row.bind === forward.localHost,
+    (row) =>
+      row.workspace === forward.workspace &&
+      row.sandboxName === forward.sandboxName &&
+      row.bind === forward.localHost,
   );
   if (samePort.length > 1 || sameTarget.length > 1) return { state: "indeterminate" };
   const legacy = samePort[0];

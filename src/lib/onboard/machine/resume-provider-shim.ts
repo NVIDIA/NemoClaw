@@ -1,11 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  registeredInferenceProviderRevision,
+} from "../../inference/native-provider/registered";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import { gatewayReachableCompatibleEndpointUrl } from "../../inference/native-local/eligibility";
+import type { SandboxEntry } from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
   normalizeNativeNvidiaProviderAttachment,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
-  type NativeNvidiaProviderAttachment,
 } from "../../inference/native-nvidia/contract";
 import {
   recordedCustomCredentialEnv,
@@ -33,12 +40,8 @@ const onboardProviders = require("../providers") as {
 };
 
 export type ResumeProviderShimDeps = {
-  getSandbox?: (name: string) =>
-    | (NonNullable<Parameters<typeof usesCustomNativeOnboarding>[3]> & {
-        nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
-      })
-    | null
-    | undefined;
+  getSandbox?: (name: string) => Partial<SandboxEntry> | null | undefined;
+  providerAdapter?: ReturnType<typeof createManagedProviderAdapter>;
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
   providerExistsInGateway(name: string, gatewayName: string): boolean | Promise<boolean>;
   isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
@@ -83,6 +86,61 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
         return {
           forceInferenceSetup: true,
           credentialEnv: credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV,
+        };
+      }
+      if (
+        provider === "compatible-endpoint" &&
+        recorded?.nativeLocalProviderAttachment !== undefined
+      ) {
+        const expected = normalizeNativeLocalProviderAttachment(
+          recorded.nativeLocalProviderAttachment,
+        );
+        if (
+          !expected ||
+          expected.gatewayName !== gatewayName ||
+          expected.sandboxName !== selection?.sandboxName ||
+          expected.provider !== provider ||
+          expected.provider !== recorded.provider ||
+          (expected.agent ?? "langchain-deepagents-code") !== recorded.agent ||
+          expected.endpointUrl !==
+            gatewayReachableCompatibleEndpointUrl(provider, selection?.endpointUrl) ||
+          (recorded.credentialEnv ?? null) !== (credentialEnv ?? null)
+        )
+          throw new Error(
+            "Native local provider resume selection does not match its recorded binding.",
+          );
+        // Native setup verifies the immutable gateway provider and retained credential.
+        // The logical provider name is not the sandbox-owned provider name.
+        return {
+          forceInferenceSetup: true,
+          credentialEnv: credentialEnv ?? null,
+          nativeCustomSetup: true,
+          nativeLocalSetup: true,
+        };
+      }
+      if (recorded?.registeredInferenceProviderAttachment !== undefined) {
+        const expected = recordedRegisteredInferenceProviderAttachment(recorded);
+        if (
+          !expected ||
+          expected.gatewayName !== gatewayName ||
+          expected.sandboxName !== selection?.sandboxName ||
+          expected.providerName !== provider ||
+          expected.endpointUrl !== selection?.endpointUrl ||
+          expected.credentialEnv !== credentialEnv
+        )
+          throw new Error(
+            "Registered provider resume selection does not match its recorded binding.",
+          );
+        revalidateSandboxIdentity?.("verifying registered provider resume");
+        await registeredInferenceProviderRevision({
+          adapter: deps.providerAdapter ?? createManagedProviderAdapter(),
+          expected,
+        });
+        revalidateSandboxIdentity?.("verified registered provider resume");
+        return {
+          forceInferenceSetup: false,
+          credentialEnv: expected.credentialEnv,
+          registeredNativeSetup: true,
         };
       }
       if (

@@ -8,8 +8,89 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./doctor-inference";
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import { verifyRegisteredInferenceProviderAttachment } from "../../inference/config";
 
 const endpoint = "https://inference.local/v1/models";
+
+describe("registered provider doctor", () => {
+  it.each([
+    "served",
+    "request-failed",
+    "replaced",
+    "detached",
+    "wrong-gateway",
+    "wrong-endpoint",
+    "malformed",
+    "unreachable",
+  ])("checks registered identity and invocation without a shared route: %s", async (scenario) => {
+    const fixture = registeredInferenceFixture(true);
+    const changes: Record<string, Partial<typeof fixture.state>> = {
+      replaced: { id: "replacement-id" },
+      detached: { attached: false },
+    };
+    Object.assign(fixture.state, changes[scenario]);
+    const shared = vi.fn();
+    const probe = vi.fn(async () =>
+      scenario === "request-failed"
+        ? { ok: false as const, detail: "request failed", httpStatus: 503 }
+        : { ok: true as const },
+    );
+    const verify = vi.fn(async ({ expected }: { expected: typeof fixture.binding }) => {
+      await verifyRegisteredInferenceProviderAttachment({ adapter: fixture.adapter, expected });
+    });
+    const checks = await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "native-extra",
+        model: "selected-model",
+        agentName: "hermes",
+        recordedEndpointUrl:
+          scenario === "wrong-endpoint" ? "https://other.example/v1" : fixture.binding.endpointUrl,
+        preferredInferenceApi: fixture.binding.inferenceApi,
+        credentialEnv: fixture.binding.credentialEnv,
+        registeredInferenceProviderAttachment: scenario === "malformed" ? {} : fixture.binding,
+      },
+      scenario !== "unreachable",
+      {
+        gatewayName: scenario === "wrong-gateway" ? "other" : fixture.binding.gatewayName,
+        verifyRegisteredStatusAttachmentImpl: verify,
+        probeSandboxInferenceInvocationImpl: probe,
+        probeSandboxInferenceGatewayHealthImpl: shared,
+        probeProviderHealthImpl: () => null,
+        includeServingProcessCheck: false,
+      },
+    );
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (registered native)",
+        status: scenario === "served" ? "ok" : "fail",
+      }),
+    );
+    expect(shared).not.toHaveBeenCalled();
+    expect(probe.mock.calls).toEqual(
+      ["served", "request-failed"].includes(scenario)
+        ? [
+            [
+              expect.objectContaining({
+                sandboxName: "alpha",
+                gatewayName: fixture.binding.gatewayName,
+                provider: "native-extra",
+                model: "selected-model",
+                nativeProvider: true,
+                preferredInferenceApi: fixture.binding.inferenceApi,
+                registeredInferenceProviderAttachment: fixture.binding,
+              }),
+              {},
+              expect.any(Number),
+            ],
+          ]
+        : [],
+    );
+    expect(fixture.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(fixture.adapter.detachProvider).not.toHaveBeenCalled();
+  });
+});
 
 function gateway(ok: boolean, httpStatus = ok ? 200 : 0) {
   return {

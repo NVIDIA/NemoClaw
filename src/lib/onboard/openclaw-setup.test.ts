@@ -2,10 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
 import {
   isSandboxGatewayHttpReachableForStatus,
   waitForStartedNativeGatewayProcess,
 } from "../actions/sandbox/process-recovery";
+import {
+  verifyRegisteredInferenceProviderAttachment,
+  registeredInferenceProviderRevision,
+} from "../inference/native-provider/registered";
+
+import * as sandboxRecreateProbe from "./sandbox-recreate-probe";
+import type { SandboxEntry } from "../state/registry/types";
 
 const configMocks = vi.hoisted(() => ({
   readSandboxConfig: vi.fn(),
@@ -27,6 +35,8 @@ import {
   isOpenclawGatewayReady,
 } from "./openclaw-setup";
 import {
+  type InitializeOpenclawInferenceRoute,
+  refreshRestoredRegisteredOpenclawInferenceRoute,
   createInitialOpenclawInferenceRoute,
   createOpenclawInferenceRouteWriter,
 } from "./openclaw/initial-inference-route";
@@ -491,6 +501,8 @@ describe("initial OpenClaw inference route", () => {
       false,
       undefined,
       true,
+      undefined,
+      undefined,
     );
   });
 
@@ -672,4 +684,183 @@ describe("initial Hermes provider selection", () => {
       );
     },
   );
+});
+
+describe("restored registered OpenClaw selection", () => {
+  it.each(["attached", "replaced", "detached", "wrong-gateway", "changed-revision"])(
+    "refreshes only a verified selection: %s",
+    async (state) => {
+      const fixture = registeredInferenceFixture(true);
+      const overrides: Record<string, Partial<typeof fixture.state>> = {
+        attached: {},
+        replaced: { id: "replacement" },
+        detached: { attached: false },
+        "wrong-gateway": {},
+        "changed-revision": {},
+      };
+      Object.assign(fixture.state, overrides[state]);
+      const binding = fixture.binding;
+      const selectedModel = {
+        id: "selected-model",
+        contextWindow: 131072,
+        maxTokens: 8192,
+        compat: { supportsStore: false },
+        params: { custom: "retained" },
+      };
+      const config = {
+        agents: { defaults: { model: { primary: "old/old-model" } } },
+        models: {
+          providers: {
+            [binding.providerName]: {
+              baseUrl: binding.endpointUrl,
+              api: binding.inferenceApi,
+              apiKey: "openshell:resolve:env:v1_VENDOR_API_KEY",
+              models: [selectedModel],
+            },
+          },
+        },
+        channels: { retained: true },
+      };
+      const writeConfig = vi.fn();
+      const readHandle = vi.fn(async () => {
+        fixture.state.revision += Number(state === "changed-revision");
+        return fixture.handle;
+      });
+      const readConfig = vi.fn(() => config);
+      const writer = createOpenclawInferenceRouteWriter({
+        readOpenclawConfig: readConfig,
+        patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+        writeOpenclawInferenceConfigNatively: writeConfig,
+        verifyRegisteredAttachment: async (expected) => {
+          await verifyRegisteredInferenceProviderAttachment({ adapter: fixture.adapter, expected });
+          return registeredInferenceProviderRevision({ adapter: fixture.adapter, expected });
+        },
+        readRegisteredHandle: readHandle,
+      });
+      const operation = writer(
+        binding.sandboxName,
+        "selected-model",
+        binding.providerName,
+        binding.inferenceApi,
+        state === "wrong-gateway" ? "other" : binding.gatewayName,
+        undefined,
+        {
+          nativeProvider: true,
+          endpointUrl: binding.endpointUrl,
+          registeredInferenceProviderAttachment: binding,
+        },
+      );
+      const outcome = await operation.then(
+        () => "written",
+        () => "refused",
+      );
+      expect(outcome).toBe(state === "attached" ? "written" : "refused");
+      expect(readHandle.mock.calls).toEqual(
+        ["attached", "changed-revision"].includes(state) ? [[binding]] : [],
+      );
+      expect(readConfig.mock.calls).toEqual(
+        state === "attached" ? [[binding.sandboxName, binding.gatewayName]] : [],
+      );
+      expect(writeConfig.mock.calls).toEqual(
+        state === "attached"
+          ? [
+              [
+                binding.sandboxName,
+                config,
+                expect.objectContaining({
+                  providerKey: binding.providerName,
+                  inferenceBaseUrl: binding.endpointUrl,
+                  inferenceApi: binding.inferenceApi,
+                }),
+                binding.gatewayName,
+              ],
+            ]
+          : [],
+      );
+      expect(config.models.providers[binding.providerName]).toMatchObject({
+        models: [selectedModel],
+        apiKey: state === "attached" ? fixture.handle : "openshell:resolve:env:v1_VENDOR_API_KEY",
+      });
+      expect(config.channels).toEqual({ retained: true });
+    },
+  );
+});
+
+it.each([
+  "verified",
+  "changed-registration",
+  "changed-agent",
+  "changed-live-id",
+  "wrong-runtime",
+  "unrelated-update",
+])("checks outer restored OpenClaw identity before projection: %s", async (state) => {
+  const f = registeredInferenceFixture(true);
+  const entry = {
+    name: f.binding.sandboxName,
+    agent: "openclaw",
+    provider: f.binding.providerName,
+    model: "selected-model",
+    endpointUrl: f.binding.endpointUrl,
+    preferredInferenceApi: f.binding.inferenceApi,
+    credentialEnv: f.binding.credentialEnv,
+    gatewayName: f.binding.gatewayName,
+    registeredInferenceProviderAttachment: f.binding,
+    lifecycleGeneration: "generation",
+    lifecycleLiveIdentityFingerprint: "fingerprint",
+  } as SandboxEntry;
+  const observe = vi.spyOn(sandboxRecreateProbe, "observeSandboxOnGateway").mockReturnValue({
+    state: "not_ready",
+    liveIdentityFingerprint: state === "changed-live-id" ? "other" : "fingerprint",
+  });
+  const read = vi.fn(() =>
+    state === "changed-registration"
+      ? { ...entry, model: "other-model" }
+      : state === "changed-agent"
+        ? { ...entry, agent: "hermes" }
+        : state === "unrelated-update"
+          ? { ...entry, dashboardPort: 9001 }
+          : entry,
+  );
+  const write = vi.fn<InitializeOpenclawInferenceRoute>(
+    async (_name, _model, _provider, _api, _gateway, assertCurrent) => {
+      assertCurrent?.("write restored config");
+    },
+  );
+  const runtime = {
+    gatewayName: state === "wrong-runtime" ? "other" : f.binding.gatewayName,
+  } as never;
+  const result = await refreshRestoredRegisteredOpenclawInferenceRoute(
+    entry,
+    runtime,
+    read,
+    write,
+  ).then(
+    () => "written",
+    () => "refused",
+  );
+  expect(result).toBe(["verified", "unrelated-update"].includes(state) ? "written" : "refused");
+  expect(write.mock.calls).toEqual(
+    ["verified", "unrelated-update"].includes(state)
+      ? [
+          [
+            entry.name,
+            entry.model,
+            entry.provider,
+            entry.preferredInferenceApi,
+            entry.gatewayName,
+            expect.any(Function),
+            {
+              nativeProvider: true,
+              endpointUrl: f.binding.endpointUrl,
+              registeredInferenceProviderAttachment: f.binding,
+            },
+          ],
+        ]
+      : [],
+  );
+  expect(
+    observe.mock.calls.every(
+      ([target, , selected]) => target.gatewayName === entry.gatewayName && selected === runtime,
+    ),
+  ).toBe(true);
 });

@@ -388,7 +388,7 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   _deleted = _deleted || cmd.includes("sandbox delete");
   commands.push({ command: cmd, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-messaging-v1", false);
   if (profileResult !== null) return profileResult;
   const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, ${JSON.stringify(gatewayName)});
   if (providerResult !== null) return providerResult;

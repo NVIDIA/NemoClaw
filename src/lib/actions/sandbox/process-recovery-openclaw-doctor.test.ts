@@ -528,26 +528,21 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.invocationCallOrder[0]).toBeLessThan(capture.mock.invocationCallOrder[0]!);
   });
 
-  it("keeps filesystem gates direct and probes health through the OpenShell network namespace", async () => {
+  it("uses owner SSH for maintenance and native exec for final health (#12603)", async () => {
     const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
-    const executePrivileged = vi.fn(
-      (_sandboxName: string, _command: readonly string[], _timeout: number) => ({
-        status: 0,
-        stdout: "",
-        stderr: "",
-      }),
-    );
+    const maintenance = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
     const capture = vi.fn(() => ({ status: 0, output: "" }));
+    const runtimeSelection = { gatewayName: "recorded-gateway", workspace: "default" as const };
     const deps = {
       captureOpenshell: capture as never,
-      executePrivilegedSandboxCommand: executePrivileged,
       executeSandboxExecCommand: execute,
+      executeMaintenanceCommand: maintenance,
       now: () => 0,
       sleep: vi.fn(async () => undefined),
     };
 
-    const begun = await beginOpenClawPostRestoreDoctor("alpha", undefined, deps);
-    expect(begun).toEqual({ ok: true, window: { sandboxName: "alpha" } });
+    const begun = await beginOpenClawPostRestoreDoctor("alpha", runtimeSelection, deps);
+    expect(begun).toEqual({ ok: true, window: { sandboxName: "alpha", runtimeSelection } });
     await expect(
       finishOpenClawPostRestoreDoctor(
         (begun as { ok: true; window: Parameters<typeof finishOpenClawPostRestoreDoctor>[0] })
@@ -556,38 +551,17 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       ),
     ).resolves.toEqual({ ok: true });
 
-    expect(execute).toHaveBeenNthCalledWith(
-      1,
-      "alpha",
-      expect.not.stringContaining("curl"),
-      30_000,
-      {},
-    );
-    expect(execute).toHaveBeenNthCalledWith(
-      2,
-      "alpha",
-      expect.stringContaining("curl"),
-      expect.any(Number),
-      {},
-    );
-    expect(executePrivileged).toHaveBeenCalledTimes(5);
-    const expectedDirectCall = [
-      "alpha",
-      ["/bin/sh", "-lc", expect.stringContaining('/usr/bin/setpriv --reuid="$uid" --regid="$gid"')],
-      expect.any(Number),
-    ];
-    expect(executePrivileged.mock.calls).toEqual([
-      expectedDirectCall,
-      expectedDirectCall,
-      expectedDirectCall,
-      expectedDirectCall,
-      expectedDirectCall,
+    expect(execute.mock.calls).toEqual([
+      ["alpha", expect.not.stringContaining("curl"), 30_000, { runtimeSelection }],
+      ["alpha", expect.stringContaining("curl"), expect.any(Number), { runtimeSelection }],
     ]);
-    expect(executePrivileged.mock.calls[0]?.[1][2]).toContain("curl");
-    expect(executePrivileged.mock.calls[1]?.[1][2]).not.toContain("curl");
-    expect(executePrivileged.mock.calls[2]?.[1][2]).not.toContain("curl");
-    expect(executePrivileged.mock.calls[3]?.[1][2]).not.toContain("curl");
-    expect(executePrivileged.mock.calls[4]?.[1][2]).not.toContain("curl");
+    expect(maintenance.mock.calls).toEqual([
+      ["alpha", expect.stringContaining("curl"), expect.any(Number), { runtimeSelection }],
+      ["alpha", expect.not.stringContaining("curl"), 30_000, { runtimeSelection }],
+      ["alpha", expect.not.stringContaining("curl"), expect.any(Number), { runtimeSelection }],
+      ["alpha", expect.not.stringContaining("curl"), expect.any(Number), { runtimeSelection }],
+      ["alpha", expect.not.stringContaining("curl"), expect.any(Number), { runtimeSelection }],
+    ]);
   });
 
   it("does not restart when the one-shot marker cannot be persisted", async () => {
@@ -954,23 +928,20 @@ describe.each([
   "unavailable",
   "malformed",
 ] as const)("doctor maintenance transport failure: %s", (kind) => {
-  it("reports an unverified marker without restarting or trying privilege", async () => {
+  it("reports an unverified marker without restarting", async () => {
     const error = new SandboxCommandTransportError(kind);
     const execute = vi.fn().mockRejectedValue(error);
     const capture = vi.fn();
-    const privileged = vi.fn();
     await expect(
       beginOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
         executeSandboxExecCommand: execute,
-        executePrivilegedSandboxCommand: privileged,
         now: () => 0,
         sleep: vi.fn(),
       }),
     ).resolves.toEqual({ ok: false, stage: "mark", detail: error.message });
     expect(execute).toHaveBeenCalledOnce();
     expect(capture).not.toHaveBeenCalled();
-    expect(privileged).not.toHaveBeenCalled();
   });
 
   it("reports an unverified native release without polling or retrying", async () => {

@@ -224,7 +224,7 @@ describe("handleSandboxState Ready sandbox messaging", () => {
 
     expect(inspectGatewayCredential).toHaveBeenCalledWith(
       "saved-telegram-bridge",
-      "nemoclaw-mcp-v1",
+      "nemoclaw-messaging-v1",
       "TELEGRAM_BOT_TOKEN",
     );
     expect(calls.createSandbox).not.toHaveBeenCalled();

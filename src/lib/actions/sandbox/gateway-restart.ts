@@ -371,24 +371,50 @@ function failedAuxiliaryRecoveryDetail(results: RestartAuxiliaryRecoveryResult[]
   return `gateway health passed but ${failed.join(", ")} could not be re-established`;
 }
 
-function openClawRestartReady(result: GatewayRestartCommandResult | null): boolean | null {
-  if (result === null) return null;
-  const output = result.stdout.trimEnd();
+function openClawRestartObservation(
+  result: GatewayRestartCommandResult | null,
+  transportError: SandboxCommandTransportError | null = null,
+) {
+  const output = result?.stdout.trimEnd() ?? "";
   const separator = output.lastIndexOf("\n");
-  if (result.status !== 0 || separator < 0 || output.slice(separator + 1).trim() !== "200") {
-    return false;
-  }
+  const statusLine = separator < 0 ? "" : output.slice(separator + 1).trim();
+  let jsonParsed = false;
+  let ready: boolean | null = null;
   try {
     const document: unknown = JSON.parse(output.slice(0, separator));
-    return (
+    jsonParsed = separator >= 0;
+    if (
+      jsonParsed &&
       document !== null &&
       typeof document === "object" &&
       "ready" in document &&
-      document.ready === true
-    );
+      typeof document.ready === "boolean"
+    ) {
+      ready = document.ready;
+    }
   } catch {
-    return false;
+    // Only fixed fields leave this parser; response bodies can contain secrets.
   }
+  const knownTransportKinds = [
+    "cancelled",
+    "capture",
+    "invocation",
+    "timeout",
+    "unavailable",
+    "malformed",
+  ];
+  return {
+    commandStatus: result && Number.isSafeInteger(result.status) ? result.status : null,
+    transportErrorKind:
+      transportError && knownTransportKinds.includes(transportError.kind)
+        ? transportError.kind
+        : null,
+    httpStatus: /^[1-5][0-9]{2}$/.test(statusLine) ? Number(statusLine) : null,
+    jsonParsed,
+    ready,
+    probeResult:
+      result === null ? null : result.status === 0 && statusLine === "200" && ready === true,
+  };
 }
 
 export async function restartSandboxGatewayWithDeps(
@@ -500,6 +526,18 @@ export async function restartSandboxGatewayWithDeps(
     return { ok: false, failureLayer: "health timeout", detail };
   }
 
+  let readinessProbeCount = 0;
+  const readinessSamples: (ReturnType<typeof openClawRestartObservation> & { ordinal: number })[] =
+    [];
+  const observeReadiness = (
+    result: GatewayRestartCommandResult | null,
+    error: SandboxCommandTransportError | null = null,
+  ) => {
+    const observation = openClawRestartObservation(result, error);
+    readinessSamples.push({ ordinal: ++readinessProbeCount, ...observation });
+    if (readinessSamples.length > 32) readinessSamples.shift();
+    return observation.probeResult;
+  };
   if (
     !(await deps.waitForRecoveredSandboxGateway(sandboxName, {
       quiet,
@@ -516,10 +554,10 @@ export async function restartSandboxGatewayWithDeps(
                   deps.buildOpenClawReadinessProbeCommand(name),
                   10_000,
                 );
-                return openClawRestartReady(result);
+                return observeReadiness(result);
               } catch (error) {
                 if (!(error instanceof SandboxCommandTransportError)) throw error;
-                return null;
+                return observeReadiness(null, error);
               }
             },
           }
@@ -528,6 +566,16 @@ export async function restartSandboxGatewayWithDeps(
   ) {
     const detail = `gateway process restarted but ${agentName === "openclaw" ? "readiness" : "health"} did not pass before timeout`;
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
+    if (agentName === "openclaw") {
+      console.error(
+        `  OpenClaw restart readiness: ${JSON.stringify({
+          nativeRestartStatus: restartResult.status,
+          totalProbes: readinessProbeCount,
+          droppedSamples: readinessProbeCount - readinessSamples.length,
+          samples: readinessSamples,
+        })}`,
+      );
+    }
     await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
   }

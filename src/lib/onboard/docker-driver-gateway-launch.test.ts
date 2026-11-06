@@ -128,10 +128,10 @@ describe("docker-driver-gateway-launch", () => {
       "/home/shadeform/.local/bin/openshell-sandbox",
     );
 
-    expect(toml).toContain('compute_drivers = ["docker"]');
-    expect(toml).toContain('sandbox_namespace = "nemoclaw"');
+    expect(toml).toContain('compute_driver = "docker"');
+    expect(toml).toContain('sandbox_label = "nemoclaw"');
     expect(toml).toContain('grpc_endpoint = "https://127.0.0.1:8080"');
-    expect(toml).toContain('network_name = "openshell-docker"');
+    expect(toml).not.toContain("network_name =");
     expect(toml).toContain('supervisor_image = "ghcr.io/nvidia/openshell/supervisor:0.0.44"');
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
@@ -182,7 +182,7 @@ describe("docker-driver-gateway-launch", () => {
 
     expect(toml).toContain("[openshell.drivers.podman]");
     expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
-    expect(toml).not.toContain("sandbox_namespace");
+    expect(toml).not.toContain("sandbox_label");
   });
 
   it("rejects wildcard binds for direct host gateway launches", () => {

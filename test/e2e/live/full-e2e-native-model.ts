@@ -3,6 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
+import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
 } from "../../../src/lib/inference/native-nvidia/contract.ts";
@@ -49,7 +53,9 @@ export function buildNativeModelRestartFixture(
                 ? NVIDIA_HOSTED_NATIVE_ENDPOINT
                 : "https://inference.local/v1",
             apiKey: nativeCustom
-              ? "${COMPATIBLE_API_KEY}"
+              ? nativeLocalCredentialReference(logicalProvider, endpointUrl, "openclaw")
+                ? "${" + NATIVE_LOCAL_CREDENTIAL_ENV + "}"
+                : "${COMPATIBLE_API_KEY}"
               : nativeNvidia
                 ? "${NVIDIA_INFERENCE_API_KEY}"
                 : "unused",

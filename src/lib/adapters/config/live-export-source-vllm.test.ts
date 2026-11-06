@@ -102,7 +102,6 @@ function mockManagedVllmSource(
   const observed: ObservedManagedVllmRuntime = {
     containerId: "a".repeat(64),
     imageId: `sha256:${"b".repeat(64)}`,
-    networkId: "c".repeat(64),
     startedAt: "2026-09-10T12:00:00Z",
     serving: {
       backend: "vllm",

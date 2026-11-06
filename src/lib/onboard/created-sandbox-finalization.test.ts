@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { writeFakeSsh } from "../../../test/support/native-snapshot";
 import * as restoreWindow from "../actions/sandbox/runtime/openclaw-lifecycle";
 import type { SandboxEntry } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
@@ -223,32 +224,10 @@ function makeRestoreFixture(): {
     openshell,
     '#!/usr/bin/env bash\nprintf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "${!#}"\n',
   );
-  executable(
-    path.join(bin, "ssh"),
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const command = process.argv.at(-1)
-  .replaceAll("/sandbox/.deepagents", ${JSON.stringify(liveDir)});
-if (command.includes("printf '%s\\\\0%s\\\\0'")) {
-  process.stdout.write(Buffer.from("/sandbox\\0/sandbox\\0"));
-  process.exit(0);
-}
-if (command.includes('restore_dir "$stage" "$root"')) {
-  for (const entry of fs.readdirSync(${JSON.stringify(liveRoot)})) {
-    fs.rmSync(require("node:path").join(${JSON.stringify(liveRoot)}, entry), { recursive: true, force: true });
-  }
-  const result = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", ${JSON.stringify(liveRoot)}], { input: fs.readFileSync(0), stdio: ["pipe", "pipe", "pipe"] });
-  if (result.stdout) fs.writeSync(1, result.stdout);
-  if (result.stderr) fs.writeSync(2, result.stderr);
-  process.exit(result.status ?? 1);
-}
-const result = spawnSync("bash", ["-c", command], { input: fs.readFileSync(0), stdio: ["pipe", "pipe", "pipe"] });
-if (result.stdout) fs.writeSync(1, result.stdout);
-if (result.stderr) fs.writeSync(2, result.stderr);
-process.exit(result.status ?? 1);
-`,
-  );
+  writeFakeSsh(bin);
+  vi.stubEnv("NEMOCLAW_TEST_NATIVE_ROOT", liveRoot);
+  vi.stubEnv("NEMOCLAW_TEST_NATIVE_HOME", "/sandbox");
+  vi.stubEnv("NEMOCLAW_TEST_NATIVE_WORKSPACE", "/sandbox");
   process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
   process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   return { backupPath, currentPath, oldPath };
@@ -1292,6 +1271,50 @@ describe("restored OpenClaw selection reconciliation", () => {
       "nemoclaw-9090",
       undefined,
       { endpointUrl: undefined, nativeProvider: false },
+    );
+  });
+
+  it("refreshes a registered route during ordinary rebuild before releasing the gateway", async () => {
+    const { registeredInferenceFixture } =
+      await import("../../../test/helpers/registered-inference");
+    const binding = {
+      ...registeredInferenceFixture(true).binding,
+      sandboxName: options.sandboxName,
+      gatewayName: options.gatewayName,
+    };
+    const order: string[] = [];
+    const dependencies = deps(order);
+    vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async () => {
+        order.push("restart");
+        return { ok: true };
+      },
+    );
+    await finalizeCreatedSandbox(
+      {
+        ...options,
+        reconcileOpenClawInference: false,
+        provider: binding.providerName,
+        preferredInferenceApi: binding.inferenceApi,
+        nativeProvider: true,
+        endpointUrl: binding.endpointUrl,
+        registeredInferenceProviderAttachment: binding,
+      },
+      dependencies,
+    );
+    expect(order).toEqual(["restore", "selection", "restart", "register"]);
+    expect(dependencies.writeRestoredOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+      options.sandboxName,
+      options.model,
+      binding.providerName,
+      binding.inferenceApi,
+      options.gatewayName,
+      undefined,
+      {
+        endpointUrl: binding.endpointUrl,
+        nativeProvider: true,
+        registeredInferenceProviderAttachment: binding,
+      },
     );
   });
 

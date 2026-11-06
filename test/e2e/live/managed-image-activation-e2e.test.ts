@@ -2,9 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test } from "../fixtures/e2e-test.ts";
-import { qualifyManagedImageActivation } from "./managed-image-activation-e2e-helpers.ts";
+import {
+  qualifyManagedImageActivation,
+  qualifyManagedVolumePreservation,
+} from "./managed-image-activation-e2e-helpers.ts";
 
 const TIMEOUT_MS = 75 * 60_000;
+
+test(
+  "legacy managed state remains unchanged when attachment approval is missing (#12603)",
+  {
+    timeout: 10 * 60_000,
+    meta: {
+      e2ePhases: [
+        "create owned legacy state on the selected container engine",
+        "reject legacy state without changing its content or metadata",
+        "record legacy state preservation evidence",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, progress }) => {
+    progress.phase("create owned legacy state on the selected container engine");
+    await qualifyManagedVolumePreservation(
+      { artifacts, cleanup },
+      {
+        refusal: () =>
+          progress.phase("reject legacy state without changing its content or metadata"),
+        evidence: () => progress.phase("record legacy state preservation evidence"),
+      },
+    );
+  },
+);
 
 test(
   "candidate CLI activates managed images without builds and the selected runtime adopts public agent digests (#7744, #11932, #12241)",
@@ -36,6 +64,37 @@ test(
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",
     });
-    await qualifyManagedImageActivation({ artifacts, cleanup, host, lifecycle, progress, sandbox });
+    progress.phase("validate exact candidate catalog and host runtime");
+    await qualifyManagedImageActivation(
+      { artifacts, cleanup, host, lifecycle, progress, sandbox },
+      {
+        agents: {
+          openclaw: {
+            onboard: () => progress.phase("onboard and exercise OpenClaw"),
+            publicLifecycle: () =>
+              progress.phase("stop and start OpenClaw through public NemoClaw lifecycle"),
+            cleanup: () => progress.phase("destroy and verify OpenClaw cleanup"),
+          },
+          hermes: {
+            onboard: () => progress.phase("onboard and exercise Hermes"),
+            publicLifecycle: () =>
+              progress.phase("stop and start Hermes through public NemoClaw lifecycle"),
+            cleanup: () => progress.phase("destroy and verify Hermes cleanup"),
+          },
+          "langchain-deepagents-code": {
+            onboard: () => progress.phase("onboard and exercise Deep Agents Code"),
+            publicLifecycle: () =>
+              progress.phase("stop and start Deep Agents Code through public NemoClaw lifecycle"),
+            cleanup: () => progress.phase("destroy and verify Deep Agents Code cleanup"),
+          },
+        },
+        hermesSecretBoundary: () =>
+          progress.phase("prove Hermes secret-boundary refusal before native restart"),
+        externalImages: () =>
+          progress.phase(
+            "prove buildless external-image onboarding, drift rejection, rebuild, and retention",
+          ),
+      },
+    );
   },
 );

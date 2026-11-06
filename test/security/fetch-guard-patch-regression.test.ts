@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+  LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION,
   dockerRunCommandBetween,
   runDockerfilePatchBlock,
   runFetchGuardPatchBlock,
@@ -149,7 +150,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   fs.writeFileSync(reviewedArchive, "fake reviewed OpenClaw archive");
   const command = dockerRunCommandBetween(
     "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-    "# Patch OpenClaw media fetch",
+    "# Patch OpenClaw network boundaries",
   )
     .replaceAll(
       "bash /scripts/lib/verify-mcporter-audit.sh",
@@ -295,7 +296,7 @@ function webGuardedFetchFixtureSource(): string {
   ].join("\n");
 }
 
-describe("fetch-guard patch regression guard", () => {
+describe("OpenClaw installation and legacy proxy fixtures", () => {
   it("anchors web_fetch proxy mode to the reviewed OpenClaw 2026.7.1 contract", () => {
     expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
       "function fetchWithWebToolsNetworkGuard(params)",
@@ -406,12 +407,12 @@ describe("fetch-guard patch regression guard", () => {
     expect(
       dockerRunCommandBetween(
         "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-        "# Patch OpenClaw media fetch",
+        "# Patch OpenClaw network boundaries",
       ),
     ).toContain("rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter");
   });
 
-  it("applies the Dockerfile OpenClaw compatibility patch block to executable fixtures", async () => {
+  it("applies legacy proxy and shared install patches to executable fixtures", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-patches-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
@@ -483,7 +484,7 @@ describe("fetch-guard patch regression guard", () => {
         dist,
         tmp,
         "# Native OpenClaw restart must reload",
-        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+        LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION,
       );
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 1 applied");
@@ -606,11 +607,7 @@ describe("fetch-guard patch regression guard", () => {
     fs.writeFileSync(webGuardPath, webGuardedFetchFixtureSource());
 
     try {
-      const patch = runFetchGuardPatchBlock(
-        dist,
-        tmp,
-        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
-      );
+      const patch = runFetchGuardPatchBlock(dist, tmp, LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 1 applied");
       expect(patch.stdout).toContain("Patch 2 applied");
@@ -1120,11 +1117,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(
-        dist,
-        tmp,
-        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
-      );
+      const patch = runFetchGuardPatchBlock(dist, tmp, LEGACY_OPENCLAW_PATCH_FIXTURE_VERSION);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 4 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
@@ -1316,7 +1309,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain(
-        "Patch 6 applied to OpenClaw 2026.9.2 cron preflight trusted env-proxy",
+        "Patch 6 applied to OpenClaw 2026.7.1 cron preflight trusted env-proxy",
       );
       const patched = fs.readFileSync(preflightPath, "utf-8");
       expect(
@@ -1372,7 +1365,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain(
-        "OpenClaw 2026.9.2 has no cron model-provider preflight; Patch 6 not needed",
+        "OpenClaw 2026.7.1 has no cron model-provider preflight; Patch 6 not needed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

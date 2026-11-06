@@ -852,7 +852,7 @@ with tempfile.TemporaryDirectory() as tmp:
     guard.PROC_ROOT = str(proc)
     guard.HERMES_ROOT_LIFECYCLE_MARKER = str(root / "root-marker")
     guard.HERMES_STARTUP_READY_FILE = str(root / "ready-marker")
-    guard.pwd.getpwnam = lambda _name: types.SimpleNamespace(pw_uid=1000)
+    guard.pwd.getpwnam = lambda _name: types.SimpleNamespace(pw_uid=1000, pw_gid=1000)
 
     def process(pid, parent, uid, argv):
         directory = proc / str(pid)

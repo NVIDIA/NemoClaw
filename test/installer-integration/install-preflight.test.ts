@@ -567,6 +567,7 @@ exit 0
       const openshellLog = path.join(tmp, "install-openshell.log");
       fs.mkdirSync(path.join(tmp, ".git"));
 
+      fs.mkdirSync(path.join(tmp, "scripts"));
       writeNodeStub(fakeBin);
       writeExecutable(
         path.join(fakeBin, "openshell"),
@@ -579,7 +580,6 @@ exit 0
 
       writeSourceCheckoutPackages(tmp);
 
-      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
       writeExecutable(
         path.join(tmp, "scripts", "install-openshell.sh"),
         `#!/usr/bin/env bash

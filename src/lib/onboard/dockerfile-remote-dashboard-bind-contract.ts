@@ -28,6 +28,11 @@ const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [CONFIG_MODE_RE, MESSAGING_BUILD_APPL
 // openclaw.json>` to an otherwise safe command. A lifecycle test verifies
 // these digests against the checked-in Dockerfile.
 const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
+  // Native mediation removes the obsolete proxy config and clears the gateway
+  // token; this instruction preserves the generated dashboard binding.
+  "18f3a380f3ea017b820cf07dda4e74b27c1eab8d83c8258b31b0cc7f8f73b98e",
+  // Tool-search validation generates configs only under its temporary HOME.
+  "13e59f553ca6e1b01b57c9e38804a49aaeb137cf2c1b4b6c522ebf7dc3a5bc7d",
   "d0ed2268f42964e8a150deb39e68e31313e520503fa2c131a4d7cc8b21191da0",
   "6f457f365f5c0d128e5e3b549a630b5bd9ebd223919f2c2c8e6a31235d763781",
   "dca7d3dbc030e4efa77c850b9d21a826358c69c7d2062f3eee2f5a57eeb07aa2",

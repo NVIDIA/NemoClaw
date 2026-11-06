@@ -50,6 +50,8 @@ export type ResumeProviderRecoveryDeps = {
 export type ResumeProviderRecoveryResult = {
   /** Route recovery through native setup; this is not evidence of credential ownership. */
   nativeCustomSetup?: boolean;
+  nativeLocalSetup?: boolean;
+  registeredNativeSetup?: boolean;
   forceInferenceSetup: boolean;
   credentialEnv: string | null;
 };
@@ -76,7 +78,7 @@ export function getResumeProviderCredentialEnv(
  * inference setup step (provider was missing and credential was hydrated or
  * just re-entered). `credentialEnv` is the env var resolved for that recovery.
  * Fixed native hosted providers always re-enter setup to verify their persisted
- * ownership; NVIDIA and Hermes retain their separate credential recovery paths.
+ * ownership; NVIDIA retains its separate credential recovery path.
  *
  * In non-interactive mode with a missing credential, calls `deps.exit(1)`.
  */
@@ -85,12 +87,15 @@ export async function ensureResumeProviderReady(
   credentialEnv: string | null | undefined,
   deps: ResumeProviderRecoveryDeps,
 ): Promise<ResumeProviderRecoveryResult> {
+  if (provider && deps.isRoutedInferenceProvider(provider)) {
+    // The logical routed name is not the sandbox-owned native provider name.
+    return {
+      forceInferenceSetup: true,
+      credentialEnv: credentialEnv || deps.defaultRouteCredentialEnv,
+    };
+  }
   const native = fixedNativeProvider(provider);
-  if (
-    native &&
-    native.logicalProvider !== "nvidia-prod" &&
-    native.logicalProvider !== "hermes-provider"
-  ) {
+  if (native && native.logicalProvider !== "nvidia-prod") {
     // Native setup verifies the persisted provider identity. The logical name
     // is not a gateway provider, and its presence cannot authorize skipping setup.
     return { forceInferenceSetup: true, credentialEnv: native.credentialEnv };

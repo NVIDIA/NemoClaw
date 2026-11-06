@@ -10,6 +10,7 @@ import { redactString } from "../fixtures/redaction.ts";
 // failed build. The focused support test binds these allowlist keys to the
 // production Podman ownership constants.
 const PODMAN_MANAGED_LABEL = "openshell.managed";
+const PODMAN_ISOLATION_ROLE_LABEL = "openshell.ai/isolation-role";
 const PODMAN_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 const PODMAN_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const PODMAN_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
@@ -35,6 +36,8 @@ type JsonRecord = Record<string, unknown>;
 export interface PodmanContainerArtifactSummary {
   readonly labels: Readonly<Record<string, string | null>>;
   readonly state: {
+    readonly exitCode: number | null;
+    readonly oomKilled: boolean | null;
     readonly paused: boolean | null;
     readonly running: boolean | null;
     readonly status: string | null;
@@ -90,6 +93,11 @@ export function sanitizePodmanInspectArtifact(output: string): PodmanContainerAr
   return Object.freeze({
     labels: Object.freeze({
       [PODMAN_MANAGED_LABEL]: labels[PODMAN_MANAGED_LABEL] === "true" ? "true" : null,
+      [PODMAN_ISOLATION_ROLE_LABEL]:
+        labels[PODMAN_ISOLATION_ROLE_LABEL] === "sandbox" ||
+        labels[PODMAN_ISOLATION_ROLE_LABEL] === "supervisor"
+          ? labels[PODMAN_ISOLATION_ROLE_LABEL]
+          : null,
       [PODMAN_SANDBOX_ID_LABEL]: identityValue(labels[PODMAN_SANDBOX_ID_LABEL]),
       [PODMAN_SANDBOX_NAME_LABEL]: identityValue(labels[PODMAN_SANDBOX_NAME_LABEL]),
       [PODMAN_SANDBOX_NAMESPACE_LABEL]: identityValue(labels[PODMAN_SANDBOX_NAMESPACE_LABEL], true),
@@ -100,6 +108,14 @@ export function sanitizePodmanInspectArtifact(output: string): PodmanContainerAr
       [AGENT_LABEL]: identityValue(labels[AGENT_LABEL]),
     }),
     state: Object.freeze({
+      exitCode:
+        typeof state.ExitCode === "number" &&
+        Number.isInteger(state.ExitCode) &&
+        state.ExitCode >= 0 &&
+        state.ExitCode <= 255
+          ? state.ExitCode
+          : null,
+      oomKilled: booleanValue(state.OOMKilled),
       paused: booleanValue(state.Paused),
       running: booleanValue(state.Running),
       status: stateValue(state.Status),

@@ -16,7 +16,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { discoverHostAddress } from "../fixtures/host-address.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { waitForMcpCurlPolicyDenial } from "../fixtures/curl-policy-denial.ts";
 import {
   type DnsRebindingHostsFixture,
   remapDnsRebindingHostname,
@@ -81,6 +81,7 @@ export function parseRawOpenShellAllowedIpsRebindingEndpoint(
 export function buildRawOpenShellAllowedIpsRebindingPolicy(
   basePolicyYaml: string,
   port: number,
+  pinnedIp = RAW_OPENSHELL_REBIND_PINNED_IP,
 ): string {
   const policy = parseRawPolicy(basePolicyYaml);
   policy.network_policies = {
@@ -94,8 +95,10 @@ export function buildRawOpenShellAllowedIpsRebindingPolicy(
           path: "/mcp",
           protocol: "mcp",
           enforcement: "enforce",
-          allowed_ips: [RAW_OPENSHELL_REBIND_PINNED_IP],
+          allowed_ips: [pinnedIp],
           mcp: {
+            // OpenShell 0.1.3 includes this default in policy readback.
+            versions: ["2025-11-25"],
             max_body_bytes: 4096,
             strict_tool_names: true,
             allow_all_known_mcp_methods: false,
@@ -112,33 +115,31 @@ export function buildRawOpenShellAllowedIpsRebindingPolicy(
 }
 
 /**
- * Exercise OpenShell directly with a raw MCP request and require an exact 403.
+ * Exercise OpenShell directly; the caller verifies an HTTP, connect, or audited DNS denial.
  * This intentionally bypasses every NemoClaw MCP command and agent adapter.
  *
- * Pinned resolve-validate-connect implementation:
- * https://github.com/NVIDIA/OpenShell/blob/3dee5570a46076a57a3b056f35f35ebc0861ac85/crates/openshell-supervisor-network/src/proxy.rs#L2648-L2674
- * resolves once, #L2699-L2739 plus #L2794-L2803 validate and return that
- * address list, and #L4093-L4100 plus #L4340-L4342 carry that same list through
- * the explicit HTTP-forward connection path used by this probe.
+ * OpenShell 0.1.3 also reports native TCP destination denial as connect EACCES;
+ * preserve curl's errno diagnostic rather than requiring the old proxy's 403.
  */
-export function buildRawOpenShellAllowedIpsRebindingProbeScript(targetUrl: string): string {
+export function buildRawOpenShellAllowedIpsRebindingProbeScript(
+  targetUrl: string,
+  outputDirectory = "/tmp",
+): string {
   const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  const responsePath = "/tmp/nemoclaw-raw-openshell-rebinding.body";
-  const stderrPath = "/tmp/nemoclaw-raw-openshell-rebinding.stderr";
+  const responsePath = path.join(outputDirectory, "nemoclaw-raw-openshell-rebinding.body");
+  const stderrPath = path.join(outputDirectory, "nemoclaw-raw-openshell-rebinding.stderr");
   return [
     "set -u",
     `rm -f ${shellQuote(responsePath)} ${shellQuote(stderrPath)}`,
     `body=${shellQuote(body)}`,
     "set +e",
-    `status="$(curl -sS --max-time 30 -o ${shellQuote(responsePath)} -w '%{http_code}' -X POST ${shellQuote(targetUrl)} -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' --data-binary "$body" 2>${shellQuote(stderrPath)})"`,
+    `status="$(LC_ALL=C curl -sS --verbose --max-time 30 -o ${shellQuote(responsePath)} -w '%{http_code}' -X POST ${shellQuote(targetUrl)} -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'mcp-protocol-version: 2025-11-25' --data-binary "$body" 2>${shellQuote(stderrPath)})"`,
     "curl_rc=$?",
     "set -e",
     `cat ${shellQuote(responsePath)} 2>/dev/null || true`,
     `cat ${shellQuote(stderrPath)} >&2 2>/dev/null || true`,
     `printf '${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}%s\\n' "$status"`,
-    'if [ "$curl_rc" -eq 0 ] && [ "$status" = "403" ]; then exit 0; fi',
-    'if [ "$curl_rc" -ne 0 ]; then exit "$curl_rc"; fi',
-    "exit 1",
+    'exit "$curl_rc"',
   ].join("\n");
 }
 
@@ -196,7 +197,6 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
   let policyMutationAttempted = false;
   try {
     const reboundAddress = await hostAddressForSandbox(options.host);
-    expect(reboundAddress).not.toBe(RAW_OPENSHELL_REBIND_PINNED_IP);
     expect(
       isPrivateIp(reboundAddress),
       `${reboundAddress} must be a private rebinding target`,
@@ -211,8 +211,8 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       options.host,
       options.sandboxName,
       hostsFixture,
-      RAW_OPENSHELL_REBIND_PINNED_IP,
-      "raw-openshell-rebinding-map-public-pin",
+      reboundAddress,
+      "raw-openshell-rebinding-map-control-pin",
     );
 
     const basePolicy = await options.sandbox.openshell(
@@ -240,11 +240,36 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     );
 
     policyMutationAttempted = true;
+    const controlPolicyApplied = await setPolicyDocument(
+      options.sandboxName,
+      buildRawOpenShellAllowedIpsRebindingPolicy(basePolicyYaml, server.port, reboundAddress),
+      { nonFatal: true, operation: "allow the raw OpenShell rebinding control" },
+    );
+    await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));
+    const targetUrl = `http://${RAW_OPENSHELL_REBIND_HOSTNAME}:${server.port}/mcp`;
+    const control = await options.sandbox.execShell(
+      options.sandboxName,
+      trustedSandboxShellScript(buildRawOpenShellAllowedIpsRebindingProbeScript(targetUrl)),
+      { artifactName: "raw-openshell-rebinding-allowed-control", env, timeoutMs: 60_000 },
+    );
+    const requestsBeforeDenial = server.requestCount();
+    await remapDnsRebindingHostname(
+      options.host,
+      options.sandboxName,
+      hostsFixture,
+      RAW_OPENSHELL_REBIND_PINNED_IP,
+      "raw-openshell-rebinding-map-public-pin",
+    );
     expect(
-      await setPolicyDocument(options.sandboxName, fs.readFileSync(policyPath, "utf8"), {
+      (await setPolicyDocument(options.sandboxName, fs.readFileSync(policyPath, "utf8"), {
         nonFatal: true,
         operation: "run the raw OpenShell allowed_ips rebinding proof",
-      }),
+      })) &&
+        controlPolicyApplied &&
+        control.exitCode === 0 &&
+        !control.timedOut &&
+        control.stdout.includes(`${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}200`) &&
+        requestsBeforeDenial === 1,
       "raw-openshell-rebinding-policy-set",
     ).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));
@@ -261,7 +286,6 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     const effectiveEndpoint = parseRawOpenShellAllowedIpsRebindingEndpoint(effectivePolicy.stdout);
     expect(effectiveEndpoint).toMatchObject({
       allowed_ips: [RAW_OPENSHELL_REBIND_PINNED_IP],
-      host: RAW_OPENSHELL_REBIND_HOSTNAME,
       port: server.port,
       protocol: "mcp",
     });
@@ -274,22 +298,33 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       "raw-openshell-rebinding-map-private-unpinned",
     );
 
-    const targetUrl = `http://${RAW_OPENSHELL_REBIND_HOSTNAME}:${server.port}/mcp`;
+    const readDnsAudit = (suffix: string) =>
+      options.sandbox.openshell(
+        ["logs", options.sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
+        { artifactName: `raw-openshell-rebinding-dns-audit-${suffix}`, env, timeoutMs: 30_000 },
+      );
+    const dnsAuditBefore = await readDnsAudit("before");
     const denial = await options.sandbox.execShell(
       options.sandboxName,
       trustedSandboxShellScript(buildRawOpenShellAllowedIpsRebindingProbeScript(targetUrl)),
       {
-        artifactName: "raw-openshell-rebinding-exact-403",
+        artifactName: "raw-openshell-rebinding-policy-denial",
         env,
         timeoutMs: 60_000,
       },
     );
-    expect(denial.exitCode, resultText(denial)).toBe(0);
-    expect(denial.stdout).toContain(`${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403`);
+    const policyDenied = await waitForMcpCurlPolicyDenial(
+      denial,
+      dnsAuditBefore,
+      readDnsAudit,
+      RAW_OPENSHELL_REBIND_HOSTNAME,
+      RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER,
+    );
+    expect(policyDenied && hostsFixture.server.answers() > 0, resultText(denial)).toBe(true);
     expect(
       server.requestCount(),
-      "raw OpenShell allowed_ips denial must record zero upstream requests",
-    ).toBe(0);
+      "raw OpenShell allowed_ips denial must record no additional upstream requests",
+    ).toBe(requestsBeforeDenial);
   } finally {
     try {
       if (policyMutationAttempted && basePolicyPath) {

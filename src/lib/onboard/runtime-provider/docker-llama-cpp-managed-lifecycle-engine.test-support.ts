@@ -33,7 +33,6 @@ export interface DockerFixture {
     readonly status: number;
     readonly stderr?: string;
   }) => void;
-  readonly setOpenShellBridgeSubnet: (value: string) => void;
   readonly driftHardening: () => void;
   readonly driftEntrypoint: () => void;
   readonly dropTmpfs: () => void;
@@ -86,7 +85,6 @@ export function createDockerFixture(
     readonly status: number;
     readonly stderr?: string;
   } | null = null;
-  let openShellBridgeSubnet = "172.29.0.0/16";
   let hardeningDrift = false;
   let tmpfs: Record<string, string> | null = {
     "/tmp": "rw,noexec,nosuid,nodev,size=1024,uid=1001,gid=1001,mode=1777",
@@ -197,24 +195,6 @@ export function createDockerFixture(
       case "network":
         switch (args[1]) {
           case "inspect":
-            switch (args[2]) {
-              case "openshell-docker":
-                return {
-                  status: 0,
-                  stdout: JSON.stringify([
-                    {
-                      Name: "openshell-docker",
-                      Internal: false,
-                      Driver: "bridge",
-                      Scope: "local",
-                      IPAM: {
-                        Config: [{ Subnet: openShellBridgeSubnet, Gateway: "172.29.0.1" }],
-                      },
-                    },
-                  ]),
-                  stderr: "",
-                };
-            }
             switch (networkPresent) {
               case false:
                 absentNetworkInspectHook?.();
@@ -348,10 +328,7 @@ export function createDockerFixture(
       case "run":
         invariant(args[1] === "--rm", unexpected);
         probeHook?.();
-        if (
-          sandboxBridgeProbeFailure !== null &&
-          args[args.indexOf("--network") + 1] === "openshell-docker"
-        ) {
+        if (sandboxBridgeProbeFailure !== null && args[args.indexOf("--network") + 1] === "host") {
           return {
             ...sandboxBridgeProbeFailure,
             stdout: "",
@@ -386,7 +363,6 @@ export function createDockerFixture(
     failCreateUncertain: () => (createUncertain = true),
     failProbe: () => (probeFails = true),
     failSandboxBridgeProbe: (result) => (sandboxBridgeProbeFailure = result),
-    setOpenShellBridgeSubnet: (value) => (openShellBridgeSubnet = value),
     driftHardening: () => (hardeningDrift = true),
     driftEntrypoint: () => {
       invariant(container !== undefined, "cannot drift an absent fixture container");
@@ -449,10 +425,4 @@ export function createDockerFixture(
 
 export function dockerCommandPrefixes(fixture: DockerFixture): unknown[] {
   return fixture.capture.mock.calls.map((call) => call[0]?.slice(0, 2));
-}
-
-export function hostNetworkRuns(fixture: DockerFixture): readonly (readonly string[])[] {
-  return fixture.capture.mock.calls
-    .map(([argv]) => argv as readonly string[])
-    .filter((argv) => argv[0] === "run" && argv[argv.indexOf("--network") + 1] === "host");
 }
