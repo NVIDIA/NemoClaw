@@ -216,7 +216,7 @@ def selected(expression, context, failed)
   end
 end
 
-def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', reporter: nil, retrying: false)
+def exercise(workflow, root, scenario, parent, head, merged: true, action: 'closed', base: 'main', reporter: nil, retrying: false)
   FileUtils.rm_rf(["#{root}/workspace", "#{root}/temp"]) if retrying
   FileUtils.rm_f(Dir["#{root}/output-*"]) if retrying
   FileUtils.mkdir_p(["#{root}/bin", "#{root}/workspace", "#{root}/temp", "#{root}/artifacts"])
@@ -266,7 +266,7 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
         if $slurp; then printf ']'; fi ;;
       repos/example/repo/pulls/1/files*) printf '[{"filename":"tools/ci/pr-merge-report.rs"}]' ;;
       repos/example/repo/pulls/1)
-        printf '{"merged":true,"base":{"ref":"main"},"head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","ref":"fork-feature","repo":{"id":99}},"created_at":"2026-01-01T00:00:00Z","merged_at":"2026-01-01T00:10:00Z","additions":209,"deletions":10,"changed_files":5}' ;;
+        jq -n --arg base "$PR_BASE" '{merged:true,base:{ref:$base},head:{sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",ref:"fork-feature",repo:{id:99}},created_at:"2026-01-01T00:00:00Z",merged_at:"2026-01-01T00:10:00Z",additions:209,deletions:10,changed_files:5}' ;;
       repos/example/repo/pulls/1/commits*|repos/example/repo/pulls/1/reviews*|repos/example/repo/commits/*/statuses*) printf '[]' ;;
       repos/example/repo/actions/runs*) printf '{"total_count":0,"workflow_runs":[]}' ;;
       repos/example/repo/commits/*/check-runs*) printf '{"check_runs":[]}' ;;
@@ -310,18 +310,18 @@ def exercise(workflow, root, scenario, parent, head, merged: true, action: 'clos
     test "$SCENARIO" != readback_failure
   SH
   context = {'github' => {'event_name' => 'pull_request_target', 'repository' => 'example/repo', 'token' => 'fixture-token', 'run_attempt' => retrying ? '2' : '1',
-    'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'merge_commit_sha' => 'd' * 40,
+    'event' => {'pull_request' => {'merged' => merged, 'number' => 1, 'base' => {'ref' => base}, 'merge_commit_sha' => 'd' * 40,
       'head' => {'sha' => head, 'repo' => {'full_name' => 'example/fork'}}}}},
     'runner' => {'temp' => "#{root}/temp"}, 'steps' => {}}
   job = workflow.fetch('jobs').fetch('report')
   trigger = (workflow['on'] || workflow[true]).fetch('pull_request_target')
-  eligible = trigger.fetch('types').include?(action) && trigger.fetch('branches').include?('main')
+  eligible = trigger.fetch('types').include?(action) && trigger.fetch('branches').include?(base)
   failed = false
   artifact = nil
   return {failed: false, root: root, original_comments: original_comments} unless eligible && selected(job['if'], context, failed)
   job.fetch('steps').each_with_index do |step, index|
     next unless selected(step['if'], context, failed)
-    env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario,
+    env = {'PATH' => "#{root}/bin:/usr/bin:/bin", 'FIXTURE' => root, 'SCENARIO' => scenario, 'PR_BASE' => base,
       'RUNNER_TEMP' => "#{root}/temp", 'GITHUB_REPOSITORY' => 'example/repo', 'GITHUB_STEP_SUMMARY' => "#{root}/summary",
       'GITHUB_WORKFLOW_SHA' => 'e' * 40, 'GITHUB_RUN_ID' => '1234', 'GITHUB_RUN_ATTEMPT' => context['github']['run_attempt'], 'GITHUB_OUTPUT' => "#{root}/output-#{index}"}
     env['REAL_REPORTER'] = reporter ? 'true' : ''
@@ -412,6 +412,20 @@ receipt = JSON.parse(File.read("#{valid[:artifact]}/merge-outcomes-receipt.json"
 raise 'Receipt is not revision-bound' unless receipt.values_at('workflow_revision', 'reporter_revision') == ['e' * 40, parent]
 raise 'Fork-modified reporter scenario was not covered' unless receipt['fork_modified_reporter']
 raise 'Opening report was absent' unless receipt['opening_report_count'] == 1
+v1 = exercise(workflow, "#{ARGV[0]}/v1", 'valid', parent, head, base: 'v1', reporter: reporter_source)
+raise File.read("#{v1[:root]}/errors") if v1[:failed]
+raise 'v1 merge did not compile the trusted reporter' unless File.exist?("#{v1[:root]}/compilations") && File.read("#{v1[:root]}/compilations") == "compile\n"
+raise 'v1 merge did not publish exactly once' unless File.read("#{v1[:root]}/posts") == "POST\n"
+v1_comments = JSON.parse(File.read("#{v1[:root]}/comments.json"))
+v1_reports = v1_comments.select { |comment| comment.dig('user', 'login') == 'github-actions[bot]' && comment['body'].include?('<!-- nemoclaw-merge-report:v1 -->') }
+raise 'v1 merge lost or duplicated its report' unless v1_reports.length == 1
+v1_report = v1_reports.first.fetch('body')
+raise 'v1 report lost merged metadata' unless v1_report.start_with?('<details>') && v1_report.include?(head) && v1_report.include?('+209 / -10 lines across 5 files')
+raise 'v1 merge changed existing comments' unless v1_comments.reject { |comment| comment['id'] == 123 } == JSON.parse(v1[:original_comments])
+raise 'v1 artifact lost the report' unless File.read("#{v1[:artifact]}/merge-outcomes.md").strip == v1_report.strip
+raise 'v1 summary lost the report' unless File.read("#{v1[:root]}/summary").include?(v1_report)
+v1_receipt = JSON.parse(File.read("#{v1[:artifact]}/merge-outcomes-receipt.json"))
+raise 'v1 receipt lost trusted provenance' unless v1_receipt.values_at('reporter_revision', 'publication_readback', 'opening_preserved', 'duplicate_avoided') == [parent, true, true, true]
 %w[malformed multiple api_failure wrong_checkout modified_reporter].each do |scenario|
   result = exercise(workflow, "#{ARGV[0]}/#{scenario}", scenario, parent, head)
   raise "Invalid parent or checkout accepted: #{scenario}" unless result[:failed]
@@ -421,8 +435,8 @@ installation = exercise(workflow, "#{ARGV[0]}/installation", 'installation', par
 raise 'Installation failed' if installation[:failed]
 assert_no_code_or_publication(installation)
 raise 'Installation behavior missing' unless File.read("#{installation[:root]}/summary").include?('reports start with the next merged PR')
-[[false, 'closed'], [true, 'opened']].each_with_index do |(merged, action), index|
-  result = exercise(workflow, "#{ARGV[0]}/ineligible-#{index}", 'valid', parent, head, merged: merged, action: action)
+[[false, 'closed', 'main'], [true, 'opened', 'main'], [true, 'closed', 'release']].each_with_index do |(merged, action, base), index|
+  result = exercise(workflow, "#{ARGV[0]}/ineligible-#{index}", 'valid', parent, head, merged: merged, action: action, base: base)
   raise 'Ineligible event failed' if result[:failed]
   assert_no_code_or_publication(result)
 end
