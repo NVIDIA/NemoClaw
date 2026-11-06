@@ -8,7 +8,7 @@
 # output names only the targets that failed.
 
 terraform {
-  required_version = "= 1.12.9"
+  required_version = "= 1.12.12"
 }
 
 variable "context" {

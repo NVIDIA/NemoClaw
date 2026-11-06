@@ -30,7 +30,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.150` on `PATH` and narrow the `contract` or `integration` profile with a filter:
+Nextest builds every workspace target, including the fixture executables; after `cargo ci tools`, put `.tools/nextest-0.9.151` on `PATH` and narrow the `contract` or `integration` profile with a filter:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
@@ -269,6 +269,8 @@ Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM
 | `kubernetes-gateway-driver-mismatch` | A Kubernetes document against a gateway that reports Docker. The workspace precondition rejects the plan, and the gateway's incompatibility names the Kubernetes driver. Nothing reaches OpenShell, Fabric, or the upstream. |
 | `kubernetes-external-three-agents` | `examples/kubernetes/external-gateway.yaml`, unchanged: three agents share one registration holding the credential from `INFERENCE_API_KEY`, and each starts with its own name; independent sandboxes are created at the same time, and no sandbox runs an inference or runtime probe. An unchanged apply changes nothing on the gateway and starts no agent. Replacing one sandbox stops and starts only its agent |
 | `kubernetes-slow-sandbox-delete` | The gateway takes 31 seconds to answer a sandbox deletion during a replacement: the provider deletes it once, without asking again, and then creates the replacement |
+| `gtc-dc-dgx-spark`, `gtc-dc-dgx-station`, `gtc-dc-windows-wsl2-rtx-spark` | The Hermes, OpenClaw, and Deep Agents examples in `examples/gtc-dc` for that target, unchanged and only planned. Each plan creates the managed Docker gateway, the Nemotron Super vLLM service, which the vLLM provider validates for the target's hardware profile, and one sandbox with the example's harness whose agent uses that service's address and model. GPU access, the model download, and inference need the target host |
+| `gtc-dc-kubernetes-amd64` | `examples/gtc-dc/kubernetes-amd64.yaml`, unchanged and only planned: the existing gateway supports the Kubernetes driver, and the OpenClaw and Hermes sandboxes' agents use the hosted NVIDIA model. Its HCL equivalent is not planned, because it names gateway TLS references and the fixture gateway serves plaintext gRPC |
 | `external-multiple-providers` | Two deployments on one gateway. The researcher attaches its hosted and local registrations, and the writer only the local one. The second deployment has its own workspace, each registration carries its deployment's owner, and each sandbox attaches only its own workspace's registrations. Applying the first deployment again after the second changes nothing |
 | `travel` | `examples/hcl/travel` applied unchanged with the Docker provider mocked: Ollama readiness against the fixture upstream listing the model, the registration at the address sandboxes use, the sandbox's policy, and the Pi agent's name, model, and instructions. An unchanged apply changes nothing on the gateway and starts no agent |
 | `travel-team` | `examples/hcl/travel-team` applied the same way: four registrations, each role's attachments, grants, and toolsets, and a hosted-model change that replaces only the scheduler's and buyer's sandboxes |
@@ -372,7 +374,7 @@ The SDK's [compatibility tests](../../crates/nemoclaw-sdk/tests/fabric_compatibi
 
 ### Inference API Fixtures
 
-Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/e5b5ebf2b81cc3c6325301ea419ebf2453dab12e/tests), alongside the implementation.
+Native adapter protocol and configuration tests belong to [Fabric](https://github.com/NVIDIA/NeMo-Fabric/tree/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/tests), alongside the implementation.
 The [image source checks](testing.md#image-source-checks) cover NemoClaw packaging separately.
 
 

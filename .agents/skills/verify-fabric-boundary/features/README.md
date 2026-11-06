@@ -6,7 +6,7 @@
 ## Baseline Preconditions
 
 - The [launch](../SKILL.md#launch) completed for this run, including the Fabric-boundary YAML edits, the seeded caller volumes, and `bindings.md`, and the [doctor](../SKILL.md#doctor) passes.
-- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 135 rows, or 130 for `deepagents-code`.
+- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 135 rows.
 - The inference source the target file chose answers its `/models` request.
 - The OpenShell CLI matching `versions.json` on `PATH`, with `OPENSHELL_GATEWAY_ENDPOINT` and `OPENSHELL_WORKSPACE` set by the doctor.
 - `jq`, `curl`, and `openssl` on the host.
@@ -35,7 +35,7 @@
 
   The input JSON holds only `nonce` and `phase`.
   Before a plugin event check, confirm that its trigger and ledger entries for this nonce are absent.
-  Never put the input nonce or a skill's hidden recipe in a file or skill prompt; use a unique request ID when the harness supports one.
+  Never put the input nonce or a skill's hidden recipe in a file or skill prompt.
 - **Prompts.** Send each feature file's prompt exactly. Replace only its `<...>` placeholders, with values from `bindings.md`, and send the same text in every phase.
   Save the exact text sent in `CHECK_DIR`.
   A harness constraint that `bindings.md` records, such as the plugin format, may be appended after the prompt's last line; it must not change the requested behavior or the expected output.
@@ -84,13 +84,17 @@
     jq -Rs . "$CHECK_DIR/$1.prompt.txt" |
       openshell sandbox exec -n assistant --no-tty -- fabric-agent-ctl invoke --agent assistant --runtime-id "$RUNTIME_ID" --input - > "$CHECK_DIR/$1.reply.json"
     echo "exit $?"
-    jq --arg rt "$RUNTIME_ID" '{run: .result.status, error: .result.error, same_runtime: (.result.runtime_id == $rt), response: .result.output.response}' "$CHECK_DIR/$1.reply.json"
+    jq '{run: .result.status, error: .result.error, response: .result.output.response}' "$CHECK_DIR/$1.reply.json"
   }
   ```
 
   Pass `-` as `fill`'s argument when the prompt has no `<script>`.
   After each request, save the current turn's native calls, with their arguments, output, and exit status, from the record `bindings.md` names, in `$CHECK_DIR/NAME.calls.txt`; keep earlier turns out of that file.
   Once, after defining them, print `$SHELL_TOOL`, `$FILE_WRITE_TOOL`, `$SKILL_AUTHORING`, and `$NATIVE_SKILL_DIR`; each must match `bindings.md`.
+  The [bridge invocation test](../../../../crates/nemoclaw-e2e/tests/integration/fabric_bridge.rs) checks the selected agent and runtime ID, stdin input, and no replay of uncertain work.
+  The [bridge envelope tests](../../../../crates/fabric-provider/src/bridge.rs) and [native result tests](../../../../crates/nemoclaw-e2e/src/state.rs) cover operation and native result status separately; `ask` keeps status and error output for diagnosis.
+  The SDK's [`routes_set_the_harness_provider_and_sampling`](../../../../crates/nemoclaw-sdk/tests/fabric_compatibility.rs) checks exact model variant projection.
+  Keep runtime IDs and any returned request IDs as evidence; request-ID support belongs to Fabric and remains unresolved in #14203.
 - **Record each check.** When a check finishes, fill in its row's outcome, finding, and `CHECK_DIR` in `$EVIDENCE/checks.md`, as the [proof rules](#proof-rules) require.
 - **Product assertions and commands.** Each Sub-feature line and `Result` states intended behavior, which the selected revision may not implement yet; keep it as written.
   Take each control's command from the tool's own help or documentation, save that help in `$CHECK_DIR`, and record the command in `bindings.md` or the check's evidence.
@@ -123,19 +127,19 @@ Each check gets one of three outcomes:
 
 Phases run in this order, once each. A transition phase holds one lifecycle check; the phase after it re-runs the checks that list it.
 
-| Phase | Directory | What happens | Checks (`hermes`, `openclaw` / `deepagents-code`) |
+| Phase | Directory | What happens | Checks |
 |---|---|---|---|
-| Initial | `initial` | First apply; first-start discovery, then inference, then every feature's first checks, including authoring, install, activation, and use; unchanged plan/apply for `agent-plugin-reconcile` | 32 / 31 |
+| Initial | `initial` | First apply; first-start discovery, then inference, then every feature's first checks, including authoring, install, activation, and use; unchanged plan/apply for `agent-plugin-reconcile` | 32 |
 | Runtime restart | `runtime-restart` | Stop only the managed Fabric runtime through supported control, then unchanged plan/apply; the same sandbox gets a new usable runtime | 1 |
 | After runtime restart | `after-runtime-restart` | Re-run the mounted script, skill, extension, and agent-plugin reuse checks | 9 |
 | Stop/start | `stop-start` | Stop and start the same sandbox through OpenShell's supported commands, confirming the stopped state and lost access, then unchanged plan/apply | 1 |
-| After stop/start | `after-stop-start` | Re-run every check that lists this phase | 22 / 21 |
+| After stop/start | `after-stop-start` | Re-run every check that lists this phase | 22 |
 | Recreate | `recreate` | Preview and destroy the deployment, keeping state and caller volumes, then plan/apply the baseline YAML; a new sandbox replaces the old one | 1 |
-| After recreate | `after-recreate` | Re-run every check that lists this phase | 22 / 21 |
+| After recreate | `after-recreate` | Re-run every check that lists this phase | 22 |
 | Config change | `config-change` | Change only the agent's supported shell restriction from the baseline, save the diff, then plan/apply | 1 |
-| After config change | `after-config-change` | Re-run every check that lists this phase; shell checks expect rejection with no other execution path | 22 / 21 |
+| After config change | `after-config-change` | Re-run every check that lists this phase; shell checks expect rejection with no other execution path | 22 |
 | Restore | `restore` | Restore the exact baseline YAML, then plan/apply | 1 |
-| After restore | `after-restore` | Re-run every check that lists this phase; shell execution returns | 22 / 21 |
+| After restore | `after-restore` | Re-run every check that lists this phase; shell execution returns | 22 |
 | Teardown | `teardown` | Preview and destroy, then list the retained caller volumes, model cache, and evidence | 1 |
 
 After config change, the feature files expect these results; the change disables only the shell-launch tool:
@@ -168,7 +172,5 @@ In the Initial phase, run the checks in this order:
 2. `inference`.
 3. The rest of each file in table order, with `agent-plugin-reconcile` last.
 4. `retention`.
-
-For `deepagents-code`, `web-ui` is out of this skill's scope; the check log omits it.
 
 Each Sub-feature line ends with `Phases:` and its comma-separated phase names, as the [check log](../SKILL.md#evidence) reads them.

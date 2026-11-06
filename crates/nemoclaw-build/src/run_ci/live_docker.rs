@@ -192,6 +192,7 @@ fn prepare(
     bundle: &Path,
     inputs: &Path,
     images: live_images::Source<'_>,
+    cases: &[String],
     owned: &mut Owned,
 ) -> Result<Vec<(String, String)>> {
     if !platform.starts_with("linux_") {
@@ -232,7 +233,6 @@ fn prepare(
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
             live_images::build_hermes(platform, &prefix)?;
-            live_images::build_deepagents_code(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
         }
     }
@@ -296,48 +296,46 @@ fn prepare(
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
-    // The dummy reports native health, so its whole HCL E2E lifecycle
-    // completes. Its case is bound to this run like the documents above.
-    let dummy_case = {
-        let uid = live::uuid()?;
-        let subnet = live::free_subnet(&used, &subnets)?;
-        subnets.push(subnet.clone());
-        let path = inputs.join(format!("{DUMMY_CASE}.yaml"));
-        let template = fs::read_to_string(
-            Path::new("crates/nemoclaw-e2e/cases").join(format!("{DUMMY_CASE}.yaml")),
-        )?;
-        let port = format!("http://127.0.0.1:{}", live::free_port()?);
-        fs::write(&path, dummy_case(&template, &uid, &port, &subnet, &dummy)?)?;
-        owned.uids.push(uid);
-        path
-    };
     // The interface case's agents reach a stub model at the gateway network's
     // host address; the stub answers only requests with this run's key.
     let mut key = [0u8; 16];
     getrandom::fill(&mut key).map_err(|_| "cannot make the stub model's key")?;
     let model_key = format!("nc-model-key-{}", nemoclaw_build::hex(&key));
-    let interfaces = {
+    let path = |path: &Path| path.display().to_string();
+    // Each HCL E2E case is bound to this run like the documents above.
+    let mut bound = Vec::new();
+    for case in cases {
         let uid = live::uuid()?;
         let subnet = live::free_subnet(&used, &subnets)?;
         subnets.push(subnet.clone());
-        let host = subnet
-            .strip_suffix(".0/24")
-            .map(|prefix| format!("{prefix}.1"))
-            .ok_or("a gateway subnet is a /24")?;
-        let path = inputs.join(format!("{INTERFACES_CASE}.yaml"));
         let template = fs::read_to_string(
-            Path::new("crates/nemoclaw-e2e/cases").join(format!("{INTERFACES_CASE}.yaml")),
+            Path::new(nemoclaw_build::hcl_cases::DOCUMENTS).join(format!("{case}.yaml")),
         )?;
         let endpoint = format!("http://127.0.0.1:{}", live::free_port()?);
-        let model = format!("http://{host}:{}/v1", live::free_port()?);
-        fs::write(
-            &path,
-            interfaces_case(&template, &uid, &endpoint, &subnet, &model, &agent, &hermes)?,
-        )?;
+        let document = match case.as_str() {
+            // The dummy reports native health, so its whole HCL E2E lifecycle
+            // completes.
+            DUMMY_CASE => dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?,
+            INTERFACES_CASE => {
+                let host = subnet
+                    .strip_suffix(".0/24")
+                    .map(|prefix| format!("{prefix}.1"))
+                    .ok_or("a gateway subnet is a /24")?;
+                let model = (host.as_str(), live::free_port()?);
+                interfaces_case(&template, &uid, &endpoint, &subnet, model, &agent, &hermes)?
+            }
+            other => {
+                return Err(format!(
+                    "live-docker cannot bind the {other} case to its run; add its binding to run_ci/live_docker.rs"
+                )
+                .into());
+            }
+        };
+        let file = inputs.join(format!("{case}.yaml"));
+        fs::write(&file, document)?;
         owned.uids.push(uid);
-        path
-    };
-    let path = |path: &Path| path.display().to_string();
+        bound.push(format!("{case}\t{}", path(&file)));
+    }
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
@@ -363,22 +361,16 @@ fn prepare(
             GATEWAY_DOCUMENTS.into(),
             [path(&first), path(&profiles)].join("\n"),
         ),
-        (
-            HCL_CASES.into(),
-            [
-                format!("{DUMMY_CASE}\t{}", path(&dummy_case)),
-                format!("{INTERFACES_CASE}\t{}", path(&interfaces)),
-            ]
-            .join("\n"),
-        ),
+        (HCL_CASES.into(), bound.join("\n")),
     ])
     .collect())
 }
 
-/// The HCL E2E case that `hcl_live::case` runs in this suite.
+/// The reference image's case, which this suite binds to the derived image.
 const DUMMY_CASE: &str = "docker-dummy";
 
-/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image.
+/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
+/// and a workspace volume named for the UID, so runs never share one.
 fn dummy_case(
     template: &str,
     uid: &str,
@@ -394,30 +386,41 @@ fn dummy_case(
             ("http://127.0.0.1:17697", endpoint),
             ("172.30.122.0/24", subnet),
             (&zero, image),
+            (
+                "source: hcl-dummy-workspace",
+                &format!("source: hcl-dummy-workspace-{uid}"),
+            ),
         ],
     )?)
 }
 
+/// The case whose agents reach this suite's stub model.
 const INTERFACES_CASE: &str = "docker-openclaw-hermes-interfaces";
 
 /// The interface case bound to one run's UID, gateway endpoint, subnet, stub
-/// model endpoint, and OpenClaw and Hermes images.
+/// model address and port, which its model provider and a grant name, and
+/// OpenClaw and Hermes images.
 fn interfaces_case(
     template: &str,
     uid: &str,
     endpoint: &str,
     subnet: &str,
-    model: &str,
+    (model_host, model_port): (&str, u16),
     openclaw: &str,
     hermes: &str,
 ) -> Result<String> {
     let zero = "0".repeat(64);
+    let model_port = model_port.to_string();
     Ok(live::bind_case(
         template,
         &[
+            // The stub's address and port come first: bind_case replaces
+            // every occurrence, and a later value, such as the UID, could
+            // contain the template's port.
+            ("172.30.123.1", model_host),
+            ("17699", &model_port),
             ("9d4c1f2e-6b3a-4c8d-a5e7-2f1b0c9d8e76", uid),
             ("http://127.0.0.1:17698", endpoint),
-            ("http://172.30.123.1:17699/v1", model),
             ("172.30.123.0/24", subnet),
             (&format!("nc-fabric@sha256:{zero}"), openclaw),
             (&format!("nc-fabric-hermes@sha256:{zero}"), hermes),
@@ -445,11 +448,17 @@ pub(super) fn run_live_docker(
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
     images: live_images::Source<'_>,
+    hcl_cases: Option<&[String]>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
         return Err("build the bundle first: cargo ci bundle".into());
     }
+    let cases = nemoclaw_build::hcl_cases::on(
+        Path::new("."),
+        nemoclaw_build::hcl_cases::Runner::LiveDocker,
+        hcl_cases,
+    )?;
     let inputs = tempfile::Builder::new()
         .prefix("nemoclaw-live-docker-")
         .tempdir()?;
@@ -457,7 +466,15 @@ pub(super) fn run_live_docker(
         images: Vec::new(),
         uids: Vec::new(),
     };
-    let environment = prepare(pins, platform, &bundle, inputs.path(), images, &mut owned)?;
+    let environment = prepare(
+        pins,
+        platform,
+        &bundle,
+        inputs.path(),
+        images,
+        &cases,
+        &mut owned,
+    )?;
     let documents: Vec<String> = environment
         .iter()
         .find(|(key, _)| key == GATEWAY_DOCUMENTS)
@@ -566,6 +583,7 @@ mod tests {
             "  uid: u-1",
             "    networkCIDR: 172.30.9.0/24",
             "        ref: i@1",
+            "              source: hcl-dummy-workspace-u-1",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }
@@ -581,7 +599,7 @@ mod tests {
             "u-1",
             "http://127.0.0.1:1",
             "172.30.9.0/24",
-            "http://172.30.9.1:2/v1",
+            ("172.30.9.1", 2),
             "o@1",
             "h@1",
         )
@@ -592,6 +610,10 @@ mod tests {
             "      endpoint: http://172.30.9.1:2/v1",
             "        ref: o@1",
             "        ref: h@1",
+            // The claw sandbox's grant names the stub's address too.
+            "              - host: 172.30.9.1",
+            "                port: 2",
+            "                  - 172.30.9.1/32",
         ] {
             assert!(bound.lines().any(|bound| bound == line), "{line}");
         }

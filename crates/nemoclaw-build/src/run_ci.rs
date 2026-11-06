@@ -166,6 +166,7 @@ fn run_step(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: live_images::Source<'_>,
+    hcl_cases: Option<&[String]>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -186,6 +187,7 @@ fn run_step(
                 &configure,
                 archive_file,
                 images,
+                hcl_cases,
             );
         }
         Step::LiveImages => return live_images::build(platform),
@@ -455,16 +457,26 @@ pub(super) fn publish(report: &str) {
     }
 }
 
+/// What the live suites run with: their images and HCL E2E cases.
+pub(super) struct LiveInputs<'a> {
+    /// A `ci live-images` archive to load instead of building.
+    pub images: Option<&'a Path>,
+    /// A `v1` commit whose pushed images to pull instead of building.
+    pub images_commit: Option<&'a str>,
+    /// The HCL E2E cases to run, or every case placed on the suite.
+    pub hcl_cases: Option<&'a [String]>,
+}
+
 pub(super) async fn run_steps(
     pins: &Pins,
     selected: Option<&str>,
     partition: Option<&str>,
     archive_file: Option<&Path>,
-    images: Option<&Path>,
-    images_commit: Option<&str>,
+    live: LiveInputs<'_>,
     plan: Option<&nemoclaw_build::changes::Plan>,
 ) -> Result<()> {
-    let images = match (images, images_commit) {
+    let hcl_cases = live.hcl_cases;
+    let images = match (live.images, live.images_commit) {
         (Some(archive), _) => live_images::Source::Archive(archive),
         (None, Some(commit)) => live_images::Source::Commit(commit),
         (None, None) => live_images::Source::Build,
@@ -507,15 +519,39 @@ pub(super) async fn run_steps(
             let configure = |command: &mut Command| {
                 command.env("PROTOC", &protoc).env("PATH", &path);
             };
-            live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
+            live_kind::run_live_kind(
+                tools.pins,
+                &platform,
+                &configure,
+                archive_file,
+                images,
+                hcl_cases,
+            )
+            .await
         } else if step == Step::LiveDocker {
             // The interface case forwards and reads tokens with the CLI.
             match live_docker::install_openshell(tools.pins, &platform).await {
-                Ok(()) => run_step(&tools, &platform, step, partition, archive_file, images),
+                Ok(()) => run_step(
+                    &tools,
+                    &platform,
+                    step,
+                    partition,
+                    archive_file,
+                    images,
+                    hcl_cases,
+                ),
                 Err(error) => Err(error),
             }
         } else {
-            run_step(&tools, &platform, step, partition, archive_file, images)
+            run_step(
+                &tools,
+                &platform,
+                step,
+                partition,
+                archive_file,
+                images,
+                None,
+            )
         };
         let elapsed = begun.elapsed().as_secs();
         if matches!(step, Step::Build | Step::Bundle) {

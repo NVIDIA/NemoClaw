@@ -6,5 +6,5 @@
 # beside a copy of harness/main.tf.
 
 terraform {
-  required_version = "= 1.12.9"
+  required_version = "= 1.12.12"
 }
