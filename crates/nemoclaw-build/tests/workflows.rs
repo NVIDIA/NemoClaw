@@ -108,6 +108,10 @@ fn ssh_probe_selects_linux_from_the_shared_runner_group() {
         labels.iter().any(|label| label == "linux"),
         "shared runner selection must require Linux"
     );
+    assert!(
+        labels.iter().any(|label| label == "x64"),
+        "shared runner selection must require x64"
+    );
 }
 
 /// The organization allows GitHub's and NVIDIA's actions and verified

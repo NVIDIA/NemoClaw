@@ -53,6 +53,7 @@ fn publishes_only_outcome_and_commit_and_removes_credentials() {
         ("remote_failure", "failed (remote-command)"),
         ("timeout", "failed (timeout)"),
         ("interrupted", "failed (interrupted)"),
+        ("main_interrupted", "failed (interrupted)"),
         ("missing_key", "failed (inputs)"),
         ("missing_host", "failed (inputs)"),
         ("missing_user", "failed (inputs)"),
@@ -84,14 +85,20 @@ ssh-keygen)
 timeout)
   if [[ "$3" == 5s ]]; then
     [[ "$1" == --signal=TERM && "$2" == --kill-after=1s ]] || exit 82
+    [[ "$4" == bash && "$5" == -c && "$6" == 'exec 3<>"/dev/tcp/$1/22"' && "$7" == _ && "$8" == target.example.invalid ]] || exit 82
     [[ "$scenario" != tcp_failure ]]
     exit
   fi
-  [[ "$3" != 10s ]] || { shift 3; exec "$@"; }
+  if [[ "$3" == 10s ]]; then
+    [[ "$1" == --signal=TERM && "$2" == --kill-after=1s && "$4" == getent && "$5" == ahosts && "$6" == target.example.invalid ]] || exit 82
+    shift 3
+    exec "$@"
+  fi
   [[ "$1" == --signal=TERM && "$2" == --kill-after=5s && "$3" == 30s ]] || exit 82
   shift 3
   [[ "$scenario" != timeout ]] || exit 124
   if [[ "$scenario" == interrupted ]]; then kill -TERM "$PPID"; exit 143; fi
+  if [[ "$scenario" == main_interrupted ]]; then kill -TERM "$PROBE_SHELL_PID"; exit 143; fi
   exec "$@" ;;
 ssh)
   : > "${0%/*}/ssh-invoked"
@@ -118,7 +125,7 @@ esac
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let output = Command::new("bash")
-            .args(["-c", script])
+            .args(["-c", &format!("export PROBE_SHELL_PID=$$;\n{script}")])
             .env(
                 "PATH",
                 format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
@@ -179,6 +186,9 @@ esac
             );
         }
         assert_eq!(output.status.success(), allowed, "{scenario}: {stderr}");
+        if scenario == "main_interrupted" {
+            assert_eq!(output.status.code(), Some(143), "main-shell TERM status");
+        }
         assert_eq!(stdout.trim(), format!("SSH connectivity: {outcome}"));
         assert!(
             stderr.is_empty(),
