@@ -204,6 +204,7 @@ describe("isolateAmbientRecreateEnv", () => {
       expect(env.NEMOCLAW_VLLM_MODEL).toBe("ambient-vllm-model");
       expect(env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON).toBe('{"ambient":true}');
       expect(env.NEMOCLAW_FROM_DOCKERFILE).toBe("/tmp/unrelated.Dockerfile");
+      expect(env.NEMOCLAW_HERMES_SWITCHYARD_ROUTING_B64).toBe("unrelated-routing");
       expect(env.NEMOCLAW_WEB_SEARCH_PROVIDER).toBe("tavily");
       expect(env.NEMOCLAW_POLICY_TIER).toBe("permissive");
       expect(env.NEMOCLAW_POLICY_MODE).toBe("customize");

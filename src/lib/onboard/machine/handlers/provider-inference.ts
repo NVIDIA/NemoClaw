@@ -105,6 +105,16 @@ async function resumeProviderReadiness<Gpu, Agent, Host>(
     : deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv, undefined, selection);
 }
 
+function switchyardReservationResumeOptions(
+  configured: boolean,
+  resume: boolean,
+  session: Session | null,
+): Pick<ProviderInferenceSetupOptions, "resumeSwitchyardReservation"> {
+  return configured && resume && session?.steps?.sandbox?.status !== "complete"
+    ? { resumeSwitchyardReservation: true }
+    : {};
+}
+
 export interface ProviderInferenceSetupOptions {
   /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
   rebuildSandboxPolicyDocument?: string;
@@ -139,6 +149,8 @@ export interface ProviderInferenceSetupOptions {
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Onboard session that owns the route reservation this setup creates. */
   reservationSessionId?: string;
+  /** Recover only this session's unpublished Switchyard reservation after interruption. */
+  resumeSwitchyardReservation?: boolean;
   /** Keep a published source row intact until the sandbox create phase passes backup. */
   deferPublishedRouteReservation?: boolean;
   /** Explicit fresh recreation, with publication owned by the sandbox backup transaction. */
@@ -2460,6 +2472,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(freshManagedOllama || switchyardConfigured
           ? { reservationSessionId: session?.sessionId }
           : {}),
+        ...switchyardReservationResumeOptions(switchyardConfigured, effectiveResume, session),
         ...(fresh && !effectiveResume && recreateSandbox
           ? { recreatePublishedSandbox: true, reservationSessionId: session?.sessionId }
           : {}),

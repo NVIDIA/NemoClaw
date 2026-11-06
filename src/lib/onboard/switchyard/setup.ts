@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { withRestoredCredentialEnv } from "../credential-env";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
@@ -16,6 +17,7 @@ import {
   SwitchyardProviderBindingError,
   HERMES_SWITCHYARD_BINDINGS_ENV,
   encodeSwitchyardProviderBindings,
+  validateSwitchyardBindingState,
 } from "../../hermes-switchyard-routing";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
@@ -67,6 +69,51 @@ export async function setupSwitchyardInference(input: {
       "setup does not match the reviewed provider selection.",
     );
   const previous = deps.getSandbox?.(sandboxName);
+  if (previous?.hermesSwitchyard && input.options.resumeSwitchyardReservation === true) {
+    const reservation = structuredClone(previous);
+    const expected = validateSwitchyardBindingState(previous.hermesSwitchyard);
+    if (
+      previous.name !== sandboxName ||
+      previous.workload !== undefined ||
+      previous.pendingRouteReservation !== true ||
+      !input.options.reservationSessionId ||
+      previous.reservationSessionId !== input.options.reservationSessionId ||
+      previous.gatewayName !== gatewayName ||
+      previous.provider !== provider ||
+      previous.model !== model ||
+      previous.endpointUrl !== input.endpointUrl ||
+      previous.credentialEnv !== input.credentialEnv ||
+      !isDeepStrictEqual(expected.routing, routing)
+    )
+      throw new SwitchyardProviderBindingError(
+        "the pending reservation does not match this onboarding session and route. No provider was changed.",
+      );
+    input.options.revalidateSandboxIdentity?.("recover the Switchyard provider reservation");
+    const observed = await observeSwitchyardProviderBindings({
+      routing,
+      adapter: deps.providerAdapter,
+      target: { kind: "named", gatewayName },
+      providerNames: Object.fromEntries(
+        expected.bindings.providers.map((binding) => [
+          binding.logicalProvider,
+          binding.providerName,
+        ]),
+      ),
+    });
+    input.options.revalidateSandboxIdentity?.("restore the Switchyard provider bindings");
+    if (
+      !isDeepStrictEqual(observed, expected.bindings) ||
+      !isDeepStrictEqual(deps.getSandbox?.(sandboxName), reservation)
+    )
+      throw new SwitchyardProviderBindingError(
+        "the pending reservation or its provider bindings changed during recovery. No provider was changed.",
+      );
+    input.environment[HERMES_SWITCHYARD_BINDINGS_ENV] = encodeSwitchyardProviderBindings(
+      observed,
+      routing,
+    );
+    return { ok: true };
+  }
   if (previous?.hermesSwitchyard)
     throw new SwitchyardProviderBindingError(
       "a fresh sandbox is required; provider reuse is not supported. Existing bindings were not changed. Preserve this sandbox and onboard with a new sandbox name.",

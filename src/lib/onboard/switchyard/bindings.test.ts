@@ -331,6 +331,124 @@ describe("Switchyard provider bindings", () => {
     expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
   });
 
+  it("restores owned pending bindings on explicit resume without creating providers (#13863)", async () => {
+    const f = fixture();
+    const { bindings } = await f.setup();
+    const recorded: SandboxEntry = {
+      name: f.input.sandboxName,
+      gatewayName: f.input.gatewayName,
+      provider: routing.capable.provider,
+      model: routing.capable.model,
+      endpointUrl: "https://api.openai.com/v1",
+      credentialEnv: "OPENAI_API_KEY",
+      pendingRouteReservation: true,
+      reservationSessionId: "session-test",
+      hermesSwitchyard: { routing, bindings },
+    };
+    const updateSandbox = vi.fn(() => false);
+    const input = setupInput(f, updateSandbox, () => structuredClone(recorded));
+    const resumeOptions = { ...input.options, resumeSwitchyardReservation: true };
+    input.options = resumeOptions;
+    vi.clearAllMocks();
+
+    await expect(setupSwitchyardInference(input)).resolves.toEqual({ ok: true });
+    expect(input.environment[HERMES_SWITCHYARD_BINDINGS_ENV]).toBeTruthy();
+    expect(f.methods.getProvider).toHaveBeenCalled();
+    expect(f.methods.inspectProviderProfile).toHaveBeenCalled();
+    expect(f.methods.createProvider).not.toHaveBeenCalled();
+    expect(f.methods.updateProvider).not.toHaveBeenCalled();
+    expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each<{
+    failure: string;
+    mutate(
+      input: Parameters<typeof setupSwitchyardInference>[0],
+      recorded: SandboxEntry,
+      f: ReturnType<typeof fixture>,
+    ): void;
+  }>([
+    {
+      failure: "foreign owner",
+      mutate: (_input, recorded) => {
+        recorded.reservationSessionId = "another-session";
+      },
+    },
+    {
+      failure: "missing owner",
+      mutate: (input) => {
+        input.options.reservationSessionId = undefined;
+      },
+    },
+    {
+      failure: "completed reservation",
+      mutate: (_input, recorded) => {
+        recorded.pendingRouteReservation = false;
+      },
+    },
+    {
+      failure: "changed routing",
+      mutate: (_input, recorded) => {
+        recorded.hermesSwitchyard = {
+          ...recorded.hermesSwitchyard!,
+          routing: createHermesSwitchyardRoutingIntent({
+            efficient: { ...routing.efficient, model: "different-model" },
+            capable: routing.capable,
+          }),
+        };
+      },
+    },
+    {
+      failure: "provider revision",
+      mutate: (_input, _recorded, f) => {
+        const provider = f.providers.values().next().value!;
+        f.providers.set(provider.name, {
+          ...provider,
+          revision: { id: "replacement", resourceVersion: 2 },
+        });
+      },
+    },
+    {
+      failure: "reservation drift",
+      mutate: (_input, recorded, f) => {
+        const inspect = f.methods.inspectProviderProfile.getMockImplementation()!;
+        f.methods.inspectProviderProfile.mockImplementationOnce(async (request) => {
+          recorded.reservationSessionId = "another-session";
+          return inspect(request);
+        });
+      },
+    },
+  ])(
+    "rejects $failure during explicit reservation resume without provider mutations (#13863)",
+    async ({ mutate }) => {
+      const f = fixture();
+      const { bindings } = await f.setup();
+      const recorded: SandboxEntry = {
+        name: f.input.sandboxName,
+        gatewayName: f.input.gatewayName,
+        provider: routing.capable.provider,
+        model: routing.capable.model,
+        endpointUrl: "https://api.openai.com/v1",
+        credentialEnv: "OPENAI_API_KEY",
+        pendingRouteReservation: true,
+        reservationSessionId: "session-test",
+        hermesSwitchyard: { routing, bindings },
+      };
+      const updateSandbox = vi.fn(() => false);
+      const input = setupInput(f, updateSandbox, () => recorded);
+      input.options = { ...input.options, resumeSwitchyardReservation: true };
+      mutate(input, recorded, f);
+      vi.clearAllMocks();
+      await expect(setupSwitchyardInference(input)).rejects.toThrow();
+      expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+      expect(f.methods.createProvider).not.toHaveBeenCalled();
+      expect(f.methods.updateProvider).not.toHaveBeenCalled();
+      expect(f.methods.deleteProvider).not.toHaveBeenCalled();
+      expect(updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects a recorded pending binding without attempting a resumed reservation (#13863)", async () => {
     const f = fixture();
     const { bindings } = await f.setup();
