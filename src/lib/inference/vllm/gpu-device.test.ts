@@ -17,6 +17,7 @@ describe("managed vLLM GPU selection", () => {
       selected,
       selected.defaultModel,
       selected.buildDockerRunFlags?.() ?? selected.dockerRunFlags,
+      {},
     );
 
     expect(args.slice(args.indexOf("--gpus"), args.indexOf("--gpus") + 2)).toEqual([

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -28,6 +28,14 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
+
+let fixtureHome: string;
+beforeEach(() => {
+  fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-profile-"));
+});
+afterEach(() => {
+  fs.rmSync(fixtureHome, { recursive: true, force: true });
+});
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -126,6 +134,109 @@ function writeScopedGatewayState(home: string): void {
 }
 
 describe("uninstall local model profile cleanup", () => {
+  it.each([
+    { outcome: "removed", removes: true, inventoryStatus: 0, exitCode: 0 },
+    { outcome: "still present", removes: false, inventoryStatus: 0, exitCode: 1 },
+    { outcome: "inventory unavailable", removes: true, inventoryStatus: 1, exitCode: 1 },
+  ])(
+    "verifies bearerless vLLM on its default daemon: $outcome",
+    async ({ removes, inventoryStatus, exitCode }) => {
+      const containerId = "d".repeat(64);
+      const otherId = "e".repeat(64);
+      const local = new Map([["nemoclaw-vllm", containerId]]);
+      const ambient = new Map([
+        ["nemoclaw-vllm", otherId],
+        ["operator-server", "foreign"],
+      ]);
+      const env = {
+        HOME: path.join(fixtureHome, "nemoclaw-uninstall-vllm-daemons"),
+        DOCKER_CONTEXT: "other-local",
+        DOCKER_HOST: "unix:///other/docker.sock",
+        DOCKER_CONFIG: "/other/config",
+        DOCKER_TLS_VERIFY: "1",
+        DOCKER_CERT_PATH: "/other/certs",
+        DOCKER_API_VERSION: "1.44",
+      };
+      const errors: string[] = [];
+      const runDocker = vi.fn<NonNullable<UninstallRunDeps["runDocker"]>>((args, options) => {
+        const isDefault = options?.env?.DOCKER_CONTEXT === "default";
+        const inventory = isDefault ? local : ambient;
+        const handlers = new Map([
+          [
+            JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS),
+            () => ok(`${inventory.get("nemoclaw-vllm")} ${String(isDefault)}\n`),
+          ],
+          [
+            JSON.stringify(["rm", "-f", containerId]),
+            () => {
+              removes && inventory.delete("nemoclaw-vllm");
+              return ok();
+            },
+          ],
+          [
+            JSON.stringify(RESERVED_INFERENCE_NAMES_ARGS),
+            () => ({
+              status: isDefault ? inventoryStatus : 0,
+              stdout: [...inventory.keys()].join("\n"),
+              stderr: "",
+            }),
+          ],
+        ]);
+        return handlers.get(JSON.stringify(args))?.() ?? ok();
+      });
+      const result = await runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: (command) => command === "openshell" || command === "docker",
+          env,
+          existsSync: () => false,
+          error: (message) => errors.push(message),
+          isTty: false,
+          log: () => {},
+          run: vi.fn(okWithKnownGatewayList),
+          runDocker,
+        },
+      );
+      expect(result.exitCode).toBe(exitCode);
+      expect(local.has("nemoclaw-vllm")).toBe(!removes);
+      expect([...ambient]).toEqual([
+        ["nemoclaw-vllm", otherId],
+        ["operator-server", "foreign"],
+      ]);
+      expect(runDocker).toHaveBeenCalledWith(
+        ["rm", "-f", containerId],
+        expect.objectContaining({ env: expect.objectContaining({ DOCKER_CONTEXT: "default" }) }),
+      );
+      const localCalls = runDocker.mock.calls.filter(
+        ([, options]) => options?.env?.DOCKER_CONTEXT === "default",
+      );
+      expect(localCalls.map(([args]) => args)).toEqual([
+        ORPHANED_VLLM_INSPECT_ARGS,
+        ["rm", "-f", containerId],
+        RESERVED_INFERENCE_NAMES_ARGS,
+      ]);
+      expect(
+        localCalls.map(([, options]) =>
+          Object.keys(options?.env ?? {}).filter((name) => name.startsWith("DOCKER_")),
+        ),
+      ).toEqual([["DOCKER_CONTEXT"], ["DOCKER_CONTEXT"], ["DOCKER_CONTEXT"]]);
+      expect(
+        runDocker.mock.calls.filter(
+          ([args, options]) =>
+            JSON.stringify(args) === JSON.stringify(RESERVED_INFERENCE_NAMES_ARGS) &&
+            options?.env?.DOCKER_HOST === env.DOCKER_HOST,
+        ),
+      ).toHaveLength(exitCode === 0 ? 1 : 0);
+      expect(
+        errors.some((message) =>
+          /remains after ownership-aware cleanup|could not inventory reserved managed inference/u.test(
+            message,
+          ),
+        ),
+      ).toBe(exitCode !== 0);
+    },
+  );
+
   it("removes an orphaned host-local vLLM container only when its managed label is present (#8981)", async () => {
     const containerId = "a".repeat(64);
     const runDocker = dockerResults(
@@ -136,7 +247,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-orphaned-vllm" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-orphaned-vllm"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         log: () => {},
@@ -165,7 +278,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-unlabeled-vllm" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-unlabeled-vllm"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         error: (message) => errors.push(message),
         isTty: false,
@@ -193,7 +308,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-malformed-vllm" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-malformed-vllm"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         error: (message) => errors.push(message),
         isTty: false,
@@ -222,7 +339,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-removal-failure" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-vllm-removal-failure"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         error: (message) => errors.push(message),
         isTty: false,
@@ -278,7 +397,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-runtime-name-guard" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-runtime-name-guard"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         error: (message) => errors.push(message),
         isTty: false,
@@ -302,7 +423,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-runtime-inventory-guard" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-runtime-inventory-guard"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         error: (message) => errors.push(message),
         isTty: false,
@@ -324,7 +447,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: false, deleteModels: true, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell",
-        env: { HOME: "/tmp/nemoclaw-uninstall-model-confirmation" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-model-confirmation"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: true,
         log: (line) => logs.push(line),
@@ -391,7 +516,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "ollama",
-        env: { HOME: "/tmp/nemoclaw-uninstall-all-ollama-models" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-all-ollama-models"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         log: () => {},
@@ -428,7 +555,7 @@ describe("uninstall local model profile cleanup", () => {
       {
         commandExists: (command) => command === "openshell" || command === "ollama",
         env: {
-          HOME: "/tmp/nemoclaw-uninstall-local-ollama-only",
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-local-ollama-only"),
           OLLAMA_HOST: "https://remote.example.test:11434",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -457,7 +584,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "ollama",
-        env: { HOME: "/tmp/nemoclaw-uninstall-malformed-ollama" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-malformed-ollama"),
+        } as NodeJS.ProcessEnv,
         error: (message) => errors.push(message),
         existsSync: () => false,
         isTty: false,
@@ -484,7 +613,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "ollama",
-        env: { HOME: "/tmp/nemoclaw-uninstall-failed-ollama-inventory" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-failed-ollama-inventory"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         log: () => {},
@@ -508,7 +639,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "ollama",
-        env: { HOME: "/tmp/nemoclaw-uninstall-partial-ollama" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-partial-ollama"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         log: () => {},
@@ -531,7 +664,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "ollama",
-        env: { HOME: "/tmp/nemoclaw-uninstall-keep-models" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-keep-models"),
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         log: () => {},
@@ -692,7 +827,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: true, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-local-cleanup-failure" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-local-cleanup-failure"),
+        } as NodeJS.ProcessEnv,
         existsSync: (target) => String(target).endsWith("/.nemoclaw/managed-llama-cpp"),
         error: (message) => errors.push(message),
         isTty: false,
@@ -719,7 +856,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-llama-and-bearerless-vllm" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-llama-and-bearerless-vllm"),
+        } as NodeJS.ProcessEnv,
         existsSync: (target) => String(target).endsWith("/.nemoclaw/managed-llama-cpp"),
         isTty: false,
         log: () => {},
@@ -750,7 +889,9 @@ describe("uninstall local model profile cleanup", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell" || command === "docker",
-        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-receipt-only" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: path.join(fixtureHome, "nemoclaw-uninstall-vllm-receipt-only"),
+        } as NodeJS.ProcessEnv,
         existsSync: (target) => String(target).endsWith("/.nemoclaw/host-local-vllm-runtime.json"),
         isTty: false,
         log: () => {},

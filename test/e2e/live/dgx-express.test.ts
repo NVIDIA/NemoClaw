@@ -31,6 +31,7 @@ import {
   classifyDockerContainerInspection,
   inspectSandboxIdentity,
   listedSandboxNames,
+  vllmPublicationProbeUrls,
 } from "../support/spark-express-vllm-safety.ts";
 import {
   cleanupSandbox,
@@ -42,6 +43,21 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
 const VLLM_CONTAINER = "nemoclaw-vllm";
 const TEST_TIMEOUT_MS = 65 * 60_000;
 const ONBOARD_TIMEOUT_MS = 55 * 60_000;
+
+const VLLM_PUBLICATION_CURL_ARGS = [
+  "-q",
+  "--noproxy",
+  "*",
+  "--globoff",
+  "--silent",
+  "--show-error",
+  "--connect-timeout",
+  "3",
+  "--max-time",
+  "5",
+  "--write-out",
+  "%{exitcode} %{http_code}\n",
+];
 
 interface VllmContainerInspection {
   readonly Id: string;
@@ -55,8 +71,8 @@ interface VllmContainerInspection {
     readonly DeviceRequests: Array<{ Count: number; Capabilities: string[][] }>;
     readonly IpcMode: string;
     readonly NetworkMode: string;
-    readonly PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
     readonly ShmSize: number;
+    readonly PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
   };
   readonly Mounts: Array<{ Destination: string; RW: boolean; Type: string }>;
 }
@@ -390,6 +406,38 @@ test(
       ]),
     );
 
+    const publicationEnv = e2eEnv();
+    const probes = vllmPublicationProbeUrls();
+    await artifacts.writeJson("spark-express-vllm-publication-probes", probes);
+    const allowed = await host.command(
+      "curl",
+      [
+        ...VLLM_PUBLICATION_CURL_ARGS,
+        ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url]),
+      ],
+      {
+        artifactName: "spark-express-vllm-publication-allowed",
+        env: publicationEnv,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(allowed.exitCode, resultText(allowed)).toBe(0);
+    expect(allowed.stdout.trim().split("\n")).toEqual(["0 200"]);
+    const refused = await host.command(
+      "curl",
+      [
+        ...VLLM_PUBLICATION_CURL_ARGS,
+        ...probes.denied.flatMap((url) => ["--output", "/dev/null", url]),
+      ],
+      {
+        artifactName: "spark-express-vllm-publication-denied",
+        env: publicationEnv,
+        timeoutMs: 60_000,
+      },
+    );
+    expect(refused.exitCode, resultText(refused)).toBe(7);
+    expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
+
     progress.phase("prove sandbox inference and unrelated egress denial");
     const route = normalizeNativeLocalProviderAttachment(
       getSandbox(SANDBOX_NAME)?.nativeLocalProviderAttachment,
@@ -479,6 +527,38 @@ test(
         install: () => progress.phase("install Station Express from the candidate checkout"),
         assert: () => progress.phase("assert managed Super VL and routed inference"),
         cleanup: () => progress.phase("clean up the job runtime"),
+      },
+      verifyPublication: async (env) => {
+        const probes = vllmPublicationProbeUrls();
+        await artifacts.writeJson("station-express-vllm-publication-probes", probes);
+        const allowed = await host.command(
+          "curl",
+          [
+            ...VLLM_PUBLICATION_CURL_ARGS,
+            ...probes.allowed.flatMap((url) => ["--output", "/dev/null", url]),
+          ],
+          {
+            artifactName: "station-express-vllm-publication-allowed",
+            env,
+            timeoutMs: 30_000,
+          },
+        );
+        expect(allowed.exitCode, resultText(allowed)).toBe(0);
+        expect(allowed.stdout.trim().split("\n")).toEqual(["0 200"]);
+        const refused = await host.command(
+          "curl",
+          [
+            ...VLLM_PUBLICATION_CURL_ARGS,
+            ...probes.denied.flatMap((url) => ["--output", "/dev/null", url]),
+          ],
+          {
+            artifactName: "station-express-vllm-publication-denied",
+            env,
+            timeoutMs: 60_000,
+          },
+        );
+        expect(refused.exitCode, resultText(refused)).toBe(7);
+        expect(refused.stdout.trim().split("\n")).toEqual(probes.denied.map(() => "7 000"));
       },
       writeEvidence: (name, value) => artifacts.writeJson(name, value),
     });

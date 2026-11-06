@@ -85,7 +85,12 @@ import {
   type RecoveredManagedClusterVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
-import { recoverHostLocalManagedVllmEndpoint } from "./serving/vllm-host-local-lifecycle";
+import {
+  getLegacyHostLocalManagedVllmLoopbackHost,
+  ManagedVllmInspectionError,
+  recoverHostLocalManagedVllmEndpoint,
+  UnsafeLegacyVllmBindingsError,
+} from "./serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecycle";
@@ -1066,6 +1071,8 @@ export type ManagedVllmProviderState =
 
 export interface ManagedVllmProviderBindingOptions {
   hostUrl?: string | null;
+  /** Validated recorded bearerless port; otherwise use the process vLLM port. */
+  legacyServingPort?: number;
   /** Compatibility seam for the Station lifecycle resolver. */
   getManagedBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
   loadApiKeyImpl?: () => string | null;
@@ -1200,7 +1207,12 @@ export function getManagedVllmProviderState(
       ...(hostLocalEndpoint.serving ? { serving: hostLocalEndpoint.serving } : {}),
     };
   }
-  if (!managedClusterEndpoint) return stationState;
+  if (!managedClusterEndpoint) {
+    if (stationState.kind === "absent") {
+      getLegacyHostLocalManagedVllmLoopbackHost(options.legacyServingPort ?? VLLM_PORT);
+    }
+    return stationState;
+  }
   return {
     kind: "ready",
     baseUrl: `${managedClusterEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
@@ -1491,15 +1503,17 @@ export function probeLocalProviderHealth(
     (options.findReachableOllamaHostImpl ?? findReachableOllamaHost)();
   }
 
+  const legacyVllmPort = recordedLocalVllmHostPort(options.recordedEndpointUrl) ?? VLLM_PORT;
   let managedState: ManagedVllmProviderState = { kind: "absent" };
   if (provider === "vllm-local") {
     try {
       managedState = getManagedVllmProviderState({
+        legacyServingPort: legacyVllmPort,
         getManagedBaseUrlImpl: options.getManagedVllmBaseUrlImpl,
         loadApiKeyImpl: options.loadVllmApiKeyImpl,
         recoverManagedClusterVllmEndpointImpl: options.recoverManagedClusterVllmEndpointImpl,
       });
-    } catch {
+    } catch (error) {
       return {
         ok: false,
         providerLabel,
@@ -1507,7 +1521,10 @@ export function probeLocalProviderHealth(
         failureLabel: "unhealthy",
         probeLabel: "vllm backend",
         detail:
-          "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
+          error instanceof UnsafeLegacyVllmBindingsError ||
+          error instanceof ManagedVllmInspectionError
+            ? error.message
+            : "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
       };
     }
   }
@@ -1531,7 +1548,7 @@ export function probeLocalProviderHealth(
   const endpoint = managedValidationBaseUrl
     ? `${managedValidationBaseUrl}/models`
     : provider === "vllm-local"
-      ? `http://127.0.0.1:${recordedLocalVllmHostPort(options.recordedEndpointUrl) ?? VLLM_PORT}/v1/models`
+      ? `http://127.0.0.1:${legacyVllmPort}/v1/models`
       : getLocalProviderHealthEndpoint(provider);
   if (!endpoint) return null;
 
@@ -1663,14 +1680,17 @@ export function getLocalProviderContainerReachabilityCheck(
       const managed = recoveredManagedVllmBinding();
       if (managed.kind === "unavailable") return null;
       const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
-      const hostAlias = managed.binding?.validationBaseUrl
-        ? "host.openshell.internal:127.0.0.1"
-        : "host.openshell.internal:host-gateway";
+      const loopbackHost = managed.binding?.validationBaseUrl
+        ? "127.0.0.1"
+        : !managed.binding && !configuredLocalInferenceHostUrl()
+          ? getLegacyHostLocalManagedVllmLoopbackHost(VLLM_PORT)
+          : null;
+      const hostAlias = `host.openshell.internal:${loopbackHost ?? "host-gateway"}`;
       return [
-        ...(managedBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
+        ...(managedBaseUrl || loopbackHost ? ["docker", "--context", "default"] : ["docker"]),
         "run",
         "--rm",
-        ...(managed.binding?.validationBaseUrl
+        ...(loopbackHost
           ? [
               "--network",
               "host",
@@ -1866,7 +1886,13 @@ export function validateLocalProvider(
     }
   }
 
-  const containerCommand = getLocalProviderContainerReachabilityCheck(provider);
+  let containerCommand: string[] | null;
+  try {
+    containerCommand = getLocalProviderContainerReachabilityCheck(provider);
+  } catch (error) {
+    if (provider !== "vllm-local") throw error;
+    containerCommand = null;
+  }
   if (!containerCommand) {
     if (provider === "vllm-local") {
       return {

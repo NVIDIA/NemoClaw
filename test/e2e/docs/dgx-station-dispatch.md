@@ -24,6 +24,8 @@ NEMOCLAW_REPO_ROOT="$(pwd)" bash install.sh --express-install --yes-i-accept-thi
 `--express-install` selects the existing Station Express recipe without its selection prompt. Station qualification and explicit software acceptance remain required. It rejects conflicting provider, profile, deferred-onboarding, and interactive Station options. Ordinary non-interactive installation retains its existing selection behavior.
 
 The smoke checks the ready sandbox, running managed vLLM with the Super VL serving alias, and the independently selected managed-image revision.
+Before inference, vLLM health requests must succeed on loopback and refuse every other assigned IPv4/IPv6 host address.
+The candidate's command artifacts retain inspected bindings, probe targets, exit codes, and HTTP statuses.
 It checks an assistant response through the authenticated native local provider attached to that sandbox.
 Cleanup attempts to retire installation state left after success or failure.
 Cleanup uses a fresh signal through the E2E cleanup registry.

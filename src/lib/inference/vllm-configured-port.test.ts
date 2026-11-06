@@ -11,31 +11,40 @@ vi.mock("../core/ports", async (importOriginal) => ({
 import { buildVllmRunArgs } from "./vllm";
 
 describe("managed vLLM configured host port", () => {
-  it("maps a fixed serving recipe onto NEMOCLAW_VLLM_PORT", () => {
-    const model = {
-      id: "test/model",
-      label: "Test model",
-      envValue: "test-model",
-      downloadSizeBytes: 1,
-      maxModelLen: 4096,
-      modelArgs: [],
-      gated: false,
-      platforms: ["linux" as const],
-      fixedServeCommand: true as const,
-    };
-    const image = `vllm/vllm-openai@sha256:${"1".repeat(64)}`;
-    const profile = {
-      name: "Linux + NVIDIA GPU",
-      platform: "linux" as const,
-      image,
-      imageDownloadSizeBytes: 1,
-      defaultModel: model,
-      containerName: "nemoclaw-vllm",
-      dockerRunFlags: ["--gpus", "all"],
-      pullTimeoutSec: 60,
-      loadTimeoutSec: 60,
-    };
+  it.each([undefined, true] as const)(
+    "publishes the configured port only on loopback when managed bearer authentication is %s (#14083)",
+    (managedBearerAuth) => {
+      const model = {
+        id: "test/model",
+        label: "Test model",
+        envValue: "test-model",
+        downloadSizeBytes: 1,
+        maxModelLen: 4096,
+        modelArgs: [],
+        gated: false,
+        platforms: ["linux" as const],
+        fixedServeCommand: true as const,
+        managedBearerAuth,
+      };
+      const image = `vllm/vllm-openai@sha256:${"1".repeat(64)}`;
+      const profile = {
+        name: "Linux + NVIDIA GPU",
+        platform: "linux" as const,
+        image,
+        imageDownloadSizeBytes: 1,
+        defaultModel: model,
+        containerName: "nemoclaw-vllm",
+        dockerRunFlags: ["--gpus", "all"],
+        pullTimeoutSec: 60,
+        loadTimeoutSec: 60,
+      };
 
-    expect(buildVllmRunArgs(profile, model, profile.dockerRunFlags)).toContain("19000:8000");
-  });
+      const args = buildVllmRunArgs(profile, model, profile.dockerRunFlags, {
+        VLLM_API_KEY: "a".repeat(64),
+      });
+      expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
+        "127.0.0.1:19000:8000",
+      ]);
+    },
+  );
 });

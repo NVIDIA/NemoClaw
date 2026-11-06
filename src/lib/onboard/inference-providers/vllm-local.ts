@@ -7,6 +7,10 @@
 import { isLocalProviderProbeOutputHealthy } from "../../inference/serving/model-inventory";
 import type { SetupInferenceResult, VllmDeps } from "./types";
 import { getNimInferenceEndpoints, getServedModelId } from "../../inference/nim";
+import {
+  ManagedVllmInspectionError,
+  UnsafeLegacyVllmBindingsError,
+} from "../../inference/serving/vllm-host-local-lifecycle";
 
 export async function setupVllmLocalInference(
   args: { model: string; provider: string; localNimSelected?: boolean },
@@ -30,6 +34,19 @@ export async function setupVllmLocalInference(
     error("  Local NVIDIA NIM does not serve the selected model. Onboarding stopped.");
     return exitProcess(1);
   }
+  let managedBinding: ReturnType<typeof getManagedVllmProviderBinding>;
+  try {
+    managedBinding = args.localNimSelected ? null : getManagedVllmProviderBinding();
+  } catch (bindingError) {
+    error(
+      bindingError instanceof UnsafeLegacyVllmBindingsError ||
+        bindingError instanceof ManagedVllmInspectionError
+        ? `  ${bindingError.message}`
+        : "  Managed vLLM authentication state is unsafe or unreadable.",
+    );
+    return exitProcess(1);
+  }
+
   const validation = args.localNimSelected
     ? { ok: true as const }
     : validateLocalProvider(provider);
@@ -59,13 +76,6 @@ export async function setupVllmLocalInference(
       }
       return exitProcess(1);
     }
-  }
-  let managedBinding: ReturnType<typeof getManagedVllmProviderBinding>;
-  try {
-    managedBinding = args.localNimSelected ? null : getManagedVllmProviderBinding();
-  } catch {
-    error("  Managed vLLM authentication state is unsafe or unreadable.");
-    return exitProcess(1);
   }
   const baseUrl = args.localNimSelected
     ? getNimInferenceEndpoints().baseUrl

@@ -143,15 +143,12 @@ describe("shared vLLM install setup", () => {
     expect(mocks.probeHostStorage().capacity.availableBytes).toBe(1_000_000_000_000n);
 
     mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "first-row"]);
-    expect(mocks.dockerCapture(["container"])).toBe("");
     expect(mocks.dockerCapture(["container"])).toBe("first-row");
-    expect(mocks.dockerCapture(["container"])).toBe("");
     expect(() => mocks.dockerCapture(["container"])).toThrow(
-      "No ambient Docker ownership response remains",
+      "No local Docker ownership response remains",
     );
 
     mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "second-row"]);
-    expect(mocks.dockerCapture(["container"])).toBe("");
     expect(mocks.dockerCapture(["container"])).toBe("second-row");
     mocks.dockerCapture.mockReset();
   });
@@ -263,6 +260,9 @@ describe("vLLM profile detection", () => {
       runtime.dockerRunFlags,
       {} as NodeJS.ProcessEnv,
     );
+    expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
+      "127.0.0.1:8000:8000",
+    ]);
     expect(args).toEqual(
       expect.arrayContaining([
         "--pull=never",
@@ -277,8 +277,6 @@ describe("vLLM profile detection", () => {
         "memlock=-1",
         "--label",
         `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
-        "-p",
-        "8000:8000",
         "--name",
         NEMOCLAW_VLLM_CONTAINER_NAME,
         "--entrypoint",
@@ -416,21 +414,23 @@ describe("vLLM run command", () => {
   it("adds Docker init so restarts can reap the server process (#7219)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags);
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags, {});
     expect(args.slice(0, 4)).toEqual(["--pull=never", "--init", "--restart", "unless-stopped"]);
   });
 
   it("adds --restart unless-stopped so the container survives a host reboot (#4886)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags);
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags, {});
     expect(args).toEqual(expect.arrayContaining(["--restart", "unless-stopped"]));
     expect(args).toContain("--name");
     expect(args[args.indexOf("--name") + 1]).toBe(profile!.containerName);
     expect(args).toEqual(
       expect.arrayContaining(["--label", `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`]),
     );
-    expect(args).toContain("8000:8000");
+    expect(args.flatMap((value, index) => (value === "-p" ? [args[index + 1]] : []))).toEqual([
+      "127.0.0.1:8000:8000",
+    ]);
   });
 
   it("publishes authenticated managed vLLM only on loopback (#8379)", () => {
@@ -462,6 +462,7 @@ describe("vLLM run command", () => {
       catalogProfile,
       catalogProfile.defaultModel,
       catalogProfile.dockerRunFlags,
+      {},
     );
 
     expect(args).toEqual(
@@ -863,7 +864,7 @@ describe("installVllm model resolution", () => {
     });
     const [runArgs] = mocks.dockerRunDetached.mock.calls[0] as [string[]];
     expect(runArgs).toEqual(
-      expect.arrayContaining(["--shm-size", "17179869184b", "-p", "8000:8000"]),
+      expect.arrayContaining(["--shm-size", "17179869184b", "-p", "127.0.0.1:8000:8000"]),
     );
     expect(runArgs).not.toContain("--network");
     expect(runArgs.at(-1)).toContain("--cpu-offload-gb 150");
@@ -1078,24 +1079,10 @@ describe("installVllm model resolution", () => {
       ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
       ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
     ];
-    expect(dockerAdapterOptions).toHaveLength(10);
-    const canonicalOwnershipOptions = dockerAdapterOptions.filter(
-      (options) => options.env?.DOCKER_CONTEXT === "default",
-    );
-    expect(canonicalOwnershipOptions).toHaveLength(2);
-    const ambientDockerOptions = dockerAdapterOptions.filter(
-      (options) => options.env?.DOCKER_CONTEXT !== "default",
-    );
-    expect(ambientDockerOptions).toHaveLength(8);
-    ambientDockerOptions.forEach((options) => {
-      expect(options).toEqual(
-        expect.objectContaining({
-          env: expect.objectContaining({
-            DOCKER_CONTEXT: "local-test-context",
-          }),
-        }),
-      );
-    });
+    expect(dockerAdapterOptions.length).toBeGreaterThan(0);
+    expect([
+      ...new Set(dockerAdapterOptions.map((options) => options.env?.DOCKER_CONTEXT)),
+    ]).toEqual(["default"]);
   });
 
   it("pins authenticated host-local installs to the physical default daemon (#8379)", async () => {
