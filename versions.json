@@ -1,7 +1,7 @@
 {
   "opentofu": "1.12.12",
   "openshell": "0.1.7",
-  "ollama": "0.40.11",
+  "ollama": "0.40.14",
   "platforms": {
     "linux_arm64": {
       "kind": {
@@ -17,8 +17,8 @@
         "sha256": "8b8f18bd2b30346efbc698dd5a73dd7c805f3ef8380f6dfc95c768f3f1852f6a"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-aarch64-unknown-linux-gnu.tar.gz",
-        "sha256": "9164568e9840c6509177086828ac7d3178c2d8feb0658b4d2bff62fa620e98c8"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-aarch64-unknown-linux-gnu.tar.gz",
+        "sha256": "3e35e8f6913af92558ba09d7155f74e35dd1f0024ef3cd891637433ae4eacbdd"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_arm64.zip",
@@ -47,8 +47,8 @@
         "sha256": "121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-x86_64-unknown-linux-gnu.tar.gz",
-        "sha256": "b0959bc64232974224cf9fb22c915845398c0e8668fa7831eb5b43fb1eef781f"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-unknown-linux-gnu.tar.gz",
+        "sha256": "1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_amd64.zip",
@@ -73,8 +73,8 @@
         "sha256": "9cd98a532c5c5e0c4161314de0225de27e4c8a323917b6ea7b1b714d3ae23466"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-universal-apple-darwin.tar.gz",
-        "sha256": "82a759b4d218d38359424196ab244c470e8f7c7d149c814fbbeef4d67c3c301a"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-universal-apple-darwin.tar.gz",
+        "sha256": "d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_arm64.zip",
@@ -95,8 +95,8 @@
         "sha256": "228cc7add4616cc14ca5e80dee83209d44449a7aee95a914ae748fa374efb078"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-universal-apple-darwin.tar.gz",
-        "sha256": "82a759b4d218d38359424196ab244c470e8f7c7d149c814fbbeef4d67c3c301a"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-universal-apple-darwin.tar.gz",
+        "sha256": "d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_amd64.zip",
@@ -117,8 +117,8 @@
         "sha256": "f0c128dc0d8492eceece83bb459a4c0e316764b929ffbf1aa416357fd644edd3"
       },
       "nextest": {
-        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-x86_64-pc-windows-msvc.tar.gz",
-        "sha256": "b7a8bf567140b8b366716f2dea27b32e088dc12f53597315f976d0dbf7c6ade8"
+        "url": "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-pc-windows-msvc.tar.gz",
+        "sha256": "e51bdb4b5883df48f335381b287378edb244318fac65ae0adaf6b9e69298246b"
       },
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_windows_amd64.zip",
@@ -132,7 +132,7 @@
   },
   "rust": "1.99.1",
   "protobuf": "36.2",
-  "nextest": "0.9.150",
+  "nextest": "0.9.151",
   "openshellRevision": "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c",
   "images": {
     "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
