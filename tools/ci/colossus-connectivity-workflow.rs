@@ -39,6 +39,54 @@ fn script(step: &str) -> String {
 }
 
 #[test]
+/// Both jobs reject either actor when permission lookup fails or grants insufficient access.
+fn authorizes_both_actors_and_fails_closed_in_each_job() {
+    let scripts = [script("Authorize dispatch"), script("Authorize probe")];
+    for script in scripts {
+        for (scenario, original, rerunner, allowed) in [
+            ("maintain", "owner", "operator", true),
+            ("admin", "owner", "operator", true),
+            ("write", "owner", "operator", false),
+            ("read", "owner", "operator", false),
+            ("api_failure", "owner", "operator", false),
+            ("denied_original", "writer", "operator", false),
+            ("denied_rerunner", "owner", "writer", false),
+            ("malformed", "owner", "operator", false),
+            ("maintain", "-invalid", "operator", false),
+        ] {
+            let shell = format!(
+                r#"
+gh() {{
+  case "$scenario" in
+    api_failure) echo 'synthetic-secret' >&2; return 1 ;;
+    denied_original|denied_rerunner)
+      if [[ "$*" == *'/writer/'* ]]; then echo write; else echo maintain; fi ;;
+    malformed) printf 'maintain\nwrite\n' ;;
+    *) printf '%s\n' "$scenario" ;;
+  esac
+}}
+{script}
+"#
+            );
+            let output = Command::new("bash")
+                .args(["-c", &shell])
+                .env("scenario", scenario)
+                .env("ACTOR", original)
+                .env("TRIGGERING_ACTOR", rerunner)
+                .env("GITHUB_REPOSITORY", "NVIDIA/NemoClaw")
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.success(),
+                allowed,
+                "permission scenario {scenario}"
+            );
+            assert!(!String::from_utf8_lossy(&output.stderr).contains("synthetic-secret"));
+        }
+    }
+}
+
+#[test]
 /// Synthetic SSH output must stay private, the outcome names only the failed
 /// stage, and every exit must remove credential files.
 fn publishes_only_outcome_and_commit_and_removes_credentials() {
@@ -46,6 +94,10 @@ fn publishes_only_outcome_and_commit_and_removes_credentials() {
     for (scenario, outcome) in [
         ("success", "passed"),
         ("ssh_failure", "failed (ssh)"),
+        ("dns_failure", "failed (dns)"),
+        ("tcp_failure", "failed (tcp)"),
+        ("host_key_failure", "failed (host-key)"),
+        ("authentication_failure", "failed (authentication)"),
         ("remote_failure", "failed (remote-command)"),
         ("timeout", "failed (timeout)"),
         ("interrupted", "failed (interrupted)"),
@@ -70,11 +122,20 @@ fn publishes_only_outcome_and_commit_and_removes_credentials() {
         let shim = r#"#!/bin/bash
 set -eu
 case "${0##*/}" in
+getent)
+  printf 'synthetic-private-key target.example.invalid\n' >&2
+  [[ "$scenario" != dns_failure ]] ;;
 ssh-keygen)
   if [[ "$scenario" == invalid_key && "$1" == -y ]] || [[ "$scenario" == invalid_known_hosts && "$1" == -l ]]; then
     echo synthetic-private-key >&2; exit 1
   fi ;;
 timeout)
+  if [[ "$3" == 5s ]]; then
+    [[ "$1" == --signal=TERM && "$2" == --kill-after=1s ]] || exit 82
+    [[ "$scenario" != tcp_failure ]]
+    exit
+  fi
+  [[ "$3" != 10s ]] || { shift 3; exec "$@"; }
   [[ "$1" == --signal=TERM && "$2" == --kill-after=5s && "$3" == 30s ]] || exit 82
   shift 3
   [[ "$scenario" != timeout ]] || exit 124
@@ -89,10 +150,16 @@ ssh)
   [[ -z "${PROBE_PRIVATE_KEY+x}" && -z "${PROBE_KNOWN_HOSTS+x}" ]] || exit 81
   printf 'synthetic-private-key target.example.invalid\n'
   printf 'synthetic-known-hosts synthetic-user\n' >&2
-  case "$scenario" in success) exit 0 ;; remote_failure) exit 1 ;; *) exit 255 ;; esac ;;
+  case "$scenario" in
+    success) exit 0 ;;
+    remote_failure) exit 1 ;;
+    host_key_failure) echo 'Host key verification failed. synthetic-private-key' >&2; exit 255 ;;
+    authentication_failure) echo 'synthetic-user: Permission denied (publickey).' >&2; exit 255 ;;
+    *) exit 255 ;;
+  esac ;;
 esac
 "#;
-        for command in ["ssh", "ssh-keygen", "timeout"] {
+        for command in ["ssh", "ssh-keygen", "timeout", "getent"] {
             use std::os::unix::fs::PermissionsExt;
             let path = bin.join(command);
             fs::write(&path, shim).unwrap();
@@ -150,7 +217,10 @@ esac
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary_text = fs::read_to_string(&summary).unwrap();
         let allowed = scenario == "success";
-        if scenario.starts_with("missing_") || scenario.starts_with("invalid_") {
+        if scenario.starts_with("missing_")
+            || scenario.starts_with("invalid_")
+            || matches!(scenario, "dns_failure" | "tcp_failure")
+        {
             assert!(
                 !bin.join("ssh-invoked").exists(),
                 "SSH invoked with rejected inputs in {scenario}"
