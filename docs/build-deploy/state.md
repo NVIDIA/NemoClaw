@@ -217,9 +217,13 @@ Destroy removes workloads but leaves some bound data and infrastructure for expl
 | Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
-| Managed Docker or Podman gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
+| Managed Docker or Podman gateway | Process removed; database, signing/encryption keys, the gateway's Docker or Podman network, and stopped initializer retained |
 | Managed Kubernetes gateway | Release and development issuer removed; namespace, credential key Secret, and the gateway's persistent volumes retained |
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |
+
+The retained network keeps its `spec.gateway.networkCIDR` subnet on that engine.
+A new deployment on the same host needs a different `networkCIDR`, or [remove the retained resources](usage.md#remove-retained-resources) first.
+Redeploying the same deployment, with the same `metadata.uid` and state directory, reuses the network.
 
 The [teardown implementation](../../crates/nemoclaw-sdk/src/deployment/runtime/teardown.rs) selects retained bindings.
 Destroy's JSON `retained` list identifies tracked resource addresses; it is not an inventory of every host file or externally owned resource.

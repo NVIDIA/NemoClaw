@@ -401,6 +401,21 @@ The installer contract has no separate recovery operation and does not create an
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
 Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.
 
+### Recover After a Host Reboot
+
+After the host restarts, the engine starts a managed Docker gateway again, because its restart policy is `unless-stopped`, but not a managed vLLM or Ollama container, whose restart policy is `no`; see the [provider reference](../references/provider.md#docker-gateway-launch).
+From the directory containing the original `deployment.yaml`, with the matching bundle on `PATH`, plan and then apply with the deployment's state directory:
+
+```sh
+nemoclaw plan --state-dir .local/deployment deployment.yaml
+nemoclaw apply --state-dir .local/deployment deployment.yaml
+```
+
+The plan shows each stopped model container replaced; the default `updatePolicy: Preserve` permits this because the container no longer runs.
+Apply creates the new container on the retained model-cache volume and waits for the service's readiness.
+As after a [gateway restart](#configure-a-managed-gateway), the same apply starts each agent's runtime again in its sandbox.
+If a model container had stopped before the reboot, find out why before applying; see [Diagnose and Recover a Stopped Runtime](../agents-inference/models.md#diagnose-and-recover-a-stopped-runtime).
+
 ### Replace Workloads After an Unusable Runtime
 
 When OpenShell reports that a sandbox exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
@@ -442,7 +457,7 @@ nemoclaw apply --state-dir .local/deployment deployment.yaml
 
 This procedure follows the implemented CLI lifecycle; recovery from arbitrary malformed inputs remains unqualified.
 Recreation starts the runtime but does not check that it answers.
-Check the recreated runtime with one [request](../agents-inference/agents.md#run-one-deep-agents-or-pi-request) before relying on it; do not replay an invocation whose effects are unknown merely to test recovery.
+Check the recreated runtime with one [request](../agents-inference/agents.md#run-one-agent-request) before relying on it; do not replay an invocation whose effects are unknown merely to test recovery.
 
 ### Recover from an Unfinished Helm Install
 

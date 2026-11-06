@@ -13,7 +13,7 @@ After apply, one headless request through Fabric's public invocation returns a r
 
 ## How to get to it (user POV)
 
-- `openshell sandbox exec` with `fabric-agent-ctl invoke`, as [Invoke an Agent](../../../../docs/agents-inference/interfaces.md#invoke-an-agent) and [Run One Request](../../../../docs/agents-inference/agents.md#run-one-deep-agents-or-pi-request) document; the [OpenClaw example](../../../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) reads the runtime ID the same way.
+- `openshell sandbox exec` with `fabric-agent-ctl invoke`, as [Invoke an Agent](../../../../docs/agents-inference/interfaces.md#invoke-an-agent) and [Run One Request](../../../../docs/agents-inference/agents.md#run-one-agent-request) document; the [OpenClaw example](../../../../docs/agents-inference/agents.md#run-one-headless-openclaw-request) reads the runtime ID the same way.
 - The agent's native interfaces, where the agent file lists a feature for them; apply lists them under **Agent interfaces**.
 
 ## Driving it with the nemoclaw and OpenShell CLIs
