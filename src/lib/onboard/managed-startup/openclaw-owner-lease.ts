@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { stripTypeScriptTypes } from "node:module";
 
-import { ROOT } from "../../state/paths";
+const observerAssets = path.resolve(__dirname, "../../../../scripts/lib");
 
 // Allow container and interpreter startup/teardown outside the native
 // five-minute lease window. The observer itself still waits at most 300 seconds.
@@ -17,12 +17,9 @@ export const OPENCLAW_OWNER_LEASE_EXECUTION_TIMEOUT_MS = 330_000;
  * Neither path reclaims locks or releases the startup hold.
  */
 export function buildOpenClawOwnerLeaseObserver(): string {
-  const reader = readFileSync(
-    path.join(ROOT, "scripts", "lib", "openclaw_pairing_state.py"),
-    "utf8",
-  );
+  const reader = readFileSync(path.join(observerAssets, "openclaw_pairing_state.py"), "utf8");
   const nativeObserver = stripTypeScriptTypes(
-    readFileSync(path.join(ROOT, "scripts", "lib", "openclaw-gateway-owner.mts"), "utf8"),
+    readFileSync(path.join(observerAssets, "openclaw-gateway-owner.mts"), "utf8"),
   );
   const nativeProgram = `${nativeObserver}
 try {
