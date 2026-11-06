@@ -734,9 +734,23 @@ async function enrichFromPolicy(
 
   const denyTools = denyToolInspection.ok ? denyToolInspection.selectors : [];
 
+  // Check for policy conflicts
+  const hasNamedAllowRules = allowRules.length > 0;
+  const hasDenyRules = denyRulesFromEndpoint.length > 0 || legacyDenyTools.length > 0;
+
+  // Named allow rules conflict with deny rules or unparameterized tools/call rules
+  const hasUnparameterizedToolsCallRule = Array.isArray(endpoint.deny_rules)
+    ? endpoint.deny_rules.some((rule) =>
+        isObjectRecord(rule) &&
+        rule.method === "tools/call" &&
+        (!isObjectRecord(rule.params) || typeof rule.params.name !== "string")
+      )
+    : false;
+
   const policyConflict =
     !denyToolInspection.ok ||
     !legacyDeniedToolInspection.ok ||
+    (hasNamedAllowRules && (hasDenyRules || hasUnparameterizedToolsCallRule)) ||
     (allowRules.length > 0 ? allowRules.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool)) : false)
       ? "Live policy contains invalid tool selectors."
       : endpointConflict;

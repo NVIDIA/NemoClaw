@@ -120,6 +120,22 @@ function visibleEntries() {
     );
 }
 
+/** Collect all non-hidden display entries (excluding intentionally hidden ones). */
+function nonHiddenDisplayEntries() {
+  return Object.entries(PUBLIC_DISPLAY_ENTRIES)
+    .filter(([commandId]) => !USAGE_NOT_IN_COMMAND_SOURCE.has(commandId))
+    .flatMap(([commandId, entries]) =>
+      entries
+        .filter((entry) => !entry.hidden)
+        .map((entry) => ({
+          commandId,
+          usage: entry.usage,
+          flags: entry.flags,
+          ...(commandId === "sandbox:mcp" ? { subcommand: entry.usage.split(" ").at(-1) } : {}),
+        })),
+    );
+}
+
 /** Extract sandbox usage hints from the policy-channel source for parity checks. */
 function parseUsageHints() {
   const source = fs.readFileSync(POLICY_CHANNEL_SOURCE, "utf8");
@@ -135,4 +151,4 @@ function parseUsageHints() {
   });
 }
 
-export { visibleEntries, parseUsageHints, missingUsageFlags, extraUsageFlags };
+export { visibleEntries, nonHiddenDisplayEntries, parseUsageHints, missingUsageFlags, extraUsageFlags };

@@ -86,6 +86,7 @@ import {
   assertMcpCredentialBoundaryRuntimeVersion,
   assertValidAllowToolSelector,
   buildMcpBridgeProviderName,
+  normalizeAllowTools,
   normalizeMcpDenyTools,
   normalizeMcpServerUrl,
   preflightMcpServerUrlResolvedTarget,
@@ -973,14 +974,13 @@ async function addMcpBridgeUnlocked(
         2,
       );
     }
-    const deduplicated = [...new Set(options.allowTools.map(assertValidAllowToolSelector))].sort();
+    normalizedAllowTools = normalizeAllowTools(options.allowTools.map(assertValidAllowToolSelector));
     if (denyTools.length > 0) {
       throw new McpBridgeError(
         "Cannot specify both --deny-tool and --allow-tool. Choose one mode: explicit denials or explicit allowlist (deny-by-default).",
         2,
       );
     }
-    normalizedAllowTools = deduplicated;
   }
   const toolPolicy = computeToolPolicy(normalizedAllowTools, denyTools);
 
@@ -1417,7 +1417,7 @@ async function updateMcpBridgeAllowToolsUnlocked(
 ): Promise<void> {
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
-  const normalizedAllowTools = [...new Set(allowTools.map(assertValidAllowToolSelector))].sort();
+  const normalizedAllowTools = normalizeAllowTools(allowTools.map(assertValidAllowToolSelector));
   const sandbox = getSandboxOrThrow(sandboxName);
   const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);

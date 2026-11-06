@@ -285,6 +285,7 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
 
 export const VALID_ALLOW_TOOL_RE = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
 export const VALID_IDENTITY_RE = /^sha256:[a-f0-9]{64}$/;
+export const MCP_ALLOW_TOOL_SELECTOR_MAX_COUNT = MCP_DENIED_TOOL_SELECTOR_MAX_COUNT;
 
 /**
  * Validate an allow-tool selector and throw on invalid input.
@@ -298,6 +299,20 @@ export function assertValidAllowToolSelector(tool: string): string {
     );
   }
   return tool;
+}
+
+export function normalizeAllowTools(tools: readonly string[]): string[] {
+  if (tools.length > MCP_ALLOW_TOOL_SELECTOR_MAX_COUNT) {
+    throw new McpBridgeError(
+      `MCP allow-tool policy accepts at most ${String(MCP_ALLOW_TOOL_SELECTOR_MAX_COUNT)} selectors.`,
+      2,
+    );
+  }
+  const deduplicated = [...new Set(tools)];
+  if (deduplicated.length !== tools.length) {
+    throw new McpBridgeError("Duplicate --allow-tool declarations are not accepted.", 2);
+  }
+  return deduplicated.sort();
 }
 
 /**
@@ -502,7 +517,7 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     );
   }
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
-  const normalizedAllowTools = allowTools.length > 0 ? [...new Set(allowTools)].sort() : undefined;
+  const normalizedAllowTools = allowTools.length > 0 ? normalizeAllowTools(allowTools) : undefined;
 
   return {
     server,

@@ -5,9 +5,9 @@ import { describe, expect, test, vi } from "vitest";
 
 import { help } from "../actions/root-help";
 import { visibleCommands } from "./command-registry";
-import { visibleEntries, parseUsageHints, missingUsageFlags, extraUsageFlags } from "./usage-parity-support";
+import { visibleEntries, nonHiddenDisplayEntries, parseUsageHints, missingUsageFlags, extraUsageFlags } from "./usage-parity-support";
 
-const ANSI_SGR = /\u001b\[[0-9;]*m/g;
+const ANSI_SGR = /[\u001b\[[0-9;]*m/g;
 
 const helpOutput = vi.spyOn(console, "log").mockImplementation(() => {});
 help();
@@ -20,6 +20,17 @@ const publicHelpEntries = visibleEntries()
   );
 
 describe("public display usage parity", () => {
+  test("verifies all non-hidden display entries have visible commands", () => {
+    const nonHiddenEntries = nonHiddenDisplayEntries();
+    expect(nonHiddenEntries.length).toBeGreaterThan(0);
+    for (const entry of nonHiddenEntries) {
+      const command = visibleCommands().find(
+        (candidate) => candidate.commandId === entry.commandId && candidate.usage === entry.usage,
+      );
+      expect(command).toBeDefined();
+    }
+  });
+
   /** Fail loudly if hint parsing ever yields nothing instead of silently passing. */
   const usageHints = parseUsageHints();
   test("parses usage hints", () => {
