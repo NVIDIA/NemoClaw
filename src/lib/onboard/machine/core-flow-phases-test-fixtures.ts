@@ -135,9 +135,7 @@ export function createPhases(
         _gatewayName: string,
         operation: () => Promise<T> | T,
       ) => await operation(),
-      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
-        await operation(),
-      getModelRouterPort: () => 4000,
+
       normalizeHermesAuthMethod: (value) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({
@@ -188,12 +186,7 @@ export function createPhases(
       getOpenshellBinary: () => "openshell",
       needsBedrockRuntimeAdapter: () => false,
       isInferenceRouteReady: (_gatewayName, _provider, _model) => false,
-      isRoutedInferenceProvider: () => false,
-      reconcileModelRouter: vi.fn(async () => undefined),
-      reupsertRoutedProvider: (_gatewayName, _provider, _endpointUrl, _credentialEnv) => ({
-        ok: true,
-        endpointUrl: "https://example.test/v1",
-      }),
+
       reserveSandboxInferenceRoute: vi.fn(() => true),
       hasSandboxLifecycleAuthority: vi.fn(() => false),
       registryUpdateSandbox: vi.fn(),

@@ -97,6 +97,32 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
+  it.each([true, false])(
+    "rejects legacy router resume before durable state changes (resumable=%s)",
+    async (resumable) => {
+      const stored = { ...createSession({ provider: "nvidia-router" }), resumable };
+      const before = structuredClone(stored);
+      const { deps, getSession } = createDeps(stored);
+      await expect(
+        prepareOnboardSession(
+          {
+            resume: true,
+            fresh: false,
+            requestedFromDockerfile: null,
+            requestedSandboxName: "saved",
+            cannotPrompt: true,
+            nonInteractive: true,
+          },
+          deps,
+        ),
+      ).rejects.toThrow("Model Router has been removed");
+      expect(deps.updateSession).not.toHaveBeenCalled();
+      expect(deps.applySessionRecovery).not.toHaveBeenCalled();
+      expect(deps.saveSession).not.toHaveBeenCalled();
+      expect(getSession()).toEqual(before);
+    },
+  );
+
   it.each(["thread-opt-in", "disabled"] as const)(
     "preserves explicit DCode %s intent across interruption before sandbox registration",
     async (mode) => {

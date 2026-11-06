@@ -1281,11 +1281,9 @@ Failed targets still write a manifest for diagnosis, and the existing artifact u
 The manifest is secret-free diagnostic evidence.
 It does not replace the workflow job result or the strict `Release qualification` aggregate.
 
-The `model-router-provider-routed-inference` target writes `router-diagnostics.json` before sandbox cleanup.
-It summarizes the final 64 KiB of the router log as fixed status flags and a completion-response count.
-It never copies log text, request content, or credentials into that file.
-An unavailable log is recorded explicitly; a false flag does not prove that an unlogged event did not occur.
-The cleanup registry captures diagnostics before destroying the sandbox and records capture failures separately from the test failure.
+The deprecated built-in Model Router target and its router-log diagnostics were removed with the feature (#14066).
+Legacy destroy and uninstall cleanup remain covered by their existing lifecycle tests.
+Retired selectors fail validation instead of silently selecting another target.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 

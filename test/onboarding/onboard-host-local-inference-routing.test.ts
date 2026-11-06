@@ -460,17 +460,7 @@ describe("onboard host-local inference routing", () => {
 
   it("explicitly clears stale host-local ownership for a remote route", async () => {
     const harness = createHarness({
-      overrides: {
-        isRoutedInferenceProvider: () => true,
-        reconcileModelRouter: vi.fn(async () => undefined),
-        routedInference: {
-          upsertRoutedProvider: vi.fn(() => ({
-            ok: true,
-            endpointUrl: "https://api.example.test/v1",
-            result: { message: "configured" },
-          })),
-        },
-      },
+      overrides: {},
     });
     await expect(
       harness.setupInference(
