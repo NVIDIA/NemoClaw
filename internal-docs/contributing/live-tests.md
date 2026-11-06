@@ -82,7 +82,7 @@ Run blocks call these modules:
 | `docker-openclaw-vllm` | Live / HCL, NVIDIA GPU runner | OpenClaw on a [vLLM model](#generic-models) the deployment serves; any reply. |
 | `docker-openclaw-vllm-shared` | Live / HCL, NVIDIA GPU runner | Two OpenClaw agents sharing one vLLM model with bearer authentication; any reply from each. |
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
-| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
+| `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in Hermes's sandbox, a pseudo-terminal; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
 | `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
@@ -232,7 +232,8 @@ A request there must get the stub's 401, which shows that it reached the stub; w
 A connection to the managed gateway, at the gateway network's second address and its endpoint's port, must fail with `EACCES`, OpenShell's refusal: no grant names that host, and the sandbox's OpenShell proxy, which runs on the host network, can reach it.
 The stub's reply does not establish inference; `docker-openclaw-nvidia` covers hosted inference.
 
-Hermes's browser chat needs a pseudo-terminal, and is not checked live.
+Hermes's browser chat runs its terminal UI in a pseudo-terminal, so one more command in Hermes's sandbox opens one with `python3`'s `os.openpty()`; that needs the read-write `/dev/pts` the Hermes image's default policy grants.
+The chat itself is not checked live.
 Rejected interfaces, refused tokens, a killed dashboard process, and tokens kept out of output and state are integration checks ([#14060](https://github.com/NVIDIA/NemoClaw/issues/14060)).
 
 ## Docker Gateway Isolation
