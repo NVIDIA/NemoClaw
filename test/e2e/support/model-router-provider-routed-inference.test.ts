@@ -259,6 +259,7 @@ describe("Model Router native agent admission", () => {
   async function runAgentProgram(
     params: Record<string, unknown>,
     overrides: Record<string, string> = {},
+    resolution: "absolute" | "unset" | "bare" | "missing" = "absolute",
   ) {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "router-agent-"));
     try {
@@ -277,14 +278,31 @@ describe("Model Router native agent admission", () => {
         }`,
       );
       const binary = path.join(runtime, "openclaw.mjs");
-      await fs.writeFile(binary, "");
+      await fs.writeFile(binary, "", { mode: 0o700 });
+      await fs.symlink(binary, path.join(runtime, "openclaw"));
+      const bashEnv = path.join(directory, "bash-env.sh");
+      await fs.writeFile(
+        bashEnv,
+        `export PATH="$FIXTURE_OPENCLAW_PATH:$PATH"
+openclaw() { printf 'The runtime guard must not be invoked.\n' >&2; return 97; }
+`,
+      );
       const command = modelRouterAgentCommand(params);
       return spawnSync(command[0]!, command.slice(1), {
         encoding: "utf8",
         env: {
           HOME: directory,
           PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
-          OPENCLAW_BIN: binary,
+          BASH_ENV: bashEnv,
+          FIXTURE_OPENCLAW_PATH: runtime,
+          OPENCLAW_BIN:
+            resolution === "unset"
+              ? undefined
+              : resolution === "bare"
+                ? "openclaw"
+                : resolution === "missing"
+                  ? path.join(directory, "missing-openclaw")
+                  : binary,
           OPENCLAW_GATEWAY_TOKEN: "synthetic-gateway-token",
           ...overrides,
         },
@@ -323,6 +341,29 @@ describe("Model Router native agent admission", () => {
         progress: false,
       },
     });
+    expect(result.stdout + result.stderr).not.toContain("synthetic-gateway-token");
+  });
+
+  it.each(["unset", "bare"] as const)(
+    "loads the native SDK when the runtime guard shadows the %s executable setting",
+    async (resolution) => {
+      const params = { agentId: "main", model: "nvidia-routed", provider: "inference" };
+      const result = await runAgentProgram(params, {}, resolution);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        method: "agent",
+        authenticated: true,
+        params,
+      });
+      expect(result.stdout + result.stderr).not.toContain("synthetic-gateway-token");
+    },
+  );
+
+  it("rejects a missing executable before gateway admission", async () => {
+    const result = await runAgentProgram({}, { REJECT_AGENT: "1" }, "missing");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).not.toContain("Agent admission denied.");
     expect(result.stdout + result.stderr).not.toContain("synthetic-gateway-token");
   });
 

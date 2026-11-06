@@ -131,7 +131,8 @@ export function modelRouterAgentCommand(params: Record<string, unknown>): string
     `set -eu
 ${buildTrustedProxyEnvSourceShell()}
 : "\${OPENCLAW_GATEWAY_TOKEN:?The OpenClaw gateway token is required.}"
-exec node --input-type=module --eval "$1" "$2" "\${OPENCLAW_BIN:-$(command -v openclaw)}"
+openclaw_binary="$(type -P -- "\${OPENCLAW_BIN:-openclaw}")"
+exec node --input-type=module --eval "$1" "$2" "$openclaw_binary"
 `,
     "model-router-agent",
     MODEL_ROUTER_AGENT_PROGRAM,
