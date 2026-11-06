@@ -415,16 +415,22 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     }
     if (token === "--transport") {
       const t = argv[++i] ?? "";
-      if (t !== "sse" && t !== "stdio") {
-        throw new McpBridgeError("Invalid --transport. Must be 'sse' or 'stdio'.", 2);
+      if (t !== "sse") {
+        throw new McpBridgeError(
+          "Invalid --transport. Managed HTTPS MCP URLs must use SSE transport for OpenShell credential enforcement.",
+          2,
+        );
       }
       transport = t;
       continue;
     }
     if (token?.startsWith("--transport=")) {
       const t = token.slice("--transport=".length);
-      if (t !== "sse" && t !== "stdio") {
-        throw new McpBridgeError("Invalid --transport. Must be 'sse' or 'stdio'.", 2);
+      if (t !== "sse") {
+        throw new McpBridgeError(
+          "Invalid --transport. Managed HTTPS MCP URLs must use SSE transport for OpenShell credential enforcement.",
+          2,
+        );
       }
       transport = t;
       continue;
@@ -444,14 +450,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse]",
       2,
     );
   }

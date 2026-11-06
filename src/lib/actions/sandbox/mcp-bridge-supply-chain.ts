@@ -76,9 +76,10 @@ export function enforceTransportTrust(entry: McpSourceEntry, requireOAuth: boole
   }
 
   if (transport === "stdio") {
-    // Warn but allow for backward compatibility with local development
-    console.warn(
-      `  WARNING: MCP server '${entry.server}' uses STDIO transport. This bypasses OpenShell network policies and credential boundaries. Prefer SSE (--transport sse) for production.`,
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' uses STDIO transport. Managed HTTPS MCP URLs must use SSE transport for OpenShell credential enforcement.`,
+      2,
+      "supply-chain",
     );
   }
 }

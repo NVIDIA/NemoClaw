@@ -386,6 +386,24 @@ describe("generated MCP policy", () => {
     ).rejects.toThrow(/without exact public address pins/);
   });
 
+  it("rejects policyConflict before applying policy or calling applyPresetContent", async () => {
+    const conflictedEntry = {
+      ...entry,
+      policyConflict: "Live policy contains invalid tool selectors.",
+    };
+    const applyPresetContentSpy = vi.spyOn(policies, "applyPresetContent").mockResolvedValue(true);
+    const getPresetContentGatewayStateSpy = vi
+      .spyOn(policies, "getPresetContentGatewayState")
+      .mockResolvedValue("match");
+
+    await expect(
+      applyGeneratedPolicy("alpha", conflictedEntry, { addresses: ["8.8.8.8"] }, { runtimeSelection }),
+    ).rejects.toThrow(/Live policy contains invalid tool selectors/);
+
+    expect(applyPresetContentSpy).not.toHaveBeenCalled();
+    expect(getPresetContentGatewayStateSpy).not.toHaveBeenCalled();
+  });
+
   it("refuses to render a credential binding without an exact provider name", () => {
     expect(() =>
       buildMcpBridgePolicyYaml(

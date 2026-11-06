@@ -445,4 +445,198 @@ describe("MCP CLI input validation", () => {
       ]),
     ).toThrow(/requires exactly one --env KEY/);
   });
+
+  it("parses --allow-tool as separate argument", () => {
+    const parsed = parseMcpAddArgs([
+      "github",
+      "--url",
+      "https://api.githubcopilot.com/mcp/",
+      "--env",
+      "GITHUB_TOKEN",
+      "--allow-tool",
+      "read_repo",
+    ]);
+    expect(parsed.allowTools).toEqual(["read_repo"]);
+    expect(parsed.denyTools).toBeUndefined();
+  });
+
+  it("parses --allow-tool=value as equals-form argument", () => {
+    const parsed = parseMcpAddArgs([
+      "github",
+      "--url",
+      "https://api.githubcopilot.com/mcp/",
+      "--env",
+      "GITHUB_TOKEN",
+      "--allow-tool=list_issues",
+    ]);
+    expect(parsed.allowTools).toEqual(["list_issues"]);
+  });
+
+  it("accepts and sorts deduplicated --allow-tool selectors", () => {
+    const parsed = parseMcpAddArgs([
+      "github",
+      "--url",
+      "https://api.githubcopilot.com/mcp/",
+      "--env",
+      "GITHUB_TOKEN",
+      "--allow-tool=read_repo",
+      "--allow-tool=read_repo",
+      "--allow-tool=list_issues",
+    ]);
+    expect(parsed.allowTools).toEqual(["list_issues", "read_repo"]);
+  });
+
+  it.each(["", "tool name", "tool/name", "123tool", "a".repeat(129)])(
+    "rejects invalid --allow-tool selector %# in add args",
+    (tool) => {
+      expect(() =>
+        parseMcpAddArgs([
+          "github",
+          "--url",
+          "https://mcp.example.test/mcp",
+          "--env",
+          "GITHUB_TOKEN",
+          "--allow-tool",
+          tool,
+        ]),
+      ).toThrow(/Invalid --allow-tool selector/);
+    },
+  );
+
+  it("rejects --allow-tool with --deny-tool in add args", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--deny-tool",
+        "delete_*",
+        "--allow-tool",
+        "read_repo",
+      ]),
+    ).toThrow(/Cannot specify both --deny-tool and --allow-tool/);
+  });
+
+  it("validates --server-identity format in add args", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--server-identity",
+        "not-valid",
+      ]),
+    ).toThrow(/Invalid --server-identity/);
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--server-identity",
+        "sha256:" + "a".repeat(64),
+      ]),
+    ).not.toThrow();
+  });
+
+  it("rejects --transport=stdio in add args", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--transport",
+        "stdio",
+      ]),
+    ).toThrow(/Managed HTTPS MCP URLs must use SSE transport/);
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://mcp.example.test/mcp",
+        "--env",
+        "GITHUB_TOKEN",
+        "--transport=stdio",
+      ]),
+    ).toThrow(/Managed HTTPS MCP URLs must use SSE transport/);
+  });
+
+  it("accepts --transport=sse in add args", () => {
+    const parsed = parseMcpAddArgs([
+      "github",
+      "--url",
+      "https://mcp.example.test/mcp",
+      "--env",
+      "GITHUB_TOKEN",
+      "--transport",
+      "sse",
+    ]);
+    expect(parsed.transport).toBe("sse");
+  });
+
+  it("parses replacement and clear forms for allow-tool updates", () => {
+    expect(
+      parseMcpUpdateArgs([
+        "doordash",
+        "--allow-tool",
+        "doordash_submit_order",
+        "--allow-tool=admin_tool",
+      ]),
+    ).toEqual({ server: "doordash", allowTools: ["admin_tool", "doordash_submit_order"] });
+    expect(parseMcpUpdateArgs(["doordash", "--clear-allow-tools"])).toEqual({
+      server: "doordash",
+      clearAllowTools: true,
+    });
+  });
+
+  it("rejects --allow-tool with --deny-tool in update args", () => {
+    expect(() =>
+      parseMcpUpdateArgs([
+        "github",
+        "--allow-tool",
+        "read_repo",
+        "--deny-tool",
+        "delete_*",
+      ]),
+    ).toThrow(/Pass repeated --allow-tool options or --clear-allow-tools, but not with --deny-tool/);
+  });
+
+  it("rejects --allow-tool with --clear-deny-tools in update args", () => {
+    expect(() =>
+      parseMcpUpdateArgs([
+        "github",
+        "--clear-deny-tools",
+        "--allow-tool",
+        "read_repo",
+      ]),
+    ).toThrow(/Pass repeated --allow-tool options or --clear-allow-tools, but not with --deny-tool/);
+  });
+
+  it("rejects --deny-tool with --clear-allow-tools in update args", () => {
+    expect(() =>
+      parseMcpUpdateArgs([
+        "github",
+        "--clear-allow-tools",
+        "--deny-tool",
+        "delete_*",
+      ]),
+    ).toThrow(/Pass --clear-allow-tools alone to remove the allowlist/);
+  });
+
+  it("rejects invalid --allow-tool selector in update args", () => {
+    expect(() =>
+      parseMcpUpdateArgs([
+        "github",
+        "--allow-tool",
+        "123invalid",
+      ]),
+    ).toThrow(/Invalid --allow-tool selector/);
+  });
 });

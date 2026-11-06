@@ -81,6 +81,9 @@ const entry: McpSourceEntry = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.preflightMcpEntryTargets.mockResolvedValue(
+    new Map([["github", { addresses: ["8.8.8.8"] }]]),
+  );
   mocks.inspectSourceBridgeState.mockReturnValue({
     bridges: { github: entry },
     sources: { native: { github: entry }, legacy: {} },
