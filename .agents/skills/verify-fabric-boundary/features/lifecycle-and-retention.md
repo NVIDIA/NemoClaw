@@ -90,13 +90,15 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 5. **After a transition:** set `PHASE` to the next phase's directory, write its [fresh phase input](README.md#driving-conventions), and re-run every check whose Phases list names that phase, in the [map's order](README.md#features).
    The [lifecycle phases](README.md#lifecycle-phases) table gives each After-phase's check count; run exactly those.
    Record the transition's own row in `$EVIDENCE/checks.md` once its result is known.
-6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3, then stop only the runtime through Fabric's supported control. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
+6. **`extension-runtime-restart`:** with `PHASE=runtime-restart` and `CASE=extension-runtime-restart`, run step 3.
+   For Hermes, prepare [the open TUI and in-flight probe](native-interfaces.md#prepare-and-observe-the-stop) before stopping; finish that check's stop, cancellation, stale-entry, and persistence observations before recovery.
+   Stop only the runtime through Fabric's supported control. Save the control's help, the exact command, and its output in `$CHECK_DIR`.
 
    Result: the control reports a stop that succeeded, with no error.
    Run step 4; review the plan before apply and do not proceed if it replaces the sandbox, as the [gotchas](#gotchas) require.
    Pass when `container-before.txt` and `container-after.txt` match, `runtime-after.txt` differs from `runtime-before.txt`, and the request in step 4 succeeds on the new runtime.
    A stop with no supported control is Failed, linked to one missing-implementation finding; a runtime that plan/apply doesn't bring back is Failed.
-   Then run step 5 with `PHASE=after-runtime-restart`.
+   Then run step 5 with `PHASE=after-runtime-restart`, including `hermes-tui-recovery` for Hermes.
 7. **`stop-start`:** with `PHASE=stop-start` and `CASE=stop-start`, run step 3, then stop the same sandbox through OpenShell's supported control, confirm it is stopped and unreachable, and start it again. Save the control's help, each command, and its output in `$CHECK_DIR`. While the sandbox is stopped, record:
 
    ```sh
@@ -185,7 +187,7 @@ Each transition uses steps 3, 4, and 5 around its own commands.
 
 - Never reseed a marker, the supplied skill, or anything else after a transition. A missing or changed file is evidence.
 - Retained files prove neither discovery, registration, fresh execution, nor conversation resume. [skills](skills.md) tracks rediscovery of a generated skill separately; don't infer conversation resume from `retention`.
-- Each transition starts a new runtime or sandbox: an old `RUNTIME_ID` fails with `runtime_unavailable`, and old interface entry points or tokens are gone. Step 4 reads both again.
+- After runtime replacement, the old `RUNTIME_ID` fails with `runtime_unavailable`; old entry points or tokens must not grant access to that runtime. A leftover launcher file alone proves neither access nor cleanup. Step 4 reads the current runtime and entry points again.
 - Stop only what the check names. `extension-runtime-restart` stops the Fabric runtime, not the sandbox; `stop-start` stops the sandbox, not the gateway, model service, or Docker daemon.
 - Don't substitute `docker stop`, `docker restart`, or killing the runtime's process for the supported controls; a killed runtime can leave interface markers behind.
 - An explicit `fabric-agent-ctl start`, or a runtime started by hand, is at most a separately recorded diagnostic. Never put its handle in state, and stop it before teardown.
