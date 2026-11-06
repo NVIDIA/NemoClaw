@@ -327,8 +327,10 @@ impl Api {
             fields(&row, 4)?;
             let submitted = number(&row[3])?;
             if submitted <= merged {
-                validate_sha(&row[2])?;
-                commits.insert(row[2].clone());
+                if !row[2].is_empty() {
+                    validate_sha(&row[2])?;
+                    commits.insert(row[2].clone());
+                }
                 report.reviews.push(Review {
                     id: number(&row[0])?,
                     state: row[1].clone(),
@@ -504,7 +506,7 @@ impl Api {
             .map_err(|e| format!("Cannot post report: {e}"))?;
         if !output.status.success() {
             return Err(format!(
-                "Report publication failed; inspect existing comments before retrying: {}",
+                "Report publication failed; retain the report and inspect existing comments: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
@@ -512,7 +514,7 @@ impl Api {
         let posted = self.rows(&format!("issues/comments/{id}"), "[.body] | @tsv")?;
         if posted != vec![vec![body]] {
             return Err(
-                "Posted report did not match readback; inspect comments before retrying".into(),
+                "Posted report did not match readback; stop and investigate, do not retry".into(),
             );
         }
         Ok(())

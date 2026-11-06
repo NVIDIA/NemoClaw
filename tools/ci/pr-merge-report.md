@@ -50,10 +50,10 @@ rustc --edition=2024 -D warnings --test tools/ci/pr-merge-report-workflow.rs -o 
 /tmp/adapter-tests
 ```
 
-If GitHub confirms that a historical commit is unavailable, the reporter lists
-that revision as a history gap and collects the remaining revisions. It checks
-the commit endpoint before treating a check or status lookup as missing history.
-Access failures, other API failures and missing merged PR revisions stop reporting.
+After the commit endpoint confirms a missing historical revision, the report
+lists the history gap and retains available revisions. Reviews without commit
+attribution remain in the report without commit lookups. Access failures,
+other API failures and missing merged PR revisions stop reporting.
 
 These tests cannot prove GitHub event selection, effective token permissions or
 the real checkout action. The `report` job owns that live boundary. It runs on
@@ -94,10 +94,10 @@ These fields bind the evidence to the installed implementation. Keep a failed
 or missing observation pending; a checked-in scenario or fixture pass is not a
 hosted acceptance receipt. A changed workflow or reporter needs fresh evidence.
 
-The API-failure fixtures cover successful POST followed by failed readback.
-Do not inject that failure into the live repository. If it occurs naturally,
-retain the failed run and its full report, inspect the existing bot comment,
-and apply the repository's bounded retry policy before retrying publication.
-A retry regenerates the full report even when the bot comment already exists.
-The publication guard prevents another POST, and successful verification retains
-the recovered attempt's report and receipt.
+Keep readback API failure injection in fixtures. For a live failure, retain the
+run and report, then inspect the bot comment. If readback content differs from
+the posted report, stop and investigate. Do not retry integrity failures or
+access denials. Retry transient API failures only under the repository's
+[bounded retry policy](../../.agents/skills/_shared/pr-follow-up.md#bounded-retry-policy).
+An allowed retry regenerates the report; an existing bot report prevents another
+POST. Successful verification retains the recovered report and receipt.

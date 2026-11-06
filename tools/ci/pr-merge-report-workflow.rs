@@ -37,7 +37,7 @@ case "$endpoint" in
   repos/example/repo/pulls/1/commits*)
     printf '[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]\n[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]\n' ;;
   repos/example/repo/pulls/1/reviews*)
-    printf '[{"id":7,"state":"CHANGES_REQUESTED","commit_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","submitted_at":"2026-01-01T00:03:00Z"}]\n' ;;
+    jq -n --arg scenario "$SCENARIO" '[{id:7,state:"CHANGES_REQUESTED",commit_id:(if $scenario == "null_review" then null elif $scenario == "invalid_review" then "not-a-sha" else "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" end),submitted_at:"2026-01-01T00:03:00Z"}]' ;;
   repos/example/repo/actions/runs\?*)
     printf '{"total_count":1,"workflow_runs":[{"id":11,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-01-01T00:01:00Z","workflow_id":9,"event":"pull_request","head_branch":"fork-feature","pull_requests":[{"number":1}]}]}\n'
     printf '{"total_count":2,"workflow_runs":[{"id":12,"head_repository":{"id":99},"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:04:00Z","workflow_id":9,"event":"pull_request","head_branch":"fork-feature","pull_requests":[]},{"id":13,"head_repository":{"id":100},"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","created_at":"2026-01-01T00:04:00Z","workflow_id":9,"head_branch":"fork-feature","pull_requests":[]}]}\n' ;;
@@ -95,28 +95,38 @@ case "$endpoint" in
     else printf '[]\n'; fi ;;
   repos/example/repo/issues/comments/123)
     if [ "$SCENARIO" = readback_failure ]; then exit 44; fi
+    if [ "$SCENARIO" = readback_mismatch ]; then
+      printf '{"body":"different content"}\n'
+      exit 0
+    fi
     jq -n --rawfile body "$FIXTURE/posted-body" '{body:$body}' ;;
   *) printf 'Unexpected endpoint: %s\n' "$endpoint" >&2; exit 43 ;;
 esac | jq -r "$query"
 MOCK
 chmod +x "$FIXTURE/gh"
 export PATH="$FIXTURE:$PATH"
-export SCENARIO=valid
-"$FIXTURE/reporter" example/repo 1 > "$FIXTURE/preview"
-grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/preview"
-grep -Fq '| Repair rounds | 1 (observed revisions after failed checks) |' "$FIXTURE/preview"
-grep -Fq '| Review rounds | 1 changes-requested reviews; 1 observed follow-up revisions |' "$FIXTURE/preview"
-grep -Fq 'Unit &#124; &#60;script&#62; &#64;someone' "$FIXTURE/preview"
-grep -Fq '| success | 50 |' "$FIXTURE/preview"
-grep -Fq 'Legacy gate' "$FIXTURE/preview"
-if grep -Fq 'Prior branch' "$FIXTURE/preview"; then exit 1; fi
-if grep -Fq 'Unrelated branch' "$FIXTURE/preview"; then exit 1; fi
-if grep -F 'Other fork' "$FIXTURE/preview" >&2; then exit 1; fi
-test ! -e "$FIXTURE/writes"
-"$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/posted"
-test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
-grep -Fq 'repos/example/repo/issues/comments/123' "$FIXTURE/requests"
-rm "$FIXTURE/writes"
+for SCENARIO in valid null_review; do
+  export SCENARIO
+  : > "$FIXTURE/requests"
+  "$FIXTURE/reporter" example/repo 1 > "$FIXTURE/preview"
+  grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/preview"
+  grep -Fq '| Repair rounds | 1 (observed revisions after failed checks) |' "$FIXTURE/preview"
+  grep -Fq '| Review rounds | 1 changes-requested reviews; 1 observed follow-up revisions |' "$FIXTURE/preview"
+  grep -Fq 'Unit &#124; &#60;script&#62; &#64;someone' "$FIXTURE/preview"
+  grep -Fq '| success | 50 |' "$FIXTURE/preview"
+  grep -Fq 'Legacy gate' "$FIXTURE/preview"
+  if grep -Fq 'Prior branch' "$FIXTURE/preview"; then exit 1; fi
+  if grep -Fq 'Unrelated branch' "$FIXTURE/preview"; then exit 1; fi
+  if grep -F 'Other fork' "$FIXTURE/preview" >&2; then exit 1; fi
+  test ! -e "$FIXTURE/writes"
+  grep -Fq 'https://github.com/example/repo/pull/1#pullrequestreview-7' "$FIXTURE/preview"
+  "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/posted"
+  test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
+  grep -Fq 'repos/example/repo/issues/comments/123' "$FIXTURE/requests"
+  cmp "$FIXTURE/preview" "$FIXTURE/posted-body"
+  if grep -Fq 'repos/example/repo/commits//' "$FIXTURE/requests"; then exit 1; fi
+  rm "$FIXTURE/writes"
+done
 SCENARIO=existing "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/existing-report"
 test ! -e "$FIXTURE/writes"
 grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/existing-report"
@@ -132,18 +142,26 @@ for SCENARIO in missing_history missing_history_422 missing_status; do
   cmp "$FIXTURE/history-preview" "$FIXTURE/posted-body"
   rm "$FIXTURE/writes"
 done
-for SCENARIO in api_failure unmerged missing_head unauthorized forbidden server_error validation_error missing_access missing_server missing_malformed existing_revision; do
+for SCENARIO in api_failure unmerged invalid_review missing_head unauthorized forbidden server_error validation_error missing_access missing_server missing_malformed existing_revision; do
   export SCENARIO
   if "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/output" 2>&1; then
     cat "$FIXTURE/output" >&2
     exit 1
   fi
   test ! -e "$FIXTURE/writes"
+  if [ "$SCENARIO" = invalid_review ]; then grep -Fq 'Invalid commit SHA' "$FIXTURE/output"; fi
 done
-if SCENARIO=readback_failure "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/retained-report"; then exit 1; fi
-test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
-grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/retained-report"
-grep -Fq '</details>' "$FIXTURE/retained-report"
+for SCENARIO in readback_failure readback_mismatch; do
+  rm -f "$FIXTURE/writes"
+  if SCENARIO="$SCENARIO" "$FIXTURE/reporter" example/repo 1 --post > "$FIXTURE/retained-report" 2> "$FIXTURE/readback-error"; then exit 1; fi
+  test "$(wc -l < "$FIXTURE/writes" | tr -d ' ')" = 1
+  grep -Fq '+209 / -10 lines across 5 files' "$FIXTURE/retained-report"
+  grep -Fq '</details>' "$FIXTURE/retained-report"
+  if [ "$SCENARIO" = readback_mismatch ]; then
+    cat "$FIXTURE/readback-error" >&2
+    grep -Fq 'Posted report did not match readback; stop and investigate, do not retry' "$FIXTURE/readback-error"
+  fi
+done
 "##;
     let output = Command::new("bash")
         .args(["-c", script])
