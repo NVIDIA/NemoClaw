@@ -12,6 +12,7 @@ import YAML from "yaml";
 import { messagingSandboxFiles } from "../../../../test/support/messaging-sandbox-files";
 import {
   hermesTeamsPlan,
+  hermesRebuildVerificationCases,
   rebuildPostRestoreInput,
   runtimeKindByAgent,
 } from "../../../../test/support/rebuild-post-restore-fixtures";
@@ -459,17 +460,24 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    "rejects rebuild with recovery=%s whose normal write pairing remains pending",
-    async (preparedBackupRecovery) => {
+  it.each([
+    [false, "scope-upgrade-not-approved", undefined],
+    [true, "scope-upgrade-not-approved", undefined],
+    [false, "pairing-incompatible", "paired.clientMode"],
+    [true, "pairing-incompatible", "paired.clientMode"],
+  ] as const)(
+    "rejects rebuild with recovery=%s when pairing is incomplete",
+    async (preparedBackupRecovery, reason, pairingField) => {
       vi.mocked(pairingSettlement.settleOrdinaryOpenClawPairing).mockResolvedValue({
         kind: "incomplete",
-        reason: "scope-upgrade-not-approved",
+        reason,
+        ...(pairingField ? { pairingField } : {}),
       });
       const args = { ...input(), preparedBackupRecovery };
-      const result = await runRebuildPostRestorePhase(args);
+      expect(await runRebuildPostRestorePhase(args)).toBeUndefined();
       expect(args.bail).toHaveBeenCalledWith("OpenClaw pairing remained incomplete after rebuild.");
-      expect(result).toBeUndefined();
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).toContain(pairingField ? `${reason} (${pairingField})` : reason);
       expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
         "rebuild completed",
       );
@@ -873,29 +881,7 @@ describe("rebuild post-restore phase", () => {
     expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("rebuild completed");
   });
 
-  it.each([
-    {
-      cronGate: false,
-      preparedBackupRecovery: false,
-      restoreSucceeded: true,
-      gatewayDetail: "nemoclaw alpha gateway restart",
-      recoveryDetail: "If gateway health is still unverified",
-    },
-    {
-      cronGate: true,
-      preparedBackupRecovery: false,
-      restoreSucceeded: true,
-      gatewayDetail: "Hermes gateway health was not verified after state restore.",
-      recoveryDetail: "Hermes cron dispatch remains drained",
-    },
-    {
-      cronGate: false,
-      preparedBackupRecovery: true,
-      restoreSucceeded: false,
-      gatewayDetail: "Correct the reported restore problem",
-      recoveryDetail: "nemoclaw alpha recover",
-    },
-  ])(
+  it.each(hermesRebuildVerificationCases)(
     "reports unavailable verification with cron gate=$cronGate, prepared recovery=$preparedBackupRecovery, and restore=$restoreSucceeded (#12004)",
     async ({
       cronGate,

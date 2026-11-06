@@ -8,7 +8,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
+import {
+  formatOpenClawPairingMismatchField,
+  settleOrdinaryOpenClawPairing,
+} from "../../onboard/machine/finalization-deps";
 import {
   classifyPortableLifecycleReceipt,
   portableLifecycleReceiptMatchesGeneration,
@@ -167,6 +170,15 @@ function printRebuildVersionFailureRecovery(
     );
   }
   return failureMessage;
+}
+
+function printRebuildPairingFailure(pairing: {
+  readonly reason: string;
+  readonly pairingField?: string;
+}): void {
+  console.error(
+    `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${formatOpenClawPairingMismatchField(pairing.pairingField)}`,
+  );
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -656,7 +668,7 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      console.error(`  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}`);
+      printRebuildPairingFailure(pairing);
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,

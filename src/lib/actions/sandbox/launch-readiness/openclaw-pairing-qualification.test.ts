@@ -9,7 +9,10 @@ import { performance } from "node:perf_hooks";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createOpenClawPairingFixture } from "../../../../../test/helpers/openclaw-pairing-fixture";
+import {
+  createOpenClawPairingFixture,
+  SQLITE_PAIRING_FIXTURE_SCRIPT,
+} from "../../../../../test/helpers/openclaw-pairing-fixture";
 import { redactString } from "../../../../../test/e2e/fixtures/redaction.ts";
 
 import {
@@ -111,7 +114,7 @@ function writeSqlitePairingState(
     token,
     publicKeyPem: publicKeyPem(ED25519_SPKI_PREFIX, Buffer.from(fixture.publicKey, "base64url")),
   };
-  const result = spawnSync("python3", ["-c", SQLITE_FIXTURE_SCRIPT, stateDirectory], {
+  const result = spawnSync("python3", ["-c", SQLITE_PAIRING_FIXTURE_SCRIPT, stateDirectory], {
     encoding: "utf8",
     input: JSON.stringify(payload),
   });
@@ -167,86 +170,6 @@ function checkpointSqlitePairingState(stateDirectory: string): string {
   expect(fs.existsSync(`${database}-shm`)).toBe(false);
   return database;
 }
-
-const SQLITE_FIXTURE_SCRIPT = String.raw`
-import json
-import os
-import sqlite3
-import sys
-
-state_dir = sys.argv[1]
-value = json.load(sys.stdin)
-os.umask(0o007)
-sqlite_state_dir = os.path.join(state_dir, 'state')
-os.makedirs(sqlite_state_dir, mode=0o770, exist_ok=True)
-database = os.path.join(sqlite_state_dir, 'openclaw.sqlite')
-connection = sqlite3.connect(database)
-connection.execute('PRAGMA journal_mode = WAL')
-connection.execute('PRAGMA wal_autocheckpoint = 0')
-connection.executescript('''
-CREATE TABLE device_identities (
-  identity_key TEXT PRIMARY KEY, device_id TEXT NOT NULL, public_key_pem TEXT NOT NULL,
-  private_key_pem TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
-);
-CREATE TABLE device_pairing_paired (
-  device_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, display_name TEXT,
-  operator_label TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT,
-  browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT,
-  approved_scopes_json TEXT, remote_ip TEXT, tokens_json TEXT, approved_via TEXT,
-  node_surface_json TEXT, pending_node_surface_json TEXT, created_at_ms INTEGER NOT NULL,
-  approved_at_ms INTEGER NOT NULL, last_seen_at_ms INTEGER, last_seen_reason TEXT
-);
-CREATE TABLE device_pairing_pending (
-  request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, public_key TEXT NOT NULL,
-  display_name TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT,
-  browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, remote_ip TEXT,
-  silent INTEGER, is_repair INTEGER, ts INTEGER NOT NULL, refreshed_at_ms INTEGER
-);
-CREATE TABLE device_auth_tokens (
-  device_id TEXT NOT NULL, role TEXT NOT NULL, token TEXT NOT NULL, scopes_json TEXT NOT NULL,
-  updated_at_ms INTEGER NOT NULL,
-  PRIMARY KEY (device_id, role)
-);
-''')
-connection.execute(f"PRAGMA user_version = {value.get('userVersion', 15)}")
-connection.execute(
-  'INSERT INTO device_identities VALUES (?, ?, ?, ?, ?, ?)',
-  ('primary', value['deviceId'], value['publicKeyPem'], value['privateKeyPem'], 1, 1),
-)
-operator = {
-  'operator': {
-    'token': value['token'],
-    'role': 'operator',
-    'scopes': value['pairedTokenScopes'],
-  },
-}
-connection.execute(
-  'INSERT INTO device_pairing_paired VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  (
-    value['deviceId'], value['publicKey'], None, None, None, None, 'cli', 'cli', None,
-    'operator', json.dumps(['operator']), json.dumps(value['pairedScopes']),
-    json.dumps(value['pairedScopes']), None, json.dumps(operator), None, None, None,
-    1, 1, None, None,
-  ),
-)
-connection.execute(
-  'INSERT INTO device_auth_tokens VALUES (?, ?, ?, ?, ?)',
-  (value['deviceId'], 'operator', value['token'], json.dumps(value['authScopes']), 1),
-)
-for request in value.get('pending') or []:
-  connection.execute(
-    'INSERT INTO device_pairing_pending VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    (
-      request['requestId'], request['deviceId'], request['publicKey'], None, None, None,
-      request.get('clientId'), request.get('clientMode'), None, request.get('role'),
-      json.dumps(request['roles']) if 'roles' in request else None,
-      json.dumps(request['scopes']) if 'scopes' in request else None,
-      None, None, int(request['isRepair']) if 'isRepair' in request else None, 1, None,
-    ),
-  )
-connection.commit()
-os._exit(0)
-`;
 
 function localScriptSpawn(
   _binary: string,
@@ -822,9 +745,59 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         writeJson(pairedPath, paired);
         const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
         expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingIncompatibleError);
-        expect(diagnostic).toHaveBeenCalledWith("OpenClaw CLI pairing incompatible: scope-set.");
+        expect(() => observeOrdinarySettlement()).toThrow(
+          expect.objectContaining({
+            field: scope === "operator.write" ? "scope.consistency" : "paired.scopes",
+            failureCategory: "incompatible-state",
+          }),
+        );
+        expect(diagnostic).not.toHaveBeenCalled();
       },
     );
+
+    it("reports only the rejected persisted field for an incompatible local pair (#13709)", () => {
+      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.clientMode = "webchat";
+      writeJson(pairedPath, paired);
+
+      let failure: unknown;
+      try {
+        observeOrdinarySettlement();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(OpenClawPairingIncompatibleError);
+      expect((failure as OpenClawPairingIncompatibleError).field).toBe("paired.clientMode");
+      expect(JSON.stringify(failure)).not.toContain(TOKEN);
+      expect(JSON.stringify(failure)).not.toContain(deviceId);
+    });
+
+    it("discards untrusted mismatch output outside the field allowlist (#13709)", () => {
+      const failure = () =>
+        observeOrdinaryOpenClawPairingSettlement(
+          "alpha",
+          "nemoclaw-8080",
+          "2026.7.1",
+          stateDirectory,
+          {
+            getOpenshellBinary: () => "openshell",
+            readApprovalPolicy: () => POLICY,
+            spawnSync: (() => ({
+              status: 4,
+              signal: null,
+              error: undefined,
+              stdout: '__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"secret-token"}\n',
+            })) as unknown as typeof spawnSync,
+          },
+        );
+      expect(failure).toThrow(OpenClawPairingIncompatibleError);
+      try {
+        failure();
+      } catch (error) {
+        expect((error as OpenClawPairingIncompatibleError).field).toBeNull();
+      }
+    });
 
     it.each(["ui", "unknown"])("rejects %s metadata on the local device (#13100)", (clientMode) => {
       const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
@@ -837,19 +810,17 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       );
       expect(spawn.mock.results[0]?.value.status).toBe(4);
       expect(spawn.mock.results[0]?.value.stdout).toBe(
-        "__NEMOCLAW_PAIRING_INCOMPATIBLE__=paired-metadata\n",
+        '__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"paired.clientMode"}\n',
       );
-      expect(diagnostic.mock.calls).toEqual([
-        ["OpenClaw CLI pairing incompatible: paired-metadata."],
-      ]);
+      expect(diagnostic.mock.calls).toEqual([]);
     });
 
     it.each([
-      ["missing-operator", [], {}],
-      ["role-set", ["operator", "observer"], {}],
-      ["token-mismatch", ["operator"], { token: `${TOKEN}-mismatch` }],
-      ["metadata", ["operator"], { role: "observer" }],
-    ] as const)("reports only the fixed client-token %s category", (reason, roles, fields) => {
+      ["auth.tokens", [], {}],
+      ["auth.tokens", ["operator", "observer"], {}],
+      ["auth.tokens.operator.token", ["operator"], { token: `${TOKEN}-mismatch` }],
+      ["auth.tokens.operator.role", ["operator"], { role: "observer" }],
+    ] as const)("reports only the rejected client credential field %s", (reason, roles, fields) => {
       const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
       const invalidAuth = {
         ...auth,
@@ -871,25 +842,28 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         auth: JSON.parse(fs.readFileSync(authPath, "utf8")),
       }).toEqual({
         status: 4,
-        stdout: `__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:${reason}\n`,
-        diagnostic: [[`OpenClaw CLI pairing incompatible: client-token / ${reason}.`]],
-        redactedDiagnostic: [`OpenClaw CLI pairing incompatible: client-token / ${reason}.`],
+        stdout: `__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"${reason}"}\n`,
+        diagnostic: [],
+        redactedDiagnostic: [],
         auth: invalidAuth,
       });
     });
 
     it.each([
       TOKEN,
-      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=" + TOKEN,
-      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token\n" + TOKEN,
-      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:" + TOKEN,
+      "__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__=" + TOKEN,
+      '__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"auth.tokens"}\n' + TOKEN,
+      `__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"${TOKEN}"}`,
     ])("does not log unrecognized pairing output %j", (stdout) => {
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
       const spawn = vi.fn(() => ({ status: 4, stdout })) as unknown as typeof localScriptSpawn;
       expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
         OpenClawPairingIncompatibleError,
       );
-      expect(diagnostic.mock.calls).toEqual([["OpenClaw CLI pairing incompatible: unclassified."]]);
+      expect(diagnostic.mock.calls).toEqual([]);
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        expect.objectContaining({ field: null, failureCategory: "incompatible-state" }),
+      );
     });
 
     it.each(

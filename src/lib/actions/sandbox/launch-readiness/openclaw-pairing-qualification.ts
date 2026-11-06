@@ -15,9 +15,9 @@ import {
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
+const MISMATCH_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__=";
 const RETRYABLE_OBSERVATION_EXIT_STATUS = 3;
 const INCOMPATIBLE_OBSERVATION_EXIT_STATUS = 4;
-const INCOMPATIBLE_MARKER = "__NEMOCLAW_PAIRING_INCOMPATIBLE__=";
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const OPENCLAW_VERSION_RE = /\bopenclaw\b[^\r\n0-9]*([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/i;
 export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
@@ -37,6 +37,39 @@ export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS +
   WATCHER_STATUS_TIMEOUT_MS;
 const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
+const MISMATCH_FIELDS = new Set([
+  "paired.cardinality",
+  "paired.mapKey",
+  "paired.deviceId",
+  "paired.publicKey",
+  "paired.clientId",
+  "paired.clientMode",
+  "paired.role",
+  "paired.roles",
+  "paired.requestedScopes",
+  "paired.publicKeyPem",
+  "paired.tokens",
+  "paired.tokens.operator.role",
+  "paired.tokens.operator.revokedAtMs",
+  "paired.tokens.operator.token",
+  "paired.tokens.operator.aliases",
+  "auth.version",
+  "auth.deviceId",
+  "auth.tokens",
+  "auth.tokens.operator.role",
+  "auth.tokens.operator.revokedAtMs",
+  "auth.tokens.operator.token",
+  "auth.tokens.operator.aliases",
+  "paired.scopes",
+  "paired.approvedScopes",
+  "paired.tokens.operator.scopes",
+  "auth.tokens.operator.scopes",
+  "scope.consistency",
+]);
+
+export function formatOpenClawPairingMismatchField(field: string | null | undefined): string {
+  return field && MISMATCH_FIELDS.has(field) ? ` (${field})` : "";
+}
 
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
 // Canonical approval preserves the requested pairing/write view on the paired
@@ -103,10 +136,30 @@ export class OpenClawPairingQualificationError extends Error {
 }
 
 export class OpenClawPairingIncompatibleError extends OpenClawPairingQualificationError {
-  constructor() {
+  constructor(readonly field: string | null = null) {
     super("incompatible-state");
     this.name = "OpenClawPairingIncompatibleError";
   }
+}
+
+function parseOpenClawPairingMismatchField(output: unknown): string | null {
+  const lines = String(output ?? "")
+    .trimEnd()
+    .split(/\r?\n/);
+  if (lines.length !== 1 || !lines[0]!.startsWith(MISMATCH_MARKER)) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(lines[0]!.slice(MISMATCH_MARKER.length)) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return hasExactKeys(record, ["field"]) &&
+    typeof record.field === "string" &&
+    MISMATCH_FIELDS.has(record.field)
+    ? record.field
+    : null;
 }
 
 export class OpenClawPairingObservationRetryableError extends OpenClawPairingQualificationError {
@@ -266,6 +319,7 @@ import sys
 ${pairingStateModule}
 
 MARKER = ${JSON.stringify(marker)}
+MISMATCH_MARKER = ${JSON.stringify(MISMATCH_MARKER)}
 MAX_ENTRY_BYTES = 512 * 1024
 MAX_SAFE_INTEGER = 9007199254740991
 REQUIRED_ROLES = ['operator']
@@ -285,11 +339,10 @@ ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 
 incompatible_pairing = False
-incompatible_reason = "unclassified"
 
-def reject():
-    if incompatible_pairing:
-        print("${INCOMPATIBLE_MARKER}" + incompatible_reason)
+def reject(field=None):
+    if incompatible_pairing and ORDINARY_SETTLEMENT and field:
+        print(MISMATCH_MARKER + json.dumps({'field': field}, separators=(',', ':')))
     sys.exit(${INCOMPATIBLE_OBSERVATION_EXIT_STATUS} if incompatible_pairing else 1)
 
 def retry_observation():
@@ -684,38 +737,41 @@ try:
         )
     ]
     incompatible_pairing = bool(local_paired)
-    incompatible_reason = "local-record-count"
     if len(local_paired) != 1:
-        reject()
+        reject('paired.cardinality')
     map_key, paired_device = local_paired[0]
-    incompatible_reason = "paired-metadata"
-    if (
-        map_key != device_id
-        or not isinstance(paired_device, dict)
-        or paired_device.get('deviceId') != device_id
-        or paired_device.get('publicKey') != device_public_key
-        or paired_device.get('clientId') != 'cli'
-        or paired_device.get('clientMode') not in ('cli', 'probe')
-        or paired_device.get('role') != 'operator'
-        or not exact_string_set(paired_device.get('roles'), REQUIRED_ROLES)
-        or 'requestedScopes' in paired_device
-        or 'publicKeyPem' in paired_device
-    ):
-        reject()
-    incompatible_reason = "paired-token"
+    if not isinstance(paired_device, dict):
+        reject('paired.deviceId')
+    paired_checks = (
+        ('paired.mapKey', map_key == device_id),
+        ('paired.deviceId', paired_device.get('deviceId') == device_id),
+        ('paired.publicKey', paired_device.get('publicKey') == device_public_key),
+        ('paired.clientId', paired_device.get('clientId') == 'cli'),
+        ('paired.clientMode', paired_device.get('clientMode') in ('cli', 'probe')),
+        ('paired.role', paired_device.get('role') == 'operator'),
+        ('paired.roles', exact_string_set(paired_device.get('roles'), REQUIRED_ROLES)),
+        ('paired.requestedScopes', 'requestedScopes' not in paired_device),
+        ('paired.publicKeyPem', 'publicKeyPem' not in paired_device),
+    )
+    for field, valid in paired_checks:
+        if not valid:
+            reject(field)
     paired_tokens = paired_device.get('tokens')
     paired_operator = paired_tokens.get('operator') if isinstance(paired_tokens, dict) and set(paired_tokens) == {'operator'} else None
-    if (
-        not isinstance(paired_operator, dict)
-        or paired_operator.get('role') != 'operator'
-        or paired_operator.get('revokedAtMs') is not None
-        or not isinstance(paired_operator.get('token'), str)
-        or not paired_operator.get('token')
-        or paired_operator.get('token').strip() != paired_operator.get('token')
-        or any(alias in paired_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
-    ):
-        reject()
-    incompatible_reason = "client-token"
+    if not isinstance(paired_operator, dict):
+        reject('paired.tokens')
+    paired_token_checks = (
+        ('paired.tokens.operator.role', paired_operator.get('role') == 'operator'),
+        ('paired.tokens.operator.revokedAtMs', paired_operator.get('revokedAtMs') is None),
+        ('paired.tokens.operator.token', isinstance(paired_operator.get('token'), str)
+            and bool(paired_operator.get('token'))
+            and paired_operator.get('token').strip() == paired_operator.get('token')),
+        ('paired.tokens.operator.aliases', not any(alias in paired_operator
+            for alias in ('requestedScopes', 'approvedScopes', 'roles'))),
+    )
+    for field, valid in paired_token_checks:
+        if not valid:
+            reject(field)
     auth_tokens = auth.get('tokens')
     # OpenClaw commits approval before the client stores the hello response token.
     # Ordinary onboarding can observe that gap; qualification still requires the token.
@@ -727,30 +783,23 @@ try:
     ):
         retry_observation()
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
-    if (
-        type(auth.get('version')) is not int
-        or auth.get('version') != 1
-        or auth.get('deviceId') != device_id
-        or not isinstance(auth_operator, dict)
-        or auth_operator.get('role') != 'operator'
-        or auth_operator.get('revokedAtMs') is not None
-        or not isinstance(auth_operator.get('token'), str)
-        or auth_operator.get('token') != paired_operator.get('token')
-        or any(alias in auth_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
-    ):
-        # Report only fixed categories after the unchanged credential checks fail.
-        client_token_failures = (
-            ('missing-operator', not isinstance(auth_tokens, dict) or 'operator' not in auth_tokens),
-            ('role-set', isinstance(auth_tokens, dict) and set(auth_tokens) != {'operator'}),
-            ('token-mismatch', isinstance(auth_operator, dict)
-                and isinstance(auth_operator.get('token'), str)
-                and auth_operator.get('token') != paired_operator.get('token')),
-        )
-        incompatible_reason += ':' + next(
-            filter(lambda failure: failure[1], client_token_failures),
-            ('metadata', True),
-        )[0]
-        reject()
+    if type(auth.get('version')) is not int or auth.get('version') != 1:
+        reject('auth.version')
+    if auth.get('deviceId') != device_id:
+        reject('auth.deviceId')
+    if not isinstance(auth_operator, dict):
+        reject('auth.tokens')
+    auth_token_checks = (
+        ('auth.tokens.operator.role', auth_operator.get('role') == 'operator'),
+        ('auth.tokens.operator.revokedAtMs', auth_operator.get('revokedAtMs') is None),
+        ('auth.tokens.operator.token', isinstance(auth_operator.get('token'), str)
+            and auth_operator.get('token') == paired_operator.get('token')),
+        ('auth.tokens.operator.aliases', not any(alias in auth_operator
+            for alias in ('requestedScopes', 'approvedScopes', 'roles'))),
+    )
+    for field, valid in auth_token_checks:
+        if not valid:
+            reject(field)
 
     incompatible_pairing = False
     if STRICT_SETTLEMENT and pending:
@@ -858,8 +907,24 @@ try:
             reject()
     if not settled and not pairing_only and not upgrade_required:
         incompatible_pairing = True
-        incompatible_reason = "scope-set"
-        reject()
+        scope_checks = (
+            ('paired.scopes', paired_device.get('scopes'),
+             (PAIRING_ONLY_SCOPES, PAIRING_READ_SCOPES, REQUEST_SCOPES,
+              TOKEN_SCOPES, ADMIN_REQUEST_SCOPES)),
+            ('paired.approvedScopes', paired_device.get('approvedScopes'),
+             (PAIRING_ONLY_SCOPES, PAIRING_READ_SCOPES, REQUEST_SCOPES,
+              TOKEN_SCOPES, ADMIN_REQUEST_SCOPES)),
+            ('paired.tokens.operator.scopes', paired_operator.get('scopes'),
+             (PAIRING_ONLY_SCOPES, PAIRING_READ_SCOPES, TOKEN_SCOPES,
+              ADMIN_PAIRED_TOKEN_SCOPES)),
+            ('auth.tokens.operator.scopes', auth_operator.get('scopes'),
+             (PAIRING_ONLY_SCOPES, PAIRING_READ_SCOPES, TOKEN_SCOPES,
+              ADMIN_AUTH_TOKEN_SCOPES)),
+        )
+        for field, value, allowed_sets in scope_checks:
+            if not any(exact_string_set(value, allowed) for allowed in allowed_sets):
+                reject(field)
+        reject('scope.consistency')
 
     device_identity_sha256 = hashlib.sha256(json.dumps({
         'deviceId': device_id,
@@ -970,16 +1035,9 @@ function runOpenClawPairingObservation(
     throw new OpenClawPairingObservationRetryableError();
   }
   if (!result.error && !result.signal && result.status === INCOMPATIBLE_OBSERVATION_EXIT_STATUS) {
-    // Export only a closed reason vocabulary, never the observed device or credential state.
-    const reason = String(result.stdout ?? "")
-      .trim()
-      .match(
-        /^__NEMOCLAW_PAIRING_INCOMPATIBLE__=(local-record-count|paired-metadata|paired-token|client-token(?::(?:missing-operator|role-set|token-mismatch|metadata))?|scope-set)$/,
-      )?.[1];
-    console.error(
-      `OpenClaw CLI pairing incompatible: ${(reason ?? "unclassified").replace(":", " / ")}.`,
+    throw new OpenClawPairingIncompatibleError(
+      mode === "ordinary-settlement" ? parseOpenClawPairingMismatchField(result.stdout) : null,
     );
-    throw new OpenClawPairingIncompatibleError();
   }
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code;

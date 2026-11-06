@@ -53,3 +53,27 @@ export const runtimeKindByAgent = {
   "langchain-deepagents-code": "terminal",
   pi: "terminal",
 } as const;
+
+export const hermesRebuildVerificationCases = [
+  {
+    cronGate: false,
+    preparedBackupRecovery: false,
+    restoreSucceeded: true,
+    gatewayDetail: "nemoclaw alpha gateway restart",
+    recoveryDetail: "If gateway health is still unverified",
+  },
+  {
+    cronGate: true,
+    preparedBackupRecovery: false,
+    restoreSucceeded: true,
+    gatewayDetail: "Hermes gateway health was not verified after state restore.",
+    recoveryDetail: "Hermes cron dispatch remains drained",
+  },
+  {
+    cronGate: false,
+    preparedBackupRecovery: true,
+    restoreSucceeded: false,
+    gatewayDetail: "Correct the reported restore problem",
+    recoveryDetail: "nemoclaw alpha recover",
+  },
+];
