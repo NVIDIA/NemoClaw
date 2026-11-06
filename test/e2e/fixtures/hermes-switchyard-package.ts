@@ -128,8 +128,9 @@ assert {str(p.relative_to(bundle)) for p in bundle.rglob('*') if p.is_file()} ==
     'notices/protocol/LICENSE', 'notices/protocol/NOTICE',
     'notices/switchyard-translation/LICENSE', 'notices/switchyard-translation/NOTICE',
 }
+qualifier_script = Path('/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py')
 for entry in [*bundle.parents, bundle, *bundle.rglob('*'),
-              Path('/opt/nemoclaw-hermes-config/qualify-switchyard-judge.py')]:
+              *qualifier_script.parents, qualifier_script]:
     assert not entry.is_symlink(), entry
     assert entry.stat().st_uid == 0, entry
     assert entry.stat().st_mode & 0o022 == 0, entry

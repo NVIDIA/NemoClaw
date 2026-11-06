@@ -459,11 +459,18 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 #### `--switchyard-config <file>`
 
-For managed Hermes onboarding, generate adaptive Switchyard routing configuration from a JSON file containing only the efficient and capable provider/model selections.
+For managed Hermes onboarding, generate adaptive Switchyard routing configuration from a JSON file containing efficient and capable provider/model selections, plus an optional `judge` selection.
 Both targets must name approved fixed hosted provider profiles and use different model IDs, even when they use different providers.
-NemoClaw configures the capable target as the routing judge and derives the internal Relay and Switchyard configuration.
+By default, the capable target also serves as the routing judge.
+If the capable target fails judge qualification, you can select a separate judge.
+To use a separate judge, add a `judge` object with `provider` and `model` fields.
+Its provider must use an approved fixed hosted profile, and its model ID must differ from both target models.
+NemoClaw derives the internal Relay and Switchyard configuration from these selections.
 The file must not contain credentials, endpoints, or internal routing fragments.
 This option requires the managed Hermes image; Portable and custom images are not supported.
+
+Gateway startup makes bounded model calls to verify judge classification and separate routing and answer usage accounting.
+If that check fails, the gateway does not start.
 
 Fresh setup creates OpenShell-managed providers for the selected profiles and attaches them to the new sandbox.
 NemoClaw verifies and records their identities before completing setup.
