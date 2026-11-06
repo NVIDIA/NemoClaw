@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: E2E / SSH connectivity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/colossus-connectivity.yml
+      - tools/ci/colossus-connectivity-workflow.rs
+
+permissions: {}
+
+concurrency:
+  group: colossus-connectivity-${{ github.event_name }}-${{ github.event.pull_request.number || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test authorization and output boundaries
+        shell: bash
+        run: |
+          rustfmt --edition 2024 --check tools/ci/colossus-connectivity-workflow.rs
+          rustc --edition=2024 -D warnings --test tools/ci/colossus-connectivity-workflow.rs -o "$RUNNER_TEMP/connectivity-tests"
+          "$RUNNER_TEMP/connectivity-tests"
+
+  # The colossus-connectivity environment releases its secrets only to v1, so
+  # this job is the only code that can read them; an edited copy of this
+  # workflow on another branch gets none.
+  probe:
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
+    runs-on:
+      group: nv-cpu-general
+    environment: colossus-connectivity
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Verify SSH connectivity
+        env:
+          PROBE_HOST: ${{ secrets.COLOSSUS_SSH_HOST }}
+          PROBE_USER: ${{ secrets.COLOSSUS_SSH_USER }}
+          PROBE_KNOWN_HOSTS: ${{ secrets.COLOSSUS_SSH_KNOWN_HOSTS }}
+          PROBE_PRIVATE_KEY: ${{ secrets.COLOSSUS_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          probe_dir=''
+          # The failed stage is a fixed word, so the outcome names where to look
+          # without revealing the target or any SSH output.
+          stage=inputs
+          finish() {
+            status=$?
+            trap - EXIT
+            if [[ -n "$probe_dir" ]] && ! rm -rf -- "$probe_dir" >/dev/null 2>&1; then
+              status=1
+              stage=cleanup
+            fi
+            outcome=passed
+            if [[ "$status" != 0 ]]; then outcome="failed ($stage)"; fi
+            printf 'SSH connectivity: %s\n' "$outcome"
+            if [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+              printf 'SSH connectivity: %s\nTested commit: %s\n' "$outcome" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit "$status"
+          }
+          trap finish EXIT
+          trap 'stage=interrupted; exit 130' INT
+          trap 'stage=interrupted; exit 143' TERM
+          trap 'stage=interrupted; exit 129' HUP
+          [[ -n "$PROBE_HOST" && -n "$PROBE_USER" && -n "$PROBE_KNOWN_HOSTS" && -n "$PROBE_PRIVATE_KEY" ]]
+          [[ ${#PROBE_HOST} -le 253 && "$PROBE_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]
+          [[ ${#PROBE_USER} -le 64 && "$PROBE_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          umask 077
+          probe_dir="$(mktemp -d "${RUNNER_TEMP}/ssh-probe.XXXXXX" 2>/dev/null)"
+          printf '%s\n' "$PROBE_PRIVATE_KEY" 2>/dev/null > "$probe_dir/key"
+          printf '%s\n' "$PROBE_KNOWN_HOSTS" 2>/dev/null > "$probe_dir/known_hosts"
+          unset PROBE_PRIVATE_KEY PROBE_KNOWN_HOSTS
+          stage=key
+          ssh-keygen -y -P '' -f "$probe_dir/key" >/dev/null 2>&1
+          stage=known-hosts
+          ssh-keygen -l -f "$probe_dir/known_hosts" >/dev/null 2>&1
+          stage=connection
+          code=0
+          timeout --signal=TERM --kill-after=5s 30s ssh -F /dev/null -T \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no \
+            -o HostKeyAlgorithms=ssh-ed25519 -o VerifyHostKeyDNS=no \
+            -o GlobalKnownHostsFile=/dev/null -o "UserKnownHostsFile=$probe_dir/known_hosts" \
+            -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+            -o ForwardAgent=no -o ForwardX11=no -o ClearAllForwardings=yes \
+            -o PermitLocalCommand=no -o ProxyCommand=none -o ProxyJump=none \
+            -o LogLevel=QUIET -i "$probe_dir/key" \
+            -l "$PROBE_USER" "$PROBE_HOST" /usr/bin/true \
+            </dev/null >/dev/null 2>&1 || code=$?
+          # timeout exits 124, or 137 after its kill; SSH exits 255 for its own
+          # errors (network, host key, or authentication) and otherwise with
+          # the remote command's status.
+          case "$code" in
+            0) ;;
+            124 | 137) stage=timeout; exit 1 ;;
+            255) stage=ssh; exit 1 ;;
+            *) stage=remote-command; exit 1 ;;
+          esac
