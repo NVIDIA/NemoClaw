@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -19,6 +21,10 @@ export function gatewayUpgradeAgentResponseIsSuccessful(raw: string): boolean {
     responses.length > 0 &&
     responses.every((document) => (document as { status?: unknown }).status === "ok")
   );
+}
+
+export function gatewayUpgradeMarkerWriteCommand(markerPath: string, marker: string): string {
+  return `mkdir -p ${shellQuote(path.dirname(markerPath))} && printf '%s\\n' ${shellQuote(marker)} >${shellQuote(markerPath)}`;
 }
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
