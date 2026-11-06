@@ -93,11 +93,15 @@ The evidence cell names the counters, cutoff, and any excluded activity.
   Do not sum running totals within a segment, add `last_token_usage` to them, or add `reasoning_output_tokens` to output again.
 - **Claude Code:** read assistant `message.usage` from the session JSONL.
   Count each API response once, using `message.id` and `requestId` when present to identify repeated streaming records; use its final usage snapshot through the cutoff.
+  Confirm that the recorded version persisted final usage, including for completed subagent responses; the last transcript entry can still contain streaming placeholders.
+  Reconcile with final response usage when available; otherwise report known lower bounds as `partial`, or `unavailable` if no usable counters exist.
   Sum `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` for input, `cache_read_input_tokens` for cached input, and `output_tokens` for output.
 - **Pi:** inspect the recorded version's schema.
   Its [usage accounting](https://github.com/badlogic/pi-mono/blob/2a32a605a9f18a5f0191f65358a2e764b2f69fc7/packages/coding-agent/src/core/usage-totals.ts) reads assistant and tool-result `message.usage`, plus `usage` on usage, compaction, and branch-summary entries when present.
   Sum unique authoring-session entries through the cutoff, including paid activity on abandoned branches: `input + cacheRead + cacheWrite` for input, `cacheRead` for cached input, and `output` for output.
   Do not add `totalTokens` or reasoning subtotals to these counts.
+  Confirm that the provider reported the counters before marking usage `recorded`: the [OpenAI-completions adapter](https://github.com/badlogic/pi-mono/blob/2a32a605a9f18a5f0191f65358a2e764b2f69fc7/packages/ai/src/api/openai-completions.ts) defaults missing usage fields to zero, so a stored zero alone does not establish zero usage.
+  Treat unverified counters as gaps; use `partial` for known lower bounds, or `unavailable` if no usable counters exist.
 
 Exclude inherited activity before a fork's authoring boundary; subtract a recorded cumulative baseline when needed.
 Include separate subagent usage only when its records were inspected and it is not already included; state the coverage.
