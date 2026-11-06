@@ -45,6 +45,21 @@ describe("Model Router rules (#14066)", () => {
     [{ messages: text, metadata: { pin_model: lightning } }, [lightning, "explicit"]],
     [{ messages: image, model: superVL }, [superVL, "explicit"]],
     [
+      { messages: text, model: "nvidia-routed", metadata: { pin_model: lightning } },
+      [lightning, "explicit"],
+    ],
+    [
+      { messages: text, model: "nvidia-routed", metadata: { pin_model: superVL } },
+      [superVL, "explicit"],
+    ],
+    [
+      { messages: text, model: lightning, metadata: { pin_model: lightning } },
+      [lightning, "explicit"],
+    ],
+    [{ messages: text, model: superVL, metadata: { pin_model: superVL } }, [superVL, "explicit"]],
+    [{ messages: image, model: superVL, metadata: { pin_model: superVL } }, [superVL, "explicit"]],
+    [{ messages: text, model: lightning, metadata: { pin_model: null } }, [lightning, "explicit"]],
+    [
       {
         messages: [
           ...text,
@@ -70,6 +85,14 @@ describe("Model Router rules (#14066)", () => {
     { messages: text, metadata: { models: [superVL] } },
     { messages: text, model: "unknown" },
     { messages: text, metadata: { pin_model: [] } },
+    { messages: text, model: "unknown", metadata: { pin_model: superVL } },
+    { messages: text, model: null, metadata: { pin_model: superVL } },
+    { messages: text, model: [], metadata: { pin_model: superVL } },
+    { messages: text, model: null },
+    { messages: text, model: lightning, metadata: { pin_model: superVL } },
+    { messages: text, model: superVL, metadata: { pin_model: lightning } },
+    { messages: image, model: lightning, metadata: { pin_model: superVL } },
+    { messages: text, model: superVL, metadata: { pin_model: "unknown" } },
   ])("rejects request %j without a deployment fallback", (request) => {
     expect(python(select, request)).toHaveProperty("error");
   });

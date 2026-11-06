@@ -53,11 +53,13 @@ def select_model(request):
         raise ValueError("The rules policy does not accept a models ranking override.")
     pin = metadata.get("pin_model")
     model = request.get("model", "nvidia-routed")
+    if model not in ("nvidia-routed", LIGHTNING, SUPER_VL) or (pin is not None and pin not in (LIGHTNING, SUPER_VL)):
+        raise ValueError("Unknown Model Router selection. Use a configured pool model.")
+    if pin is not None and model not in ("nvidia-routed", pin):
+        raise ValueError("Model Router selections conflict. Use one configured pool model.")
     if pin is None and model != "nvidia-routed":
         pin = model
     if pin is not None:
-        if pin not in (LIGHTNING, SUPER_VL):
-            raise ValueError("Unknown Model Router selection. Use a configured pool model.")
         if image and pin == LIGHTNING:
             raise ValueError("Lightning does not support images. Select SuperVL.")
         return pin, "explicit"
