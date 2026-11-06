@@ -49,8 +49,29 @@ These references are not raw credentials.
 If these checks fail, normal credential sanitization applies.
 This exception does not apply to configuration backups or other files.
 After restore, NemoClaw replaces these references with a current OpenShell provider-bound credential handle before restarting Hermes.
-This does not repair configurations whose references were already stripped.
-Recovery for those configurations is tracked in [the Hermes NVIDIA recovery issue](https://github.com/NVIDIA/NemoClaw/issues/14094).
+
+<AgentOnly variant="hermes">
+Rebuild also [repairs an already-stripped route](https://github.com/NVIDIA/NemoClaw/pull/14153) when all three fields contain exactly `[STRIPPED_BY_MIGRATION]`.
+Recovery requires a registered Hermes `nvidia-prod` route, matching endpoint and model metadata, and verified sandbox identity and provider binding.
+Partial damage, other providers, missing bindings, and ambiguous routes remain rejected.
+
+Before recovery, update NemoClaw and use its matching managed Hermes image.
+Both the CLI and image must contain the recovery change; an older or custom image is not qualified for this path.
+Rebuild replaces the sandbox and transfers its sanitized native home, including recoverable user settings and Discord configuration.
+Keep any existing failure backup until recovery is verified.
+
+```bash
+$$nemoclaw <sandbox-name> rebuild --yes
+$$nemoclaw <sandbox-name> status --json
+```
+
+Verify that status reports `provider: "nvidia-prod"` and `inferenceHealth` with both `ok` and `probed` set to `true`.
+Then confirm that Hermes answers an inference request and that your user settings and Discord configuration remain present.
+Retained Discord configuration does not establish successful Discord message delivery.
+Recovery acquires a fresh OpenShell provider-bound handle; do not insert a raw API key or edit the stripped fields manually.
+If restore or validation fails, NemoClaw reports failure and retains the backup.
+Preserve that backup and inspect the reported cause before another mutation; repeating a failed rebuild is not a general recovery procedure.
+</AgentOnly>
 
 Hermes PID and lock receipts, OpenClaw's post-upgrade doctor marker, warm-up sessions, and transient SQLite write-ahead-log, shared-memory, and rollback-journal companions, and NemoClaw's configuration and blueprint cache are replacement-owned or generation-local. The replacement keeps its fresh copies instead of restoring the retired sandbox's values. NemoClaw sanitizes machine-local authority from the durable OpenClaw database copy and rejects an archive that still contains one of those database companions, because replaying it could restore removed authority. For Deep Agents Code, NemoClaw scans `sessions.db-journal`, `sessions.db-shm`, and `sessions.db-wal` for credential material before it publishes a backup. A detected credential or scan that exceeds the backup deadline stops the backup and identifies the affected sidecar. Unknown agent paths transfer when their archive paths and link targets have no line breaks and their content is inspectable and credential-free. For a line break in a path or link target, [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) explains how to rename the path or recreate the link. A restore failure happens after the replacement is created; NemoClaw retains the backup for manual recovery and does not publish the replacement as successful. Move credentials into supported OpenShell credential storage or bindings, remove them from the native home, and retry.
 

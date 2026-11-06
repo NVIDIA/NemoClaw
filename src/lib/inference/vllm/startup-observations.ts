@@ -78,7 +78,7 @@ export async function readVllmStartupLogExcerpts(
         "{{if gt .RestartCount 0}}{{.State.StartedAt}}{{end}}",
         containerName,
       ],
-      { env: dockerEnv, ignoreError: true, timeout: LOG_TIMEOUT_MS },
+      { env: dockerEnv, replaceEnv: true, ignoreError: true, timeout: LOG_TIMEOUT_MS },
     )
     .trim();
   const excerpts: { lines: string[]; suffix: string }[] = [];
@@ -93,6 +93,7 @@ export async function readVllmStartupLogExcerpts(
   const current = operations
     .dockerCapture(["logs", "--tail", String(LOG_LINES), containerName], {
       env: dockerEnv,
+      replaceEnv: true,
       ignoreError: true,
       includeStderr: true,
     })
