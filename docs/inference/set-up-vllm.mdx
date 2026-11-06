@@ -65,7 +65,8 @@ $$nemoclaw onboard
 Select **Local vLLM**.
 On generic hosts, the entry includes an experimental label.
 On N1x, the existing-server route remains unvalidated even after standard-onboarding intent admits it.
-NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
+NemoClaw accepts the detected endpoint only when `/v1/models` returns HTTP `200` and an OpenAI-style JSON response with a `data` array.
+It then records the model reported by that response.
 
 When you request a vLLM serving profile, the detected server must report the profile's served model alias or a safe `root` that matches the profile's declared model.
 NemoClaw stops onboarding when neither identifier matches, rather than recording a route that the profile does not declare.

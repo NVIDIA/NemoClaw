@@ -15,26 +15,26 @@
     "testFileCount": 77,
     "liveFileCount": 189,
     "direct": {
-      "expectCalls": 1302,
-      "matcherAssertions": 1285,
+      "expectCalls": 1308,
+      "matcherAssertions": 1291,
       "nodeAssertions": 109,
-      "namedAssertionHelpers": 421,
+      "namedAssertionHelpers": 427,
       "failCalls": 0,
       "throwGuards": 50,
       "objectFieldAssertions": 186,
-      "assertionPoints": 2051,
+      "assertionPoints": 2063,
       "generatedProbeBlocks": 91,
       "generatedProbeConditions": 215
     },
     "unique": {
-      "expectCalls": 1730,
-      "matcherAssertions": 1708,
+      "expectCalls": 1736,
+      "matcherAssertions": 1714,
       "nodeAssertions": 132,
-      "namedAssertionHelpers": 668,
+      "namedAssertionHelpers": 674,
       "failCalls": 1,
       "throwGuards": 532,
       "objectFieldAssertions": 268,
-      "assertionPoints": 3309,
+      "assertionPoints": 3321,
       "generatedProbeBlocks": 220,
       "generatedProbeConditions": 727
     },
@@ -509,10 +509,10 @@
         0
       ],
       "test/e2e/live/sandbox-survival.test.ts": [
-        3,
-        8,
-        4,
         9,
+        20,
+        10,
+        21,
         0
       ],
       "test/e2e/live/sessions-agents-cli.test.ts": [

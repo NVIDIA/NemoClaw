@@ -3,6 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { SANDBOX_REPAIR_READY_TIMEOUT_SEC } from "../../../src/lib/actions/sandbox/connect";
+import { OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS } from "../../../src/lib/actions/sandbox/process-recovery";
+
 import {
   SANDBOX_SURVIVAL_ADMIN_APPROVAL_TIMEOUT_MS,
   SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
@@ -19,6 +22,7 @@ import {
   SANDBOX_SURVIVAL_PREPARATION_WORST_CASE_MS,
   SANDBOX_SURVIVAL_READINESS_BUDGET_MS,
   SANDBOX_SURVIVAL_READINESS_WORST_CASE_MS,
+  SANDBOX_SURVIVAL_RECOVER_TIMEOUT_MS,
   SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES,
   SANDBOX_SURVIVAL_TEST_HEADROOM_MS,
   SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
@@ -34,6 +38,23 @@ import { SANDBOX_MARKER_COMMAND_TIMEOUT_MS } from "../fixtures/phases/state-vali
 const MINUTE_MS = 60_000;
 
 describe("sandbox-survival timeout contract", () => {
+  it.each([
+    "src/lib/actions/sandbox/connect.ts",
+    "src/lib/actions/sandbox/process-recovery.ts",
+    "src/lib/actions/sandbox/start.ts",
+  ])("selects both native runtime variants for changes to %s", (file) => {
+    const target = catalogueTargetsForChangedFiles([file]).find(
+      (candidate) => candidate.id === "sandbox-survival",
+    );
+    expect(target?.gatewayRuntimes).toEqual(["docker", "podman"]);
+  });
+
+  it("lets recovery finish both readiness waits and startup before the command deadline", () => {
+    const sequentialWaitsMs =
+      (2 * SANDBOX_REPAIR_READY_TIMEOUT_SEC + OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS) * 1_000;
+    expect(SANDBOX_SURVIVAL_RECOVER_TIMEOUT_MS).toBeGreaterThan(sequentialWaitsMs);
+  });
+
   it("contains every bounded phase and leaves explicit test headroom", () => {
     expect(SANDBOX_SURVIVAL_PREPARATION_WORST_CASE_MS).toBeGreaterThanOrEqual(
       SANDBOX_SURVIVAL_INSTALL_TIMEOUT_MS,

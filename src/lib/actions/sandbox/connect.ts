@@ -141,12 +141,15 @@ import {
   type HermesPortableForwardRecoveryContext,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryTimingEvidence,
+  OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS,
   prepareHermesPortableLaunchForwards,
   verifyHermesPortableLaunchForwards,
   type PreparedHermesPortableForwardRecovery,
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
+  resolveGatewayRecoveryWaitSeconds,
   waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess,
 } from "./process-recovery";
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
@@ -386,6 +389,11 @@ async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean
   return result.kind === "settled";
 }
 
+/**
+ * Verify the agent, host forwards, and inference route under probe-only authority.
+ * After starting OpenClaw, a positive wait requires a running gateway observation;
+ * a zero wait skips startup observation and continues ordinary recovery.
+ */
 async function runSandboxConnectProbe(
   sandboxName: string,
   {
@@ -467,6 +475,30 @@ async function runSandboxConnectProbe(
 
   let settledHermesGatewayObserved =
     managedHermesGatewayProcessObserved === true && agent?.name === "hermes";
+  if (
+    startedStoppedContainer &&
+    (readConnectSandbox(sandboxName)?.agent ?? "openclaw") === "openclaw" &&
+    resolveGatewayRecoveryWaitSeconds(OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS) > 0
+  ) {
+    const gatewayProcess = await measureAsync("processes", () =>
+      waitForStartedNativeGatewayProcess(
+        sandboxName,
+        "openclaw",
+        getSandboxTargetGatewayName(sandboxName),
+        {
+          defaultTimeoutSeconds: OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS,
+          log: console.log,
+        },
+      ),
+    );
+    if (gatewayProcess !== true) {
+      probeTiming?.markFailureStage("processes");
+      console.error(
+        `  Probe failed: the OpenClaw gateway in sandbox '${sandboxName}' did not become observable and running before the startup settlement window expired.`,
+      );
+      process.exit(1);
+    }
+  }
   if (startedStoppedContainer && agent?.name === "hermes") {
     const gatewayProcess = await measureAsync("processes", () =>
       waitForStartedHermesGatewayProcess(sandboxName, getSandboxTargetGatewayName(sandboxName), {
