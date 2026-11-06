@@ -110,6 +110,41 @@ export function exportedProviderProfileMatchesContract(
   }
 }
 
+/**
+ * True when the applied gateway profile is an outdated (lagging) version of the
+ * checked-in boundary: every credential, endpoint and capability matches, but
+ * the applied binaries allowlist is a strict subset of the checked-in one.
+ *
+ * This is the profile "lag" surface behind #13657: NemoClaw updated the
+ * checked-in egress allowlist (e.g. added `/usr/bin/curl`) but an earlier
+ * import on the gateway still carries the narrower list, so the sandbox policy
+ * it derives from is missing the path the in-sandbox probe actually runs.
+ * Such a profile is NemoClaw-owned content that merely fell behind; it is
+ * refreshed rather than failing the closed boundary. A widened or
+ * contradictory profile remains rejected (see #9806).
+ */
+export function appliedProviderProfileLaggingContract(
+  exported: string,
+  expected: CheckedInProviderProfileContract,
+): boolean {
+  let actual: ProviderProfileBoundary | null = null;
+  try {
+    actual = providerProfileBoundary(JSON.parse(exported) as unknown);
+  } catch {
+    return false;
+  }
+  if (!actual) return false;
+  const boundary = expected.boundary;
+  return (
+    actual.id === boundary.id &&
+    actual.inference_capable === boundary.inference_capable &&
+    isDeepStrictEqual(actual.credentials, boundary.credentials) &&
+    isDeepStrictEqual(actual.endpoints, boundary.endpoints) &&
+    actual.binaries.length < boundary.binaries.length &&
+    actual.binaries.every((binary) => boundary.binaries.includes(binary))
+  );
+}
+
 export function isMissingProviderProfile(output: string, profileId: string): boolean {
   const normalized = output
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "")
