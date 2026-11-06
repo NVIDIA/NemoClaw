@@ -264,16 +264,9 @@ describe("source-backed MCP denied-tool policy updates", () => {
   });
 
   it("accepts deny-tool update when recorded public pins match fresh DNS answer", async () => {
-    const lookup = vi
-      .spyOn(dns, "lookup")
-      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
-    try {
-      await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
-      expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
-      expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
-    } finally {
-      lookup.mockRestore();
-    }
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalled();
   });
 
   it("rejects deny-tool update when public pins drift without --refresh-public-pins", async () => {
@@ -304,14 +297,15 @@ describe("source-backed MCP denied-tool policy updates", () => {
       expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
       expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
 
-      // After refresh, a deny-tool update should succeed with the new pins
+      // Read the updated state after refresh
+      const refreshedEntry = { ...entry, allowedIps: ["1.1.1.1"] };
       vi.clearAllMocks();
       mocks.inspectSourceBridgeState.mockReturnValue({
-        bridges: { github: { ...entry, allowedIps: ["1.1.1.1"] } },
-        sources: { native: { github: { ...entry, allowedIps: ["1.1.1.1"] } }, legacy: {} },
+        bridges: { github: refreshedEntry },
+        sources: { native: { github: refreshedEntry }, legacy: {} },
       });
       mocks.inspectAgentMcpSources.mockResolvedValue({
-        native: { github: { ...entry, allowedIps: ["1.1.1.1"] } },
+        native: { github: refreshedEntry },
         legacy: {},
       });
       mocks.preflightMcpEntryTargets.mockResolvedValue(

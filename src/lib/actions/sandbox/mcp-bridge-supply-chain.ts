@@ -113,6 +113,12 @@ export function computeToolPolicy(
   allowTools?: readonly string[],
   denyTools?: readonly string[],
 ): { allowTools: readonly string[]; denyTools: readonly string[]; mode: "allowlist" | "denylist" } {
+  // Reject explicitly empty arrays: [] is invalid, undefined means denylist mode.
+  if (allowTools !== undefined && allowTools.length === 0) {
+    throw new Error(
+      "Explicitly empty allowTools array is not allowed. Use undefined (omitted) for denylist mode.",
+    );
+  }
   if (allowTools && allowTools.length > 0) {
     return {
       allowTools,

@@ -697,21 +697,37 @@ async function enrichFromPolicy(
   const legacyDeniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
   const legacyDenyTools = legacyDeniedToolInspection.ok ? legacyDeniedToolInspection.selectors : [];
 
-  // Read allow rules from the new schema (rules[].allow.params.name)
-  // Only include rules whose allow.method is "tools/call" to avoid
-  // granting unintended tool-call permissions from non-tool methods.
+  // Read allow rules from the new schema (rules[].allow.params.name or
+  // rules[].allow.tool). Only include rules whose allow.method is "tools/call"
+  // to avoid granting unintended tool-call permissions from non-tool methods.
+  // Both canonical (params.name) and legacy (allow.tool) selector forms are
+  // accepted so persisted allowlists round-trip without false conflicts.
   const allowRules = Array.isArray(endpoint.rules)
     ? endpoint.rules
         .filter(
-          (rule): rule is { allow: { method: string; params: { name: string } } } =>
-            isObjectRecord(rule) &&
-            "allow" in rule &&
-            isObjectRecord(rule.allow) &&
-            rule.allow.method === "tools/call" &&
-            isObjectRecord(rule.allow.params) &&
-            typeof rule.allow.params.name === "string",
+          (rule): rule is { allow: { method: string; params: { name: string } } } => {
+            if (!isObjectRecord(rule) || !"allow" in rule || !isObjectRecord(rule.allow)) {
+              return false;
+            }
+            if (rule.allow.method !== "tools/call") return false;
+            if (
+              isObjectRecord(rule.allow.params) &&
+              typeof rule.allow.params.name === "string"
+            ) {
+              return true;
+            }
+            return typeof rule.allow.tool === "string";
+          },
         )
-        .map((rule) => rule.allow.params.name)
+        .map((rule) => {
+          if (
+            isObjectRecord(rule.allow.params) &&
+            typeof rule.allow.params.name === "string"
+          ) {
+            return rule.allow.params.name;
+          }
+          return (rule.allow as { tool?: string }).tool as string;
+        })
     : [];
 
   // Read deny rules from the new schema (endpoint.deny_rules with params.name)
@@ -734,23 +750,28 @@ async function enrichFromPolicy(
 
   const denyTools = denyToolInspection.ok ? denyToolInspection.selectors : [];
 
-  // Check for policy conflicts
+  // Check for policy conflicts. Named allow rules conflict with deny rules
+  // or unparameterized tools/call rules at the endpoint level.
   const hasNamedAllowRules = allowRules.length > 0;
   const hasDenyRules = denyRulesFromEndpoint.length > 0 || legacyDenyTools.length > 0;
 
-  // Named allow rules conflict with deny rules or unparameterized tools/call rules
-  const hasUnparameterizedToolsCallRule = Array.isArray(endpoint.deny_rules)
-    ? endpoint.deny_rules.some((rule) =>
-        isObjectRecord(rule) &&
-        rule.method === "tools/call" &&
-        (!isObjectRecord(rule.params) || typeof rule.params.name !== "string")
-      )
+  // Named allow rules conflict with unparameterized tools/call allow rules
+  // (endpoint.rules with allow.method === "tools/call" but no tool selector).
+  const hasUnparameterizedToolsCallAllow = Array.isArray(endpoint.rules)
+    ? endpoint.rules.some((rule) => {
+        if (!isObjectRecord(rule) || !"allow" in rule || !isObjectRecord(rule.allow)) {
+          return false;
+        }
+        return rule.allow.method === "tools/call" &&
+          !isObjectRecord(rule.allow.params) &&
+          typeof rule.allow.tool !== "string";
+      })
     : false;
 
   const policyConflict =
     !denyToolInspection.ok ||
     !legacyDeniedToolInspection.ok ||
-    (hasNamedAllowRules && (hasDenyRules || hasUnparameterizedToolsCallRule)) ||
+    (hasNamedAllowRules && (hasDenyRules || hasUnparameterizedToolsCallAllow)) ||
     (allowRules.length > 0 ? allowRules.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool)) : false)
       ? "Live policy contains invalid tool selectors."
       : endpointConflict;
@@ -760,7 +781,7 @@ async function enrichFromPolicy(
   // access when deny rules are also empty. An all-invalid allowlist is reported
   // through policyConflict instead, and mutations refuse conflicted entries.
   const validAllowTools =
-    allowRules.length > 0 ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool)) : [];
+    allowRules.length > 0 ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool)).sort() : [];
   const allowTools = validAllowTools.length > 0 ? validAllowTools : undefined;
 
   // serverIdentity, transport, and requireOAuth are request-scoped options, not

@@ -116,6 +116,12 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
   // cause a false mismatch on retry.
   const existingTransport = existing.transport ?? inferTransportFromUrl(existing.url);
   const requestedTransport = requested.transport ?? inferTransportFromUrl(requested.url);
+  // Normalize tool lists for order-insensitive comparison: equivalent selector sets
+  // should match regardless of order. Sort before comparing to handle hand-edited.
+  const existingDenyTools = [...(existing.denyTools ?? [])].sort();
+  const requestedDenyTools = [...(requested.denyTools ?? [])].sort();
+  const existingAllowTools = [...(existing.allowTools ?? [])].sort();
+  const requestedAllowTools = [...(requested.allowTools ?? [])].sort();
   return (
     existing.server === requested.server &&
     existing.agent === requested.agent &&
@@ -124,10 +130,10 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.providerName === requested.providerName &&
     existing.policyName === requested.policyName &&
     existing.trustedPrivateHost === requested.trustedPrivateHost &&
-    (existing.denyTools?.length ?? 0) === (requested.denyTools?.length ?? 0) &&
-    (existing.denyTools ?? []).every((tool, index) => tool === requested.denyTools?.[index]) &&
-    (existing.allowTools?.length ?? 0) === (requested.allowTools?.length ?? 0) &&
-    (existing.allowTools ?? []).every((tool, index) => tool === requested.allowTools?.[index]) &&
+    existingDenyTools.length === requestedDenyTools.length &&
+    existingDenyTools.every((tool, index) => tool === requestedDenyTools[index]) &&
+    existingAllowTools.length === requestedAllowTools.length &&
+    existingAllowTools.every((tool, index) => tool === requestedAllowTools[index]) &&
     (existing.allowedIps?.length ?? 0) === (requested.allowedIps?.length ?? 0) &&
     (existing.allowedIps ?? []).every(
       (address, index) => address === requested.allowedIps?.[index],
@@ -135,17 +141,18 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index]) &&
     existingTransport === requestedTransport &&
-    // serverIdentity and requireOAuth cannot round-trip through durable
-    // agent-native or OpenShell policy state (readers reconstruct only
-    // server/url/env plus policy-derived pins). An absent stored value therefore
-    // cannot distinguish an exact retry from a conflicting one: the retry adopts
-    // the requested intent fail-open. Compare strictly whenever the stored entry
-    // carries them; the add path warns when it adopts an unverifiable pin.
-    // requireOAuth is additionally rejected outright at the transport-trust
-    // boundary, so no OAuth intent can reach this comparison today.
+    // requireOAuth is rejected outright at the transport-trust boundary, so no
+    // OAuth intent can reach this comparison today.
     (existing.requireOAuth === undefined || existing.requireOAuth === requested.requireOAuth) &&
+    // serverIdentity cannot round-trip through durable agent-native or
+    // OpenShell policy state (readers reconstruct only server/url/env plus
+    // policy-derived pins). A stored pin must be matched exactly; an absent
+    // stored pin cannot distinguish an exact retry from a conflicting one, so
+    // the retry must not adopt the requested pin silently. Reject the request
+    // until durable enforcement exists.
     (existing.serverIdentity?.digest === undefined ||
-      existing.serverIdentity.digest === requested.serverIdentity?.digest)
+      existing.serverIdentity.digest === requested.serverIdentity?.digest) &&
+    (requested.serverIdentity === undefined || existing.serverIdentity?.digest !== undefined)
   );
 }
 
@@ -1033,12 +1040,8 @@ async function addMcpBridgeUnlocked(
     );
   }
 
-  // Supply-chain verification runs only against an actually stored pin. This is
-  // a transient in-memory check, not durable retry validation: reconstructed
-  // agent-native entries never carry serverIdentity (see sameMcpAddIntent), so
-  // this branch does not fire for them and a retry with a conflicting pin is
-  // adopted fail-open below. A stored pin that differs still fails closed here
-  // when the caller supplies one.
+  // Supply-chain verification runs only against an actually stored pin. A stored
+  // pin that differs still fails closed here when the caller supplies one.
   if (existingEntry?.serverIdentity && options.serverIdentity) {
     await verifyMcpServerIdentity(existingEntry, options.serverIdentity);
   }
@@ -1048,11 +1051,12 @@ async function addMcpBridgeUnlocked(
     existingEntry.serverIdentity === undefined
   ) {
     // Durable state cannot prove the prior identity intent, so an exact retry
-    // and a conflicting retry are indistinguishable. Adopt the requested pin
-    // for crash-consistent resume and make that visible; changing the pin
-    // deliberately still requires remove with --force and re-add.
-    console.warn(
-      `  WARNING: MCP server '${options.server}' retry cannot validate --server-identity against durable state. Adopting the requested pin.`,
+    // and a conflicting retry are indistinguishable. Reject the request until
+    // durable enforcement exists; changing the pin deliberately still requires
+    // remove with --force and re-add.
+    throw new McpBridgeError(
+      `MCP server '${options.server}' retry cannot validate --server-identity against durable state. Remove with --force and re-add to set a new identity pin.`,
+      2,
     );
   }
 

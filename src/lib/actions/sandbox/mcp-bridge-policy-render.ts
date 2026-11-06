@@ -107,6 +107,12 @@ function renderMcpBridgePolicyYaml(
   const key = buildMcpBridgePolicyKey(server);
   const allowedIps = [...target.addresses];
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+  // Reject explicitly empty arrays: [] is invalid, undefined means denylist mode.
+  if (allowTools !== undefined && allowTools.length === 0) {
+    throw new Error(
+      "Explicitly empty allowTools array is not allowed. Use undefined (omitted) for denylist mode.",
+    );
+  }
   const normalizedAllowTools = allowTools ? [...allowTools].sort() : [];
   const isAllowlistMode = normalizedAllowTools.length > 0;
 

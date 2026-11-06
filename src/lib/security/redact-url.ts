@@ -213,13 +213,12 @@ export function redactUrlTokenPartial(
   if (value.length === 0) return value;
   const parsed = parseUrlTokenForRedaction(value);
   if (!parsed) {
-    return redactMalformedUrlQuery(
-      redactMalformedUrlUserinfo(value, "****"),
-      "****",
-      false,
-      isSensitiveKey,
-      redactStandaloneSecrets,
-    );
+    // A malformed URL cannot be parsed. Apply userinfo redaction and then
+    // use the query/fragment redaction pipeline which properly decodes
+    // percent-encoded values before checking against secret patterns.
+    const redactedUserinfo = redactMalformedUrlUserinfo(value, "****");
+    // stripFragment=false preserves and redacts the fragment for display output
+    return redactMalformedUrlQuery(redactedUserinfo, "****", false, isSensitiveKey, redactStandaloneSecrets);
   }
   if (parsed.url.username) parsed.url.username = "****";
   if (parsed.url.password) parsed.url.password = "****";
