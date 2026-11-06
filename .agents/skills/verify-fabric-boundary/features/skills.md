@@ -45,6 +45,14 @@ Otherwise, if neither holds, Loading is Failed.
 - Correct output alone never proves loading.
 - Authoring prompts and the agent's claims never replace a native read of the saved skill.
 
+## Output Evidence
+
+For supplied and generated skills on both OpenClaw and Hermes, the runner reads the result from the mounted filesystem through `openshell sandbox exec` and checks its exact keys, probe, nonce, and phase with the commands below.
+That independent read is authoritative for contents; an agent's reply or a successful write-tool response, including `verified:true`, cannot replace it.
+The run's native file calls must still show a current input-read and output-write, and [Instruction Evidence](#instruction-evidence) must establish loading.
+An agent-side result reread is optional and is not a pass condition: native system guidance may forbid reverifying a write the tool already confirmed.
+Keep the fresh phase input and remove the output before each run, so a retained artifact cannot pass.
+
 ## Driving it with fabric-agent-ctl and the OpenShell CLI
 
 Preconditions: the [launch](../SKILL.md#launch) seeded the supplied skill below before the first apply, `bindings.md` records the skill path's YAML field, the native discovery and view mechanism, the `skill-authoring tool` and `skill directory` lines, and the native state and skill roots, and the phase's [fresh phase input](README.md#driving-conventions) is written: `fixtures/probe-input.json` holds this phase's `NONCE`.
@@ -72,7 +80,7 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    - `phase`: the input phase unchanged.
 
    Use file tools, not shell execution, so this workflow also works when the terminal toolset is disabled.
-   Read the result back and report its path. Do not claim success if a tool failed.
+   Report the result's path. Do not claim success if a tool failed.
    ```
 
    The launch seeds it once, before the first apply, and records its hash in `$EVIDENCE/seeded.sha256`.
@@ -97,7 +105,7 @@ Save each request's runtime skill list or loading record for the turn in `$CHECK
    - **Persistence:** `grep` prints the seeded hash's line.
    - **Discovery:** `discover.calls.txt` or `discover.skills.txt` shows the current turn's native discovery listing `capability-probe` from `/sandbox/workspace/skills/capability-probe/`, and a native view of its content.
    - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `capability-probe`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
-   - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json`, wrote `results/skill-result.json`, and read the result back.
+   - **Output:** the runner's independent read produces `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/skill-result.json`, as [Output Evidence](#output-evidence) requires.
 3. **`mounted-skill-first-start`:** run it first in the Initial phase, before any other request in this run, including `inference`:
 
    ```sh
@@ -195,7 +203,7 @@ MARKER=%s
     - **Persistence:** `same`, at the recorded save location.
     - **Discovery:** the current turn's native discovery lists `$SKILL_NAME` from that location.
     - **Loading:** [Instruction Evidence](#instruction-evidence) holds for `$SKILL_NAME`: a current load in `run.calls.txt`, or reuse of this phase's discovery view.
-    - **Output:** `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/generated-skill-result.json`.
+    - **Output:** the runner's independent read produces `{"keys":["nonce","phase","probe"],"ok":true}`, and `run.calls.txt` shows current-turn native file calls that read `fixtures/probe-input.json` and wrote `results/generated-skill-result.json`, as [Output Evidence](#output-evidence) requires.
 
     Result: all four hold. A retained file with failed native discovery is Failed when a runtime is available.
 ## Gotchas
