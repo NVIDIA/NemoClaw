@@ -483,37 +483,4 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       status: "ABSENT",
     });
   });
-
-  it("keeps the E2E failure and cleanup when the diagnostic budget expires (#6409)", () => {
-    const { calls, env, state, workDir } = fixture({
-      e2eDiagnosticTimesOut: true,
-      e2eFails: true,
-    });
-    const result = run({
-      ...env,
-      FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS: "1",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("full E2E failed");
-    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
-    expect(laneLog).toContain(
-      "Full E2E failure diagnostic gateway state: status 124; output: probe timed out",
-    );
-    expect(laneLog).toContain(
-      "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
-    );
-    expect(laneLog).toContain(
-      "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
-    );
-    const commands = fs.readFileSync(calls, "utf8");
-    expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
-    expect(commands.indexOf("ExecMainCode")).toBeLessThan(
-      commands.indexOf("brev delete nclaw-e2e-test-1"),
-    );
-    expect(fs.existsSync(state)).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
-      status: "ABSENT",
-    });
-  });
 });

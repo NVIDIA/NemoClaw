@@ -30,7 +30,8 @@ Use a host firewall with default-deny inbound rules.
 Allow the configured TCP port only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
 
-An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
+A new managed single-host container publishes the configured host port on exactly two host addresses: `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge.
+The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
 OpenShell reaches the server through the private bridge binding.
 <AgentOnly variant="openclaw">
@@ -111,7 +112,7 @@ vllm serve /models/Hermes-3-Llama-3.1-8B \
 Use the parser required by your selected model instead of copying `hermes` for another model family.
 Without both `--enable-auto-tool-choice` and a matching parser, tool calls can appear as raw assistant text instead of structured `tool_calls`.
 The `--host` value in this operator-run example controls the listener inside that server process.
-For the authenticated fixed profile, evaluate host exposure from its published Docker port bindings as described in [Install a Fixed vLLM Profile](choose-local-inference-server#install-a-fixed-vllm-profile).
+For a managed single-host profile, evaluate host exposure from its published Docker port bindings as described in [Install a Fixed vLLM Profile](choose-local-inference-server#install-a-fixed-vllm-profile).
 
 ## Install or Start Managed vLLM
 
@@ -182,32 +183,56 @@ Choose one action:
 
 - To reuse the running server, omit `--vllm-gpu-device` and select **Local vLLM**.
   On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, before onboarding.
-- To change the GPU or port, inspect the sandbox registry for every gateway-port environment on the host.
+- To recreate a managed container or change its GPU or port, inspect the sandbox registry for every gateway-port environment on the host.
   Run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw list` for port `8080` and for every non-default port represented by a numeric directory under `~/.nemoclaw/gateways/`.
   Treat every sandbox that reports provider `vllm-local` as a possible consumer because the list output does not distinguish local vLLM from Local NIM.
   Continue only when no environment reports that provider; otherwise, keep the server running or move each possible consumer to another inference provider.
   Stop an operator-managed server through the system service, container, or process workflow that started it.
-  For a NemoClaw-managed container, inspect its ID and labels before stopping it:
+  For a NemoClaw-managed container, use Docker's default local context to inspect its ID and labels before stopping it:
 
   ```bash
-  docker container inspect \
+  docker --context default container inspect \
     --format '{{.Id}} {{json .Config.Labels}}' \
     nemoclaw-vllm
   ```
 
   Continue only when the output includes `"com.nvidia.nemoclaw.managed-vllm":"true"` and does not include `com.nvidia.nemoclaw.vllm-role`, `com.nvidia.nemoclaw.vllm-endpoint`, or `com.nvidia.nemoclaw.vllm-cluster`.
   Do not stop the container when any distributed label is present; follow the matching multi-node vLLM guide instead.
+  Record the original profile or model settings and the host port before stopping the container.
+  Read the mappings for the inspected container ID:
+
+  ```bash
+  docker --context default port <container-id> 8000/tcp
+  ```
+
+  All mappings must report the same host port.
+  If you cannot establish one host port, keep the container running and stop recovery.
+  Save that port for the onboarding command, including when you use a new shell:
+
+  ```bash
+  VLLM_HOST_PORT="<recorded-host-port>"
+  ```
+
   Stop that exact container ID:
 
   ```bash
-  docker container stop <container-id>
+  docker --context default container stop <container-id>
   ```
 
-  Set `NEMOCLAW_VLLM_PORT` before onboarding if you are changing the port.
-  Rerun managed onboarding:
+  For an intentional port change, set `VLLM_HOST_PORT` to the new port instead.
+  Rerun managed onboarding with the original profile or model settings.
+  For a catalog profile with GPU selection:
 
   ```bash
-  $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
+  NEMOCLAW_VLLM_PORT="${VLLM_HOST_PORT:?Set the recorded host port first.}" \
+    $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
+  ```
+
+  For managed installation without `--profile`, restore the original `NEMOCLAW_VLLM_MODEL` setting if you used one:
+
+  ```bash
+  NEMOCLAW_VLLM_PORT="${VLLM_HOST_PORT:?Set the recorded host port first.}" \
+    NEMOCLAW_PROVIDER=install-vllm $$nemoclaw onboard
   ```
 
 Accept the result when onboarding completes and `$$nemoclaw list` reports the new sandbox with provider `vllm-local` and the expected model.
@@ -225,9 +250,11 @@ In an interactive run, the managed path lists the supported model registry for y
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
 The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container with the configured host port (`8000` by default).
-For a bearer-protected profile, Docker publishes that port only on `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge.
-For a bearerless profile, Docker publishes the host port on all host interfaces and vLLM does not require NemoClaw's managed bearer key.
-Before starting a bearerless profile, configure the host firewall to allow the port only from the OpenShell Docker subnet and loopback, and deny it on management, LAN, and internet-facing interfaces.
+For every single-host profile, Docker publishes that port only on `127.0.0.1` and the private IPv4 gateway of the `openshell-docker` bridge.
+Bearerless profiles do not require NemoClaw's managed bearer key.
+Existing containers keep their published bindings until they are recreated.
+Managed route recovery rejects owned bearerless containers whose bindings do not match the required pair.
+To recreate the container, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) with the original model and port settings.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
 NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the container ID and API-key fingerprint.
@@ -236,7 +263,10 @@ If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw pre
 On hosts other than N1x, if another vLLM server already occupies the configured vLLM port and no managed GPU selection accompanies explicit managed-install intent, NemoClaw selects the existing-server path and applies the model-identity checks described above.
 On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
 Except for the interrupted managed install described below, an occupied single-host port stops installation before NemoClaw persists a bearer key or records the selected model.
-For an interrupted install, it can remove and replace only a running `nemoclaw-vllm` container that has the NemoClaw ownership label and publishes container port `8000` to the requested host port on `127.0.0.1` or `0.0.0.0` through the selected local Docker connection.
+For an interrupted install, NemoClaw can remove and replace only a running `nemoclaw-vllm` container with the ownership label and matching port mappings through the selected local Docker connection.
+Managed route recovery accepts an owned bearerless container only when container port `8000` maps to the requested host port on exactly `127.0.0.1` and the private IPv4 gateway of `openshell-docker`.
+Route recovery rejects other bindings, including `0.0.0.0` and `::`.
+If route recovery rejects the container, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) to recreate it with the original model and port settings.
 It refuses an unlabeled, stopped, distributed, ambiguous, differently mapped, or differently addressed container.
 For every other port holder, NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
 Stop the process, then run onboarding again.
@@ -341,9 +371,10 @@ The explicit watched `docker pull` still runs against that immutable digest.
 After an image pull, NemoClaw checks the model-cache estimate again before `hf download`.
 The model-download helper and the long-lived vLLM container use `--pull=never`, so an implicit pull cannot select another image.
 
-NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
-It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
-When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI behavior and uses `DOCKER_HOST`.
+Managed single-host vLLM uses the host's default Docker daemon for image inspection, storage checks, downloads, launch, and cleanup.
+It ignores ambient Docker selectors, including `DOCKER_HOST`, `DOCKER_CONTEXT`, and `DOCKER_CONFIG`.
+Use `docker --context default system df` and `docker --context default info --format '{{.DockerRootDir}}'` to inspect that daemon when investigating a storage warning.
+NemoClaw recognizes `/var/run/docker.sock` and `/run/docker.sock` as local default Docker socket paths for storage inspection.
 Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
 
 When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
@@ -557,7 +588,7 @@ Correct the reported startup problem, then repeat the same rebuild command.
 Verify that the replacement container uses the two-sequence limit.
 
 ```bash
-docker container inspect \
+docker --context default container inspect \
   --format '{{json .Config.Cmd}}' \
   nemoclaw-vllm
 ```
