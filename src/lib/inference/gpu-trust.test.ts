@@ -90,6 +90,29 @@ describe("GPU trust helpers", () => {
     expect(resolveNvidiaSmiCommand({ isWsl: true, runCaptureImpl })).toBe(WSL_NVIDIA_SMI_PATH);
   });
 
+  it("bounds both candidates and tries the WSL driver after a PATH probe timeout", () => {
+    const runCaptureImpl = vi.fn().mockReturnValueOnce("").mockReturnValueOnce("GPU 0: NVIDIA RTX");
+
+    expect(captureNvidiaSmi(["-L"], { isWsl: true, runCaptureImpl })).toBe("GPU 0: NVIDIA RTX");
+    expect(runCaptureImpl).toHaveBeenNthCalledWith(1, ["nvidia-smi", "-L"], {
+      ignoreError: true,
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    expect(runCaptureImpl).toHaveBeenNthCalledWith(2, [WSL_NVIDIA_SMI_PATH, "-L"], {
+      ignoreError: true,
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+  });
+
+  it("returns no GPU output when both bounded candidates time out", () => {
+    const runCaptureImpl = vi.fn(() => "");
+
+    expect(captureNvidiaSmi(["-L"], { isWsl: true, runCaptureImpl })).toBe("");
+    expect(runCaptureImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("does not probe the WSL driver path outside WSL", () => {
     const runCaptureImpl = vi.fn<
       (command: readonly string[], options?: { ignoreError?: boolean }) => string
