@@ -6,7 +6,7 @@
 ## Baseline Preconditions
 
 - The [launch](../SKILL.md#launch) completed for this run, including the Fabric-boundary YAML edits, the seeded caller volumes, and `bindings.md`, and the [doctor](../SKILL.md#doctor) passes.
-- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 138 rows for `hermes`, 136 for `openclaw`.
+- `$EVIDENCE/checks.md` lists every selected check with an empty outcome: 137 rows for `hermes`, 135 for `openclaw`.
 - The inference source the target file chose answers its `/models` request.
 - The OpenShell CLI matching `versions.json` on `PATH`, with `OPENSHELL_GATEWAY_ENDPOINT` and `OPENSHELL_WORKSPACE` set by the doctor.
 - `jq`, `curl`, and `openssl` on the host.
@@ -129,7 +129,7 @@ Phases run in this order, once each. A transition phase holds one lifecycle chec
 
 | Phase | Directory | What happens | Checks |
 |---|---|---|---|
-| Initial | `initial` | First apply; first-start discovery, then inference, then every feature's first checks, including authoring, install, activation, and use; unchanged plan/apply for `agent-plugin-reconcile` | 33 |
+| Initial | `initial` | First apply; first-start discovery, then inference, then every feature's first checks, including authoring, install, activation, and use; unchanged plan/apply for `agent-plugin-reconcile` | 32 |
 | Runtime restart | `runtime-restart` | Stop only the managed Fabric runtime through supported control, with the Hermes TUI open and owned work in flight; then unchanged plan/apply gives the same sandbox a new usable runtime | 2 for Hermes; 1 for others |
 | After runtime restart | `after-runtime-restart` | Re-run the mounted script, skill, extension, and agent-plugin reuse checks; for Hermes, verify native TUI recovery and explicit conversation resume | 10 for Hermes; 9 for others |
 | Stop/start | `stop-start` | Stop and start the same sandbox through OpenShell's supported commands, confirming the stopped state and lost access, then unchanged plan/apply | 1 |
@@ -161,7 +161,7 @@ After config change, the feature files expect these results; the change disables
 |---|---|---|
 | [invoke-and-tools.md](invoke-and-tools.md) | `inference`, `file-read`, `file-write`, `shell-success`, `shell-failure`, `mounted-supplied-script`, `mounted-generated-script` | The agent answers through Fabric and uses its native file and shell tools on mounted scripts |
 | [native-interfaces.md](native-interfaces.md) | `tui`, `web-ui`, `hermes-tui-stop`, `hermes-tui-recovery` | Native interfaces with a file effect and reconnect; Hermes managed TUI shutdown, owned-work cancellation, and explicit resume after recovery |
-| [skills.md](skills.md) | `skill-discovery`, `skill-execution`, `mounted-skill-yaml`, `mounted-skill-first-start`, `mounted-supplied-skill`, `generated-skill`, `mounted-generated-skill`, `mounted-generated-skill-save` | Supplied skills load from the mounted directory, and a skill the agent creates is saved there and found again |
+| [skills.md](skills.md) | `skill-discovery`, `skill-execution`, `mounted-skill-first-start`, `mounted-supplied-skill`, `generated-skill`, `mounted-generated-skill`, `mounted-generated-skill-save` | Supplied skills load from the mounted directory, and a skill the agent creates is saved there and found again |
 | [plugins.md](plugins.md) | `plugin-load`, `plugin-hooks`, `agent-plugin-author`, `agent-plugin-install`, `agent-plugin-activate`, `agent-plugin-reuse`, `agent-plugin-reconcile` | Bundled plugins load and fire hooks, and a plugin the agent writes and installs stays active |
 | [mounted-extensions.md](mounted-extensions.md) | `mounted-native-tool-yaml`, `mounted-native-tool-first-start`, `mounted-plugin-yaml`, `mounted-plugin-first-start`, `mounted-supplied-native-tool`, `mounted-generated-native-tool`, `mounted-supplied-plugin`, `mounted-generated-plugin` | Native tools and plugins on the mounted workspace, supplied or agent-written, register and run |
 | [lifecycle-and-retention.md](lifecycle-and-retention.md) | `retention`, `extension-runtime-restart`, `stop-start`, `recreate`, `change`, `restore`, `teardown` | Each lifecycle transition, and the workspace and artifact files that survive it |
