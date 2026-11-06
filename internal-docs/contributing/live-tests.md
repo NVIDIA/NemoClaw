@@ -24,7 +24,11 @@ It then runs two [HCL E2E scenarios](#hcl-e2e-scenarios), one after the other, e
 
 The `kind-kubernetes-development` scenario deploys one agent with the defaults: the `kubernetes` runtime profile and the `development` authentication profile, whose tokens the SDK issues.
 Its CLI runs with an empty `PATH`, so no Helm executable can stand in for the bundled Helm provider.
-The agent must answer from its recorded runtime with the stub's reply, and destroy must keep only the gateway's storage.
+The agent must answer from its recorded runtime with the stub's reply.
+Its sandbox has an explicit policy, as the [GTC DC Kubernetes example](../../examples/kubernetes/hosted-nvidia.yaml) has, with one entry that gives `python3` the stub's `/health`; the managed inference grant gives the image's executables only the stub's `/v1/**` paths.
+The `tests/e2e/hcl/command` module then runs `python3` twice in the sandbox: a request to the stub's `/health` must get the stub's 404, where OpenShell's proxy would answer 403 without the entry, and a connection to the API server's Service at `10.96.0.1`, the first address of kind's Service network, must fail with `EACCES`, OpenShell's refusal, because no entry names it.
+The address is literal, so DNS can't cause the refusal.
+Destroy must then keep only the gateway's storage.
 Next, a `ValidatingAdmissionPolicy` that the `hcl_live::admission` probe creates refuses StatefulSets in the deployment's namespace, so an apply fails after Helm stored the gateway release.
 That apply must fail with the refusal, and once the probe removes the policy, no record of the release may remain and the state must not bind it (#14155).
 Another apply must then reuse that storage, refreshing rather than creating it again, so the namespace, encryption key, and claims kept their identity, and the agent must answer again.
@@ -70,7 +74,7 @@ Run blocks call these modules:
 | `tests/e2e/hcl/cli` | Runs one bundled `nemoclaw` command, `plan`, `apply`, or `destroy`, and reports its exit status, error, and JSON result. |
 | `tests/e2e/hcl/verifier` | Invokes agents through `hcl_live::probe` and reports targets without a reply, without an expected one-word answer, or from an unexpected runtime. |
 | `tests/e2e/hcl/volume` | Before a Docker case's first apply, creates each named volume that its sandboxes mount, with the bundled Docker provider, as a platform provides one: with OpenShell's default approval labels for the deployment's workspace and its root owned by the given sandbox identity. NemoClaw's destroy leaves the volumes, and the test removes them when the case ends. |
-| `tests/e2e/hcl/command` | Runs one fixed command per target in a named sandbox through `hcl_live::command`, with the pinned OpenShell CLI's `openshell sandbox exec`, and reports targets whose command exits nonzero, or whose output lacks the expected text or contains the forbidden text. Reports hold only the exit status and whether the output matched; the output stays in the run's private `work` directory. |
+| `tests/e2e/hcl/command` | Runs one fixed command per target in a named sandbox through `hcl_live::command`, with the pinned OpenShell CLI's `openshell sandbox exec`, or on a managed Kubernetes gateway with the gateway's exec through the SDK's port-forward, and reports targets whose command exits nonzero, or whose output lacks the expected text or contains the forbidden text. Reports hold only the exit status and whether the output matched; the output stays in the run's private `work` directory. |
 
 | Case | Runner | Checks |
 |---|---|---|
@@ -84,7 +88,7 @@ Run blocks call these modules:
 | `docker-openclaw-hermes-ollama` | Live / HCL, NVIDIA GPU runner | OpenClaw on NVIDIA hosted inference, `FOUR`; Hermes on a managed Ollama model, any reply. |
 | `docker-openclaw-hermes-interfaces` | `cargo ci live-docker` | OpenClaw's Control UI and Hermes's API server and dashboard through the reported forward and token, on a stub model that requires the run's key; in each sandbox, a writable workspace and no model key in the environment; in OpenClaw's sandbox, a granted endpoint reached and an undeclared host refused ([Agent Interfaces](#agent-interfaces)). |
 | `docker-dummy` | `cargo ci live-docker` | The [dummy agent](#dummy-agent-lifecycle); its configured reply before and after a redeploy that reuses the gateway's storage, and a workspace file on a named volume that survives the destroy and redeploy. |
-| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage. |
+| `kind-kubernetes-development` | `cargo ci live-kind` | One agent with the default [kubernetes runtime and development authentication profiles on kind](#kubernetes-gateway-without-the-helm-cli), applied with no `PATH`; it answers with the stub's reply before and after a redeploy that reuses the gateway's storage, and its sandbox's explicit policy lets `python3` reach the stub's `/health` and refuses an undeclared in-cluster address. |
 | `kind-openshift-oidc` | `cargo ci live-kind` | Two agents with the OpenShift profile [on kind](#kubernetes-gateway-without-the-helm-cli), from a private registry's image, behind a gateway that accepts an existing OIDC issuer's tokens; each answers with the stub's reply. |
 
 Every scenario checks the same successful path:
