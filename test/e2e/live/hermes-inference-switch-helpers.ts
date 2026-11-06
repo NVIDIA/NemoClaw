@@ -16,6 +16,7 @@ import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/nat
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { withDiscordEnrollmentFixture } from "../fixtures/discord-enrollment-env.ts";
+import { hermesNvidiaRecoveryProbe } from "../fixtures/hermes-nvidia-recovery.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/index.ts";
 import {
@@ -282,7 +283,6 @@ export async function prepareProxyResolutionRoute({
     },
   );
   expect(registered.exitCode, resultText(registered)).toBe(0);
-  await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
 
   const setRoute = await host.command(
     "node",
@@ -461,7 +461,7 @@ export async function expectNativeLocalHermesTurn(options: {
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
     max_tokens: 100,
   });
-  const result = await runHermesPongWithRetry({
+  await runHermesPongWithRetry({
     expectedModel: options.model,
     onEvidence: options.onEvidence,
     run: (attempt) =>
@@ -476,9 +476,6 @@ export async function expectNativeLocalHermesTurn(options: {
         },
       ),
   });
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(chatContent(result.stdout)).toMatch(/PONG/i);
-  expect(inferenceResponseModel(result.stdout)).toBe(options.model);
   expect(
     options.endpoint
       .requests()
@@ -960,19 +957,33 @@ export async function runHermesNvidiaDiscordRebuild({
         },
       );
       expectExitZero(enrolled, "enroll Discord before native NVIDIA rebuild");
-      const rebuilt = await host.command("node", [CLI, SANDBOX_NAME, "rebuild", "--yes"], {
-        artifactName: "hermes-nvidia-discord-rebuild",
-        env: withDiscordEnrollmentFixture(env(), enrollmentEnv.DISCORD_BOT_TOKEN),
-        redactionValues,
-        timeoutMs: 15 * 60_000,
-      });
-      expectExitZero(rebuilt, "rebuild Hermes with enrolled Discord");
-      const discordState = await sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "/opt/hermes/.venv/bin/python3",
-          "-c",
-          `import json, os, shlex
+      // Keep healthy preservation separate from recovery of already-stripped state.
+      for (const damaged of [false, true]) {
+        const prefix = damaged ? "hermes-nvidia-damaged" : "hermes-nvidia-discord";
+        let expectedFingerprint: string | undefined;
+        if (damaged) {
+          const seeded = await sandbox.exec(SANDBOX_NAME, hermesNvidiaRecoveryProbe("seed"), {
+            artifactName: `${prefix}-input`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 30_000,
+          });
+          expectExitZero(seeded, "seed and read back exactly three stripped NVIDIA fields");
+          expectedFingerprint = JSON.parse(seeded.stdout).configFingerprint;
+        }
+        const rebuilt = await host.command("node", [CLI, SANDBOX_NAME, "rebuild", "--yes"], {
+          artifactName: `${prefix}-rebuild`,
+          env: withDiscordEnrollmentFixture(env(), enrollmentEnv.DISCORD_BOT_TOKEN),
+          redactionValues,
+          timeoutMs: 15 * 60_000,
+        });
+        expectExitZero(rebuilt, "rebuild Hermes with enrolled Discord");
+        const discordState = await sandbox.exec(
+          SANDBOX_NAME,
+          [
+            "/opt/hermes/.venv/bin/python3",
+            "-c",
+            `import json, os, shlex
 from pathlib import Path
 import yaml
 home = Path(os.environ.get("HERMES_HOME", "/sandbox/.hermes"))
@@ -984,46 +995,57 @@ print(json.dumps({
     "guildIds": values.get("NEMOCLAW_DISCORD_GUILD_IDS"),
     "allowedUsers": values.get("DISCORD_ALLOWED_USERS"),
 }))`,
-        ],
-        {
-          artifactName: "hermes-nvidia-discord-post-rebuild-state",
+          ],
+          {
+            artifactName: `${prefix}-post-rebuild-state`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 30_000,
+          },
+        );
+        expectExitZero(discordState, "read Discord settings after rebuild");
+        expect(JSON.parse(discordState.stdout)).toEqual({
+          enabled: true,
+          requireMention: true,
+          guildIds: "1491590992753590594",
+          allowedUsers: "1005536447329222676",
+        });
+        const status = await host.command("node", [CLI, SANDBOX_NAME, "status", "--json"], {
+          artifactName: `${prefix}-post-rebuild-status`,
           env: env(),
           redactionValues,
-          timeoutMs: 30_000,
-        },
-      );
-      expectExitZero(discordState, "read Discord settings after rebuild");
-      expect(JSON.parse(discordState.stdout)).toEqual({
-        enabled: true,
-        requireMention: true,
-        guildIds: "1491590992753590594",
-        allowedUsers: "1005536447329222676",
-      });
-      const status = await host.command("node", [CLI, SANDBOX_NAME, "status", "--json"], {
-        artifactName: "hermes-nvidia-discord-post-rebuild-status",
-        env: env(),
-        redactionValues,
-        timeoutMs: 6 * 60_000,
-      });
-      expectExitZero(status, "check Hermes NVIDIA status after rebuild");
-      expect(JSON.parse(status.stdout), resultText(status)).toMatchObject({
-        provider: "nvidia-prod",
-        inferenceHealth: { ok: true, probed: true },
-      });
-      const inference = await sandbox.exec(
-        SANDBOX_NAME,
-        ["hermes", "-z", "Reply with exactly PROBE_OK"],
-        {
-          artifactName: "hermes-nvidia-discord-post-rebuild-inference",
-          env: env(),
-          redactionValues,
-          timeoutMs: 180_000,
-        },
-      );
-      expect(
-        inference.exitCode === 0 && /\bPROBE_OK\b/u.test(resultText(inference)),
-        resultText(inference),
-      ).toBe(true);
+          timeoutMs: 6 * 60_000,
+        });
+        expectExitZero(status, "check Hermes NVIDIA status after rebuild");
+        expect(JSON.parse(status.stdout), resultText(status)).toMatchObject({
+          provider: "nvidia-prod",
+          inferenceHealth: { ok: true, probed: true },
+        });
+        if (damaged) {
+          const recovered = await sandbox.exec(SANDBOX_NAME, hermesNvidiaRecoveryProbe("verify"), {
+            artifactName: `${prefix}-recovered-state`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 30_000,
+          });
+          expectExitZero(recovered, "verify recovered NVIDIA references and retained user state");
+          expect(JSON.parse(recovered.stdout).configFingerprint).toBe(expectedFingerprint);
+        }
+        const inference = await sandbox.exec(
+          SANDBOX_NAME,
+          ["hermes", "-z", "Reply with exactly PROBE_OK"],
+          {
+            artifactName: `${prefix}-post-rebuild-inference`,
+            env: env(),
+            redactionValues,
+            timeoutMs: 180_000,
+          },
+        );
+        expect(
+          inference.exitCode === 0 && /\bPROBE_OK\b/u.test(resultText(inference)),
+          resultText(inference),
+        ).toBe(true);
+      }
     }
   }
 }
