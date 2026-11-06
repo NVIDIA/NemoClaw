@@ -72,4 +72,4 @@ spec:
               providerRef: super
               overrides:
                 model: nemotron-3-super
-                maxTokens: 1024
+                maxTokens: 8192
