@@ -196,6 +196,10 @@ function spawnStatusFromOptions(options: ConnectHarnessOptions): number | null {
   return Object.hasOwn(options, "spawnStatus") ? (options.spawnStatus ?? null) : 0;
 }
 
+/**
+ * Isolate connect recovery with mocked gateway, forward, inference, and publication boundaries.
+ * Startup probes default to running; gatewayProcessSettlement supplies stopped or unavailable observations.
+ */
 export function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarness {
   delete require.cache[requireDist.resolve(connectModulePath)];
 

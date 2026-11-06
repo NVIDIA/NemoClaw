@@ -1610,6 +1610,8 @@ export async function waitForStartedHermesGatewayProcess(
 /**
  * Wait for the native agent process after the sandbox runtime becomes Ready.
  * OpenShell Ready proves the supervisor session, not the agent's HTTP listener.
+ * At the OpenClaw deadline, null means the last observation was unavailable;
+ * false means no positive observation was accepted within the wait window.
  */
 export async function waitForStartedNativeGatewayProcess(
   sandboxName: string,

@@ -3,6 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { SANDBOX_REPAIR_READY_TIMEOUT_SEC } from "../../../src/lib/actions/sandbox/connect";
+import { OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS } from "../../../src/lib/actions/sandbox/process-recovery";
+
 import {
   SANDBOX_SURVIVAL_ADMIN_APPROVAL_TIMEOUT_MS,
   SANDBOX_SURVIVAL_FINAL_DESTROY_TIMEOUT_MS,
@@ -19,6 +22,7 @@ import {
   SANDBOX_SURVIVAL_PREPARATION_WORST_CASE_MS,
   SANDBOX_SURVIVAL_READINESS_BUDGET_MS,
   SANDBOX_SURVIVAL_READINESS_WORST_CASE_MS,
+  SANDBOX_SURVIVAL_RECOVER_TIMEOUT_MS,
   SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES,
   SANDBOX_SURVIVAL_TEST_HEADROOM_MS,
   SANDBOX_SURVIVAL_TEST_TIMEOUT_MS,
@@ -43,6 +47,12 @@ describe("sandbox-survival timeout contract", () => {
       (candidate) => candidate.id === "sandbox-survival",
     );
     expect(target?.gatewayRuntimes).toEqual(["docker", "podman"]);
+  });
+
+  it("lets recovery finish both readiness waits and startup before the command deadline", () => {
+    const sequentialWaitsMs =
+      (2 * SANDBOX_REPAIR_READY_TIMEOUT_SEC + OPENCLAW_GATEWAY_STARTUP_WAIT_SECONDS) * 1_000;
+    expect(SANDBOX_SURVIVAL_RECOVER_TIMEOUT_MS).toBeGreaterThan(sequentialWaitsMs);
   });
 
   it("contains every bounded phase and leaves explicit test headroom", () => {

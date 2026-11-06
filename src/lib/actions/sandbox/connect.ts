@@ -389,6 +389,11 @@ async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean
   return result.kind === "settled";
 }
 
+/**
+ * Verify the agent, host forwards, and inference route under probe-only authority.
+ * After starting OpenClaw, a positive wait requires a running gateway observation;
+ * a zero wait skips startup observation and continues ordinary recovery.
+ */
 async function runSandboxConnectProbe(
   sandboxName: string,
   {
