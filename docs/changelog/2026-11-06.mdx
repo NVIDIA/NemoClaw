@@ -38,6 +38,11 @@ NemoClaw v0.0.142 fixes native inference onboarding, limits managed vLLM host ex
   Related change: [PR #14127](https://github.com/NVIDIA/NemoClaw/pull/14127).
 - OpenClaw readiness failures identify rejected CLI pairing state.
   Related change: [PR #13768](https://github.com/NVIDIA/NemoClaw/pull/13768).
+- After `recover` starts a stopped OpenClaw sandbox, it waits for the gateway before repairing processes and host forwards.
+  Related change: [PR #14252](https://github.com/NVIDIA/NemoClaw/pull/14252).
+- Managed MCP server addition reports policy, credential synchronization, and agent-registration progress.
+  Credential synchronization still occurs with `--no-probe`.
+  Related change: [PR #14249](https://github.com/NVIDIA/NemoClaw/pull/14249).
 
 ### Installation and Resources
 
