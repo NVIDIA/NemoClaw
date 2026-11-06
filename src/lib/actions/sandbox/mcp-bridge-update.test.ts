@@ -410,4 +410,25 @@ describe("source-backed MCP denied-tool policy updates", () => {
       expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
     },
   );
+
+  it("preserves denyTools when clearing allow-tools in denylist-mode server", async () => {
+    const deniedEntry = {
+      ...entry,
+      denyTools: ["read_issue"],
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: deniedEntry },
+      sources: { native: { github: deniedEntry }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: deniedEntry },
+      legacy: {},
+    });
+
+    await clearMcpBridgeAllowTools("alpha", "github");
+
+    const updated = mocks.applyGeneratedPolicy.mock.calls[0]?.[1] as McpSourceEntry;
+    expect(updated.denyTools).toEqual(["read_issue"]);
+    expect(updated).not.toHaveProperty("allowTools");
+  });
 });

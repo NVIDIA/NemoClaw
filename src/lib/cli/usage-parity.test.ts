@@ -19,17 +19,22 @@ const publicHelpEntries = visibleEntries()
     visibleCommands().some((command) => command.commandId === commandId),
   );
 
+const nonHiddenEntries = nonHiddenDisplayEntries();
+
 describe("public display usage parity", () => {
-  test("verifies all non-hidden display entries have visible commands", () => {
-    const nonHiddenEntries = nonHiddenDisplayEntries();
+  test("verifies non-hidden entries list is populated", () => {
     expect(nonHiddenEntries.length).toBeGreaterThan(0);
-    for (const entry of nonHiddenEntries) {
+  });
+
+  test.each(nonHiddenEntries)(
+    "has matching visible command for $commandId with usage '$usage'",
+    ({ commandId, usage }) => {
       const command = visibleCommands().find(
-        (candidate) => candidate.commandId === entry.commandId && candidate.usage === entry.usage,
+        (candidate) => candidate.commandId === commandId && candidate.usage === usage,
       );
       expect(command).toBeDefined();
-    }
-  });
+    },
+  );
 
   /** Fail loudly if hint parsing ever yields nothing instead of silently passing. */
   const usageHints = parseUsageHints();

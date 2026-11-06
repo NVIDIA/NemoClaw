@@ -1534,13 +1534,10 @@ async function clearMcpBridgeAllowToolsUnlocked(
   // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
   assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
 
-  const {
-    allowTools: _previousAllowTools,
-    denyTools: _previousDenyTools,
-    ...entryWithoutTools
-  } = storedEntry;
+  const { allowTools: _previousAllowTools, denyTools: _previousDenyTools, ...entryWithoutTools } = storedEntry;
   const updatedEntry: McpSourceEntry = {
     ...entryWithoutTools,
+    ...(_previousDenyTools ? { denyTools: [..._previousDenyTools] } : {}),
     allowedIps: [...target.addresses],
   };
   assertGeneratedPolicyMutationSafe(sandboxName, updatedEntry);
