@@ -41,10 +41,10 @@ describe("public display usage parity", () => {
 
   test.each(visibleEntries())(
     "documents every usage flag of %s (%s)",
-    ({ commandId, usage: _usage, flags }) => {
-      const missing = missingUsageFlags(commandId, flags);
+    ({ commandId, usage: _usage, flags, subcommand }) => {
+      const missing = missingUsageFlags(commandId, flags, subcommand);
       expect(missing).toEqual([]);
-      const extra = extraUsageFlags(commandId, flags);
+      const extra = extraUsageFlags(commandId, flags, subcommand);
       expect(extra).toEqual([]);
     },
   );

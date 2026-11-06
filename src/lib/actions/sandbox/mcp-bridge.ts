@@ -24,7 +24,7 @@ import {
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { redactBridgeSecretsForDisplay, redactMcpMigrationPlanForDisplay } from "./mcp-bridge-output";
 import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "./mcp-bridge/usage";
 import {
   type McpRebuildPreparation,

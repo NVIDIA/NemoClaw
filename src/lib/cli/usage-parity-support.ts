@@ -15,6 +15,14 @@ const POLICY_CHANNEL_SOURCE = path.join(
   "sandbox",
   "policy-channel.ts",
 );
+const MCP_CUSTOM_HELP_SOURCE = path.join(
+  process.cwd(),
+  "src",
+  "lib",
+  "actions",
+  "sandbox",
+  "mcp-bridge.ts",
+);
 
 /** These commands set `static usage` from an imported constant, not a source literal. */
 const USAGE_NOT_IN_COMMAND_SOURCE = new Set(["onboard", "root:help", "root:version"]);
@@ -28,8 +36,18 @@ function commandSourcePath(commandId: string): string {
   return path.join(COMMANDS_ROOT, `${commandId.replace(/:/gu, path.sep)}.ts`);
 }
 
+/** Extract the documented flag tokens for each MCP subcommand from its custom-help case. */
+function mcpCustomHelpUsage(): Record<string, string> {
+  const source = fs.readFileSync(MCP_CUSTOM_HELP_SOURCE, "utf8");
+  const usage: Record<string, string> = {};
+  for (const match of source.matchAll(/case "([a-z]+)":\s*console\.log\(`([\s\S]*?)`\);/gu)) {
+    usage[match[1]] = match[2];
+  }
+  return usage;
+}
+
 /** Read the command's literal `static usage` array from its source file. */
-function staticUsage(commandId: string): string[] {
+function staticUsage(commandId: string, subcommand?: string): string[] {
   const source = fs.readFileSync(commandSourcePath(commandId), "utf8");
   const match = /static usage = (\[[\s\S]*?\]);/u.exec(source);
   if (match === null) throw new Error(`No literal static usage in ${commandId}`);
@@ -46,14 +64,24 @@ function flagTokens(text: string): string[] {
 }
 
 /** Return flags declared in the command's usage but absent from the documented set. */
-function missingUsageFlags(commandId: string, documentedFlags: string | undefined): string[] {
+function missingUsageFlags(
+  commandId: string,
+  documentedFlags: string | undefined,
+  subcommand?: string,
+): string[] {
   const documented = new Set(flagTokens(documentedFlags ?? ""));
-  return flagTokens(staticUsage(commandId).join(" ")).filter((token) => !documented.has(token));
+  return flagTokens(staticUsage(commandId, subcommand).join(" ")).filter(
+    (token) => !documented.has(token),
+  );
 }
 
 /** Return flags present in the documented hint but absent from the command's usage. */
-function extraUsageFlags(commandId: string, documentedFlags: string | undefined): string[] {
-  const declared = new Set(flagTokens(staticUsage(commandId).join(" ")));
+function extraUsageFlags(
+  commandId: string,
+  documentedFlags: string | undefined,
+  subcommand?: string,
+): string[] {
+  const declared = new Set(flagTokens(staticUsage(commandId, subcommand).join(" ")));
   return flagTokens(documentedFlags ?? "").filter((token) => !declared.has(token));
 }
 
@@ -64,7 +92,14 @@ function visibleEntries() {
     .flatMap(([commandId, entries]) =>
       entries
         .filter((entry) => !entry.hidden || HIDDEN_COMMAND_IDS_WITH_PARITY.has(commandId))
-        .map((entry) => ({ commandId, usage: entry.usage, flags: entry.flags })),
+        .map((entry) => ({
+          commandId,
+          usage: entry.usage,
+          flags: entry.flags,
+          // Each sandbox:mcp display row names one subcommand; custom-help
+          // parity compares against that subcommand's renderMcpHelp case.
+          ...(commandId === "sandbox:mcp" ? { subcommand: entry.usage.split(" ").at(-1) } : {}),
+        })),
     );
 }
 

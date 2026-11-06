@@ -206,7 +206,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
     expect(mocks.applyGeneratedPolicy.mock.calls[0]?.[1]).not.toHaveProperty("denyTools");
   });
 
-  it("switches an allowlist-mode server to denied-tool mode on a non-empty update", async () => {
+  it("rejects denied-tool update when an allowlist is active to prevent policy widening", async () => {
     mocks.inspectSourceBridgeState.mockReturnValueOnce({
       bridges: { github: { ...entry, allowTools: ["read_issue"] } },
       sources: { native: { github: { ...entry, allowTools: ["read_issue"] } }, legacy: {} },
@@ -216,13 +216,13 @@ describe("source-backed MCP denied-tool policy updates", () => {
       legacy: {},
     });
 
-    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+    await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
+      /has an active allowlist.*--clear-allow-tools/,
+    );
 
-    // A stale allowlist would make the renderer choose allowlist mode and drop
-    // the requested deny rules, so the replacement must not carry one.
-    const updated = mocks.applyGeneratedPolicy.mock.calls[0]?.[1] as McpSourceEntry;
-    expect(updated.denyTools).toEqual(["delete_repo"]);
-    expect(updated).not.toHaveProperty("allowTools");
+    // No policy mutation should occur when the rejection fires
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
   });
 
   it("preserves the allowlist when the denylist is cleared on an allowlist-mode server", async () => {

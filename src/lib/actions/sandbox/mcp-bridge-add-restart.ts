@@ -823,6 +823,15 @@ async function updateMcpBridgeDenyToolsUnlocked(
   }
   // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
   assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
+  // Reject switching from allowlist mode to denylist mode: this would silently
+  // widen access from deny-by-default to allow-by-default. The operator must
+  // explicitly clear the allowlist first.
+  if (normalizedDenyTools.length > 0 && storedEntry.allowTools && storedEntry.allowTools.length > 0) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has an active allowlist. Run \`nemoclaw ${sandboxName} mcp update ${server} --clear-allow-tools\` before setting denied tools.`,
+      2,
+    );
+  }
   // Drop both prior tool-policy fields. A non-empty denylist means the operator
   // asked for denied-tool mode, which the renderer selects ahead of the
   // allowlist; keeping a stale allowTools would silence the requested denials.
