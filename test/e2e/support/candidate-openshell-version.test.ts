@@ -10,6 +10,7 @@ import YAML from "yaml";
 import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 import * as installerPins from "../../../scripts/checks/extract-installer-pins.mts";
+import evidence from "../fixtures/openshell-runtime-provenance-v0.1.7.json" with { type: "json" };
 import {
   candidateOpenShellVersion,
   reviewedOpenShellMcpRuntime,
@@ -223,25 +224,19 @@ describe("reviewed candidate MCP runtime evidence", () => {
     });
   });
 
-  it("binds OpenShell 0.1.7 to the verified upstream release artifacts", () => {
+  it("binds OpenShell 0.1.7 to the reviewed upstream release evidence", () => {
+    expect(evidence.releaseTag).toBe("v0.1.7");
     expect(reviewedOpenShellMcpRuntime("0.1.7")).toEqual({
-      supervisorImage:
-        "ghcr.io/nvidia/openshell/supervisor@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
+      supervisorImage: evidence.supervisor.image,
       provenance: {
         schemaVersion: 1,
-        sourceRepository: "NVIDIA/OpenShell",
-        releaseTag: "v0.1.7",
-        sourceSha: "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c",
+        sourceRepository: evidence.source.repository,
+        releaseTag: evidence.releaseTag,
+        sourceSha: evidence.source.commit,
         artifacts: {
-          cli: {
-            binarySha256: "718f40674738206a84bc3a967966225ff47dfed9ba5738099d56777faa4af793",
-          },
-          gateway: {
-            binarySha256: "0b7cb54fd8558bfad4c57f556f7fc1a20ef8cd94ebb11f4f40a9a90b74b4ad17",
-          },
-          standaloneSandbox: {
-            binarySha256: "d13966b032b07d75c917d3fbb7471e608edfdf1f25e9d922e5aa7c779cf6ad21",
-          },
+          cli: { binarySha256: evidence.artifacts.cli.binarySha256 },
+          gateway: { binarySha256: evidence.artifacts.gateway.binarySha256 },
+          standaloneSandbox: { binarySha256: evidence.artifacts.standaloneSandbox.binarySha256 },
         },
       },
     });
@@ -309,13 +304,13 @@ describe("reviewed candidate MCP runtime evidence", () => {
         "standaloneSandbox",
         "openshell-sandbox",
       ],
-    ].flatMap((row) => [
-      ["0.1.5", ...row],
-      ["0.1.7", ...row],
+    ].flatMap(([job, artifact, role, binary]) => [
+      [binary, job, artifact, "0.1.5", role],
+      [binary, job, artifact, "0.1.7", role],
     ]),
   )(
-    "rejects altered %s binaries in %s before writing %s provenance for %s",
-    (version, job, artifact, role, binary) => {
+    "rejects an altered %s binary in %s before writing %s provenance for OpenShell %s (%s)",
+    (binary, job, artifact, version, role) => {
       const directory = mkdtempSync(join(tmpdir(), "nemoclaw-mcp-provenance-"));
       try {
         const fixture = prepareRuntimeFixture(directory, version, job);
