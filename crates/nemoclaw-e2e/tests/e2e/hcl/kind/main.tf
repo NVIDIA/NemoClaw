@@ -12,7 +12,7 @@
 # case.
 
 terraform {
-  required_version = "= 1.12.9"
+  required_version = "= 1.12.12"
   required_providers {
     helm = {
       source = "hashicorp/helm"

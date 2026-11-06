@@ -83,6 +83,9 @@ pub struct State {
     pub sandbox_create_delay: std::time::Duration,
     pub active_sandbox_creates: usize,
     pub peak_sandbox_creates: usize,
+    /// When set, each CreateSandbox waits for a permit and takes one; a test
+    /// adds permits to let held creates finish one at a time.
+    pub sandbox_create_permits: Option<usize>,
     pub fail_read: Option<(&'static str, tonic::Code)>,
     /// Reject one RPC before its handler can mutate fixture state.
     pub reject_rpc: Option<(&'static str, tonic::Code, String)>,
@@ -520,6 +523,20 @@ impl tower::Service<http::Request<Body>> for Service {
                     };
                     if !delay.is_zero() {
                         tokio::time::sleep(delay).await;
+                    }
+                    loop {
+                        {
+                            let mut state = state.lock().unwrap();
+                            match &mut state.sandbox_create_permits {
+                                None => break,
+                                Some(permits) if *permits > 0 => {
+                                    *permits -= 1;
+                                    break;
+                                }
+                                Some(_) => {}
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                     let response = unary(request, state.clone(), create_sandbox).await;
                     state.lock().unwrap().active_sandbox_creates -= 1;
