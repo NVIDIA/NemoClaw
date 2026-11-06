@@ -81,6 +81,41 @@ function readRawSession(filePath: string): { value: Record<string, unknown> } | 
   return { value };
 }
 
+/** Admit the documented manual restart of one completed native routed OpenClaw session. */
+export function isCompletedNativeRouterSession(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false;
+  const machine = isObjectRecord(value.machine) ? value.machine : null;
+  const metadata = isObjectRecord(value.metadata) ? value.metadata : null;
+  if (
+    value.status !== "complete" ||
+    value.resumable !== false ||
+    value.provider !== "nvidia-router" ||
+    value.model !== "nvidia-routed" ||
+    (value.agent !== null && value.agent !== "openclaw") ||
+    machine?.state !== "complete" ||
+    value.lastCompletedStep !== "policies" ||
+    !Number.isSafeInteger(value.routerPid) ||
+    Number(value.routerPid) <= 0 ||
+    !Number.isSafeInteger(value.routerPort) ||
+    Number(value.routerPort) <= 0 ||
+    Number(value.routerPort) > 65535 ||
+    metadata?.fromDockerfile ||
+    metadata?.fromImage
+  )
+    return false;
+  const inspected = inspectCheckpoint(value.checkpoint);
+  if (inspected.status !== "loaded") return false;
+  const checkpoint = inspected.checkpoint;
+  return (
+    checkpoint.profile.value === "default" &&
+    checkpoint.machineState === "complete" &&
+    checkpoint.sessionId === value.sessionId &&
+    checkpoint.sandboxIdentity.kind === "selected" &&
+    checkpoint.sandboxIdentity.value.name === value.sandboxName &&
+    checkpoint.sandboxIdentity.value.agent === "openclaw"
+  );
+}
+
 export function resolveOnboardResumeIntent(options: {
   readonly explicitResume: boolean;
   readonly fresh: boolean;
@@ -95,8 +130,9 @@ export function resolveOnboardResumeIntent(options: {
     throw new OnboardResumeIntentError("No resumable onboarding session was found.");
   }
   if (
-    stored.value.resumable === false ||
-    (stored.value.status !== "in_progress" && stored.value.status !== "failed")
+    !isCompletedNativeRouterSession(stored.value) &&
+    (stored.value.resumable === false ||
+      (stored.value.status !== "in_progress" && stored.value.status !== "failed"))
   ) {
     throw new OnboardResumeIntentError("No resumable onboarding session was found.");
   }

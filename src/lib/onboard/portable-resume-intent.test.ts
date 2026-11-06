@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { serializeCheckpoint } from "../state/onboard-checkpoint";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
-import { createSession } from "../state/onboard-session";
+import { createSession, type Session } from "../state/onboard-session";
 import {
   assertLockedResumeIntentSnapshot,
   OnboardResumeIntentError,
@@ -40,6 +40,25 @@ function rawSession(profile: "default" | "portable" = "portable"): string {
     null,
     2,
   );
+}
+
+function completedRouterSession() {
+  const session = createSession({
+    agent: "openclaw",
+    sandboxName: "router-native",
+    provider: "nvidia-router",
+    model: "nvidia-routed",
+    routerPid: 4242,
+    routerPort: 4000,
+    lastCompletedStep: "policies",
+  });
+  session.status = "complete";
+  session.resumable = false;
+  session.machine.state = "complete";
+  session.sandboxPromptProgress.sandboxName = true;
+  for (const step of Object.values(session.steps)) step.status = "complete";
+  session.checkpoint = deriveCheckpointFromSession(session);
+  return session;
 }
 
 describe("portable resume intent", () => {
@@ -110,6 +129,110 @@ describe("portable resume intent", () => {
       expect(fs.readFileSync(file, "utf8")).toBe(before);
     },
   );
+
+  it.each(["openclaw", null])(
+    "admits explicit completed native routed recovery with recorded agent %s (#14066)",
+    (agent) => {
+      const session = completedRouterSession();
+      session.agent = agent;
+      const file = sessionFile(JSON.stringify(session));
+      const before = fs.readFileSync(file, "utf8");
+      const intent = resolveOnboardResumeIntent({
+        explicitResume: true,
+        fresh: false,
+        explicitProfile: null,
+        sessionFile: file,
+      });
+      expect(intent).toMatchObject({
+        effectiveResume: true,
+        snapshot: { profile: "default", recordedAgent: agent },
+      });
+      assertLockedResumeIntentSnapshot(intent.snapshot!, file);
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
+      expect(
+        resolveOnboardResumeIntent({
+          explicitResume: false,
+          fresh: false,
+          explicitProfile: null,
+          sessionFile: file,
+        }).effectiveResume,
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    {
+      invalid: "provider",
+      change: (session: Session) => {
+        session.provider = "nvidia-prod";
+      },
+    },
+    {
+      invalid: "agent",
+      change: (session: Session) => {
+        session.agent = "hermes";
+      },
+    },
+    {
+      invalid: "port",
+      change: (session: Session) => {
+        session.routerPort = null;
+      },
+    },
+    {
+      invalid: "identity",
+      change: (session: Session) => {
+        session.sandboxName = "different";
+      },
+    },
+    {
+      invalid: "checkpoint",
+      change: (session: Session) => {
+        session.checkpoint = null;
+      },
+    },
+    {
+      invalid: "custom-image",
+      change: (session: Session) => {
+        session.metadata.fromImage = "example/image@sha256:" + "a".repeat(64);
+      },
+    },
+    {
+      invalid: "portable",
+      change: (session: Session) => {
+        session.checkpoint = deriveCheckpointFromSession(session, {
+          profile: "portable",
+          runtimeAuthority: AUTHORITY,
+        });
+      },
+    },
+    {
+      invalid: "revision",
+      change: (session: Session) => {
+        session.machine.revision = -1;
+      },
+    },
+    {
+      invalid: "session-id",
+      change: (session: Session) => {
+        session.sessionId = "copied-session";
+      },
+    },
+  ])("refuses ineligible completed routed recovery: $invalid (#14066)", ({ change }) => {
+    const session = completedRouterSession();
+    change(session);
+    const file = sessionFile(JSON.stringify(session));
+    const before = fs.readFileSync(file, "utf8");
+    expect(() =>
+      resolveOnboardResumeIntent({
+        explicitResume: true,
+        fresh: false,
+        explicitProfile: null,
+        sessionFile: file,
+      }),
+    ).toThrow(OnboardResumeIntentError);
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+  });
 
   it("rejects terminal sessions before portable preparation can run (#9035)", () => {
     const parsed = JSON.parse(rawSession()) as Record<string, unknown>;

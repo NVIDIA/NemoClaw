@@ -51,6 +51,7 @@ import { ensureRequiredTierPolicyPresets } from "./policy-tier-suppression";
 import {
   assertLockedResumeIntentSnapshot as assertLockedResumeIntentSnapshotAtPath,
   isOnboardResumeIntentRaceError,
+  isCompletedNativeRouterSession,
   OnboardResumeIntentError,
   OnboardResumeIntentRaceError,
   resolveOnboardResumeIntent as resolveOnboardResumeIntentAtPath,
@@ -572,7 +573,9 @@ function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
 
 function reportMissingResumeSession(deps: OnboardSessionBootstrapDeps): never {
   deps.error("  No resumable onboarding session was found.");
-  deps.error("  --resume only continues an interrupted onboarding run.");
+  deps.error(
+    "  --resume continues interrupted onboarding or restarts a recorded native Model Router session.",
+  );
   deps.error("  To change configuration on an existing sandbox, rebuild it:");
   deps.error(`    ${deps.cliName()} onboard`);
   deps.exitProcess(1);
@@ -750,7 +753,8 @@ async function prepareResumeSession(
     input.checkpointProfile,
   );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
-  if (!session || session.resumable === false) {
+  const completedRouter = isCompletedNativeRouterSession(session);
+  if (!session || (session.resumable === false && !completedRouter)) {
     reportMissingResumeSession(deps);
   }
   guardResumeCheckpoint(deps);
@@ -778,6 +782,15 @@ async function prepareResumeSession(
   }
 
   deps.updateSession((current: Session) => {
+    if (completedRouter) {
+      if (!isCompletedNativeRouterSession(current)) {
+        throw new OnboardResumeIntentRaceError();
+      }
+      // Reuse the existing reopened-complete recovery receipt and prerequisite
+      // reconciliation. Keep sandbox decisions and native attachment authority.
+      current.resumable = true;
+      current.status = "in_progress";
+    }
     deps.applySessionRecovery(current);
     if (typeof input.requestedObservabilityEnabled === "boolean") {
       current.observabilityEnabled = input.requestedObservabilityEnabled;

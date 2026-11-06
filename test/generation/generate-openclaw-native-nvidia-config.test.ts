@@ -84,3 +84,55 @@ it("registers compatible explicit routed selections on the same native provider 
     { id: "nvidia/nemotron-3.5-super-vl-120b-a12b", input: ["text", "image"] },
   ]);
 });
+
+const explicitRouterModels = [
+  ["nvidia/nemotron-3.5-lightning-30b-a3b", ["text"]],
+  ["nvidia/nemotron-3.5-super-vl-120b-a12b", ["text", "image"]],
+] as const;
+
+it.each(
+  explicitRouterModels.flatMap(([id, input]) =>
+    ["agent", "agent-subagent", "main-subagent"].map((location) => ({ id, input, location })),
+  ),
+)(
+  "keeps one canonical $id entry for an existing $location reference (#14066)",
+  ({ id, input, location }) => {
+    const ref = `inference/${id}`;
+    const payload =
+      location === "main-subagent"
+        ? { agents: [], main: { subagents: { model: ref } } }
+        : {
+            agents: [
+              {
+                id: "researcher",
+                tools: { deny: ["*"] },
+                ...(location === "agent" ? { model: ref } : { subagents: { model: ref } }),
+              },
+            ],
+          };
+    const config = buildConfig({
+      ...baseOpenClawGenerationEnv(),
+      NEMOCLAW_MODEL: "nvidia-routed",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia-routed",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-router",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:4000/v1",
+      NEMOCLAW_INFERENCE_INPUTS: "text,image",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
+        JSON.stringify({ supportsToolChoice: true }),
+      ).toString("base64"),
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(payload)).toString("base64"),
+    });
+    const models = config.models.providers.inference.models;
+    expect(models.filter((entry: { id: string }) => entry.id === id)).toEqual([
+      expect.objectContaining({
+        id,
+        name: ref,
+        input: [...input],
+        compat: { supportsToolChoice: true },
+      }),
+    ]);
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia-routed");
+    expect(models).toHaveLength(3);
+  },
+);

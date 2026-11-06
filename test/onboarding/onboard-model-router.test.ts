@@ -1181,68 +1181,113 @@ describe("onboard Model Router setup", () => {
   });
 });
 
-it("retains model-specific causes when the final health observation times out (#14066)", async () => {
-  let clock = 0;
-  const terminated: number[] = [];
-  await assert.rejects(
-    startModelRouter(
-      { port: 45699 },
-      {
-        rootDir: "/test/repo",
-        homeDir: "/test/home",
-        ensureModelRouterCommand: () => "/test/bin/model-router",
-        mkdirSync: () => {},
-        ensureModelRouterPython: () => "/test/managed/bin/python",
-        readPoolConfig: () => "routing:\n  method: rules\n",
-        runProxyConfig: () => ({ status: 0 }),
-        spawnProxy: () => ({ pid: 12345, onError: () => {}, onExit: () => {}, unref: () => {} }),
-        resolveProviderCredential: () => null,
-        buildSubprocessEnv: () => ({}),
-        getProviderKey: () => "",
-        isRouterResponsive: async () => false,
-        isProcessAlive: () => true,
-        openRouterLog: () => null,
-        closeRouterLog: () => {},
-        readRouterLogTail: () => "",
-        now: () => clock,
-        sleep: async (milliseconds) => {
-          clock += milliseconds;
+it.each([
+  {
+    label: "named",
+    bodies: [
+      JSON.stringify({
+        unhealthy_endpoints: [
+          { model: "lightning", error: "old observation" },
+          { model: "super-vl", error: "upstream unavailable" },
+        ],
+      }),
+      JSON.stringify({
+        unhealthy_endpoints: [{ model: "lightning", error: "latest observation" }],
+      }),
+    ],
+    expected: ["lightning: latest observation", "super-vl: upstream unavailable"],
+    absent: ["old observation"],
+  },
+  {
+    label: "unnamed and named namespaces",
+    bodies: [
+      JSON.stringify({
+        unhealthy_endpoints: [
+          { error: "first unnamed" },
+          { error: "second unnamed" },
+          { model: "first unnamed", error: "named cause" },
+        ],
+      }),
+      JSON.stringify({ unhealthy_endpoints: [] }),
+    ],
+    expected: ["first unnamed", "second unnamed", "first unnamed: named cause"],
+    absent: [],
+  },
+  {
+    label: "truncated",
+    bodies: ['{"error":"first incomplete",', '{"error":"second incomplete",'],
+    expected: ["first incomplete", "second incomplete"],
+    absent: [],
+  },
+  {
+    label: "bounded",
+    bodies: [
+      JSON.stringify({
+        unhealthy_endpoints: Array.from({ length: 8 }, (_, i) => ({ error: `cause-${i}` })),
+      }),
+      JSON.stringify({ unhealthy_endpoints: [{ error: "overflow cause" }] }),
+    ],
+    expected: Array.from({ length: 8 }, (_, i) => `cause-${i}`),
+    absent: ["overflow cause"],
+  },
+])(
+  "retains $label causes when the final health observation times out (#14066)",
+  async ({ bodies, expected, absent }) => {
+    let clock = 0;
+    const terminated: number[] = [];
+    await assert.rejects(
+      startModelRouter(
+        { port: 45699 },
+        {
+          rootDir: "/test/repo",
+          homeDir: "/test/home",
+          ensureModelRouterCommand: () => "/test/bin/model-router",
+          mkdirSync: () => {},
+          ensureModelRouterPython: () => "/test/managed/bin/python",
+          readPoolConfig: () => "routing:\n  method: rules\n",
+          runProxyConfig: () => ({ status: 0 }),
+          spawnProxy: () => ({ pid: 12345, onError: () => {}, onExit: () => {}, unref: () => {} }),
+          resolveProviderCredential: () => null,
+          buildSubprocessEnv: () => ({}),
+          getProviderKey: () => "",
+          isRouterResponsive: async () => false,
+          isProcessAlive: () => true,
+          openRouterLog: () => null,
+          closeRouterLog: () => {},
+          readRouterLogTail: () => "",
+          now: () => clock,
+          sleep: async (milliseconds) => {
+            clock += milliseconds;
+          },
+          terminateProcess: (pid) => {
+            terminated.push(pid);
+          },
+          getRouterHealthSnapshot: vi
+            .fn()
+            .mockResolvedValueOnce(healthSnapshot(false, bodies[0]))
+            .mockResolvedValueOnce(healthSnapshot(false, bodies[1]))
+            .mockImplementation(async () => {
+              clock = 600001;
+              return healthSnapshot(false, null, { outcome: "timeout" });
+            }),
         },
-        terminateProcess: (pid) => {
-          terminated.push(pid);
-        },
-        getRouterHealthSnapshot: vi
-          .fn()
-          .mockResolvedValueOnce(
-            healthSnapshot(
-              true,
-              JSON.stringify({
-                healthy_endpoints: [],
-                unhealthy_endpoints: [
-                  { model: "nvidia/nemotron-3.5-lightning-30b-a3b", error: "HTTP 404" },
-                  {
-                    model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
-                    error: "upstream unavailable",
-                  },
-                ],
-              }),
-            ),
-          )
-          .mockImplementation(async () => {
-            clock = 600001;
-            return healthSnapshot(false, null, { outcome: "timeout" });
-          }),
+      ),
+      (error) => {
+        assert.match((error as Error).message, /last health check: timeout/);
+        assert.ok(
+          (error as Error).message.includes(`(last health error: ${expected.join("; ")})`),
+          (error as Error).message,
+        );
+        assert.deepEqual(
+          absent.filter((value) => (error as Error).message.includes(value)),
+          [],
+        );
+        return true;
       },
-    ),
-    (error) => {
-      assert.match((error as Error).message, /last health check: timeout/);
-      assert.match((error as Error).message, /lightning-30b-a3b: HTTP 404/);
-      assert.match((error as Error).message, /super-vl-120b-a12b: upstream unavailable/);
-      return true;
-    },
-  );
-  assert.deepEqual(terminated, [12345]);
-});
+    );
+    assert.deepEqual(terminated, [12345]);
+  },
+);
 
 it.each(["rules", "prefill"])(
   "selects the %s interpreter for configuration and proxy startup (#14066)",

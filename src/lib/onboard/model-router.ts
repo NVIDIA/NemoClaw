@@ -476,7 +476,8 @@ export async function startModelRouter(
     healthAttempts += 1;
     lastSnapshot = observation.snapshot;
     for (const [model, error] of unhealthyEndpointErrors(lastSnapshot.body)) {
-      if (endpointErrors.has(model) || endpointErrors.size < 8) endpointErrors.set(model, error);
+      const key = model ? `model:${model}` : `error:${error}`;
+      if (endpointErrors.has(key) || endpointErrors.size < 8) endpointErrors.set(key, error);
     }
     const healthy = isRouterSnapshotReady(lastSnapshot);
     const processAlive = deps.isProcessAlive(pid);

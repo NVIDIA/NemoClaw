@@ -938,6 +938,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       maxTokens,
     },
   ];
+  const seenModelRefs = new Set<string>([primaryModelRef]);
   if (upstreamProvider === "nvidia-router") {
     // These explicit selections use the same attached provider as the routed alias.
     for (const [id, input] of [
@@ -945,6 +946,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       ["nvidia/nemotron-3.5-super-vl-120b-a12b", ["text", "image"]],
     ] as const) {
       if (id === model) continue;
+      seenModelRefs.add(`${providerKey}/${id}`);
       providerModels.push({
         ...providerModels[0],
         id,
@@ -953,7 +955,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
       });
     }
   }
-  const seenModelRefs = new Set<string>([primaryModelRef]);
   const referencedRefs: string[] = [];
   const collectRef = (ref: unknown): void => {
     if (typeof ref !== "string" || !ref) return;

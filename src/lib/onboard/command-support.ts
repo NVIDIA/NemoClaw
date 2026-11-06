@@ -112,7 +112,8 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "temp-managed-runtime-catalog": Flags.string({ hidden: true }),
     "non-interactive": Flags.boolean({ description: "Run without interactive prompts" }),
     resume: Flags.boolean({
-      description: "Resume an interrupted onboarding session",
+      description:
+        "Resume interrupted onboarding or restart a recorded native Model Router session",
       exclusive: ["fresh"],
     }),
     fresh: Flags.boolean({

@@ -108,8 +108,8 @@ The router does not rank cost or difficulty and does not fail over to another mo
 Responses include `X-Model-Router-Selected` and `X-Model-Router-Rule` selection evidence.
 The selection record contains only the model and rule.
 Streaming and structured tool calls use the same policy.
-The rules policy accepts at most 64 MiB for the entire JSON body of a chat-completion request, including base64-encoded images.
-Larger chat-completion bodies return HTTP `413` before JSON parsing or provider dispatch.
+The rules policy accepts at most 64 MiB for the entire JSON body on `/chat/completions` and `/v1/chat/completions`, including base64-encoded images.
+Larger bodies on these two routes return HTTP `413` before JSON parsing or provider dispatch; upstream compatibility aliases are outside this bound.
 
 ## Restart an Old Running Pool
 
@@ -146,6 +146,7 @@ Then resume onboarding:
 $$nemoclaw onboard --resume
 ```
 
+For a completed native OpenClaw routed session, explicit `--resume` reopens the recorded session and revalidates its configuration and sandbox identity.
 Resuming starts the supported pool and checks its health before reusing the native attachment.
 If another process now owns the PID or port, stop and inspect it instead of sending another signal.
 A router restart does not migrate legacy OpenShell 0.1.x sandboxes.

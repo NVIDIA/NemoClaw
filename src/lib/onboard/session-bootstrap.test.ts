@@ -16,6 +16,8 @@ import {
   type Session,
   type SessionRecoveryReceipt,
 } from "../state/onboard-session";
+import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
+import { applySessionRecovery } from "./session-recovery";
 import type { ResumeConfigConflict } from "./resume-config";
 import {
   checkpointSandboxName,
@@ -96,7 +98,87 @@ function createDeps(
   return { deps, getSession: () => session };
 }
 
+function completedRouterSession() {
+  const session = createSession({
+    agent: "openclaw",
+    sandboxName: "router-native",
+    provider: "nvidia-router",
+    model: "nvidia-routed",
+    routerPid: 4242,
+    routerPort: 4000,
+    lastCompletedStep: "policies",
+  });
+  session.status = "complete";
+  session.resumable = false;
+  session.machine.state = "complete";
+  session.sandboxPromptProgress.sandboxName = true;
+  for (const step of Object.values(session.steps)) step.status = "complete";
+  session.checkpoint = deriveCheckpointFromSession(session);
+  return session;
+}
+
 describe("prepareOnboardSession", () => {
+  it("reopens completed native routed recovery at finalizing while preserving sandbox decisions (#14066)", async () => {
+    const initial = completedRouterSession();
+    const before = structuredClone(initial.checkpoint);
+    const { deps } = createDeps(initial, { applySessionRecovery });
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "router-native",
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+    expect(result.session).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      provider: "nvidia-router",
+      model: "nvidia-routed",
+      sandboxName: "router-native",
+      routerPid: 4242,
+      routerPort: 4000,
+      machine: {
+        state: "finalizing",
+        recoveryReceipt: { reason: "reopened_complete_snapshot", entry: "finalizing" },
+      },
+    });
+    expect(result.session?.checkpoint?.sandboxIdentity).toEqual(before?.sandboxIdentity);
+    expect(result.session?.checkpoint?.bindings).toEqual(before?.bindings);
+    expect(result.session?.checkpoint?.effectGroups).toEqual(before?.effectGroups);
+    expect(result.session?.checkpoint?.machineState).toBe("finalizing");
+    expect(deps.clearSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a completed router resume conflict before reopening the session (#14066)", async () => {
+    const initial = completedRouterSession();
+    const before = structuredClone(initial);
+    const { deps } = createDeps(initial, {
+      applySessionRecovery,
+      getResumeConfigConflicts: () => [
+        { field: "sandbox", recorded: "router-native", requested: "other" },
+      ],
+    });
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: "other",
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("exit 1");
+    expect(initial).toEqual(before);
+    expect(deps.updateSession).not.toHaveBeenCalled();
+  });
+
   it.each(["thread-opt-in", "disabled"] as const)(
     "preserves explicit DCode %s intent across interruption before sandbox registration",
     async (mode) => {
