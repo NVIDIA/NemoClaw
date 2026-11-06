@@ -149,12 +149,16 @@ Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` when OpenShell needs more than 120 
 
 After OpenShell reports the sandbox ready, `$$nemoclaw <sandbox-name> start` waits up to 120 seconds for the OpenClaw gateway process.
 This wait applies after both an intentional stop and an external Docker restart, regardless of the recorded stop intent.
+`$$nemoclaw <sandbox-name> recover` uses the same startup budget after it starts a stopped sandbox.
 The startup budget includes probe execution and delays.
 It is separate from the preceding 300-second OpenShell readiness wait.
-If the startup budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
-Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` to override the startup budget, not the preceding OpenShell readiness wait.
-With a value of `0`, a sandbox not recorded as intentionally stopped skips process observation but still runs normal gateway and inference verification.
-An intentionally stopped sandbox with a zero budget exits nonzero before those checks.
+If the final startup observation reports a stopped gateway at expiry, `start` exits nonzero before gateway-health verification and host-forward restoration.
+If the final observation is unavailable, `start` continues ordinary gateway and inference verification.
+If the startup budget expires, `recover` exits nonzero before ordinary process recovery and host-forward repair.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` or `recover` to override the startup budget, not the preceding OpenShell readiness wait.
+With a value of `0`, `start` skips process observation for a sandbox not recorded as intentionally stopped but still runs normal gateway and inference verification.
+For an intentionally stopped sandbox, `start` with a zero budget exits nonzero before those checks.
+With a zero budget, `recover` skips the startup wait and continues ordinary recovery and verification.
 OpenClaw gateway-health recovery and onboarding process observation retain their 30-second defaults.
 
 </AgentOnly>

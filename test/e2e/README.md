@@ -5,6 +5,18 @@
 
 Direct E2E coverage runs through Vitest.
 
+The `sandbox-survival` target retains the raw OpenShell stop/start proof and
+also checks cold public OpenClaw recovery on Docker and native Podman. After
+public `stop`, it invokes `recover` once without warming the command transport
+or listener. One-shot native and forwarded HTTP health probes must succeed,
+and the sandbox and container IDs must remain unchanged. The existing artifact
+sink records the candidate revision, runtime, identities, command results and
+health status. Startup polling and zero-wait policy remain in deterministic
+source tests. The public recovery command allows both 300-second readiness
+waits, the 120-second OpenClaw startup wait, and five minutes for the remaining
+checks. The lifecycle phase allows 25 minutes. The target allows 125 minutes,
+including test cleanup and workflow finalization.
+
 Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
 switching, and token-rotation targets use a
 test-only Node preload for their synthetic Discord enrollment tokens. The
