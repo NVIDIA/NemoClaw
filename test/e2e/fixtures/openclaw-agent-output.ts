@@ -251,6 +251,8 @@ export function buildNativePluginInvocationScript(
   timeoutSeconds = 30,
 ): string {
   const session = `e2e-native-plugin-${randomUUID()}`;
+  // This fresh session has a known owner; keep native routing explicit.
+  const sessionKey = `agent:main:explicit:${session}`;
   const prompt = nativePluginInvocationPrompt(expected);
   const reduce = [
     `const matches = ${nativePluginResultMatches.toString()}`,
@@ -264,7 +266,7 @@ export function buildNativePluginInvocationScript(
   return [
     "set -eu",
     ". /tmp/nemoclaw-proxy-env.sh",
-    `HOME=/sandbox openclaw agent --agent main --json --thinking off --timeout ${String(timeoutSeconds)} --session-id ${shellQuote(session)} -m ${shellQuote(prompt)}`,
+    `HOME=/sandbox openclaw agent --agent main --json --thinking off --timeout ${String(timeoutSeconds)} --session-id ${shellQuote(session)} --session-key ${shellQuote(sessionKey)} -m ${shellQuote(prompt)}`,
     `node -e ${shellQuote(reduce)}`,
   ].join("\n");
 }
