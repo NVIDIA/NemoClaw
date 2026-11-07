@@ -51,6 +51,15 @@ describe("public display usage parity", () => {
     expect(usageHints.length).toBeGreaterThan(0);
   });
 
+  test("does not strip plain letters from ANSI SGR regex", () => {
+    // The ANSI SGR regex must only match escape sequences, not plain text.
+    // A regex that incorrectly includes `[` in a character class would strip
+    // the literal "m" from words like "nemoclaw".
+    expect("nemoclaw".replace(ANSI_SGR, "")).toBe("nemoclaw");
+    expect("nemoclaw setup".replace(ANSI_SGR, "")).toBe("nemoclaw setup");
+    expect("\u001b[1mbold\u001b[0m".replace(ANSI_SGR, "")).toBe("bold");
+  });
+
   /** Match a help row line by the exact usage string followed by a boundary. */
   function matchesHelpRow(trimmed: string, usage: string): boolean {
     // The usage string appears at the start of the trimmed help row, followed
@@ -67,17 +76,10 @@ describe("public display usage parity", () => {
         (candidate) => candidate.commandId === commandId && candidate.usage === usage,
       );
       expect(usage).toBe(command?.usage);
-      // Match the help row by the exact usage string followed by padding/spaces,
-      // not a prefix match that could incorrectly match "nemoclaw setup" as
-      // matching the "nemoclaw setup-spark" line. The usage string appears in
-      // the help row at the start, followed by padding whitespace, then the
-      // description. A regex anchored at the start of the trimmed line prevents
-      // "nemoclaw setup" from matching the "nemoclaw setup-spark" row.
-      const escapedUsage = usage.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
       const helpLine = publicHelp
         .split("\n")
         .map((line) => line.replace(ANSI_SGR, "").trimStart())
-        .find((trimmed) => new RegExp(`^${escapedUsage}\\s`).test(trimmed));
+        .find((trimmed) => matchesHelpRow(trimmed, usage));
       expect(helpLine).toBeDefined();
       expect(helpLine ?? "").toContain(flags ?? "");
     },

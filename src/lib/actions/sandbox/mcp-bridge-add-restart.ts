@@ -49,6 +49,7 @@ import {
   inspectMcpProviderAttachments,
   MCP_BRIDGE_PROVIDER_TYPE,
   type McpCredentialRevisionObservation,
+  type McpProviderInspectionRuntimeSelection,
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
@@ -186,6 +187,42 @@ function assertNoPublicPinDrift(
         2,
       );
     }
+  }
+}
+
+/**
+ * restoreGeneratedPolicyAfterFailedReplacement.
+ *
+ * After a replacement policy fails to activate, the live OpenShell policy has
+ * already been removed. Reconstruct the prior policy from the stored entry and
+ * its original address pins so the route is not left in a widened state, and so
+ * a retry re-derives the same tool policy and pins instead of dropping them.
+ * The restore is best-effort: if it fails the caller reports that the route
+ * remains blocked and must be retried explicitly.
+ */
+async function restoreGeneratedPolicyAfterFailedReplacement(
+  sandboxName: string,
+  storedEntry: McpSourceEntry,
+  target: McpBridgeTargetValidation,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<boolean> {
+  const recordedPins = storedEntry.allowedIps ?? [];
+  if (recordedPins.length === 0) return false;
+  const restoreTarget: McpBridgeTargetValidation = storedEntry.trustedPrivateHost
+    ? {
+        addresses: [...recordedPins],
+        trustedPrivateHost: target.trustedPrivateHost ?? storedEntry.trustedPrivateHost,
+        trustedPrivateCapability: target.trustedPrivateCapability,
+      }
+    : { addresses: [...recordedPins] };
+  try {
+    await applyGeneratedPolicy(sandboxName, storedEntry, restoreTarget, {
+      bindCredential: false,
+      runtimeSelection,
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -823,7 +860,11 @@ async function updateMcpBridgeDenyToolsUnlocked(
   // Reject switching from allowlist mode to denylist mode: this would silently
   // widen access from deny-by-default to allow-by-default. The operator must
   // explicitly clear the allowlist first.
-  if (normalizedDenyTools.length > 0 && storedEntry.allowTools && storedEntry.allowTools.length > 0) {
+  if (
+    normalizedDenyTools.length > 0 &&
+    storedEntry.allowTools &&
+    storedEntry.allowTools.length > 0
+  ) {
     throw new McpBridgeError(
       `MCP server '${server}' has an active allowlist. Run \`nemoclaw ${sandboxName} mcp update ${server} --clear-allow-tools\` before setting denied tools.`,
       2,
@@ -859,12 +900,18 @@ async function updateMcpBridgeDenyToolsUnlocked(
     await applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const restored = await restoreGeneratedPolicyAfterFailedReplacement(
+      sandboxName,
+      storedEntry,
+      target,
+      runtimeSelection,
+    );
     const retryArgs =
       normalizedDenyTools.length > 0
         ? normalizedDenyTools.map((tool) => ` --deny-tool ${tool}`).join("")
         : " --clear-deny-tools";
     throw new McpBridgeError(
-      `${detail} The MCP route remains blocked. Retry with \`nemoclaw ${sandboxName} mcp update ${server}${retryArgs}\`.`,
+      `${detail} ${restored ? "The previous MCP policy was restored." : "The MCP route remains blocked."} Retry with \`nemoclaw ${sandboxName} mcp update ${server}${retryArgs}\`.`,
     );
   }
   console.log(
@@ -982,7 +1029,9 @@ async function addMcpBridgeUnlocked(
         2,
       );
     }
-    normalizedAllowTools = normalizeAllowTools(options.allowTools.map(assertValidAllowToolSelector));
+    normalizedAllowTools = normalizeAllowTools(
+      options.allowTools.map(assertValidAllowToolSelector),
+    );
     if (denyTools.length > 0) {
       throw new McpBridgeError(
         "Cannot specify both --deny-tool and --allow-tool. Choose one mode: explicit denials or explicit allowlist (deny-by-default).",
@@ -995,6 +1044,15 @@ async function addMcpBridgeUnlocked(
   // Resolve transport independently of identity pinning
   const transport = options.transport ?? inferTransportFromUrl(normalizedUrl);
 
+  // Validate server-identity at the action boundary before constructing serverIdentity,
+  // so direct callers cannot store or adopt a malformed identity.
+  if (options.serverIdentity && !VALID_IDENTITY_RE.test(options.serverIdentity)) {
+    throw new McpBridgeError(
+      "Invalid --server-identity. Expected format: sha256:<64-hex-chars>.",
+      2,
+    );
+  }
+
   // Build server identity if provided.
   // The digest is an operator pin that is recorded verbatim; nothing here
   // fetches the artifact or compares it against the digest, so `verifiedAt`
@@ -1006,15 +1064,6 @@ async function addMcpBridgeUnlocked(
         verifiedAt: Date.now(),
       }
     : undefined;
-
-  // Validate server-identity at the action boundary before constructing serverIdentity,
-  // so direct callers cannot store or adopt a malformed identity.
-  if (options.serverIdentity && !VALID_IDENTITY_RE.test(options.serverIdentity)) {
-    throw new McpBridgeError(
-      "Invalid --server-identity. Expected format: sha256:<64-hex-chars>.",
-      2,
-    );
-  }
 
   let requestedEntry: McpSourceEntry = {
     server: options.server,
@@ -1492,8 +1541,14 @@ async function updateMcpBridgeAllowToolsUnlocked(
     await applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const restored = await restoreGeneratedPolicyAfterFailedReplacement(
+      sandboxName,
+      storedEntry,
+      target,
+      runtimeSelection,
+    );
     throw new McpBridgeError(
-      `${detail} The MCP route remains blocked. Retry with \`nemoclaw ${sandboxName} mcp update ${server} --allow-tool ${normalizedAllowTools.join(" --allow-tool ")}\`.`,
+      `${detail} ${restored ? "The previous MCP policy was restored." : "The MCP route remains blocked."} Retry with \`nemoclaw ${sandboxName} mcp update ${server} --allow-tool ${normalizedAllowTools.join(" --allow-tool ")}\`.`,
     );
   }
   console.log(`  Updated allowed tools for MCP server '${server}'.`);
@@ -1556,7 +1611,11 @@ async function clearMcpBridgeAllowToolsUnlocked(
   // Public-pin drift check (skip for trusted-private; explicit refresh required for public)
   assertNoPublicPinDrift(sandboxName, server, storedEntry, target);
 
-  const { allowTools: _previousAllowTools, denyTools: _previousDenyTools, ...entryWithoutTools } = storedEntry;
+  const {
+    allowTools: _previousAllowTools,
+    denyTools: _previousDenyTools,
+    ...entryWithoutTools
+  } = storedEntry;
   const updatedEntry: McpSourceEntry = {
     ...entryWithoutTools,
     ...(_previousDenyTools ? { denyTools: [..._previousDenyTools] } : {}),
@@ -1572,8 +1631,14 @@ async function clearMcpBridgeAllowToolsUnlocked(
     await applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const restored = await restoreGeneratedPolicyAfterFailedReplacement(
+      sandboxName,
+      storedEntry,
+      target,
+      runtimeSelection,
+    );
     throw new McpBridgeError(
-      `${detail} The MCP route remains blocked. Retry with \`nemoclaw ${sandboxName} mcp update ${server} --clear-allow-tools\`.`,
+      `${detail} ${restored ? "The previous MCP policy was restored." : "The MCP route remains blocked."} Retry with \`nemoclaw ${sandboxName} mcp update ${server} --clear-allow-tools\`.`,
     );
   }
   console.log(`  Cleared allowed tools for MCP server '${server}'.`);

@@ -245,12 +245,101 @@ describe("source-backed MCP denied-tool policy updates", () => {
     expect(updated).not.toHaveProperty("denyTools");
   });
 
-  it("leaves the route blocked with an exact retry command after activation failure (#11115)", async () => {
-    mocks.applyGeneratedPolicy.mockRejectedValueOnce(new Error("activation failed"));
+  it("restores the previous policy and preserves tool state after activation failure (#13479)", async () => {
+    // removeGeneratedPolicy runs before applyGeneratedPolicy. When the
+    // replacement fails, the prior policy must be reconstructed from the stored
+    // entry so the route is not left widened and a retry re-derives the same
+    // tool policy and address pins instead of dropping them.
+    mocks.applyGeneratedPolicy
+      .mockRejectedValueOnce(new Error("activation failed"))
+      .mockResolvedValue(undefined);
 
     await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
-      /route remains blocked.*mcp update github --deny-tool delete_repo/,
+      /activation failed.*mcp update github --deny-tool delete_repo/,
     );
+
+    // The failed replacement must not be applied.
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalledTimes(2);
+    const failedCall = mocks.applyGeneratedPolicy.mock.calls[0];
+    expect(failedCall[1]).toMatchObject({ denyTools: ["delete_repo"] });
+    expect(failedCall[1]).not.toHaveProperty("allowTools");
+
+    // The prior policy is restored from the stored entry: the original denylist
+    // and address pins are re-applied, so no tool policy or pin is lost.
+    const restoredCall = mocks.applyGeneratedPolicy.mock.calls[1];
+    expect(restoredCall[1]).not.toHaveProperty("allowTools");
+    expect(restoredCall[1]).not.toHaveProperty("denyTools");
+    expect(restoredCall[1].allowedIps).toEqual(["8.8.8.8"]);
+    expect(restoredCall[2]).toMatchObject({ addresses: ["8.8.8.8"] });
+  });
+
+  it("preserves the prior allowlist and pins when an allowlist update activation fails (#13479)", async () => {
+    const allowlistedEntry = { ...entry, allowTools: ["read_issue"] };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: allowlistedEntry },
+      sources: { native: { github: allowlistedEntry }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: allowlistedEntry },
+      legacy: {},
+    });
+    mocks.applyGeneratedPolicy
+      .mockRejectedValueOnce(new Error("activation failed"))
+      .mockResolvedValue(undefined);
+
+    await expect(updateMcpBridgeAllowTools("alpha", "github", ["list_issues"])).rejects.toThrow(
+      /activation failed.*mcp update github --allow-tool list_issues/,
+    );
+
+    // The failed replacement must not be applied.
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalledTimes(2);
+    const failedCall = mocks.applyGeneratedPolicy.mock.calls[0];
+    expect(failedCall[1]).toMatchObject({ allowTools: ["list_issues"] });
+    expect(failedCall[1]).not.toHaveProperty("denyTools");
+
+    // The prior allowlist and address pins are restored; the route is not left
+    // in denylist mode, and no address pin is adopted without --refresh-public-pins.
+    const restoredCall = mocks.applyGeneratedPolicy.mock.calls[1];
+    expect(restoredCall[1]).toMatchObject({ allowTools: ["read_issue"] });
+    expect(restoredCall[1]).not.toHaveProperty("denyTools");
+    expect(restoredCall[1].allowedIps).toEqual(["8.8.8.8"]);
+    expect(restoredCall[2]).toMatchObject({ addresses: ["8.8.8.8"] });
+  });
+
+  it("preserves the prior denylist and pins when clearing an allowlist activation fails (#13479)", async () => {
+    const deniedEntry = { ...entry, allowTools: ["read_issue"], denyTools: ["delete_repo"] };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: deniedEntry },
+      sources: { native: { github: deniedEntry }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: deniedEntry },
+      legacy: {},
+    });
+    mocks.applyGeneratedPolicy
+      .mockRejectedValueOnce(new Error("activation failed"))
+      .mockResolvedValue(undefined);
+
+    await expect(clearMcpBridgeAllowTools("alpha", "github")).rejects.toThrow(
+      /activation failed.*mcp update github --clear-allow-tools/,
+    );
+
+    // The failed replacement must not be applied.
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalledTimes(2);
+    const failedCall = mocks.applyGeneratedPolicy.mock.calls[0];
+    expect(failedCall[1]).not.toHaveProperty("allowTools");
+    expect(failedCall[1]).toMatchObject({ denyTools: ["delete_repo"] });
+
+    // The prior durable state is restored verbatim: the allowlist and denylist
+    // and address pins are re-applied, so no tool policy or pin is lost and the
+    // route is not left in unrestricted denylist mode.
+    const restoredCall = mocks.applyGeneratedPolicy.mock.calls[1];
+    expect(restoredCall[1]).toMatchObject({
+      allowTools: ["read_issue"],
+      denyTools: ["delete_repo"],
+    });
+    expect(restoredCall[1].allowedIps).toEqual(["8.8.8.8"]);
+    expect(restoredCall[2]).toMatchObject({ addresses: ["8.8.8.8"] });
   });
 
   it("does not mutate policy when gateway selection fails (#11115)", async () => {
@@ -375,35 +464,30 @@ describe("source-backed MCP denied-tool policy updates", () => {
     });
 
     // The trusted-private capability gate must accept this entry and target.
-    expect(() =>
-      assertMcpBridgePolicyTarget(updatedEntry, appliedTarget as never),
-    ).not.toThrow();
+    expect(() => assertMcpBridgePolicyTarget(updatedEntry, appliedTarget as never)).not.toThrow();
   });
 
   it.each([
     ["denied-tool update", () => updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])],
     ["allowlist update", () => updateMcpBridgeAllowTools("alpha", "github", ["read_issue"])],
     ["allowlist clear", () => clearMcpBridgeAllowTools("alpha", "github")],
-  ])(
-    "refuses %s on entries with conflicting live policy",
-    async (_label, mutate) => {
-      // A conflicted entry must never feed a replacement policy: reusing its
-      // tool state could silently widen access (e.g. an all-invalid allowlist
-      // would otherwise fall through to unrestricted denylist mode).
-      const conflicted = {
-        ...entry,
-        policyConflict: "Live policy contains invalid tool selectors.",
-      };
-      mocks.inspectSourceBridgeState.mockReturnValueOnce({
-        bridges: { github: conflicted },
-        sources: { native: { github: conflicted }, legacy: {} },
-      });
+  ])("refuses %s on entries with conflicting live policy", async (_label, mutate) => {
+    // A conflicted entry must never feed a replacement policy: reusing its
+    // tool state could silently widen access (e.g. an all-invalid allowlist
+    // would otherwise fall through to unrestricted denylist mode).
+    const conflicted = {
+      ...entry,
+      policyConflict: "Live policy contains invalid tool selectors.",
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: conflicted },
+      sources: { native: { github: conflicted }, legacy: {} },
+    });
 
-      await expect(mutate()).rejects.toThrow(/conflicting live policy/);
-      expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
-      expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
-    },
-  );
+    await expect(mutate()).rejects.toThrow(/conflicting live policy/);
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+  });
 
   it("preserves denyTools when clearing allow-tools in denylist-mode server", async () => {
     const deniedEntry = {

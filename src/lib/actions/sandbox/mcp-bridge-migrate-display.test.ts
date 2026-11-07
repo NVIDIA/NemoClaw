@@ -19,6 +19,10 @@ import { dispatchMcpBridgeCommand } from "./mcp-bridge";
 const SECRET_URL =
   "https://legacy-user:legacy-pass@mcp.example.test/bot123456:AAAAsecretpath/?access_token=querysecret#hashsecret";
 const SECRET_FREE_URL = "https://mcp.example.test/mcp";
+// A path segment and a query value that are not classified as safe must render
+// endpoint-only, so an opaque credential-shaped value cannot leak verbatim.
+const OPAQUE_PATH_URL = "https://mcp.example.test/abcdef0123456789/mcp";
+const UNRECOGNIZED_QUERY_URL = "https://mcp.example.test/mcp?custom=abcdef01234567890";
 
 /** Build a minimal single-item migration plan fixture around the given URL. */
 function migrationPlan(url: string, applied = false): McpMigrationPlan {
@@ -114,5 +118,37 @@ describe("MCP migration display redaction", () => {
 
     const json = JSON.parse(await renderMigrateJson()) as McpMigrationPlan;
     expect(json.items[0].url).toBe(SECRET_FREE_URL);
+  });
+
+  it("renders an opaque path credential endpoint-only in the preview", async () => {
+    mocks.migrateMcpBridges.mockResolvedValue(migrationPlan(OPAQUE_PATH_URL));
+
+    const output = await renderMigratePreview();
+    expect(output).toContain("https://mcp.example.test/");
+    expect(output).not.toContain("abcdef0123456789");
+  });
+
+  it("renders an opaque path credential endpoint-only in the --json plan", async () => {
+    mocks.migrateMcpBridges.mockResolvedValue(migrationPlan(OPAQUE_PATH_URL));
+
+    const parsed = JSON.parse(await renderMigrateJson()) as McpMigrationPlan;
+    expect(parsed.items[0].url).toBe("https://mcp.example.test/");
+    expect(parsed.items[0].url).not.toContain("abcdef0123456789");
+  });
+
+  it("renders an unrecognized query credential endpoint-only in the preview", async () => {
+    mocks.migrateMcpBridges.mockResolvedValue(migrationPlan(UNRECOGNIZED_QUERY_URL));
+
+    const output = await renderMigratePreview();
+    expect(output).toContain("https://mcp.example.test/");
+    expect(output).not.toContain("custom=abcdef01234567890");
+  });
+
+  it("renders an unrecognized query credential endpoint-only in the --json plan", async () => {
+    mocks.migrateMcpBridges.mockResolvedValue(migrationPlan(UNRECOGNIZED_QUERY_URL));
+
+    const parsed = JSON.parse(await renderMigrateJson()) as McpMigrationPlan;
+    expect(parsed.items[0].url).toBe("https://mcp.example.test/");
+    expect(parsed.items[0].url).not.toContain("custom=abcdef01234567890");
   });
 });

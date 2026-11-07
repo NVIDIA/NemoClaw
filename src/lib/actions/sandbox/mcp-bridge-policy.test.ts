@@ -261,6 +261,52 @@ describe("generated MCP policy", () => {
     ]);
   });
 
+  it("rejects an explicitly empty allowlist at the policy boundary", () => {
+    // An empty array must not fall through to denylist mode: that would widen
+    // access from deny-by-default to allow-by-default. Omitted (undefined)
+    // means denylist mode; an explicit [] is an error.
+    expect(() =>
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        [],
+        [],
+      ),
+    ).toThrow(/Explicitly empty allowTools/);
+    // Omitted allowTools still renders denylist mode.
+    expect(() =>
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        [],
+        undefined,
+      ),
+    ).not.toThrow();
+  });
+
+  it.each(["", "9lives", "bad selector", "drop;table", "x".repeat(129)])(
+    "rejects the invalid allow selector '%s' at the policy boundary",
+    (invalid) => {
+      expect(() =>
+        buildMcpBridgePolicyYaml(
+          entry.server,
+          entry.url,
+          "openclaw-config",
+          { addresses: ["8.8.8.8"] },
+          "mcp-github",
+          [],
+          [invalid],
+        ),
+      ).toThrow(/Invalid allow-tool selector/);
+    },
+  );
+
   it("excludes standard MCP methods from allowlist tool rules", () => {
     const parsed = YAML.parse(
       buildMcpBridgePolicyYaml(
@@ -397,7 +443,12 @@ describe("generated MCP policy", () => {
       .mockResolvedValue("match");
 
     await expect(
-      applyGeneratedPolicy("alpha", conflictedEntry, { addresses: ["8.8.8.8"] }, { runtimeSelection }),
+      applyGeneratedPolicy(
+        "alpha",
+        conflictedEntry,
+        { addresses: ["8.8.8.8"] },
+        { runtimeSelection },
+      ),
     ).rejects.toThrow(/Live policy contains invalid tool selectors/);
 
     expect(applyPresetContentSpy).not.toHaveBeenCalled();

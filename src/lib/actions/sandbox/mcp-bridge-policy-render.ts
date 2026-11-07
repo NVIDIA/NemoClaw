@@ -8,7 +8,11 @@ import {
   type McpBridgeTargetValidation,
   parseMcpUrlWithValidatedTarget,
 } from "./mcp-bridge-url-validation";
-import { normalizeMcpDenyTools, validateMcpServerName } from "./mcp-bridge-validation";
+import {
+  normalizeMcpDenyTools,
+  validateMcpServerName,
+  VALID_ALLOW_TOOL_RE,
+} from "./mcp-bridge-validation";
 
 export const MCP_BRIDGE_POLICY_MAX_BODY_BYTES = 131_072;
 export const MCP_BRIDGE_ALLOWED_METHODS = [
@@ -113,6 +117,16 @@ function renderMcpBridgePolicyYaml(
       "Explicitly empty allowTools array is not allowed. Use undefined (omitted) for denylist mode.",
     );
   }
+  // The renderer is the last boundary before enforcement content exists, so
+  // every selector must match the canonical form; an unvalidated selector
+  // could reach OpenShell as an unparameterized or malformed allow rule.
+  for (const tool of allowTools ?? []) {
+    if (!VALID_ALLOW_TOOL_RE.test(tool)) {
+      throw new Error(
+        `Invalid allow-tool selector '${tool}'. Use 1-128 letters, digits, dots, underscores, or hyphens starting with a letter.`,
+      );
+    }
+  }
   const normalizedAllowTools = allowTools ? [...allowTools].sort() : [];
   const isAllowlistMode = normalizedAllowTools.length > 0;
 
@@ -209,13 +223,5 @@ export function buildMcpBridgeCapabilityPolicyYaml(
   denyTools: readonly string[] = [],
   allowTools?: readonly string[],
 ): string {
-  return renderMcpBridgePolicyYaml(
-    server,
-    url,
-    adapter,
-    target,
-    undefined,
-    denyTools,
-    allowTools,
-  );
+  return renderMcpBridgePolicyYaml(server, url, adapter, target, undefined, denyTools, allowTools);
 }

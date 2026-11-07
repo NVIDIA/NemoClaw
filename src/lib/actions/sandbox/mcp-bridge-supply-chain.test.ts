@@ -4,7 +4,25 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
-import { enforceTransportTrust } from "./mcp-bridge-supply-chain";
+import { computeToolPolicy, enforceTransportTrust } from "./mcp-bridge-supply-chain";
+
+describe("computeToolPolicy", () => {
+  it("keeps an omitted allowlist distinct from an explicitly empty one", () => {
+    // Omitted means denylist mode; an explicit empty array is rejected rather
+    // than falling through to a tools/call allow without a selector.
+    expect(computeToolPolicy(undefined, ["delete_repo"])).toEqual({
+      allowTools: [],
+      denyTools: ["delete_repo"],
+      mode: "denylist",
+    });
+    expect(() => computeToolPolicy([], [])).toThrow(/Explicitly empty allowTools/);
+    expect(computeToolPolicy(["read_repo"], [])).toEqual({
+      allowTools: ["read_repo"],
+      denyTools: [],
+      mode: "allowlist",
+    });
+  });
+});
 
 describe("enforceTransportTrust", () => {
   it("rejects OAuth requirements until provider-boundary verification is supported", () => {
@@ -17,7 +35,9 @@ describe("enforceTransportTrust", () => {
       transport: "sse",
     };
 
-    expect(() => enforceTransportTrust(entry, true)).toThrow(/provider-boundary OAuth verification/);
+    expect(() => enforceTransportTrust(entry, true)).toThrow(
+      /provider-boundary OAuth verification/,
+    );
   });
 
   it("rejects an explicit STDIO transport on an HTTPS URL before warning", () => {

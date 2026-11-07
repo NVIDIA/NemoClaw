@@ -12,6 +12,11 @@ import { ROOT } from "../../../runner";
  * plus shared temp roots. This allows build-context tests to run on checkouts
  * created under a permissive umask (e.g., 0002) without triggering group-
  * writable authority failures.
+ *
+ * This helper installs `vi.spyOn` mocks on `fs.lstatSync`, `fs.openSync`,
+ * `fs.fstatSync`, and `fs.closeSync`. Callers MUST restore them with
+ * `vi.restoreAllMocks()` after each test; otherwise subsequent tests inherit
+ * the wrapped fs behavior and may see emulated ownership on real directories.
  */
 export function emulatePrivateSourceAncestor(): void {
   const originalLstat = fs.lstatSync;

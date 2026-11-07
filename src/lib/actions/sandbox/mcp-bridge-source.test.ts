@@ -439,6 +439,141 @@ network_policies:
     ).toContain("differs from live policy endpoint");
   });
 
+  it("reads back an allowlist round-tripped through the legacy allow.tool selector form", async () => {
+    // OpenShell round-trips the rendered allow.params.name back as allow.tool.
+    // Reading only params.name loses the whole allowlist, which reads as
+    // "no allowlist" downstream and drops the entry into denylist mode,
+    // widening access from deny-by-default to allow-by-default.
+    mocks.capturePolicy.mockResolvedValue(`version: 1
+network_policies:
+  mcp_bridge_github:
+    name: mcp_bridge_github
+    endpoints:
+      - host: api.githubcopilot.com
+        port: 443
+        path: /mcp/
+        protocol: mcp
+        allowed_ips: ["8.8.8.8"]
+        credential_binding:
+          provider: alpha-mcp-github
+        rules:
+          - allow:
+              method: tools/list
+          - allow:
+              method: tools/call
+              tool: create_issue
+          - allow:
+              method: tools/call
+              tool: list_issues
+`);
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+
+    const observed = (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github;
+    expect(observed.policyConflict).toBeUndefined();
+    expect(observed.allowTools).toEqual(["create_issue", "list_issues"]);
+  });
+
+  it("reports a broad tools/call allow mixed with named allow rules as a conflict", async () => {
+    // An unparameterized tools/call allow permits every tool. Coexisting with
+    // named allow rules means the live policy no longer expresses the selected
+    // allowlist, so the entry must be refused rather than trusted.
+    mocks.capturePolicy.mockResolvedValue(`version: 1
+network_policies:
+  mcp_bridge_github:
+    name: mcp_bridge_github
+    endpoints:
+      - host: api.githubcopilot.com
+        port: 443
+        path: /mcp/
+        protocol: mcp
+        allowed_ips: ["8.8.8.8"]
+        credential_binding:
+          provider: alpha-mcp-github
+        rules:
+          - allow:
+              method: tools/call
+          - allow:
+              method: tools/call
+              params:
+                name: create_issue
+`);
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+
+    const observed = (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github;
+    expect(observed.policyConflict).toBe("Live policy contains invalid tool selectors.");
+  });
+
+  it("normalizes reconstructed allowlist order regardless of live rule order", async () => {
+    // The live policy preserves rule insertion order, but the retry comparison
+    // canonicalizes selector lists. The reader must sort the reconstructed
+    // allowlist so an equivalent re-add is not a false definition mismatch.
+    mocks.capturePolicy.mockResolvedValue(`version: 1
+network_policies:
+  mcp_bridge_github:
+    name: mcp_bridge_github
+    endpoints:
+      - host: api.githubcopilot.com
+        port: 443
+        path: /mcp/
+        protocol: mcp
+        allowed_ips: ["8.8.8.8"]
+        credential_binding:
+          provider: alpha-mcp-github
+        rules:
+          - allow:
+              method: tools/call
+              params:
+                name: submit_report
+          - allow:
+              method: tools/list
+          - allow:
+              method: tools/call
+              params:
+                name: approve_deployment
+          - allow:
+              method: tools/call
+              tool: create_issue
+`);
+    mocks.executeSandboxExecCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+
+    const observed = (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github;
+    expect(observed.policyConflict).toBeUndefined();
+    expect(observed.allowTools).toEqual(["approve_deployment", "create_issue", "submit_report"]);
+  });
+
   it("reports invalid live allow selectors without emitting an empty allowlist", async () => {
     mocks.capturePolicy.mockResolvedValue(`version: 1
 network_policies:

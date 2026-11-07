@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "../../adapters/openshell/client";
-import { redactFullWithUrls, redactStandaloneSecretsFull } from "../../security/redact";
+import {
+  redactFullWithUrls,
+  redactFullWithUrlsEndpointOnly,
+  redactStandaloneSecretsFull,
+} from "../../security/redact";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { McpMigrationPlan } from "./mcp-bridge-migration";
 
@@ -225,7 +229,7 @@ export function redactCredentialValuesForDisplay(
 export function redactMcpMigrationPlanForDisplay(plan: McpMigrationPlan): McpMigrationPlan {
   return {
     ...plan,
-    items: plan.items.map((item) => ({ ...item, url: redactFullWithUrls(item.url) })),
+    items: plan.items.map((item) => ({ ...item, url: redactFullWithUrlsEndpointOnly(item.url) })),
   };
 }
 
