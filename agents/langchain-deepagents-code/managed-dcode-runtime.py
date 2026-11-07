@@ -1082,16 +1082,18 @@ def managed_inference_api_key(base_url: str) -> str:
     """Select the non-secret credential for the validated image-owned route."""
     parsed = urlparse(base_url)
     host = parsed.hostname or ""
-    local_host = host in {"host.openshell.internal", "host.docker.internal"}
+    host_alias = host in {"host.openshell.internal", "host.docker.internal"}
+    private_ipv4 = False
     try:
         address = ipaddress.IPv4Address(host)
-        local_host = any(address in ipaddress.IPv4Network(network) for network in (
+        private_ipv4 = any(address in ipaddress.IPv4Network(network) for network in (
             "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
         ))
     except ipaddress.AddressValueError:
         # Keep the host-alias result above; every other non-IPv4 name remains untrusted.
         pass
     upstream_provider = _managed_upstream_provider()
+    local_host = host_alias or (private_ipv4 and upstream_provider != "compatible-endpoint")
     if parsed.scheme == "http" and local_host and upstream_provider in {
         "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"
     }:

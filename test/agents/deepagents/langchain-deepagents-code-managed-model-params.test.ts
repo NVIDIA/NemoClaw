@@ -111,7 +111,10 @@ def write_owned(file, value):
 name = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"
 for upstream in ("ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"):
     write_owned(${JSON.stringify(providerFile)}, upstream)
-    for endpoint in ("http://host.openshell.internal:8000/v1", "http://host.docker.internal:11434/v1", "http://10.2.3.4:8000/v1", "http://172.16.2.3:8000/v1", "http://192.168.2.3:8000/v1"):
+    endpoints = ("http://host.openshell.internal:8000/v1", "http://host.docker.internal:11434/v1")
+    if upstream != "compatible-endpoint":
+        endpoints += ("http://10.2.3.4:8000/v1", "http://172.16.2.3:8000/v1", "http://192.168.2.3:8000/v1")
+    for endpoint in endpoints:
         write_owned(${JSON.stringify(routeFile)}, endpoint)
         for identity in ("v42", "s" + "a" * 64):
             reference = "openshell:resolve:env:" + identity + "_" + name
@@ -211,7 +214,7 @@ print("native-managed-constructor-placeholder-ok")
     expect(output).toContain("native-managed-constructor-placeholder-ok");
   });
 
-  it("passes the issued compatible placeholder to the hosted DCode constructor (#13164)", () => {
+  it("passes the issued compatible placeholder to the hosted DCode constructor (#13164, #13798)", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const routeFile = path.join(tempDir, "managed-inference-base-url");
@@ -230,7 +233,7 @@ def write_owned(file, value):
 write_owned(${JSON.stringify(providerFile)}, "compatible-endpoint")
 name = "COMPATIBLE_API_KEY"
 os.environ["NEMOCLAW_LOCAL_INFERENCE_TOKEN"] = "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
-for endpoint in ("https://inference-api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1", "https://compatible.example/v1"):
+for endpoint in ("https://inference-api.nvidia.com/v1", "https://integrate.api.nvidia.com/v1", "https://compatible.example/v1", "http://10.2.3.4:19379/v1", "http://172.16.2.3:8000/v1", "http://192.168.2.3:8000/v1"):
     write_owned(${JSON.stringify(routeFile)}, endpoint)
     for reference in (
         "openshell:resolve:env:" + name,
