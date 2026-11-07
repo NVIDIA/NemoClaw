@@ -229,6 +229,14 @@ export const discordManifest = {
   ],
   hooks: [
     {
+      id: "discord-openclaw-status-health",
+      phase: "status",
+      handler: "discord.statusHealth",
+      providesReadiness: true,
+      agents: ["openclaw"],
+      outputs: [{ id: "channelHealth", kind: "status" }],
+    },
+    {
       id: "discord-hermes-status-health",
       phase: "status",
       handler: "discord.statusHealth",

@@ -9,10 +9,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as defs from "../../agent/defs";
+import * as sandboxTransport from "../../adapters/sandbox/command-transport";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../../messaging/channels";
+import { MessagingWorkflowPlanner } from "../../messaging/compiler";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
+import { runMessagingHealthChecksAfterRebuild } from "./rebuild-messaging-phase";
 
 const emptyStoredMessagingPlan = {
   schemaVersion: 1,
@@ -136,5 +143,156 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     expect(writePlanEnvSpy).toHaveBeenCalledTimes(1);
     expect(messages).toContain("Messaging manifest rebuild plan staged: telegram");
     expect(result).not.toBeNull();
+  });
+});
+
+describe("manifest-owned health checks after rebuild", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    {
+      channel: "discord",
+      condition: "the native probe fails",
+      status: 1,
+      config: {},
+      log: "invalid-output-with-secret",
+      messages: [
+        expect.stringContaining("ℹ The Discord gateway connection is not verified yet"),
+        expect.stringContaining("channels status --channel discord --wait"),
+      ],
+      forbidden: "⚠",
+      command: "openclaw channels status --channel discord --probe --json --timeout 8000",
+      timeout: 8_000,
+    },
+    {
+      channel: "discord",
+      condition: "the gateway is still connecting",
+      config: {},
+      log: '{"channelAccounts":{"discord":[{"accountId":"default","enabled":true,"configured":true,"running":true,"connected":false,"lifecycle":"recovering"}]}}',
+      messages: [
+        expect.stringContaining("ℹ The Discord gateway is not connected yet"),
+        expect.stringContaining("channels status --channel discord --wait"),
+      ],
+      forbidden: "⚠",
+      command: "openclaw channels status --channel discord --probe --json --timeout 8000",
+      timeout: 8_000,
+    },
+    {
+      channel: "discord",
+      condition: "the account is disabled",
+      config: {},
+      log: '{"channelAccounts":{"discord":[{"accountId":"default","enabled":false}]}}',
+      messages: [expect.stringContaining("⚠ The managed Discord account is disabled")],
+      command: "openclaw channels status --channel discord --probe --json --timeout 8000",
+      timeout: 8_000,
+    },
+    {
+      channel: "telegram",
+      condition: "the provider starts",
+      config: {
+        channels: {
+          telegram: {
+            enabled: true,
+            accounts: { default: { dmPolicy: "allowlist", allowFrom: [] } },
+          },
+        },
+      },
+      log: "[telegram] [default] starting provider\n",
+      messages: [
+        expect.stringContaining("'telegram' bridge startup detected"),
+        expect.stringContaining("Telegram direct-message allowlist is empty"),
+      ],
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "slack",
+      condition: "credentials are rejected",
+      config: { channels: { slack: { enabled: true } } },
+      log: "[channels] [slack] provider failed to start: invalid_auth fake-gateway-credential\n",
+      messages: [
+        expect.stringContaining("'slack' bridge logged credential/startup warnings"),
+        expect.stringContaining("authentication rejected"),
+      ],
+      forbidden: "fake-gateway-credential",
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "the channel is not enabled",
+      config: { channels: { telegram: {} } },
+      log: "",
+      messages: [expect.stringContaining("was not marked enabled in the current")],
+      command: "cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "startup logs are empty",
+      config: { channels: { telegram: { enabled: true } } },
+      log: "",
+      messages: [expect.stringContaining("did not log a startup breadcrumb")],
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "startup times out",
+      config: { channels: { telegram: { enabled: true } } },
+      log: "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled",
+      messages: [expect.stringContaining("bridge startup timed out")],
+      forbidden: "bridge startup detected",
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+    {
+      channel: "telegram",
+      condition: "the credential placeholder mismatches",
+      config: { channels: { telegram: { enabled: true } } },
+      log: "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder",
+      messages: [expect.stringContaining("logged credential/startup warnings")],
+      command: "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
+      timeout: 10_000,
+    },
+  ])("reports $channel health when $condition", async (fixture) => {
+    const plan = await new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      undefined,
+      createBuiltInRenderTemplateResolver(),
+    ).buildPlan({
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "rebuild",
+      isInteractive: false,
+      configuredChannels: [fixture.channel],
+      credentialAvailability: {
+        DISCORD_BOT_TOKEN: true,
+        TELEGRAM_BOT_TOKEN: true,
+        SLACK_BOT_TOKEN: true,
+        SLACK_APP_TOKEN: true,
+      },
+    });
+    const runtimeSelection = { gatewayName: "recorded", workspace: "default" as const };
+    const execute = vi
+      .spyOn(sandboxTransport, "executeSandboxExecCommand")
+      .mockImplementation(async (_name, command) => ({
+        status: fixture.status ?? 0,
+        stdout: command.includes("openclaw.json") ? JSON.stringify(fixture.config) : fixture.log,
+        stderr: "",
+      }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await runMessagingHealthChecksAfterRebuild("alpha", plan, vi.fn(), runtimeSelection);
+
+    expect(execute).toHaveBeenCalledWith("alpha", fixture.command, fixture.timeout, {
+      runtimeSelection,
+      honorCallerTimeout: true,
+    });
+    expect(log.mock.calls.flat()).toEqual(expect.arrayContaining(fixture.messages));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("invalid-output-with-secret");
+    expect(JSON.stringify(log.mock.calls)).not.toContain(
+      fixture.forbidden ?? "invalid-output-with-secret",
+    );
   });
 });

@@ -39,6 +39,14 @@ export interface OpenClawBridgeHealthChannelSpec {
   readonly onStartupDetected?: (context: OpenClawBridgeHealthStartupContext) => void;
 }
 
+function bridgeWarningLabel(line: string): string {
+  if (/invalid_auth|token_revoked|token_expired/i.test(line)) return "authentication rejected";
+  if (/credential placeholder|runtime .*placeholder/i.test(line))
+    return "credential placeholder configuration problem";
+  if (/bridge did not start within/i.test(line)) return "bridge startup timed out";
+  return "startup probe or provider failure";
+}
+
 export function createOpenClawBridgeHealthHookRegistration(
   spec: OpenClawBridgeHealthChannelSpec,
   options: OpenClawBridgeHealthHookOptions = {},
@@ -115,9 +123,7 @@ export function createOpenClawBridgeHealthHook(
       const credentialWarnings = lines.filter((line) => OPENCLAW_BRIDGE_WARNING_PATTERN.test(line));
       if (credentialWarnings.length > 0) {
         log(`  ⚠ '${spec.channelId}' bridge logged credential/startup warnings:`);
-        for (const line of credentialWarnings.slice(0, 3)) {
-          log(`    ${line}`);
-        }
+        log(`    ${[...new Set(credentialWarnings.map(bridgeWarningLabel))].join("; ")}.`);
         log(
           `    Verify the OpenShell provider for ${spec.channelId} holds a valid credential and re-run the sandbox rebuild if needed.`,
         );

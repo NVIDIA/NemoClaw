@@ -59,6 +59,22 @@ Refer to [Rotate a Messaging Credential](../../security/credential-rotation#rota
 Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).
 If the bot logs in but delivery fails, refer to [Discord bot logs in, but the channel still does not work](../../reference/troubleshooting#discord-bot-logs-in-but-the-channel-still-does-not-work).
 
+<AgentOnly variant="openclaw">
+## Verify the Connection
+
+After enrollment and rebuild complete, wait for the native Discord gateway connection:
+
+```bash
+$$nemoclaw <name> channels status --channel discord --wait
+```
+
+The command succeeds when the gateway connects and stops on terminal states such as rejected credentials or a blocked gateway.
+It exits nonzero if the timeout expires.
+Connectivity does not verify agent responses or message delivery.
+Mention the bot from an allowed Discord account to verify an agent reply.
+For timeout and JSON options, refer to the [channel status reference](../../reference/commands#nemoclaw-name-channels-status).
+</AgentOnly>
+
 ## Retry Authentication
 
 If Discord rejects the token, replace `DISCORD_BOT_TOKEN` with a bot token from the Discord Developer Portal.

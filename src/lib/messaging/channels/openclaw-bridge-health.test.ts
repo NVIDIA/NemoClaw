@@ -14,9 +14,10 @@ const SLACK_HEALTH_HOOK = {
 } as const satisfies ChannelHookSpec;
 
 describe("OpenClaw bridge health hook", () => {
-  it("logs channel startup warnings through the injected sandbox runner", async () => {
+  it("omits untrusted Slack startup warning details", async () => {
     const logs: string[] = [];
     const commands: string[] = [];
+    const secret = "fake-gateway-credential";
     const registry = new MessagingHookRegistry([
       createOpenClawBridgeHealthHookRegistration(
         {
@@ -43,7 +44,7 @@ describe("OpenClaw bridge health hook", () => {
             if (command.includes("gateway.log")) {
               return {
                 status: 0,
-                stdout: "[channels] [slack] provider failed to start: invalid_auth",
+                stdout: `[channels] [slack] provider failed to start: invalid_auth ${secret}`,
               };
             }
             return null;
@@ -66,7 +67,10 @@ describe("OpenClaw bridge health hook", () => {
       "tail -n 400 /tmp/gateway.log 2>/dev/null || true",
     ]);
     expect(logs.join("\n")).toContain("'slack' bridge logged credential/startup warnings");
-    expect(logs.join("\n")).toContain("invalid_auth");
+    expect(logs.join("\n")).toContain("Verify the OpenShell provider for slack");
+    expect(logs.join("\n")).toContain("authentication rejected");
+    expect(logs.join("\n")).not.toContain(secret);
+    expect(logs.join("\n")).not.toContain("invalid_auth");
   });
 
   it("requires a sandbox command runner", async () => {
@@ -143,7 +147,7 @@ describe("OpenClaw bridge health hook", () => {
               : {
                   status: 0,
                   stdout:
-                    "[telegram] [default] runtime TELEGRAM_BOT_TOKEN is an identityless canonical placeholder; a revision-scoped OpenShell credential is required",
+                    "[telegram] [default] runtime TELEGRAM_BOT_TOKEN is an identityless canonical placeholder; a revision-scoped OpenShell credential is required fake-gateway-credential",
                 },
         },
       ),
@@ -162,7 +166,9 @@ describe("OpenClaw bridge health hook", () => {
     ).resolves.toMatchObject({ outputs: {} });
 
     expect(logs.join("\n")).toContain("credential/startup warnings");
-    expect(logs.join("\n")).toContain("identityless canonical placeholder");
+    expect(logs.join("\n")).not.toContain("identityless canonical placeholder");
+    expect(logs.join("\n")).toContain("credential placeholder configuration problem");
+    expect(logs.join("\n")).not.toContain("fake-gateway-credential");
   });
 
   it("classifies a non-placeholder runtime credential as a startup warning (#10847)", async () => {
@@ -204,6 +210,7 @@ describe("OpenClaw bridge health hook", () => {
     ).resolves.toMatchObject({ outputs: {} });
 
     expect(logs.join("\n")).toContain("credential/startup warnings");
-    expect(logs.join("\n")).toContain("non-placeholder source");
+    expect(logs.join("\n")).not.toContain("non-placeholder source");
+    expect(logs.join("\n")).toContain("credential placeholder configuration problem");
   });
 });

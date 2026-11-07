@@ -68,13 +68,14 @@ describe("showSandboxChannelStatus channel config parsers", () => {
         ],
       }),
       appliedPresets: ["discord"],
+      gatewayPresets: ["discord"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "discord",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = wrappedSignalsOf(result);
     expect(
       signals.find(
         (signal) =>

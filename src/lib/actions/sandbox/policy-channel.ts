@@ -1209,52 +1209,6 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
   return true;
 }
 
-// Run manifest-owned post-rebuild health hooks.
-// Failures remain best-effort warnings because the rebuild has already
-// succeeded; this phase surfaces likely channel startup issues without making
-// channel ownership leak back into this action.
-async function runMessagingHealthChecksAfterRebuild(
-  sandboxName: string,
-  plan: SandboxMessagingPlan,
-): Promise<void> {
-  if (MessagingSetupApplier.listHealthChecks(plan).length === 0) return;
-
-  const hookRegistry = createBuiltInMessagingHookRegistry({
-    openclawBridgeHealth: {
-      sandboxName,
-      executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs, {}),
-    },
-  });
-  try {
-    await MessagingSetupApplier.applyHealthChecks(plan, {
-      runHook: (request) =>
-        runMessagingHook(
-          {
-            id: request.hookId,
-            phase: request.phase,
-            handler: request.handler,
-            inputs: request.inputKeys,
-            outputs: request.outputs,
-            onFailure: request.onFailure,
-          },
-          hookRegistry,
-          {
-            channelId: request.channelId,
-            isInteractive: !isNonInteractive(),
-            inputs: request.inputs,
-          },
-        ),
-    });
-  } catch (err) {
-    console.log(`  ${YW}⚠${R} Messaging health check failed: ${formatErrorMessage(err)}`);
-  }
-}
-
-function formatErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 async function planSandboxChannelAdd(
   sandboxName: string,
   channelId: string,
@@ -1589,7 +1543,6 @@ async function addSandboxChannelUnlocked(
           `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
         );
       }
-      await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
       recordConfigurationResult(sandboxName, "completed", "applied");
     }
     return;
@@ -1672,7 +1625,6 @@ async function addSandboxChannelUnlocked(
         `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
       );
     }
-    await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     recordConfigurationResult(sandboxName, "completed", "applied");
   }
 }

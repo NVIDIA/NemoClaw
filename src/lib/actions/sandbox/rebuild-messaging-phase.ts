@@ -6,13 +6,18 @@ import {
   type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
-import { RD as _RD, G, R } from "../../cli/terminal-style";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
+import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
   MessagingHookApplyRequest,
   MessagingOpenShellRunner,
 } from "../../messaging/applier/types";
-import type { MessagingHookOutputMap } from "../../messaging/hooks";
+import {
+  createBuiltInMessagingHookRegistry,
+  runMessagingHook,
+  type MessagingHookOutputMap,
+} from "../../messaging/hooks";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import { retirePendingRemovalMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
 import type { SandboxEntry } from "../../state/registry";
@@ -20,6 +25,50 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
 export { stageMessagingManifestPlanForRebuild };
+
+/** Run advisory manifest health checks after the replacement agent and its forwards are ready. */
+export async function runMessagingHealthChecksAfterRebuild(
+  sandboxName: string,
+  plan: SandboxMessagingPlan | null,
+  log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<void> {
+  if (!plan || MessagingSetupApplier.listHealthChecks(plan).length === 0) return;
+  const hookRegistry = createBuiltInMessagingHookRegistry({
+    openclawBridgeHealth: {
+      sandboxName,
+      executeSandboxCommand: (command, timeoutMs) =>
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
+          runtimeSelection,
+          honorCallerTimeout: true,
+        }),
+    },
+  });
+  try {
+    await MessagingSetupApplier.applyHealthChecks(plan, {
+      runHook: (request) =>
+        runMessagingHook(
+          {
+            id: request.hookId,
+            phase: request.phase,
+            handler: request.handler,
+            inputs: request.inputKeys,
+            outputs: request.outputs,
+            onFailure: request.onFailure,
+          },
+          hookRegistry,
+          {
+            channelId: request.channelId,
+            isInteractive: false,
+            inputs: request.inputs,
+          },
+        ),
+    });
+  } catch {
+    log("Messaging health check failed; diagnostic details omitted.");
+    console.log(`  ${YW}⚠${R} Messaging channel health could not be verified.`);
+  }
+}
 
 /** Stage the manifest plan while preserving rebuild's fail-before-delete boundary. */
 export async function stageRebuildMessagingPlanOrBail(

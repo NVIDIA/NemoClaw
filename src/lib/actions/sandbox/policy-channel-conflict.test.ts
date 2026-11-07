@@ -421,12 +421,8 @@ beforeEach(() => {
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockResolvedValue(true);
 
-  // After a successful interactive add, channel health-check hooks can probe
-  // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
-  // -> process.exit(1) when the openshell binary is absent (e.g. the CI
-  // unit-test runner; locally it is installed, so this only bites in CI). Stub
-  // the exec path so the post-add verification never shells out and never trips
-  // the exit spy unless a test explicitly overrides it.
+  // Configuration reads must not execute the host's OpenShell binary.
+  // Rebuild health checks are covered by the post-restore phase tests.
   vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
     new commandTransport.SandboxCommandTransportError("unavailable"),
   );
@@ -1217,77 +1213,6 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(exitMock).not.toHaveBeenCalled();
     expect(upsertMock).toHaveBeenCalledTimes(1);
   });
-
-  it("runs Telegram post-rebuild bridge verification through the channel hook", async () => {
-    arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
-    getCredentialMock.mockImplementation((key: string) =>
-      key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null,
-    );
-    mockBridgeHealthExec({
-      config: {
-        channels: {
-          telegram: {
-            enabled: true,
-            accounts: {
-              default: {
-                dmPolicy: "allowlist",
-                allowFrom: [],
-              },
-            },
-          },
-        },
-      },
-      log: "[telegram] [default] starting provider\n",
-    });
-
-    await addSandboxChannel("alpha", { channel: "telegram" });
-
-    const text = loggedText();
-    expect(text).toContain("'telegram' bridge startup detected");
-    expect(text).toContain("Telegram direct-message allowlist is empty");
-    const execCommands = vi
-      .mocked(commandTransport.executeSandboxExecCommand)
-      .mock.calls.map((call: unknown[]) => String(call[1]));
-    expect(
-      vi
-        .mocked(commandTransport.executeSandboxExecCommand)
-        .mock.calls.every((call) => call[3] === undefined || Object.keys(call[3]).length === 0),
-    ).toBe(true);
-    expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
-    expect(
-      execCommands.some(
-        (cmd: string) => cmd.includes("tail -n 400") && cmd.includes("gateway.log"),
-      ),
-    ).toBe(true);
-  });
-
-  it("runs Slack post-rebuild warning detection through the channel hook", async () => {
-    arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
-    getCredentialMock.mockImplementation((key: string) =>
-      key === "SLACK_BOT_TOKEN"
-        ? "xoxb-alpha-bot"
-        : key === "SLACK_APP_TOKEN"
-          ? "xapp-alpha-app"
-          : null,
-    );
-    mockBridgeHealthExec({
-      config: {
-        channels: {
-          slack: {
-            enabled: true,
-          },
-        },
-      },
-      log: "[channels] [slack] provider failed to start: invalid_auth\n",
-    });
-
-    await addSandboxChannel("alpha", { channel: "slack" });
-
-    const text = loggedText();
-    expect(text).toContain("'slack' bridge logged credential/startup warnings");
-    expect(text).toContain("invalid_auth");
-    expect(exitMock).not.toHaveBeenCalled();
-  });
 });
 
 describe("Teams host-forward lifecycle (PRA-2)", () => {
@@ -1480,17 +1405,3 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 });
-
-function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
-  vi.mocked(commandTransport.executeSandboxExecCommand).mockImplementation(
-    async (_sandboxName: string, command: string) => {
-      if (command.includes("cat") && command.includes("openclaw.json")) {
-        return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
-      }
-      if (command.includes("tail -n 400") && command.includes("gateway.log")) {
-        return { status: 0, stdout: options.log, stderr: "" };
-      }
-      throw new commandTransport.SandboxCommandTransportError("unavailable");
-    },
-  );
-}
