@@ -148,7 +148,16 @@ NemoClaw records the normalized host and every validated address as OpenShell po
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+To replace it, record any `--deny-tool` selectors and run `mcp remove` first.
+`mcp remove` deletes the generated policy that holds them.
+If removal reports an `MCP cleanup warning`, resolve it before you continue.
+If removal reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
+If it reports no preserved provider, skip provider deletion.
+Export the replacement credential under the same host variable name.
+If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again before re-adding the server.
+Otherwise, pass the same `--trusted-private-host` value.
+Run `mcp add` with each recorded `--deny-tool` selector and the recorded trusted-private declaration.
+`mcp remove` and `destroy` keep the provider until you delete it.
 
 Inspect the registration after the add returns:
 
@@ -186,7 +195,12 @@ NemoClaw binds each dedicated provider to its generated MCP endpoint, so OpenShe
 One normalized endpoint URL can have only one credential-bound managed server definition in a sandbox.
 If two definitions need different credentials, retain one definition for that URL or configure distinct endpoint URLs so OpenShell can select one credential unambiguously.
 
-If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
+If this server uses the profile-less `generic` provider from an earlier NemoClaw build, record its `--deny-tool` selectors, then run `mcp remove`.
+`mcp remove` deletes the generated policy that holds them.
+If removal reports an `MCP cleanup warning`, resolve it before you continue.
+If removal reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
+If it reports no preserved provider, skip provider deletion.
+Add the server again with the credential exported, and pass `--deny-tool` again for each recorded selector.
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 ## Meet Endpoint Requirements
