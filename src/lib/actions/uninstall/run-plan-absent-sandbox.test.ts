@@ -89,6 +89,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
       },
       expectedExitCode: 0,
       expectedWarning: "OpenShell sandbox 'selected-box' already removed",
+      expectedReasons: [],
       expectsPreservedState: false,
     },
     {
@@ -100,6 +101,9 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
       },
       expectedExitCode: 1,
       expectedWarning: "OpenShell sandbox 'selected-box' could not be removed or was unreachable",
+      expectedReasons: [
+        "Reason: error trying to connect: tcp connect error: Connection refused (os error 111)",
+      ],
       expectsPreservedState: true,
     },
     {
@@ -107,11 +111,18 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
       deleteResponse: { status: 1, stdout: "", stderr: "Error: sandbox is still finalizing" },
       expectedExitCode: 1,
       expectedWarning: "OpenShell sandbox 'selected-box' could not be removed or was unreachable",
+      expectedReasons: ["Reason: Error: sandbox is still finalizing"],
       expectsPreservedState: true,
     },
   ])(
     "classifies selected-gateway cleanup when the recorded sandbox is $case",
-    async ({ deleteResponse, expectedExitCode, expectedWarning, expectsPreservedState }) => {
+    async ({
+      deleteResponse,
+      expectedExitCode,
+      expectedWarning,
+      expectedReasons,
+      expectsPreservedState,
+    }) => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));
       const selectedPort = 9123;
       try {
@@ -174,6 +185,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
 
         expect(result.exitCode, warnings.join("\n")).toBe(expectedExitCode);
         expect(warnings.join("\n")).toContain(expectedWarning);
+        expect(warnings.filter((line) => line.startsWith("Reason: "))).toEqual(expectedReasons);
         expect(calls).toContainEqual([
           "sandbox",
           "delete",
