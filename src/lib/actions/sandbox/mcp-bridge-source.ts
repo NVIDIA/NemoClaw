@@ -706,7 +706,7 @@ async function enrichFromPolicy(
     ? endpoint.rules
         .filter(
           (rule): rule is { allow: { method: string; params: { name: string } } } => {
-            if (!isObjectRecord(rule) || !"allow" in rule || !isObjectRecord(rule.allow)) {
+            if (!isObjectRecord(rule) || !("allow" in rule) || !isObjectRecord(rule.allow)) {
               return false;
             }
             if (rule.allow.method !== "tools/call") return false;
@@ -759,12 +759,17 @@ async function enrichFromPolicy(
   // (endpoint.rules with allow.method === "tools/call" but no tool selector).
   const hasUnparameterizedToolsCallAllow = Array.isArray(endpoint.rules)
     ? endpoint.rules.some((rule) => {
-        if (!isObjectRecord(rule) || !"allow" in rule || !isObjectRecord(rule.allow)) {
+        if (!isObjectRecord(rule) || !("allow" in rule) || !isObjectRecord(rule.allow)) {
           return false;
         }
-        return rule.allow.method === "tools/call" &&
-          !isObjectRecord(rule.allow.params) &&
-          typeof rule.allow.tool !== "string";
+        return (
+          rule.allow.method === "tools/call" &&
+          !(
+            isObjectRecord(rule.allow.params) &&
+            typeof rule.allow.params.name === "string"
+          ) &&
+          typeof rule.allow.tool !== "string"
+        );
       })
     : false;
 

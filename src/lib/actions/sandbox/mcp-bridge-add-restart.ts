@@ -92,6 +92,7 @@ import {
   preflightMcpServerUrlResolvedTarget,
   resolveCredentialEnv,
   uniqueEnvNames,
+  VALID_IDENTITY_RE,
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
@@ -1005,6 +1006,15 @@ async function addMcpBridgeUnlocked(
         verifiedAt: Date.now(),
       }
     : undefined;
+
+  // Validate server-identity at the action boundary before constructing serverIdentity,
+  // so direct callers cannot store or adopt a malformed identity.
+  if (options.serverIdentity && !VALID_IDENTITY_RE.test(options.serverIdentity)) {
+    throw new McpBridgeError(
+      "Invalid --server-identity. Expected format: sha256:<64-hex-chars>.",
+      2,
+    );
+  }
 
   let requestedEntry: McpSourceEntry = {
     server: options.server,

@@ -624,7 +624,7 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
         2,
       );
     }
-    return { server, allowTools: [...new Set(allowTools)].sort() };
+    return { server, allowTools: normalizeAllowTools(allowTools) };
   }
   if (denyTools.length > 0 && clearDenyTools) {
     throw new McpBridgeError(

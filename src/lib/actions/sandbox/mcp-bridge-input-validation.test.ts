@@ -472,7 +472,7 @@ describe("MCP CLI input validation", () => {
     expect(parsed.allowTools).toEqual(["list_issues"]);
   });
 
-  it("accepts and sorts deduplicated --allow-tool selectors", () => {
+  it("accepts and sorts --allow-tool selectors", () => {
     const parsed = parseMcpAddArgs([
       "github",
       "--url",
@@ -480,10 +480,23 @@ describe("MCP CLI input validation", () => {
       "--env",
       "GITHUB_TOKEN",
       "--allow-tool=read_repo",
-      "--allow-tool=read_repo",
       "--allow-tool=list_issues",
     ]);
     expect(parsed.allowTools).toEqual(["list_issues", "read_repo"]);
+  });
+
+  it("rejects duplicate --allow-tool selectors in add args", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+        "--allow-tool=read_repo",
+        "--allow-tool=read_repo",
+      ]),
+    ).toThrow(/Duplicate --allow-tool/);
   });
 
   it.each(["", "tool name", "tool/name", "123tool", "a".repeat(129)])(
@@ -594,6 +607,17 @@ describe("MCP CLI input validation", () => {
       server: "doordash",
       clearAllowTools: true,
     });
+  });
+
+  it("rejects duplicate --allow-tool selectors in update args", () => {
+    expect(() =>
+      parseMcpUpdateArgs([
+        "github",
+        "--allow-tool",
+        "read_repo",
+        "--allow-tool=read_repo",
+      ]),
+    ).toThrow(/Duplicate --allow-tool/);
   });
 
   it("rejects --allow-tool with --deny-tool in update args", () => {
