@@ -139,6 +139,12 @@ If the request fails, check these items.
 3. Verify that the host can reach the inference endpoint.
 4. If the agent reports a context-overflow or token-limit error, clear the conversation with `/reset` (or start a fresh one with `/new`) in the TUI before retrying.
 
+<AgentOnly variant="openclaw">
+## Inspect OpenClaw Conversation Traces
+
+To enable OpenClaw's optional conversation trace export and view traces in a collector, follow [OpenClaw Conversation OTEL Diagnostics](../reference/commands#openclaw-conversation-otel-diagnostics).
+</AgentOnly>
+
 ## Related Topics
 
 - [Troubleshooting](../reference/troubleshooting) for common issues and resolution steps.
