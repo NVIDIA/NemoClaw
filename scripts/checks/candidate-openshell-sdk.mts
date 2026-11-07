@@ -174,7 +174,7 @@ export async function readApprovedOpenShellSdkConfig(
       request,
       identity.mergeSha,
     );
-    if (merged.commentId !== admission.commentId || merged.reviewer !== admission.reviewer)
+    if (merged.reviewId !== admission.reviewId || merged.reviewer !== admission.reviewer)
       throw new Error("Candidate SDK admission changed during merge verification");
     sources = { ...sources, ...merged.sources };
     // The merge can update other dependencies, but cannot select a different SDK or audit policy.
@@ -185,7 +185,7 @@ export async function readApprovedOpenShellSdkConfig(
     configSource: JSON.stringify(policy),
     sources,
     reviewer: admission.reviewer,
-    commentId: admission.commentId,
+    reviewId: admission.reviewId,
   };
 }
 
@@ -218,7 +218,7 @@ function artifactDecision(
     required: true,
     candidate: true,
     artifactName: parseAuditConfig(admitted.configSource).sourceRegistryPackage.artifactName,
-    bundleName: `candidate-openshell-sdk-${identity.prNumber}-${identity.candidateSha}-${identity.baseSha}-${admitted.commentId}`,
+    bundleName: `candidate-openshell-sdk-${identity.prNumber}-${identity.candidateSha}-${identity.baseSha}-${admitted.reviewId}`,
   } as const;
 }
 
