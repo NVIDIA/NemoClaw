@@ -17,6 +17,7 @@ This skill decides where a test goes and what it asserts.
 Write the behavior as circumstances and an observable outcome, then name the one component that decides it: a crate's rule, one provider type, the compiled graph across providers, the SDK or CLI, or a real engine, cluster, image, or model.
 The owner picks the layer.
 A test above the owner's layer repeats the owner's tests; a test below it cannot observe the behavior.
+For a behavior at the NemoClaw–NeMo Fabric boundary, use [`fabric-boundary-testing-reference`](../fabric-boundary-testing-reference/SKILL.md) first: it splits the behavior by owning repository, and only NemoClaw's parts get a test here.
 
 ## 2. Find what already covers it
 
@@ -38,8 +39,8 @@ Use the cheapest layer that can observe the behavior.
 | Integration | The SDK-compiled graph across providers, and the SDK and CLI over a bundle, against local fixtures | `crates/nemoclaw-e2e/tests/integration/` |
 | Live E2E | Only what needs a real Docker engine, cluster, image, model, or host | `crates/nemoclaw-e2e/tests/e2e/` |
 
-Keep live E2E tests to successful paths: a deployment comes up, agents answer, and an unchanged reapply changes nothing.
-Inject failures, recoveries, refusals, drift, and retries at the contract or integration layer, where fixtures make them repeatable.
+Keep live E2E tests to successful paths, such as a deployment coming up, agents answering, and an unchanged reapply changing nothing, and to failures and recoveries that only a real component produces, such as OpenShell refusing a sandbox's connection.
+Inject other failures, recoveries, refusals, drift, and retries at the contract or integration layer, where fixtures make them repeatable.
 A live check that a fixture can simulate belongs below the live layer.
 
 ## 4. Prefer `tofu test` scenarios
