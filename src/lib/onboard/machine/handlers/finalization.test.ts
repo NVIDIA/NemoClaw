@@ -610,7 +610,22 @@ describe("finalization handlers", () => {
     expect(calls.log).toHaveBeenCalledWith("  Connect: nemoclaw my-assistant connect");
     expect(calls.log).toHaveBeenCalledWith("  Interactive: dcode");
     expect(calls.log).toHaveBeenCalledWith('  Headless: dcode -n "<task>"');
-    expect(calls.log.mock.calls.map(([line]) => line).join("\n")).not.toContain("Port 0");
+    const output = calls.log.mock.calls.map(([line]) => line).join("\n");
+    expect(output).not.toContain("Port 0");
+    expect(output).toContain("  Sandbox: my-assistant\n  Model: model");
+    expect(output).toContain(
+      [
+        "  Manage later",
+        "",
+        "    Status:      nemoclaw my-assistant status",
+        "    Logs:        nemoclaw my-assistant logs --follow",
+        "    Model:       nemoclaw onboard --agent langchain-deepagents-code --name my-assistant --fresh --recreate-sandbox  # choose the new model during onboarding",
+        "    Policies:    nemoclaw my-assistant policy add",
+        "    Credentials: nemoclaw onboard --agent langchain-deepagents-code --name my-assistant  # with the replacement key exported",
+      ].join("\n"),
+    );
+    expect(output).not.toContain("inference set");
+    expect(output).not.toContain("credentials reset");
     expect(result.verificationDiagnostics).toEqual([]);
     expect(result.stateResult.type).toBe("complete");
   });

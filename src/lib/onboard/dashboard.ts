@@ -44,7 +44,11 @@ import {
   type ListSandboxesFn,
   type OpenShellForwardPortObserver,
 } from "./dashboard-port";
-import { canReuseDashboardForwardForAgent, resolveDashboardForwardBind } from "./dashboard-runtime";
+import {
+  canReuseDashboardForwardForAgent,
+  manageLaterLines,
+  resolveDashboardForwardBind,
+} from "./dashboard-runtime";
 import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
@@ -886,18 +890,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         console.log(line);
       }
     }
-    console.log("");
-    console.log("  Manage later");
-    console.log("");
-    console.log(`    Status:      ${deps.cliName()} ${sandboxName} status`);
-    console.log(`    Logs:        ${deps.cliName()} ${sandboxName} logs --follow`);
-    console.log(
-      `    Model:       ${deps.cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
-    );
-    console.log(`    Policies:    ${deps.cliName()} ${sandboxName} policy add`);
-    console.log(
-      `    Credentials: ${deps.cliName()} credentials reset <PROVIDER> && ${deps.cliName()} onboard`,
-    );
+    const cliName = deps.cliName();
+    for (const line of manageLaterLines(
+      cliName,
+      sandboxName,
+      `${cliName} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
+    )) {
+      console.log(line);
+    }
     console.log(`  ${"─".repeat(50)}`);
     console.log("");
   }
