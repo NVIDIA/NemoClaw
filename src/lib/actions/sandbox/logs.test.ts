@@ -72,6 +72,7 @@ function restoreProcessSignalListeners(
   }
 }
 
+/** Run `showSandboxLogsWithDeps` against fakes and capture its requests and output. */
 async function captureLogsRun(
   options: Parameters<typeof showSandboxLogsWithDeps>[1],
   results: Record<string, FakeLogProbeResult>,
@@ -123,6 +124,7 @@ async function captureLogsRun(
         exitCode = code;
         return followsLogs ? (undefined as never) : failExit(code);
       },
+      getKnownSandboxTargetGatewayName: () => null,
       isDockerRuntimeDown: () => false,
       logs,
       enableAuditLogs: async () => {
@@ -203,6 +205,28 @@ describe("showSandboxLogsWithDeps", () => {
       },
     ]);
   });
+
+  it.each([false, true])(
+    "targets the recorded gateway for audit setup and log requests (follow=%s) (#12585)",
+    async (follow) => {
+      const auditTargets: unknown[] = [];
+      const named = { kind: "named", gatewayName: "nemoclaw-8090" };
+      const result = await captureLogsRun(
+        { follow, lines: "50", since: null },
+        { logs: { status: 0 } },
+        {
+          getKnownSandboxTargetGatewayName: (name) => (name === "alpha" ? "nemoclaw-8090" : null),
+          enableAuditLogs: async (request) => {
+            auditTargets.push(request.target);
+            return { ok: true, value: undefined };
+          },
+        },
+      );
+      const requests = follow ? result.follows : result.reads;
+      expect(requests.map((request) => request.target)).toEqual([named, named]);
+      expect(auditTargets).toEqual([named]);
+    },
+  );
 
   it("skips the OpenClaw gateway tail when --since targets OpenShell logs", async () => {
     const result = await captureLogsRun(
