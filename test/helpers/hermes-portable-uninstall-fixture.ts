@@ -17,6 +17,7 @@ import {
   parseOpenShellSandboxId,
 } from "../../src/lib/adapters/openshell/sandbox-identity";
 import { loadAgent } from "../../src/lib/agent/defs";
+import { privateHermesManifestAgent } from "../../src/lib/onboard/experimental/__test-helpers__/hermes-manifest-agent";
 import { writeConfigFile } from "../../src/lib/state/config-io";
 import type { SandboxEntry } from "../../src/lib/state/registry/types";
 import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
@@ -162,6 +163,7 @@ function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
+/** Publish a Hermes portable lifecycle receipt into the given state directory. */
 function publishLifecycleReceipt(
   stateDir: string,
   runtime: ReturnType<typeof runtimeAuthority>,
@@ -193,7 +195,7 @@ function publishLifecycleReceipt(
     podmanExecutableAuthority: podmanAuthority,
     socketAuthority: socket,
     startup: resolveHermesPortableStartupContract({
-      agent: loadAgent("hermes"),
+      agent: privateHermesManifestAgent(loadAgent("hermes")),
       sandboxName: SANDBOX_NAME,
       startupArgv: [
         "env",

@@ -213,13 +213,12 @@ export function redactUrlTokenPartial(
   if (value.length === 0) return value;
   const parsed = parseUrlTokenForRedaction(value);
   if (!parsed) {
-    return redactMalformedUrlQuery(
-      redactMalformedUrlUserinfo(value, "****"),
-      "****",
-      false,
-      isSensitiveKey,
-      redactStandaloneSecrets,
-    );
+    // A malformed URL cannot be parsed. Apply userinfo redaction and then
+    // use the query/fragment redaction pipeline which properly decodes
+    // percent-encoded values before checking against secret patterns.
+    const redactedUserinfo = redactMalformedUrlUserinfo(value, "****");
+    // stripFragment=false preserves and redacts the fragment for display output
+    return redactMalformedUrlQuery(redactedUserinfo, "****", false, isSensitiveKey, redactStandaloneSecrets);
   }
   if (parsed.url.username) parsed.url.username = "****";
   if (parsed.url.password) parsed.url.password = "****";
@@ -261,5 +260,60 @@ export function redactUrlTokenFull(
   // Endpoint fragments are never sent to the server and can contain OAuth
   // credentials, so persistence intentionally drops them instead of logging.
   parsed.url.hash = "";
+  return `${parsed.url.toString()}${parsed.suffix}`;
+}
+
+/**
+ * A bare alphanumeric string of 16+ characters cannot be classified as a
+ * non-credential: tool names use separators (`create_issue`) and ordinary
+ * path words are short, while a hex or base62 token of that shape is
+ * indistinguishable from a leaked secret. Such components are rendered
+ * endpoint-only instead of being shown verbatim.
+ */
+const OPAQUE_URL_COMPONENT_RE = /^[A-Za-z0-9]{16,}$/;
+
+function isOpaqueUrlComponent(value: string): boolean {
+  if (value === "" || value === "<REDACTED>" || value === "****") return false;
+  if (!OPAQUE_URL_COMPONENT_RE.test(value)) return false;
+  // Digits or mixed case distinguish a token from a long dictionary word.
+  return /\d/.test(value) || (/[a-z]/.test(value) && /[A-Z]/.test(value));
+}
+
+/**
+ * Redact a URL token, failing closed to the scheme/host/port endpoint when its
+ * path or query cannot be classified as credential-free. Unlike
+ * `redactUrlTokenFull`, this never preserves an unclassified path segment or
+ * query value, so migration previews cannot leak opaque credentials.
+ */
+export function redactUrlTokenEndpointOnly(
+  value: string,
+  isSensitiveKey: SensitiveKeyDetector,
+  redactStandaloneSecrets: StandaloneSecretRedactor,
+): string {
+  if (value.length === 0) return value;
+  const parsed = parseUrlTokenForRedaction(value);
+  if (!parsed) {
+    // A malformed URL-like token is untrusted; nothing in its path or query
+    // can be classified safe, so the whole token is dropped.
+    return "<REDACTED>";
+  }
+  if (parsed.url.username || parsed.url.password) {
+    parsed.url.username = "";
+    parsed.url.password = "";
+  }
+  redactUrlSearchParams(parsed.url, "<REDACTED>", isSensitiveKey, redactStandaloneSecrets);
+  parsed.url.hash = "";
+
+  const pathOpaque = parsed.url.pathname
+    .split("/")
+    .some((segment) => isOpaqueUrlComponent(segment));
+  const queryOpaque = [...parsed.url.searchParams.values()].some((value) =>
+    isOpaqueUrlComponent(value),
+  );
+  if (pathOpaque || queryOpaque) {
+    // Render endpoint-only (scheme, host, port) when the path or query carries
+    // an unclassified credential-shaped value.
+    return `${parsed.url.origin}/`;
+  }
   return `${parsed.url.toString()}${parsed.suffix}`;
 }

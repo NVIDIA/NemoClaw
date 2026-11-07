@@ -37,7 +37,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Credentials",
       order: 38,
       description: "Register a provider credential with the OpenShell gateway",
-      flags: "<PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+      flags:
+        "<PROVIDER> --type <TYPE> [--agent AGENT] [--credential ENV_NAME] [--config K=V] [--from-existing]",
     },
   ],
   "credentials:list": [
@@ -59,7 +60,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Troubleshooting",
       order: 37,
-      flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
+      flags: "[--quick|-q] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
   doctor: [
@@ -89,7 +90,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Services",
       order: 37,
       description: "Switch inference and sync the running agent config",
-      flags: "--provider <provider> --model <model> [--sandbox <name>] [--no-verify]",
+      flags:
+        "--provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]",
     },
   ],
   list: [
@@ -160,7 +162,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 21,
       usage: "nemoclaw <name> channels add <channel>",
       description: "Save credentials and rebuild",
-      flags: "[--dry-run]",
+      flags: "[--dry-run] [--force]",
     },
   ],
   "sandbox:channels:list": [
@@ -274,7 +276,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 4.5,
-      flags: "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]",
+      flags:
+        "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]",
     },
   ],
   "sandbox:agent": [
@@ -339,7 +342,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Services",
       order: 37.1,
       description: "Switch inference and sync the named agent config",
-      flags: "--provider <provider> --model <model> [--no-verify]",
+      flags:
+        "--provider <provider> --model <model> [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]",
       hidden: true,
     },
   ],
@@ -411,7 +415,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 13,
-      flags: "[--yes|-y|--force] [--verbose|-v] [--observability|--no-observability]",
+      flags:
+        "[--yes|-y|--force] [--verbose|-v] [--tool-disclosure <progressive|direct>] [--dcode-auto-approval <disabled|thread-opt-in>] [--observability|--no-observability] [--retire-recovery <transaction-id>]",
     },
   ],
   "sandbox:recover": [
@@ -481,6 +486,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 4,
       description: "One sandbox's health, gateway, inference, and NIM status",
+      flags: "[--json]",
     },
   ],
   setup: [

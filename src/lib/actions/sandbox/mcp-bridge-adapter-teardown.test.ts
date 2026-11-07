@@ -254,6 +254,24 @@ describe("MCP adapter teardown rollback", () => {
     expect(mocks.restoreExistingMcpBridgeRuntime).not.toHaveBeenCalled();
   });
 
+  it("rejects a conflicting live policy before any rebuild teardown mutation (#13479)", async () => {
+    // A conflicted entry means the live policy disagrees with the durable
+    // registration. Rebuild must refuse before mutating adapters or removing
+    // the generated policy, so the existing route and adapter state stay intact.
+    const conflicted = {
+      ...entry,
+      policyConflict: "Live policy contains invalid tool selectors.",
+    };
+
+    await expect(prepareMcpBridgesForRebuild("alpha", [conflicted])).rejects.toThrow(
+      /conflicting live policy\. Resolve it before rebuilding/,
+    );
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+  });
+
   it("preserves an existing Hermes entry through legacy teardown and replacement restore", async () => {
     mocks.captureRecordedSandboxBasePolicy
       .mockReset()

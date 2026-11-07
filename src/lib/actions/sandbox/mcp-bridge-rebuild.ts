@@ -235,7 +235,18 @@ export async function prepareMcpBridgesForRebuild(
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
-  for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
+  for (const entry of entries) {
+    assertGeneratedPolicyMutationSafe(sandboxName, entry);
+    // Reject policyConflict before teardown starts, while retaining the existing
+    // application guard. This prevents mutating adapters and removing policy
+    // when the live policy disagrees with the durable registration.
+    if (entry.policyConflict) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' has conflicting live policy. Resolve it before rebuilding.`,
+        2,
+      );
+    }
+  }
   await assertMcpAdapterTeardownRuntimeCapabilities(
     sandboxName,
     sandbox,

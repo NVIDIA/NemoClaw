@@ -2,8 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "../../adapters/openshell/client";
-import { redactFullWithUrls, redactStandaloneSecretsFull } from "../../security/redact";
+import {
+  redactFullWithUrls,
+  redactFullWithUrlsEndpointOnly,
+  redactStandaloneSecretsFull,
+} from "../../security/redact";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { McpMigrationPlan } from "./mcp-bridge-migration";
 
 export type OpenShellCommandResult = {
   status: number | null;
@@ -23,10 +28,16 @@ type SensitiveValueCandidate = {
   key?: string;
 };
 
+/**
+ * isSensitiveOutputKey.
+ */
 function isSensitiveOutputKey(key: string): boolean {
   return /authorization|api[_-]?key|token|secret|password|credential/i.test(key);
 }
 
+/**
+ * nextSensitiveValueCandidate.
+ */
 function nextSensitiveValueCandidate(
   line: string,
   fromIndex: number,
@@ -49,6 +60,9 @@ function nextSensitiveValueCandidate(
   return undefined;
 }
 
+/**
+ * enclosingQuoteAt.
+ */
 function enclosingQuoteAt(line: string, index: number): '"' | "'" | undefined {
   let quote: '"' | "'" | undefined;
   let escaped = false;
@@ -68,6 +82,9 @@ function enclosingQuoteAt(line: string, index: number): '"' | "'" | undefined {
   return quote;
 }
 
+/**
+ * closingQuoteIndex.
+ */
 function closingQuoteIndex(line: string, fromIndex: number, quote: '"' | "'"): number {
   let escaped = false;
   for (let cursor = fromIndex; cursor < line.length; cursor++) {
@@ -85,6 +102,9 @@ function closingQuoteIndex(line: string, fromIndex: number, quote: '"' | "'"): n
   return -1;
 }
 
+/**
+ * redactSensitiveValuesOnLine.
+ */
 function redactSensitiveValuesOnLine(line: string): string {
   let output = "";
   let cursor = 0;
@@ -136,6 +156,9 @@ function redactSensitiveValuesOnLine(line: string): string {
   return output;
 }
 
+/**
+ * explicitCredentialValues.
+ */
 function explicitCredentialValues(
   entry: Pick<McpSourceEntry, "env"> | undefined,
   envValues: Record<string, string>,
@@ -147,6 +170,9 @@ function explicitCredentialValues(
   return [...new Set(values.filter(Boolean))].sort((left, right) => right.length - left.length);
 }
 
+/**
+ * redactMcpOutput.
+ */
 function redactMcpOutput(
   text: string,
   entry: Pick<McpSourceEntry, "env"> | undefined,
@@ -167,6 +193,9 @@ function redactMcpOutput(
   return redactStandaloneSecretsFull(output);
 }
 
+/**
+ * redactBridgeSecretsForDisplay.
+ */
 export function redactBridgeSecretsForDisplay(
   text: string,
   entry?: Pick<McpSourceEntry, "env">,
@@ -175,6 +204,9 @@ export function redactBridgeSecretsForDisplay(
   return redactMcpOutput(text, entry, envValues);
 }
 
+/**
+ * redactBridgeFailureForDisplay.
+ */
 export function redactBridgeFailureForDisplay(
   text: string,
   entry?: Pick<McpSourceEntry, "env">,
@@ -183,6 +215,9 @@ export function redactBridgeFailureForDisplay(
   return redactFullWithUrls(redactMcpOutput(text, entry, envValues));
 }
 
+/**
+ * redactCredentialValuesForDisplay.
+ */
 export function redactCredentialValuesForDisplay(
   value: string,
   envValues: Record<string, string>,
@@ -190,6 +225,17 @@ export function redactCredentialValuesForDisplay(
   return redactMcpOutput(value, undefined, envValues);
 }
 
+/** Return a display-safe copy of a migration plan with legacy URLs redacted. */
+export function redactMcpMigrationPlanForDisplay(plan: McpMigrationPlan): McpMigrationPlan {
+  return {
+    ...plan,
+    items: plan.items.map((item) => ({ ...item, url: redactFullWithUrlsEndpointOnly(item.url) })),
+  };
+}
+
+/**
+ * commandOutput.
+ */
 export function commandOutput(
   result: OpenShellCommandResult,
   envValues: Record<string, string> = {},

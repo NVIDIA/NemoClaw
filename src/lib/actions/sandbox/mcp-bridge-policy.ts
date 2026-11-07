@@ -30,6 +30,9 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy-render";
 
+/**
+ * applyGeneratedPolicy.
+ */
 export async function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -39,6 +42,11 @@ export async function applyGeneratedPolicy(
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): Promise<void> {
+  if (entry.policyConflict) {
+    throw new McpBridgeError(
+      `Refusing to apply generated MCP policy '${entry.policyName}': ${entry.policyConflict}`,
+    );
+  }
   const addresses = assertMcpBridgePolicyTarget(entry, target);
   if (addresses.length === 0) {
     throw new McpBridgeError(
@@ -54,6 +62,7 @@ export async function applyGeneratedPolicy(
           adapter,
           target,
           entry.denyTools,
+          entry.allowTools,
         )
       : buildMcpBridgePolicyYaml(
           entry.server,
@@ -62,6 +71,7 @@ export async function applyGeneratedPolicy(
           target,
           entry.providerName ?? "",
           entry.denyTools,
+          entry.allowTools,
         );
   await applyGeneratedPolicyContent(sandboxName, entry, content, options.runtimeSelection);
 }
@@ -134,6 +144,9 @@ export async function refreshMcpPublicPolicyPins(
   }
 }
 
+/**
+ * applyGeneratedPolicyContent.
+ */
 async function applyGeneratedPolicyContent(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -156,6 +169,9 @@ async function applyGeneratedPolicyContent(
   }
 }
 
+/**
+ * assertMcpBridgePolicyTarget.
+ */
 export function assertMcpBridgePolicyTarget(
   entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
@@ -199,6 +215,9 @@ export function assertMcpBridgePolicyTarget(
   return recordedPins;
 }
 
+/**
+ * assertGeneratedPolicyMutationSafe.
+ */
 export function assertGeneratedPolicyMutationSafe(
   _sandboxName: string,
   entry: McpSourceEntry,
@@ -208,6 +227,9 @@ export function assertGeneratedPolicyMutationSafe(
   }
 }
 
+/**
+ * removeGeneratedPolicy.
+ */
 export async function removeGeneratedPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -228,6 +250,9 @@ export async function removeGeneratedPolicy(
   throw new McpBridgeError(`Failed to remove generated MCP policy '${entry.policyName}'.`);
 }
 
+/**
+ * getPolicyPresence.
+ */
 export async function getPolicyPresence(
   sandboxName: string,
   entry: McpSourceEntry | undefined,
