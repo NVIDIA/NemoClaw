@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readYaml, type Workflow } from "../helpers/e2e-workflow-contract";
+import { WorkflowArtifactStore } from "../support/workflow-artifact-store";
 
 const workflow = readYaml<Workflow>(".github/workflows/code-scanning.yaml");
 const shellcheckSteps = workflow.jobs.shellcheck?.steps ?? [];
@@ -225,12 +226,12 @@ describe("Complete CodeQL query partition qualification", () => {
       partitionStep(publisher, "Download complementary JavaScript query report").with,
     ]).toEqual([
       {
-        name: "codeql-javascript-sarif-${{ github.run_id }}-${{ github.run_attempt }}-a-m",
+        name: "codeql-javascript-sarif-${{ github.run_id }}-a-m",
         path: "codeql-sarif/a-m",
         "digest-mismatch": "error",
       },
       {
-        name: "codeql-javascript-sarif-${{ github.run_id }}-${{ github.run_attempt }}-other",
+        name: "codeql-javascript-sarif-${{ github.run_id }}-other",
         path: "codeql-sarif/other",
         "digest-mismatch": "error",
       },
@@ -336,6 +337,49 @@ function exerciseReportIdentity(modify: (files: string[]) => void = () => {}) {
 }
 
 describe("CodeQL complete report compatibility", () => {
+  it("consumes retained and replaced partition reports after a failed-job rerun", () => {
+    const upload = partitionStep(
+      workflow.jobs["codeql-javascript"]!,
+      "Retain JavaScript query report for complete publication",
+    ).with!;
+    const artifactName = (template: unknown, partition: string, attempt: number, run = 71) =>
+      String(template)
+        .replaceAll("${{ github.run_id }}", String(run))
+        .replaceAll("${{ github.run_attempt }}", String(attempt))
+        .replaceAll("${{ matrix.partition }}", partition);
+    const retained = new WorkflowArtifactStore();
+    const publish = (partition: string, attempt: number, body: string) => {
+      const name = artifactName(upload.name, partition, attempt);
+      retained.publish(name, body, upload.overwrite === true);
+    };
+    const downloads = [
+      "Download first JavaScript query report",
+      "Download complementary JavaScript query report",
+    ].map((name) => partitionStep(publisher, name).with!.name);
+
+    const consume = (files: string[], run = 71) => {
+      retained.materialize(artifactName(downloads[0], "", 2, run), files[0]!);
+      retained.materialize(artifactName(downloads[1], "", 2, run), files[1]!);
+    };
+    const { result, after } = exerciseReportIdentity((files) => {
+      publish("a-m", 1, fs.readFileSync(files[0]!, "utf8"));
+      publish("other", 1, "report from interrupted job");
+      const replacement = JSON.parse(fs.readFileSync(files[1]!, "utf8"));
+      replacement.runs[0].results[0].message.text = "successful replacement partition";
+      publish("other", 2, JSON.stringify(replacement));
+      consume(files);
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(after.map((body) => JSON.parse(body!).runs[0].results[0].message.text)).toEqual([
+      "retain this finding",
+      "successful replacement partition",
+    ]);
+    expect(retained.size).toBe(2);
+    const unrelatedRun = exerciseReportIdentity((files) => consume(files, 72));
+    expect(unrelatedRun.result.status).not.toBe(0);
+    expect(unrelatedRun.after).toEqual([null, null]);
+  });
+
   it("changes only the category while retaining both reports' findings and metadata", () => {
     const { result, after, original } = exerciseReportIdentity();
     expect(result.status, result.stderr).toBe(0);

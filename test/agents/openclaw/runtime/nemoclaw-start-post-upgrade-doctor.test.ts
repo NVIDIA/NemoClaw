@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { shellQuote } from "../../../../src/lib/core/shell-quote";
 
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
+import { oneShotStartupBranch } from "../../../support/openclaw-startup-one-shot";
 
 import {
   seedNativeRetiredAdmission,
@@ -485,6 +486,59 @@ function promoteAfterReady(f: ReturnType<typeof fixture>): string {
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it.each(
+    [false, true].flatMap((rootMode) =>
+      ["absent", "release", "refuse"].map((gate) => ({ rootMode, gate })),
+    ),
+  )("admits one-shot execution after the $gate gate (root: $rootMode)", ({ rootMode, gate }) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      const requestDoctor = () =>
+        fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      const seedGate: Record<string, () => void> = {
+        absent: () => {},
+        release: requestDoctor,
+        refuse: requestDoctor,
+      };
+      seedGate[gate]!();
+      const command = `test ! -e ${shellQuote(f.marker)} && test ! -e ${shellQuote(f.ready)} || exit 88; test "$NEMOCLAW_TEST_PLACEHOLDER" = refreshed || exit 89; printf 'one-shot\\n' >>${shellQuote(f.calls)}; exit 23`;
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            doctorFunction(source, rootMode),
+            extractShellFunctionFromSource(source, "run_oneshot_command"),
+            "is_managed_inference_route() { return 1; }",
+            `run_openclaw_legacy_migrations() { export NEMOCLAW_TEST_PLACEHOLDER=stale; printf 'migration\\n' >>${shellQuote(f.calls)}; return ${gate === "refuse" ? 7 : 0}; }`,
+            "export NEMOCLAW_TEST_PLACEHOLDER=refreshed",
+            `_RUNTIME_SHELL_ENV_FILE=${shellQuote(path.join(f.root, "absent-env"))}`,
+            `NEMOCLAW_CMD=(/bin/sh -c ${shellQuote(command)})`,
+            gate === "release"
+              ? `${releaseAfterReady(f)}\nrelease_pid=$!\ntrap 'kill "$release_pid" 2>/dev/null || true; wait "$release_pid" 2>/dev/null || true' EXIT`
+              : "",
+            oneShotStartupBranch(source, rootMode),
+          ].join("\n"),
+        ],
+        { encoding: "utf8", env: fixtureEnv(f), timeout: 10_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(gate === "refuse" ? 1 : 23);
+      expect(fs.readFileSync(f.calls, "utf8")).toBe(
+        gate === "absent"
+          ? "one-shot\n"
+          : gate === "refuse"
+            ? "migration\n"
+            : "migration\ndoctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\none-shot\n",
+      );
+      expect(fs.existsSync(f.marker)).toBe(gate === "refuse");
+      expect(fs.existsSync(f.ready)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it("treats shell metacharacters in fixture paths as data", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture("js", false, "nemoclaw-$(touch${IFS}injected)-'` space-");

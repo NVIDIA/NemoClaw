@@ -5459,12 +5459,15 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+    run_requested_openclaw_post_upgrade_doctor || exit 1
+    refresh_openclaw_provider_placeholders
     prepare_gateway_token_for_current_command
     export_gateway_token
     _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
     write_runtime_shell_env
     install_messaging_runtime_preloads
     verify_messaging_runtime_secret_scans
+    consume_openclaw_post_upgrade_release_before_gateway || exit 1
     _nemoclaw_cmd_rc=0
     run_oneshot_command "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
     exit "$_nemoclaw_cmd_rc"
@@ -5575,6 +5578,7 @@ fi
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+  consume_openclaw_post_upgrade_release_before_gateway || exit 1
   _nemoclaw_cmd_rc=0
   run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
