@@ -14,7 +14,8 @@ vi.mock("../../state/gateway-registry", async (importOriginal) => ({
   listGatewayStateRoots: mocks.listRoots,
   readGatewayRegistryFile: mocks.readRegistry,
 }));
-vi.mock("./native-reader", () => ({
+vi.mock("./native-reader", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./native-reader")>()),
   createSupervisedSandboxCommandReader: mocks.createReader,
 }));
 vi.mock("../sandbox/mcp-bridge-provider-inspection", async (importOriginal) => ({

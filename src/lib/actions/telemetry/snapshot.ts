@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import { createSupervisedSandboxCommandReader } from "./native-reader";
+import { createSupervisedSandboxCommandReader, NativeTelemetryReadError } from "./native-reader";
+import type { CollectionDiagnostics, CollectionReadFailure } from "./diagnostics";
 import type { OpenShellInferenceRouteResult } from "../../adapters/openshell/inference-route";
 import {
   observedString,
@@ -49,8 +50,19 @@ import { isPublishedSandboxRegistration } from "../../state/registry/route-reser
 import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-provider-inspection";
+import { configuredAgentIds } from "../sandbox/agents/model-selections";
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
+const DEADLINE_REACHED = Symbol("telemetry-observation-deadline");
+
+function collectionInterruption(
+  options: { signal: AbortSignal; deadlineAt: number },
+  remaining = options.deadlineAt - Date.now(),
+): "deadline" | "cancelled" | undefined {
+  if (options.signal.aborted)
+    return options.signal.reason === DEADLINE_REACHED ? "deadline" : "cancelled";
+  return remaining <= 0 ? "deadline" : undefined;
+}
 
 function booleanSetting(value: unknown): {
   value: "true" | "false" | "unknown";
@@ -228,10 +240,12 @@ async function collectRuntime(
     deadlineAt: number;
     metadataErrors: readonly TelemetryMetadataError[];
     routes: Map<string, Promise<OpenShellInferenceRouteResult>>;
+    diagnostics?: CollectionDiagnostics;
   },
   reader: ReturnType<typeof createSupervisedSandboxCommandReader>,
 ): Promise<void> {
   if (entry.workload?.kind === "native-artifact") {
+    options.diagnostics?.record("runtime.inactive_artifact");
     row.state = "unavailable";
     row.status = row.agentsStatus = row.defaultAgentModel.status = "not_observed";
     row.currentInferenceRoute = unknownModel("primary", "not_observed");
@@ -252,23 +266,47 @@ async function collectRuntime(
   };
   let osObservation: Promise<void> | undefined;
   let routeObservation: Promise<void> | undefined;
+  const failureReason = (error: unknown): CollectionReadFailure => {
+    return (
+      collectionInterruption(options) ??
+      (error instanceof NativeTelemetryReadError ? error.reason : "failed")
+    );
+  };
+  let failureStage:
+    | "runtime_authority.failed"
+    | "runtime_setup.failed"
+    | "config_target.failed"
+    | "agents_projection.unresolved" = "runtime_authority.failed";
   try {
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(entry, {
       observationOnly: true,
     });
     const gatewayName = resolveSandboxGatewayName(entry);
+    failureStage = "runtime_setup.failed";
     const routeKey = JSON.stringify([gatewayName, runtimeSelection]);
     let route = options.routes.get(routeKey);
     if (!route) {
       const remaining = options.deadlineAt - Date.now();
-      if (options.signal.aborted || remaining <= 0)
+      const interruption = collectionInterruption(options, remaining);
+      if (interruption) {
+        options.diagnostics?.record(`route_read.${interruption}`);
         throw new Error("Telemetry observation deadline reached");
+      }
       route = observe(
         reader.observeInferenceRoute(
           { target: { kind: "named", gatewayName }, timeoutMs: remaining },
           runtimeSelection,
         ),
-      );
+      )
+        .then((observation) => {
+          if (!observation.ok)
+            options.diagnostics?.record(`route_observation.${observation.error.kind}`);
+          return observation;
+        })
+        .catch((error: unknown) => {
+          options.diagnostics?.record(`route_read.${failureReason(error)}`);
+          throw error;
+        });
       options.routes.set(routeKey, route);
     }
     routeObservation = route
@@ -280,41 +318,55 @@ async function collectRuntime(
             metadataErrors: options.metadataErrors,
           }),
         );
+        if (observation.ok && hasTelemetryCollectionError(row.currentInferenceRoute))
+          options.diagnostics?.record("route_projection.unresolved");
       })
       .catch(() => {});
-    const read = async (command: readonly string[]) => {
-      const remaining = options.deadlineAt - Date.now();
-      if (options.signal.aborted || remaining <= 0)
-        throw new Error("Telemetry observation deadline reached");
-      return observe(
-        reader.read(
-          {
-            sandboxName: entry.name,
-            target: { kind: "named", gatewayName },
-            command,
-            timeoutMilliseconds: remaining,
-            timeoutKillSignal: "SIGKILL",
-            outputLimitBytes: 16 * 1024 * 1024,
-          },
-          runtimeSelection,
-        ),
-      );
+    const read = async (
+      stage: "config_read" | "roster_read" | "os_read",
+      command: readonly string[],
+    ) => {
+      try {
+        const remaining = options.deadlineAt - Date.now();
+        if (options.signal.aborted || remaining <= 0)
+          throw new Error("Telemetry observation deadline reached");
+        return await observe(
+          reader.read(
+            {
+              sandboxName: entry.name,
+              target: { kind: "named", gatewayName },
+              command,
+              timeoutMilliseconds: remaining,
+              timeoutKillSignal: "SIGKILL",
+              outputLimitBytes: 16 * 1024 * 1024,
+            },
+            runtimeSelection,
+          ),
+        );
+      } catch (error) {
+        options.diagnostics?.record(`${stage}.${failureReason(error)}`);
+        throw error;
+      }
     };
     if (row.sandboxOSStatus !== "reported") {
-      osObservation = read(["uname", "-s"])
+      osObservation = read("os_read", ["uname", "-s"])
         .then((raw) => {
           const observation = classifyTelemetrySandboxOS(raw);
           row.sandboxOS = observation.value;
           row.sandboxOSStatus = observation.status;
+          if (observation.status === "collection_error")
+            options.diagnostics?.record("os_parse.invalid");
         })
         .catch(() => {
           row.sandboxOSStatus = "collection_error";
         });
     }
     if (!hasNativeTelemetryParser(row.agentHarnessId)) {
+      options.diagnostics?.record("runtime.unsupported_parser");
       row.agentsStatus = row.defaultAgentModel.status = "not_observed";
       return;
     }
+    failureStage = "config_target.failed";
     const config = resolveAgentConfig(entry.name, {
       getSandbox: () => ({ agent: entry.agent ?? undefined }),
       loadAgent: (agentName) => {
@@ -324,11 +376,38 @@ async function collectRuntime(
       },
     });
     const [raw, roster] = await Promise.allSettled([
-      read(["cat", config.configPath]).then((text) => parseConfig(text, config.format)),
+      read("config_read", ["cat", config.configPath]).then((text) => {
+        try {
+          return parseConfig(text, row.agentHarnessId === "openclaw" ? "json5" : config.format);
+        } catch (error) {
+          options.diagnostics?.record("config_parse.invalid");
+          throw error;
+        }
+      }),
       row.agentHarnessId === "openclaw"
-        ? read(["openclaw", "agents", "list", "--json"]).then(parseRuntimeRoster)
+        ? read("roster_read", ["openclaw", "agents", "list", "--json"]).then((text) => {
+            try {
+              return parseRuntimeRoster(text);
+            } catch (error) {
+              options.diagnostics?.record("roster_parse.invalid");
+              throw error;
+            }
+          })
         : undefined,
     ]);
+    let observedRoster = roster.status === "fulfilled" ? roster.value : undefined;
+    if (
+      row.agentHarnessId === "openclaw" &&
+      observedRoster === undefined &&
+      raw.status === "fulfilled"
+    ) {
+      // Explicit native membership survives a failed CLI read; defaults alone do not prove it.
+      const ids = configuredAgentIds(raw.value);
+      if (Array.isArray(ids)) {
+        observedRoster = ids.map((id) => ({ id }));
+        options.diagnostics?.record("roster.config_recovered");
+      }
+    }
     const runtime: Omit<TelemetryAgent, "models" | "modelsStatus"> = {
       agentHarnessId: row.agentHarnessId,
       agentHarnessStatus: row.agentHarnessStatus,
@@ -337,17 +416,23 @@ async function collectRuntime(
     };
     // projectConfiguration already reports an invalid managed workload receipt.
     const managedRoutedBaseUrl = readManagedRoutedBaseUrl(entry);
+    failureStage = "agents_projection.unresolved";
     Object.assign(
       row,
-      projectRuntimeAgents(
-        runtime,
-        raw.status === "fulfilled" ? raw.value : null,
-        roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors, managedRoutedBaseUrl },
-      ),
+      projectRuntimeAgents(runtime, raw.status === "fulfilled" ? raw.value : null, observedRoster, {
+        ...entry,
+        metadataErrors: options.metadataErrors,
+        managedRoutedBaseUrl,
+      }),
     );
+    if (
+      row.agents.some(hasTelemetryCollectionError) ||
+      row.defaultAgentModel.status === "collection_error"
+    )
+      options.diagnostics?.record("agents_projection.unresolved");
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";
   } catch {
+    options.diagnostics?.record(failureStage);
     row.agentsStatus = row.defaultAgentModel.status = "collection_error";
     row.status = "collection_error";
     if (row.sandboxOSStatus !== "reported" && !osObservation)
@@ -383,6 +468,7 @@ export async function collectOperationSnapshot(options: {
   signal: AbortSignal;
   deadlineAt: number;
   targets?: readonly TelemetryTargetReceipt[];
+  diagnostics?: CollectionDiagnostics;
 }): Promise<TelemetrySnapshot> {
   const snapshot: TelemetrySnapshot = {
     configurations: [],
@@ -418,6 +504,7 @@ export async function collectOperationSnapshot(options: {
             entry.pendingRouteReservation !== true
           ) {
             inventoryError = true;
+            options.diagnostics?.record("inventory.invalid_registration");
             continue;
           }
           if (!isPublishedSandboxRegistration(entry)) continue;
@@ -426,10 +513,12 @@ export async function collectOperationSnapshot(options: {
         }
       } catch {
         inventoryError = true;
+        options.diagnostics?.record(`inventory.${collectionInterruption(options) ?? "failed"}`);
       }
     }
   } catch {
     inventoryError = true;
+    options.diagnostics?.record("inventory.failed");
   }
   const qualified = new Map<string, number[]>();
   entries.forEach((entry, index) => {
@@ -438,11 +527,15 @@ export async function collectOperationSnapshot(options: {
       qualified.set(key, [...(qualified.get(key) ?? []), index]);
     } catch {
       inventoryError = true;
+      options.diagnostics?.record("inventory.invalid_binding");
     }
   });
   for (const [key, positions] of qualified) {
     if (positions.length === 1) snapshot.targetPositions.set(key, positions[0]);
-    else inventoryError = true;
+    else {
+      inventoryError = true;
+      options.diagnostics?.record("inventory.ambiguous_target");
+    }
   }
   const metadataErrors = entries.map((_, index) =>
     metadataErrorsAt(index, snapshot.targetPositions, options.targets ?? []),
@@ -452,11 +545,13 @@ export async function collectOperationSnapshot(options: {
   );
   const controller = new AbortController();
   const parentSignal = options.signal;
-  const cancel = () => controller.abort();
+  const cancel = () => controller.abort(parentSignal.reason);
+  const expire = () => controller.abort(DEADLINE_REACHED);
   parentSignal.addEventListener("abort", cancel, { once: true });
   const remaining = options.deadlineAt - Date.now();
-  const timer = setTimeout(cancel, Math.max(0, remaining));
-  if (parentSignal.aborted || remaining <= 0) cancel();
+  const timer = setTimeout(expire, Math.max(0, remaining));
+  if (parentSignal.aborted) cancel();
+  else if (remaining <= 0) expire();
   options = { ...options, signal: controller.signal };
   const reader = createSupervisedSandboxCommandReader(options.signal);
   const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
@@ -469,7 +564,9 @@ export async function collectOperationSnapshot(options: {
         async () => {
           while (nextIndex < entries.length) {
             const index = nextIndex++;
-            if (options.signal.aborted || Date.now() >= options.deadlineAt) {
+            const interruption = collectionInterruption(options);
+            if (interruption) {
+              options.diagnostics?.record(`runtime.not_started_${interruption}`);
               markRuntimeNotObserved(snapshot.configurations[index]);
               observationIncomplete = true;
               continue;

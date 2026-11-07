@@ -430,8 +430,7 @@ export function projectRuntimeAgents(
       agentsStatus: "reported",
       defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "not_configured" },
     };
-  const root = dataRecord(config);
-  if (!root) {
+  const unavailableModels = (): RuntimeAgentProjection => {
     if (!roster) throw new Error("Invalid native configuration");
     return {
       agents: roster.map(() => ({
@@ -442,23 +441,25 @@ export function projectRuntimeAgents(
       agentsStatus: "reported",
       defaultAgentModel: { agentPosition: -1, modelPosition: -1, status: "collection_error" },
     };
-  }
+  };
+  const root = dataRecord(config);
+  if (!root) return unavailableModels();
   if (runtime.agentHarnessId === "openclaw") {
     if (!roster) throw new Error("Missing native roster");
     const native = dataRecord(root.agents);
-    if (!native) throw new Error("Missing native agent configuration");
+    if (!native) return unavailableModels();
     const defaultsConfig = dataRecord(native.defaults);
+    if (native.defaults !== undefined && !defaultsConfig) return unavailableModels();
     const defaults = modelSelection(defaultsConfig?.model);
     const sources = readAssignmentSources(authority.modelAssignmentSelections);
     const entries = dataRecord(native.entries);
     const legacy = native.list;
-    if (native.entries !== undefined && !entries)
-      throw new Error("Invalid keyed agent configuration");
+    if (native.entries !== undefined && !entries) return unavailableModels();
     if (
       legacy !== undefined &&
       (!Array.isArray(legacy) || !legacy.every((value) => dataRecord(value)))
     )
-      throw new Error("Invalid legacy agent configuration");
+      return unavailableModels();
     const projected = roster.map((row) => {
       const configured = entries
         ? dataRecord(entries[row.id as string])
@@ -484,10 +485,12 @@ export function projectRuntimeAgents(
         }
       };
       const models = [
-        readModel(
-          override.invalid || (!override.primary && defaults.invalid) ? undefined : primary,
-          assignment,
-        ),
+        primary === undefined && !override.invalid && !defaults.invalid && !mismatch
+          ? unknownModel(assignment, "not_configured")
+          : readModel(
+              override.invalid || (!override.primary && defaults.invalid) ? undefined : primary,
+              assignment,
+            ),
         ...(override.fallbacks ?? defaults.fallbacks ?? []).map((model) =>
           readModel(model, "fallback"),
         ),
@@ -536,7 +539,9 @@ export function projectRuntimeAgents(
         modelPosition: index >= 0 && projected[index].agent.models.length > 0 ? 0 : -1,
         status:
           index >= 0 && projected[index].agent.models[0]?.modelStatus !== "collection_error"
-            ? "reported"
+            ? projected[index].agent.models[0].modelStatus === "not_configured"
+              ? "not_configured"
+              : "reported"
             : validDefaultEvidence && primary.length === 0 && projected.length > 1
               ? "not_configured"
               : "collection_error",

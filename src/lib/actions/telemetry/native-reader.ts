@@ -12,10 +12,20 @@ import type {
   ObserveOpenShellInferenceRouteRequest,
   OpenShellInferenceRouteResult,
 } from "../../adapters/openshell/inference-route";
-import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
+import type {
+  OpenShellSandboxBufferedCommandRequest,
+  OpenShellSandboxCommandError,
+} from "../../adapters/openshell/sandbox-command";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveOpenshellBinaryOrNull } from "../../adapters/openshell/resolve-shared";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+
+export class NativeTelemetryReadError extends Error {
+  constructor(readonly reason: OpenShellSandboxCommandError["kind"] | "nonzero_exit") {
+    super(`Native telemetry read failed: ${reason}`);
+    this.name = "NativeTelemetryReadError";
+  }
+}
 
 /** Bounded native evidence shares cancellation and releases every installed listener. */
 export function createSupervisedSandboxCommandReader(
@@ -110,13 +120,15 @@ export function createSupervisedSandboxCommandReader(
   });
   return {
     read: async (request, runtimeSelection) => {
-      if (signal.aborted) throw new Error("Native evidence cancelled");
+      if (signal.aborted) throw new NativeTelemetryReadError("cancelled");
       const result = await executor.runBuffered({
         ...request,
         environment: buildSandboxCommandEnvironment(runtimeSelection, request.environment),
       });
-      if (signal.aborted || result.outcome.kind !== "completed" || result.outcome.exitCode !== 0)
-        throw new Error("Native evidence could not be verified");
+      if (signal.aborted) throw new NativeTelemetryReadError("cancelled");
+      if (result.outcome.kind === "failed")
+        throw new NativeTelemetryReadError(result.outcome.error.kind);
+      if (result.outcome.exitCode !== 0) throw new NativeTelemetryReadError("nonzero_exit");
       return result.stdout;
     },
     observeInferenceRoute: async (request, runtimeSelection) => {
