@@ -10,6 +10,7 @@ import YAML from "yaml";
 import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
 import * as installerPins from "../../../scripts/checks/extract-installer-pins.mts";
+import { runCandidateOpenShellCli } from "../../support/candidate-openshell-version-cli";
 import evidence from "../fixtures/openshell-runtime-provenance-v0.1.7.json" with { type: "json" };
 import {
   candidateOpenShellVersion,
@@ -25,6 +26,21 @@ const blueprint = readFileSync(
 const blueprintVersions = [...blueprint.matchAll(/^max_openshell_version: "(\d+\.\d+\.\d+)"$/gm)];
 assert.equal(blueprintVersions.length, 1, "Expected one blueprint OpenShell pin");
 const pinnedVersion = blueprintVersions[0]![1]!;
+// Independent upstream evidence is the oracle; production must not read this test fixture.
+const expected017Runtime = {
+  supervisorImage: evidence.supervisor.image,
+  provenance: {
+    schemaVersion: 1,
+    sourceRepository: evidence.source.repository,
+    releaseTag: evidence.releaseTag,
+    sourceSha: evidence.source.commit,
+    artifacts: {
+      cli: { binarySha256: evidence.artifacts.cli.binarySha256 },
+      gateway: { binarySha256: evidence.artifacts.gateway.binarySha256 },
+      standaloneSandbox: { binarySha256: evidence.artifacts.standaloneSandbox.binarySha256 },
+    },
+  },
+};
 function sourceResponse(url: string) {
   const parsed = new URL(url, "https://api.github.com");
   expect(parsed.searchParams.get("ref")).toBe(sha);
@@ -46,6 +62,41 @@ describe("candidate OpenShell selection", () => {
       /^\d+\.\d+\.\d+$/,
     );
     expect(request).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    {
+      scenario: "current trusted release",
+      upgradeVersion: undefined,
+      expectedVersion: pinnedVersion,
+    },
+    { scenario: "reviewed 0.1.7", upgradeVersion: "0.1.7", expectedVersion: "0.1.7" },
+    {
+      scenario: "already selected release",
+      upgradeVersion: pinnedVersion,
+      expectedVersion: pinnedVersion,
+    },
+  ])(
+    "passes candidate selection through the MCP CLI output for $scenario",
+    async ({ upgradeVersion, expectedVersion }) => {
+      const actual = await runCandidateOpenShellCli({ upgradeVersion });
+      const expected =
+        expectedVersion === "0.1.7"
+          ? expected017Runtime
+          : reviewedOpenShellMcpRuntime(expectedVersion);
+      expect(actual.selected).toBe(expectedVersion);
+      expect(actual.status, actual.stderr).toBe(0);
+      expect(actual.emitted.version).toBe(expectedVersion);
+      expect(actual.emitted.supervisor_image).toBe(expected.supervisorImage);
+      expect(JSON.parse(actual.emitted.runtime_provenance!)).toEqual(expected.provenance);
+    },
+  );
+
+  it("rejects an unapproved candidate upgrade before emitting MCP CLI output", async () => {
+    const actual = await runCandidateOpenShellCli({ upgradeVersion: "9.8.7", approved: false });
+    expect(actual.status, actual.stderr).toBe(1);
+    expect(actual.stderr).toContain("approval");
+    expect(actual.outputExists).toBe(false);
   });
 
   it("returns the trusted verifier's selection without substituting a workflow pin", async () => {
@@ -226,20 +277,7 @@ describe("reviewed candidate MCP runtime evidence", () => {
 
   it("binds OpenShell 0.1.7 to the reviewed upstream release evidence", () => {
     expect(evidence.releaseTag).toBe("v0.1.7");
-    expect(reviewedOpenShellMcpRuntime("0.1.7")).toEqual({
-      supervisorImage: evidence.supervisor.image,
-      provenance: {
-        schemaVersion: 1,
-        sourceRepository: evidence.source.repository,
-        releaseTag: evidence.releaseTag,
-        sourceSha: evidence.source.commit,
-        artifacts: {
-          cli: { binarySha256: evidence.artifacts.cli.binarySha256 },
-          gateway: { binarySha256: evidence.artifacts.gateway.binarySha256 },
-          standaloneSandbox: { binarySha256: evidence.artifacts.standaloneSandbox.binarySha256 },
-        },
-      },
-    });
+    expect(reviewedOpenShellMcpRuntime("0.1.7")).toEqual(expected017Runtime);
   });
 
   it.each(
