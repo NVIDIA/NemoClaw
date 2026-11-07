@@ -251,7 +251,7 @@ Do not use it as a pass/fail signal.
 Use a body-visible API probe instead:
 
 ```bash
-node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
+node -e "require('https').get('https://api.atlassian.com', r => { console.log(r.statusCode); r.resume(); })"
 curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/token/accessible-resources
 ```
 
