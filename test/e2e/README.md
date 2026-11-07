@@ -1217,6 +1217,13 @@ Both gateway-cleanup policies require recovery to succeed and the dashboard to a
 The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
 Raw OpenShell start does not restore a forward that exits when its readiness poll observes the stopped sandbox.
 
+Failed native readiness in this target and the OpenClaw `channels-stop-start` shard also attempts a read-only owner snapshot before cleanup.
+The snapshot uses the uniquely resolved container ID and a separate 10-second diagnostic command limit.
+It records bounded owner heartbeat, boot identity, PID namespace, process start time, and snapshot-worker observations.
+It excludes raw owner payloads, configuration paths, hostnames, and process arguments.
+Missing or inaccessible evidence remains unavailable; a numeric PID does not establish owner liveness across namespaces.
+Collection failure preserves the readiness failure and its original deadline.
+
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.

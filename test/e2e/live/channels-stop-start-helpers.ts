@@ -123,6 +123,7 @@ export async function waitForNativeChannelGateway(
   await captureSandboxFailureDiagnostics(host, ready, {
     sandboxName: SANDBOX_NAME,
     artifactPrefix: `channels-native-readiness-${AGENT}`,
+    captureOpenClawOwner: AGENT === "openclaw",
     redactionValues: redactions,
     captureGatewayLog: true,
     env,

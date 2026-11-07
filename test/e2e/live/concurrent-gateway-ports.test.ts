@@ -26,6 +26,7 @@ import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { buildOpenClawGatewayWaitScript } from "../fixtures/gateway-runtime-start.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -428,6 +429,13 @@ async function recoverSurvivor(
       timeoutMs: Math.max(1, remaining()),
     },
   );
+  await captureSandboxFailureDiagnostics(host, nativeReady, {
+    sandboxName,
+    artifactPrefix: `${artifactPrefix}-native-readiness`,
+    captureOpenClawOwner: true,
+    env,
+    redactionValues: ["dummy"],
+  });
   expect(nativeReady.exitCode, resultText(nativeReady)).toBe(0);
 
   // OpenShell Ready precedes OpenClaw's HTTP listener. Probe inside the sandbox,

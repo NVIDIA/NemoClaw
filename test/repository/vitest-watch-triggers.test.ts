@@ -462,6 +462,13 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/hermes-wrapper.py")).toEqual([]);
   });
 
+  it.each([
+    "test/e2e/lib/openclaw-owner-diagnostic.py",
+    "test/e2e/support/openclaw-owner-diagnostic-cases.py",
+  ])("maps owner diagnostic Python input to its behavior tests: %s", (input) => {
+    expect(triggeredBy(input)).toEqual(["test/e2e/support/openclaw-owner-diagnostic.test.ts"]);
+  });
+
   it("normalizes Windows-style paths before matching (#6692)", () => {
     expect(
       resolveVitestWatchTests("C:\\workspace\\NemoClaw\\scripts\\e2e\\sanitize-trace-timing.py"),
