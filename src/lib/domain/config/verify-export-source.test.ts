@@ -743,6 +743,20 @@ describe("config export source verification (#10938)", () => {
     ).toBe(false);
   });
 
+  it("points the direct sandbox GPU refusal at the onboarding remedy only", () => {
+    const findings = classifyExportRegistry(
+      entry({ sandboxGpuEnabled: true, observabilityEnabled: true }),
+    );
+    const gpu = findings.find(({ field }) => field === "spec.sandboxes[].runtime.gpu");
+
+    expect(gpu?.category).toBe("unsupported");
+    expect(gpu?.diagnostic).toContain("--recreate-sandbox");
+    expect(gpu?.diagnostic).toContain("--no-sandbox-gpu");
+    const other = findings.find(({ field }) => field === "spec.sandboxes[].observability");
+    expect(other?.diagnostic).toBeDefined();
+    expect(other?.diagnostic).not.toContain("--no-sandbox-gpu");
+  });
+
   it("reports every excluded registry capability", () => {
     const result = classifyExportRegistry(
       entry({
