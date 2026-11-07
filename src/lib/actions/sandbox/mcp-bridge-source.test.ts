@@ -82,6 +82,9 @@ describe("source-backed MCP inventory", () => {
                 url: "https://api.githubcopilot.com/mcp/",
                 headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
               },
+              ...(kind === "native"
+                ? { "local-stdio": { command: "npx", args: ["-y", "server"] } }
+                : {}),
             },
           }),
         );
@@ -97,6 +100,10 @@ describe("source-backed MCP inventory", () => {
           url: "https://api.githubcopilot.com/mcp/",
           env: ["GITHUB_TOKEN"],
         });
+        expect(Object.keys(observed[kind])).toEqual(["github"]);
+        expect(observed.nativeServerNames).toEqual(
+          kind === "native" ? ["github", "local-stdio"] : undefined,
+        );
         expect(Object.keys(observed[kind === "native" ? "legacy" : "native"])).toEqual([]);
         expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
         expect(assertCurrent).toHaveBeenCalledTimes(2);
@@ -199,6 +206,9 @@ network_policies:
             url: "https://api.githubcopilot.com/mcp/",
             headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
           },
+          ...(agent === "langchain-deepagents-code" && source === "native"
+            ? { "local-stdio": { command: "npx", args: ["-y", "server"] } }
+            : {}),
         };
         const contents = JSON.stringify(
           agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers },
@@ -232,12 +242,85 @@ network_policies:
           url: "https://api.githubcopilot.com/mcp/",
           env: [key],
         });
+        expect(Object.keys(observed[source as "native" | "legacy"])).toEqual(["github"]);
+        expect(observed.nativeServerNames).toEqual(
+          agent === "langchain-deepagents-code" && source === "native"
+            ? ["github", "local-stdio"]
+            : undefined,
+        );
       } finally {
         mocks.configRoot = "/sandbox";
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
   );
+
+  it("accepts 64 Deep Agents native entries alongside legacy entries during source inspection", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-source-bound-"));
+    mocks.configRoot = root;
+    try {
+      const deepAgentsDir = path.join(root, ".deepagents");
+      fs.mkdirSync(deepAgentsDir);
+      const nativeServers = Object.fromEntries([
+        ...Array.from({ length: 63 }, (_, index) => [
+          `srv${String(index)}`,
+          {
+            url: `https://8.8.8.8/mcp/${String(index)}`,
+            headers: { Authorization: `Bearer openshell:resolve:env:T_MCP_${String(index)}` },
+          },
+        ]),
+        ["local-stdio", { command: "npx", args: ["-y", "server"] }],
+      ]);
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".mcp.json"),
+        JSON.stringify({ mcpServers: nativeServers }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            legacy: {
+              url: "https://8.8.8.8/mcp/legacy",
+              headers: { Authorization: "Bearer openshell:resolve:env:T_MCP_LEGACY" },
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
+        const program = command.split("<<'PY'\n")[1].split("\nPY")[0];
+        const result = spawnSync("python3", ["-I", "-S", "-"], {
+          cwd: root,
+          input: program,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      });
+
+      const liveObserved = await inspectAgentMcpSources(
+        { ...sandbox, agent: "langchain-deepagents-code" },
+        runtimeSelection,
+      );
+      expect(Object.keys(liveObserved.native)).toHaveLength(63);
+      expect(liveObserved.nativeServerNames).toHaveLength(64);
+      expect(Object.keys(liveObserved.legacy)).toEqual(["legacy"]);
+
+      const capturedObserved = inspectCapturedAgentMcpSources({
+        sandboxName: "alpha",
+        agentName: "langchain-deepagents-code",
+        directory: deepAgentsDir,
+        assertCurrent: vi.fn(),
+      });
+      expect(Object.keys(capturedObserved.native)).toHaveLength(63);
+      expect(capturedObserved.nativeServerNames).toHaveLength(64);
+      expect(Object.keys(capturedObserved.legacy)).toEqual(["legacy"]);
+    } finally {
+      mocks.configRoot = "/sandbox";
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("joins native agent configuration with live policy and provider state", async () => {
     mocks.executeSandboxExecCommand.mockReturnValue({
@@ -398,6 +481,22 @@ network_policies:
     expect(commands.find((command) => command.includes("openclaw.json"))).toContain(
       "before.uid !== 0 && before.uid !== process.getuid()",
     );
+  });
+
+  it("detects Deep Agents from stdio-only native MCP state after local registry loss", async () => {
+    const recovered = { ...sandbox, agent: null };
+    mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => ({
+      status: 0,
+      stdout: command.includes("/sandbox/.deepagents/.mcp.json")
+        ? JSON.stringify([{ server: "local-stdio", url: null, env: null, source: "native" }])
+        : "[]",
+      stderr: "",
+    }));
+
+    const observed = await inspectAgentMcpSources(recovered, runtimeSelection);
+    expect(recovered.agent).toBe("langchain-deepagents-code");
+    expect(observed.nativeServerNames).toEqual(["local-stdio"]);
+    expect(observed.native).toEqual({});
   });
 
   it("reports a policy/provider orphan without inventing an agent registration", async () => {

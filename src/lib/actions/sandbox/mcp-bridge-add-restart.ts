@@ -15,6 +15,7 @@ import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/c
 import {
   assertAgentMcpMutationRuntimeCapability,
   beginHermesMcpReloadFinalityDeadline,
+  DEEPAGENTS_MCP_MAX_SERVERS,
   HermesMcpReloadRelayLossError,
   type HermesMcpReloadFinalityDeadline,
   type HermesMcpReloadFinalityInspection,
@@ -769,6 +770,18 @@ async function addMcpBridgeUnlocked(
   }
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
+  const nativeServerNames =
+    observed.sources.nativeServerNames ?? Object.keys(observed.sources.native);
+  const prospectiveNativeServerCount =
+    nativeServerNames.length + (nativeServerNames.includes(options.server) ? 0 : 1);
+  if (
+    adapter === "deepagents-config" &&
+    prospectiveNativeServerCount > DEEPAGENTS_MCP_MAX_SERVERS
+  ) {
+    throw new McpBridgeError(
+      `Deep Agents managed MCP supports at most ${String(DEEPAGENTS_MCP_MAX_SERVERS)} servers; refusing to render a ${String(prospectiveNativeServerCount)}-server mutation.`,
+    );
+  }
   const existingEntry = observed.bridges[options.server];
   let target = existingEntry
     ? replayMcpAddTarget(existingEntry, normalizedUrl, matchingTrustedPrivateHosts)

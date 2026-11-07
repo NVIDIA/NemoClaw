@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 import type { SandboxEntry } from "../../state/registry";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
@@ -41,7 +42,8 @@ vi.mock("./mcp-bridge-adapters", () => ({
 vi.mock("./mcp-bridge-provider-readiness", () => ({
   observeMcpCredentialRevision: mocks.observeMcpCredentialRevision,
 }));
-vi.mock("./mcp-bridge-provider", () => ({
+vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-provider")>()),
   assertMcpProviderRecoverable: mocks.assertMcpProviderRecoverable,
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
@@ -86,6 +88,8 @@ vi.mock("./mcp-bridge-validation", () => ({
 }));
 
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
+import { assertNoProviderCredentialCollisions } from "./mcp-bridge-provider";
+import { assertNoProviderCredentialCollisions as realAssertNoProviderCredentialCollisions } from "./mcp-bridge-provider-inspection";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
   prepareMcpBridgesForStoppedSandboxRebuild,
@@ -110,8 +114,13 @@ const entry: McpSourceEntry = {
 };
 
 describe("MCP adapter teardown rollback", () => {
+  afterEach(() => {
+    setProviderCommandRuntimeHooksForTest({});
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(assertNoProviderCredentialCollisions).mockReset();
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
     mocks.getMcpProviderInspectionRuntimeSelection.mockReset().mockReturnValue(runtimeSelection);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
@@ -308,5 +317,60 @@ describe("MCP adapter teardown rollback", () => {
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
     expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
     expect(mocks.registerAgentAdapterAtCurrentCredentialRevision).not.toHaveBeenCalled();
+  });
+
+  it("enforces the 32-provider attachment limit before rebuild teardown and allows an already attached provider", async () => {
+    let targetAlreadyAttached = false;
+    setProviderCommandRuntimeHooksForTest({
+      runOpenshell: ((args: string[]) => {
+        const names = Array.from({ length: 32 }, (_, index) =>
+          index === 0 && targetAlreadyAttached
+            ? "alpha-mcp-github"
+            : `alpha-mcp-srv${String(index)}`,
+        );
+        const listStdout = [
+          "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS",
+          ...names.map((name) => `${name} nemoclaw-mcp-v1 1 0`),
+        ].join("\n");
+        const providerName = args[2] ?? "alpha-mcp-srv0";
+        const isGithub = providerName === "alpha-mcp-github";
+        const providerStdout = [
+          `Name: ${providerName}`,
+          `Id: ${isGithub ? entry.providerId : "00000000-0000-4000-8000-000000000099"}`,
+          "Type: nemoclaw-mcp-v1",
+          "Resource version: 12",
+          `Credential keys: ${isGithub ? "GITHUB_TOKEN" : `OTHER_${providerName.toUpperCase().replaceAll("-", "_")}`}`,
+          "Config keys: <none>",
+        ].join("\n");
+        return {
+          status: 0,
+          stdout: args[0] === "sandbox" ? listStdout : providerStdout,
+          stderr: "",
+        };
+      }) as never,
+    });
+    vi.mocked(assertNoProviderCredentialCollisions).mockImplementation(
+      realAssertNoProviderCredentialCollisions,
+    );
+    mocks.captureRecordedSandboxBasePolicy
+      .mockReset()
+      .mockResolvedValueOnce("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n")
+      .mockResolvedValueOnce("version: 1\nnetwork_policies: {}\n");
+    mocks.removeGeneratedPolicy.mockReset().mockResolvedValue(undefined);
+    mocks.detachProvider.mockReset().mockResolvedValue("detached");
+
+    await expect(prepareMcpBridgesForRebuild("alpha", [entry])).rejects.toThrow(
+      "Sandbox 'alpha' already has 32 attached OpenShell providers",
+    );
+    expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+
+    targetAlreadyAttached = true;
+    await expect(prepareMcpBridgesForRebuild("alpha", [entry])).resolves.toMatchObject({
+      entries: [entry],
+      detachedProviderEntries: [entry],
+    });
   });
 });

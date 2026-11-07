@@ -5,6 +5,7 @@ export { assertDeepAgentsMcpMutationRuntimeCapability } from "./mcp-bridge-adapt
 export { inspectDeepAgentsAdapterRegistration } from "./mcp-bridge-adapter-deepagents-inspection";
 export {
   buildDeepAgentsMcpRegisterCommand,
+  DEEPAGENTS_MCP_MAX_SERVERS,
   registerDeepAgentsAdapter,
 } from "./mcp-bridge-adapter-deepagents-registration";
 export {

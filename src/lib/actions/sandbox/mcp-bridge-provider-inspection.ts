@@ -41,6 +41,7 @@ import {
 import { normalizeRecordedMcpServerUrl } from "./mcp-bridge/recorded-url";
 
 export const MCP_BRIDGE_PROVIDER_TYPE = "nemoclaw-mcp-v1";
+export const MAX_SANDBOX_PROVIDER_ATTACHMENTS = 32;
 
 export type McpProviderInspection = {
   exists: boolean | null;
@@ -276,6 +277,40 @@ export async function inspectMcpProviderAttachments(
   }
 }
 
+export function sandboxProviderAttachmentLimitError(
+  sandboxName: string,
+  attachedCount = MAX_SANDBOX_PROVIDER_ATTACHMENTS,
+): McpBridgeError {
+  return new McpBridgeError(
+    `Sandbox '${sandboxName}' already has ${String(attachedCount)} attached OpenShell providers (maximum ${String(MAX_SANDBOX_PROVIDER_ATTACHMENTS)} per sandbox across inference, messaging, web search, extra credential, and managed MCP providers). Remove an unused MCP server or detach another provider before adding more.`,
+  );
+}
+
+export function assertSandboxProviderAttachmentCapacity(
+  sandboxName: string,
+  entries: readonly McpSourceEntry[],
+  attachments: readonly McpProviderAttachment[],
+): void {
+  const attachedNames = new Set(attachments.map((attachment) => attachment.name));
+  const unattachedNames = new Set(
+    entries
+      .map((entry) => entry.providerName)
+      .filter(
+        (name): name is string =>
+          typeof name === "string" && name.length > 0 && !attachedNames.has(name),
+      ),
+  );
+  if (unattachedNames.size === 0) return;
+  const projectedCount = attachedNames.size + unattachedNames.size;
+  if (projectedCount <= MAX_SANDBOX_PROVIDER_ATTACHMENTS) return;
+  if (attachedNames.size >= MAX_SANDBOX_PROVIDER_ATTACHMENTS) {
+    throw sandboxProviderAttachmentLimitError(sandboxName, attachedNames.size);
+  }
+  throw new McpBridgeError(
+    `Attaching ${String(unattachedNames.size)} MCP provider${unattachedNames.size === 1 ? "" : "s"} to sandbox '${sandboxName}' would reach ${String(projectedCount)} attached OpenShell providers (${String(attachedNames.size)} currently attached; maximum ${String(MAX_SANDBOX_PROVIDER_ATTACHMENTS)} per sandbox across inference, messaging, web search, extra credential, and managed MCP providers).`,
+  );
+}
+
 export async function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -302,6 +337,7 @@ export async function assertNoAttachedProviderCredentialCollisions(
       );
     }
   }
+  assertSandboxProviderAttachmentCapacity(sandboxName, entries, inspection.attachments);
 }
 
 export async function assertNoRegisteredProviderCredentialCollisions(

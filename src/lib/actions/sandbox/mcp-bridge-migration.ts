@@ -11,8 +11,17 @@ import {
   readLegacyMcpRegistryProjection,
   retireLegacyMcpRegistryProjection,
 } from "../../state/registry/legacy-mcp";
-import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-source";
 import {
+  type AgentMcpSourceSnapshot,
+  inspectAgentMcpSources,
+  inspectLegacyBridgeState,
+  joinMcpEntriesToOpenShell,
+  readCommittedLegacyRegistryEntries,
+  removeLegacyAgentMcpEntry,
+  sameMcpRegistration,
+} from "./mcp-bridge-source";
+import {
+  DEEPAGENTS_MCP_MAX_SERVERS,
   registerAgentAdapter,
   reloadOpenClawGatewayAfterMcpMutation,
   unregisterAgentAdapter,
@@ -26,12 +35,6 @@ import {
   preflightMcpEntryTargets,
   providerAttached,
 } from "./mcp-bridge-provider";
-import {
-  inspectAgentMcpSources,
-  inspectLegacyBridgeState,
-  joinMcpEntriesToOpenShell,
-  removeLegacyAgentMcpEntry,
-} from "./mcp-bridge-source";
 import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
@@ -60,6 +63,23 @@ export type McpMigrationPlan = {
   items: McpMigrationItem[];
   applied: boolean;
 };
+
+function assertDeepAgentsNativeMcpCapacity(
+  adapter: McpSourceEntry["adapter"],
+  sources: AgentMcpSourceSnapshot,
+  entries: readonly McpSourceEntry[],
+): void {
+  if (adapter !== "deepagents-config") return;
+  const nativeServerNames = new Set(sources.nativeServerNames ?? Object.keys(sources.native));
+  for (const entry of entries) {
+    if (!sources.native[entry.server]) nativeServerNames.add(entry.server);
+  }
+  if (nativeServerNames.size > DEEPAGENTS_MCP_MAX_SERVERS) {
+    throw new McpBridgeError(
+      `Deep Agents managed MCP supports at most ${String(DEEPAGENTS_MCP_MAX_SERVERS)} servers; refusing to render a ${String(nativeServerNames.size)}-server mutation.`,
+    );
+  }
+}
 
 async function preflightMigrationOpenShellState(
   sandboxName: string,
@@ -212,6 +232,7 @@ export async function migrateMcpBridges(
     if (!options.apply || entries.length === 0) {
       return { sandbox: sandboxName, items, applied: false };
     }
+    assertDeepAgentsNativeMcpCapacity(adapter, observed.sources, entries);
     await preflightMigrationOpenShellState(sandboxName, entries, runtimeSelection);
 
     if (adapter === "deepagents-config") {
@@ -230,7 +251,9 @@ export async function migrateMcpBridges(
       const created: McpSourceEntry[] = [];
       let cleanupStarted = false;
       try {
-        let native = (await inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection)).native;
+        const rebuiltSources = await inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection);
+        assertDeepAgentsNativeMcpCapacity(adapter, rebuiltSources, entries);
+        let native = rebuiltSources.native;
         for (const entry of entries) {
           if (!native[entry.server]) {
             await registerAgentAdapter(

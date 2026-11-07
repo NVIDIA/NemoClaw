@@ -171,16 +171,17 @@ export function readCommittedLegacyRegistryEntries(
 export interface AgentMcpSourceSnapshot {
   native: Record<string, McpSourceEntry>;
   legacy: Record<string, McpSourceEntry>;
+  nativeServerNames?: readonly string[];
 }
 
 type SourceRecord = {
   server: string;
-  url: string;
+  url: string | null;
   env: string | null;
   source: "native" | "legacy";
 };
 
-const SOURCE_RECORD_MAX = 64;
+const SOURCE_RECORD_MAX = 128;
 const SOURCE_OUTPUT_MAX_BYTES = 262_144;
 
 function sourcePayload(value: unknown): string {
@@ -237,9 +238,10 @@ function buildDeepAgentsSourceCommand(configDir: string): string {
     "    servers = data.get('mcpServers', {}) if isinstance(data, dict) else {}",
     "    if not isinstance(servers, dict): raise ValueError('invalid Deep Agents MCP server map')",
     "    for name, value in servers.items():",
-    "        if not isinstance(name, str) or not isinstance(value, dict): continue",
-    "        url = value.get('url')",
-    "        if isinstance(url, str): records.append({'server': name, 'url': url, 'env': env_name(value.get('headers')), 'source': source})",
+    "        if not isinstance(name, str): continue",
+    "        url = value.get('url') if isinstance(value, dict) else None",
+    "        headers = value.get('headers') if isinstance(value, dict) else None",
+    "        if isinstance(url, str) or source == 'native': records.append({'server': name, 'url': url if isinstance(url, str) else None, 'env': env_name(headers) if isinstance(url, str) else None, 'source': source})",
     "print(json.dumps(records, separators=(',', ':'))) ",
     "PY",
   ].join("\n");
@@ -282,7 +284,7 @@ function buildJsonMcpSourceScript(
     "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (paths.deepAgents) suffix = suffix.replace(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_/, ''); else if (/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return (paths.deepAgents ? /^[A-Za-z_][A-Za-z0-9_]{0,127}$/ : /^[A-Z_][A-Z0-9_]*$/).test(suffix) ? suffix : null; }",
     "function deepServers(data) { const servers = data && typeof data === 'object' && !Array.isArray(data) && Object.hasOwn(data, 'mcpServers') ? data.mcpServers : {}; if (!servers || typeof servers !== 'object' || Array.isArray(servers)) throw new Error('invalid Deep Agents MCP server map'); return servers; }",
     "const records = [];",
-    "const native = read(paths.nativePath); const nativeServers = paths.deepAgents ? deepServers(native) : native && native.mcp && native.mcp.servers; if (nativeServers && typeof nativeServers === 'object' && !Array.isArray(nativeServers)) for (const [server, value] of Object.entries(nativeServers)) if (value && typeof value === 'object' && typeof value.url === 'string') records.push({ server, url: value.url, env: envName(value.headers), source: 'native' });",
+    "const native = read(paths.nativePath); const nativeServers = paths.deepAgents ? deepServers(native) : native && native.mcp && native.mcp.servers; if (nativeServers && typeof nativeServers === 'object' && !Array.isArray(nativeServers)) for (const [server, value] of Object.entries(nativeServers)) if (value && typeof value === 'object' && typeof value.url === 'string') records.push({ server, url: value.url, env: envName(value.headers), source: 'native' }); else if (paths.deepAgents) records.push({ server, url: null, env: null, source: 'native' });",
     "const legacy = read(paths.legacyPath); const legacyServers = paths.deepAgents ? deepServers(legacy) : legacy && legacy.mcpServers; if (legacyServers && typeof legacyServers === 'object' && !Array.isArray(legacyServers)) for (const [server, value] of Object.entries(legacyServers)) if (value && typeof value === 'object' && typeof value[paths.deepAgents ? 'url' : 'baseUrl'] === 'string') records.push({ server, url: value[paths.deepAgents ? 'url' : 'baseUrl'], env: envName(value.headers), source: 'legacy' });",
     "process.stdout.write(JSON.stringify(records));",
   ].join("\n");
@@ -324,7 +326,7 @@ function parseSourceRecords(output: string): SourceRecord[] {
     if (
       !isObjectRecord(record) ||
       typeof record.server !== "string" ||
-      typeof record.url !== "string" ||
+      (record.url !== null && typeof record.url !== "string") ||
       (record.env !== null && typeof record.env !== "string") ||
       (record.source !== "native" && record.source !== "legacy")
     ) {
@@ -394,7 +396,7 @@ function entryFromRecord(
   agentName: string,
   adapter: AgentMcpAdapter,
 ): McpSourceEntry | null {
-  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(record.server)) return null;
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(record.server) || !record.url) return null;
   let url: URL;
   try {
     url = new URL(record.url);
@@ -436,7 +438,11 @@ export async function inspectAgentMcpSources(
       runtimeSelection,
       deadline,
     );
-    if (Object.keys(sources.native).length > 0 || Object.keys(sources.legacy).length > 0) {
+    if (
+      Object.keys(sources.native).length > 0 ||
+      Object.keys(sources.legacy).length > 0 ||
+      (sources.nativeServerNames?.length ?? 0) > 0
+    ) {
       candidates.push({ agent, sources });
     }
   }
@@ -493,12 +499,22 @@ function sourceSnapshotFromRecords(
 ): AgentMcpSourceSnapshot {
   const native: Record<string, McpSourceEntry> = {};
   const legacy: Record<string, McpSourceEntry> = {};
+  const nativeServerNames: string[] = [];
   for (const record of records) {
+    if (record.source === "native" && !nativeServerNames.includes(record.server)) {
+      nativeServerNames.push(record.server);
+    }
     const entry = entryFromRecord(record, agentName, adapter);
     if (!entry) continue;
     (record.source === "native" ? native : legacy)[entry.server] = entry;
   }
-  return { native, legacy };
+  return {
+    native,
+    legacy,
+    ...(nativeServerNames.some((server) => !Object.hasOwn(native, server))
+      ? { nativeServerNames }
+      : {}),
+  };
 }
 
 /** Use the same bounded reader on provider-captured regular files without executing sandbox code. */

@@ -148,7 +148,9 @@ NemoClaw records the normalized host and every validated address as OpenShell po
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+To replace it, remove and re-add the server with the replacement exported under the same host variable name.
+Save the live policy with `$$nemoclaw <sandbox> policy get > <file>` before you remove the server; the replacement add drops edits that you applied directly to the generated policy.
+`mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
 
 Inspect the registration after the add returns:
 
@@ -187,7 +189,35 @@ One normalized endpoint URL can have only one credential-bound managed server de
 If two definitions need different credentials, retain one definition for that URL or configure distinct endpoint URLs so OpenShell can select one credential unambiguously.
 
 If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
+Save the live policy with `$$nemoclaw <sandbox> policy get > <file>` before you remove the server; the replacement add drops edits that you applied directly to the generated policy.
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
+
+OpenShell allows at most 32 attached providers in one sandbox.
+Each managed MCP server uses one attached provider.
+The total also includes inference, messaging, web search, and `credentials add` providers attached to this sandbox.
+If the only other attached provider is one inference provider, NemoClaw can attach at most 31 managed MCP servers.
+When a sandbox already has 32 attached providers, NemoClaw rejects a new server before it creates a provider or policy.
+If another command attaches a provider at the same time, the add fails with the same error and removes the generated policy.
+It can keep a detached provider.
+Before deleting the retained provider, confirm its identity and credential key on the gateway that owns the sandbox, and confirm that no sandbox on that gateway attaches it.
+If an inspection fails or ownership is uncertain, leave the provider unchanged and stop.
+After those checks pass, delete only that provider with `openshell provider delete -g <GATEWAY> <PROVIDER_NAME>` before you retry the add.
+Before you add the server, run `mcp remove` for an unused MCP server, or remove another provider-backed integration.
+`channels remove` deletes the channel credentials and rebuilds the sandbox.
+Rebuild checks this limit before it changes the original sandbox.
+If attaching the MCP providers would bring the sandbox above 32 attached providers, rebuild stops before it changes the original sandbox.
+Rebuild checks the limit again before it reattaches MCP providers to the recreated sandbox.
+If the recreated sandbox has no room, rebuild reports `MCP bridge restore incomplete` and leaves those MCP servers unavailable.
+Run `openshell sandbox provider list <sandbox>` to count attached providers.
+To recover each affected server, free a provider attachment.
+Save the live policy with `$$nemoclaw <sandbox> policy get > <file>` before you remove the server; the replacement add drops edits that you applied directly to the generated policy.
+Then follow [Rotate a Credential](manage-mcp-servers#rotate-a-credential) with the original URL, credential name, denied tools, and trusted-private host.
+`mcp restart` reloads an already attached registration and does not use another provider attachment.
+
+<AgentOnly variant="deepagents">
+`mcp add` and `mcp migrate --apply` fail when `/sandbox/.deepagents/.mcp.json` would contain more than 64 `mcpServers` entries.
+The count includes entries that NemoClaw does not manage, such as stdio servers.
+</AgentOnly>
 
 ## Meet Endpoint Requirements
 
@@ -199,10 +229,6 @@ Put the bearer value in `--env KEY`.
 
 Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores.
 Endpoint hostnames must use lowercase RFC-style DNS labels without empty, leading-hyphen, trailing-hyphen, or overlong labels.
-
-<AgentOnly variant="deepagents">
-Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
-</AgentOnly>
 Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
 Endpoint URLs cannot use port `0`.
 
