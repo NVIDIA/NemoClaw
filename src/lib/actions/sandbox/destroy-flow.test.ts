@@ -25,6 +25,7 @@ import {
   traceDestroyBoundaryCalls,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import type { SandboxWorkloadReceipt } from "../../state/registry";
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
@@ -1127,28 +1128,26 @@ describe("destroySandbox flow", () => {
     expect(errorOutput).toContain("Provider cleanup detached provider-a");
   });
 
-  it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+  it.each(["default", ""])("keeps final probe adjacent to delete for workspace %j", async (ws) => {
     const trace: string[] = [];
     let identityProbeCalls = 0;
+    const lifecycleLiveIdentityFingerprint = fingerprintOpenShellSandboxId("sb-alpha")!;
     const harness = createDestroyHarness({
-      dockerRunResult: managed,
+      dockerRunResult: { status: 0, stdout: `aaaa000000000000\topenshell\t${ws}\tsb-alpha` },
+      registryEntryOverrides: { lifecycleLiveIdentityFingerprint },
       onDockerRun: (call) => {
         identityProbeCalls = call;
         trace.push(`probe:${String(call)}`);
       },
     });
     traceDestroyBoundaryCalls(harness, trace);
-
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
     const deleteIndex = trace.indexOf("delete");
     expect(deleteIndex).toBeGreaterThan(0);
     expect(trace[deleteIndex - 1]).toMatch(/^probe:/u);
-    expect(trace.slice(deleteIndex + 1)).toEqual([
-      `probe:${String(identityProbeCalls - 1)}`,
-      `probe:${String(identityProbeCalls)}`,
-    ]);
+    const tail = [`probe:${identityProbeCalls - 1}`, `probe:${identityProbeCalls}`];
+    expect(trace.slice(deleteIndex + 1)).toEqual(tail);
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {

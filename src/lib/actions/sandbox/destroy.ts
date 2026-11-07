@@ -884,6 +884,9 @@ async function destroySandboxUnlocked(
   }
   const retainedSandboxIdentityFingerprint =
     retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
+  const expectedOrdinaryContainerIdentityFingerprint = retainedRecoveryAuthority
+    ? undefined
+    : registeredSandbox?.lifecycleLiveIdentityFingerprint;
   const destroyGatewayName = resolveSandboxDestroyGatewayName(
     sandboxName,
     registeredSandbox,
@@ -928,6 +931,9 @@ async function destroySandboxUnlocked(
       redact: redactDestroyError,
       sandbox: registeredSandbox,
       ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
+      ...(expectedOrdinaryContainerIdentityFingerprint
+        ? { expectedOrdinaryContainerIdentityFingerprint }
+        : {}),
     });
   };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
@@ -1084,6 +1090,9 @@ async function destroySandboxUnlocked(
       expectedContainerIdentities: initialContainerIdentities,
       ...(retainedSandboxIdentityFingerprint
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
+        : {}),
+      ...(expectedOrdinaryContainerIdentityFingerprint
+        ? { expectedOrdinaryContainerIdentityFingerprint }
         : {}),
       ...(initialIdentity?.providerIdentity
         ? { expectedRuntimeProviderIdentity: initialIdentity.providerIdentity }

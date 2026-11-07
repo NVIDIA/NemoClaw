@@ -56,6 +56,7 @@ export type AssertUnambiguousDestroyIdentityDeps = {
   ) => RuntimeProviderDestroyIdentityReceipt;
   captureProviderIdentityByName?: (sandboxName: string) => RuntimeProviderDestroyIdentityReceipt;
   retainedSandboxIdentityFingerprint?: string;
+  expectedOrdinaryContainerIdentityFingerprint?: string;
   cliName?: string;
   classify?: (
     sandboxName: string,
@@ -88,6 +89,7 @@ export function classifyDestroyContainerIdentity(
   sandboxName: string,
   observation: DockerSandboxIdentityObservation,
   retainedSandboxIdentityFingerprint?: string,
+  expectedOrdinaryContainerIdentityFingerprint?: string,
 ): DestroyContainerIdentityVerdict {
   if (observation.status === "probe-failed") {
     return {
@@ -127,7 +129,6 @@ export function classifyDestroyContainerIdentity(
   if (managed.length > 0 && retainedSandboxIdentityFingerprint !== undefined) {
     const identityMatches = managed.every(
       (row) =>
-        row.workspace.length > 0 &&
         row.sandboxId.length > 0 &&
         fingerprintOpenShellSandboxId(row.sandboxId) === retainedSandboxIdentityFingerprint,
     );
@@ -161,15 +162,24 @@ export function classifyDestroyContainerIdentity(
   }
 
   const [identity] = managed;
-  if (!identity.workspace || !identity.sandboxId) {
-    const missingLabels = [
-      identity.workspace ? null : OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-      identity.sandboxId ? null : OPENSHELL_SANDBOX_ID_LABEL,
-    ].filter((label): label is string => label !== null);
+  if (!identity.sandboxId) {
     return {
       status: "ambiguous",
       sandboxName,
-      reason: `the managed container is missing ${missingLabels.join(" and ")}`,
+      reason: `the managed container is missing ${OPENSHELL_SANDBOX_ID_LABEL}`,
+      foreign,
+      managed,
+    };
+  }
+  if (
+    expectedOrdinaryContainerIdentityFingerprint !== undefined &&
+    fingerprintOpenShellSandboxId(identity.sandboxId) !==
+      expectedOrdinaryContainerIdentityFingerprint
+  ) {
+    return {
+      status: "ambiguous",
+      sandboxName,
+      reason: "the managed container does not match the registered sandbox identity",
       foreign,
       managed,
     };
@@ -289,6 +299,7 @@ export function assertUnambiguousDestroyContainerIdentity(
         name,
         observeDestroyContainerIdentity(name),
         retainedSandboxIdentityFingerprint,
+        deps.expectedOrdinaryContainerIdentityFingerprint,
       ));
   const verdict = deps.retainedSandboxIdentityFingerprint
     ? classify(sandboxName, deps.retainedSandboxIdentityFingerprint)

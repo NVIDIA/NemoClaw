@@ -343,6 +343,7 @@ type SandboxDestroyExecutionInput = {
   // Docker IDs qualified before destroy preparation.
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
+  expectedOrdinaryContainerIdentityFingerprint?: string;
   expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   verifyForwardPortsReleased?: () => boolean | Promise<boolean>;
@@ -510,6 +511,7 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
+  expectedOrdinaryContainerIdentityFingerprint,
   expectedRuntimeProviderIdentity,
   portableContainerAuthority,
   verifyForwardPortsReleased = () => true,
@@ -660,6 +662,7 @@ export async function executeSandboxDestroy({
         sandboxName,
         observeDestroyContainerIdentity(sandboxName),
         expectedContainerIdentityFingerprint,
+        expectedOrdinaryContainerIdentityFingerprint,
       );
       const actualContainerProof = proofFromVerdict(verdict);
       if (
