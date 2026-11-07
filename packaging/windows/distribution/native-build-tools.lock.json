@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "classification": "shared-windows-runtime-build-tools",
+  "typescriptVersion": "6.0.3",
+  "esbuildVersion": "0.27.4",
+  "packages": [
+    {
+      "package": "esbuild",
+      "version": "0.27.4",
+      "url": "https://registry.npmjs.org/esbuild/-/esbuild-0.27.4.tgz",
+      "integrity": "sha512-Rq4vbHnYkK5fws5NF7MYTU68FPRE1ajX7heQ/8QXXWqNgqqJ/GkmmyxIzUnf2Sr/bakf8l54716CcMGHYhMrrQ=="
+    },
+    {
+      "package": "@esbuild/win32-arm64",
+      "version": "0.27.4",
+      "url": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.27.4.tgz",
+      "integrity": "sha512-Z9SExBg2y32smoDQdf1HRwHRt6vAHLXcxD2uGgO/v2jK7Y718Ix4ndsbNMU/+1Qiem9OiOdaqitioZwxivhXYg=="
+    },
+    {
+      "package": "@esbuild/darwin-arm64",
+      "version": "0.27.4",
+      "url": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.27.4.tgz",
+      "integrity": "sha512-b7xaGIwdJlht8ZFCvMkpDN6uiSmnxxK56N2GDTMYPr2/gzvfdQN8rTfBsvVKmIVY/X7EM+/hJKEIbbHs9oA4tQ=="
+    },
+    {
+      "package": "typescript",
+      "version": "6.0.3",
+      "url": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="
+    },
+    {
+      "package": "playwright-core",
+      "version": "1.58.2",
+      "url": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz",
+      "integrity": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg=="
+    }
+  ],
+  "lifecycleScriptsExecuted": false
+}

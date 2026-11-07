@@ -1,0 +1,2288 @@
+diff --git a/packaging/windows/runtime/native-assets.mts b/packaging/windows/runtime/native-assets.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..01f1eddf3b3e3dc9155e772a11d1d1b53c9cea2a
+--- /dev/null
++++ b/packaging/windows/runtime/native-assets.mts
+@@ -0,0 +1,34 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import path from "node:path";
++
++export const NATIVE_WORKER_MODES = [
++  "openclaw-turn", "openclaw-web", "pi-turn", "hermes-turn", "deepagents-turn", "interactive", "nemocua",
++] as const;
++export type NativeWorkerMode = (typeof NATIVE_WORKER_MODES)[number];
++
++export function nativeDistributionAsset(name: "native-host.mjs" | "native-inference-manifest.json") {
++  const root = process.env.NEMOCLAW_NATIVE_RUNTIME_ROOT;
++  if (!root || !path.isAbsolute(root)) throw new Error("The installed application root is unavailable.");
++  return path.join(root, "app", name);
++}
++
++export function nativeWorkerAssets(runtimeRoot: string, mode: NativeWorkerMode) {
++  if (!path.isAbsolute(runtimeRoot) || !NATIVE_WORKER_MODES.includes(mode))
++    throw new Error("The prebuilt worker identity is invalid.");
++  const root = path.join(runtimeRoot, "workers");
++  return {
++    entry: path.join(root, "native-guest.mjs"),
++    root,
++    environment: { NEMOCLAW_WORKER_ROOT: root, NEMOCLAW_WORKER_MODE: mode },
++  };
++}
++
++export function nativeGuestAsset(name: string) {
++  if (!/^(?:openclaw-invoke\.cjs|(?:hermes|deepagents)-(?:turn|console|console-probe|dashboard|dashboard-probe)\.pyc)$/u.test(name))
++    throw new Error("The prebuilt worker asset is invalid.");
++  const root = process.env.NEMOCLAW_WORKER_ROOT;
++  if (!root || !path.isAbsolute(root)) throw new Error("The prebuilt worker root is unavailable.");
++  return path.join(root, name);
++}
+diff --git a/packaging/windows/runtime/native-configured-inference.mts b/packaging/windows/runtime/native-configured-inference.mts
+index 94ae8b52e37bc6396fad847266e59665a7b51fc1..f40ebecb8da3f6b6543e08dbbd381253e2aab495 100644
+--- a/packaging/windows/runtime/native-configured-inference.mts
++++ b/packaging/windows/runtime/native-configured-inference.mts
+@@ -8 +8,2 @@ import { readWindowsCredential, type NativeCredentialIdentity } from "./native-s
+-type Configuration = NativeCredentialIdentity & {
++type Configuration = Omit<NativeCredentialIdentity, "endpoint"> & {
++  endpoint?: string;
+@@ -45,4 +46,3 @@ export async function resolveNativeConfiguredInference(
+-  return {
+-    configuration: config,
+-    credential: await readWindowsCredential(launcher, config, config.credentialStored),
+-  };
++  if (typeof config.endpoint !== "string") throw new Error("The configured inference endpoint is missing.");
++  const resolved = { ...config, endpoint: config.endpoint };
++  return { configuration: resolved, credential: await readWindowsCredential(launcher, resolved, config.credentialStored) };
+diff --git a/packaging/windows/runtime/native-dispatch.mts b/packaging/windows/runtime/native-dispatch.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..96893f657cc4b6173f9318bae2c5fbf125d7b598
+--- /dev/null
++++ b/packaging/windows/runtime/native-dispatch.mts
+@@ -0,0 +1,30 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import { runNativeTurnEntry } from "./run-installed-native-turn.mts";
++import { runNativeTerminalTurnEntry } from "./run-installed-native-pi.mts";
++import { runNativeNemoCuaEntry } from "./run-installed-native-nemocua.mts";
++import { runNativeConsoleEntry } from "./run-installed-native-console-agent.mts";
++import { runNativeWebEntry } from "./run-installed-native-web-ui.mts";
++import { runNativeHermesUiEntry } from "./run-installed-native-hermes-ui.mts";
++import { runNativeInferenceEntry } from "./native-inference-cli.mts";
++
++const entries = {
++  turn: runNativeTurnEntry,
++  "terminal-turn": runNativeTerminalTurnEntry,
++  nemocua: runNativeNemoCuaEntry,
++  console: runNativeConsoleEntry,
++  web: runNativeWebEntry,
++  "hermes-dashboard": runNativeHermesUiEntry,
++  inference: runNativeInferenceEntry,
++} as const;
++
++export async function dispatchNativeEntry(mode: string | undefined, args: string[]) {
++  if (!mode || !Object.hasOwn(entries, mode)) throw new Error("The installed application mode is invalid.");
++  // Exactly one dispatcher consumes the mode. Existing entry argument contracts
++  // retain argv[0]/argv[1] and see only their own original arguments afterward.
++  process.argv = [...process.argv.slice(0, 2), ...args];
++  await entries[mode as keyof typeof entries]();
++}
++
++export const nativeEntryModes = Object.freeze(Object.keys(entries));
+diff --git a/packaging/windows/runtime/native-hermes-dashboard.mts b/packaging/windows/runtime/native-hermes-dashboard.mts
+index ffdbaaea3acdf298d3d54551ced75420d3f7429c..13a56546640a9daafbd69bd76269764e9369f9fd 100644
+--- a/packaging/windows/runtime/native-hermes-dashboard.mts
++++ b/packaging/windows/runtime/native-hermes-dashboard.mts
+@@ -11,2 +11,4 @@ export function hermesDashboardPythonSource(): string[] {
+-    "_package = Path(os.environ['NEMOCLAW_AGENT_SITE_PACKAGES']) / 'hermes_cli'",
+-    "if not (_package / 'tui_dist' / 'entry.js').is_file(): raise RuntimeError('The bundled Hermes TUI is missing')",
++    "_source = Path(os.environ['NEMOCLAW_HERMES_SOURCE_ROOT'])",
++    "_package = _source / 'hermes_cli'",
++    "if not (_source / 'ui-tui' / 'dist' / 'entry.js').is_file(): raise RuntimeError('The bundled Hermes TUI is missing')",
++    "os.environ['HERMES_TUI_DIR'] = str(_source / 'ui-tui')",
+@@ -18,2 +20,3 @@ export function hermesDashboardPythonSource(): string[] {
+-    "from hermes_cli.web_server import start_server",
+-    "start_server(host='127.0.0.1', port=0, open_browser=False, allow_public=False, initial_profile='', headless=False)",
++    "from hermes_cli.main import main",
++    "sys.argv = [sys.argv[0], 'dashboard', '--host', '127.0.0.1', '--port', '0', '--no-open', '--skip-build']",
++    "main()",
+diff --git a/packaging/windows/runtime/native-inference-cli.mts b/packaging/windows/runtime/native-inference-cli.mts
+index eb2aa123152ca8d0ad269cb7204920877c7cce92..55ef7083c40544db5c4d1baf466a390835da0ff3 100644
+--- a/packaging/windows/runtime/native-inference-cli.mts
++++ b/packaging/windows/runtime/native-inference-cli.mts
+@@ -3,0 +4,2 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+@@ -108,5 +110,2 @@ async function main() {
+-if (
+-  process.argv[1] &&
+-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+-) {
+-  main().catch((error) => {
++export async function runNativeInferenceEntry() {
++  await main().catch((error) => {
+@@ -119,0 +119,4 @@ if (
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeInferenceEntry();
++}
+diff --git a/packaging/windows/runtime/native-inference-host.mts b/packaging/windows/runtime/native-inference-host.mts
+index 0dba2df8b13e9f3c8acab129b9f83b00c6b76041..f8d87e5c9546eda666ba82f78e16d68b10ad8ec8 100644
+--- a/packaging/windows/runtime/native-inference-host.mts
++++ b/packaging/windows/runtime/native-inference-host.mts
+@@ -246 +246 @@ export function readOwnerRecord(credential: string): NativeOwnerRecord | null {
+-export async function hardwareCatalog(installRoot: string, signal?: AbortSignal) {
++export async function hardwareCatalog(installRoot: string, signal?: AbortSignal, options: { prebuilt?: boolean } = {}) {
+@@ -285 +285 @@ export async function hardwareCatalog(installRoot: string, signal?: AbortSignal)
+-  const reasons = nativeEligibility(hardware);
++  const reasons = nativeEligibility(hardware, options);
+diff --git a/packaging/windows/runtime/native-inference-manifest.mts b/packaging/windows/runtime/native-inference-manifest.mts
+index e7061a3ea570572e6b985db79301707276a10fcf..6afb6ae79b9185ca1ae75698fdb1aaa5ef15106d 100644
+--- a/packaging/windows/runtime/native-inference-manifest.mts
++++ b/packaging/windows/runtime/native-inference-manifest.mts
+@@ -4,2 +4 @@
+-import { readOpenedRegularFile } from "./native-security.mts";
+-import { fileURLToPath } from "node:url";
++import manifestJson from "./native-inference-manifest.json" with { type: "json" };
+@@ -33,6 +32 @@ type NativeExpressManifest = {
+-const manifestText = readOpenedRegularFile(
+-  fileURLToPath(new URL("./native-inference-manifest.json", import.meta.url)),
+-  { encoding: "utf8", maxBytes: 64 * 1024 },
+-);
+-if (manifestText === null) throw new Error("The installed native inference manifest is missing.");
+-const manifest = JSON.parse(manifestText) as NativeExpressManifest;
++const manifest = manifestJson as NativeExpressManifest;
+@@ -71 +65 @@ export type NativeHardware = {
+-export function nativeEligibility(hardware: NativeHardware): string[] {
++export function nativeEligibility(hardware: NativeHardware, options: { prebuilt?: boolean } = {}): string[] {
+@@ -88,2 +82,2 @@ export function nativeEligibility(hardware: NativeHardware): string[] {
+-    !Number.isFinite(hardware.availableStorageBytes) ||
+-    hardware.availableStorageBytes < NATIVE_EXPRESS.storageBytes
++    !options.prebuilt && (!Number.isFinite(hardware.availableStorageBytes) ||
++    hardware.availableStorageBytes < NATIVE_EXPRESS.storageBytes)
+diff --git a/packaging/windows/runtime/native-inference.mts b/packaging/windows/runtime/native-inference.mts
+index 2a553fe8a7a9a47972fd3fb72b21182fe0ba9743..ca0eb84b6e5f70037a8f635a2162abf40cc9a259 100644
+--- a/packaging/windows/runtime/native-inference.mts
++++ b/packaging/windows/runtime/native-inference.mts
+@@ -6,0 +7 @@ import fs from "node:fs";
++import path from "node:path";
+@@ -9,0 +11 @@ import {
++  captureNative,
+@@ -22 +24,3 @@ import {
+-import { prepareNativeFiles } from "./native-inference-install.mts";
++import { startNativeRuntimeInferenceSupervisor } from "./native-runtime-inference.mts";
++import { readPrebuiltNativeModel, inspectPrebuiltNativeModel } from "./native-prebuilt-inference.mts";
++import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+@@ -25,0 +30 @@ import {
++  cudaDeviceFromListing,
+@@ -141,4 +146 @@ export async function installNativeInference(options: NativeInferenceOptions) {
+-  const signal = AbortSignal.any([
+-    options.signal ?? new AbortController().signal,
+-    AbortSignal.timeout(4 * 60 * 60 * 1000),
+-  ]);
++  options.signal?.throwIfAborted();
+@@ -146,22 +148,2 @@ export async function installNativeInference(options: NativeInferenceOptions) {
+-  const onProgress = options.onProgress ?? quiet;
+-  const existing = await existingOwner(options.installRoot, signal).catch(() => null);
+-  if (existing?.record.status === "ready")
+-    return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: true };
+-  const state = await acquireNativeStateSession(layout.launcher, "inference");
+-  let prepared: Awaited<ReturnType<typeof prepareNativeFiles>> | undefined;
+-  let failure: Error | undefined;
+-  try {
+-    prepared = await prepareNativeFiles(options.installRoot, state.stateRoot, signal, onProgress);
+-    state.assertHeld();
+-  } catch (error) {
+-    failure = error instanceof Error ? error : new Error("Native model preparation failed.");
+-  } finally {
+-    failure = await finishNativeInferencePreparation(failure, {
+-      async removeRuntime() {
+-        if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
+-      },
+-      releaseState: () => state.release(),
+-    });
+-  }
+-  if (failure) throw failure;
+-  return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: false };
++  const prebuilt = await inspectPrebuiltNativeModel(options.installRoot, layout.launcher);
++  return { schemaVersion: 1, event: "available", localModel: NATIVE_EXPRESS.id, prebuilt };
+@@ -179 +161 @@ export async function ensureNativeInference(
+-  let supervisor: ChildProcess | undefined;
++  let supervisor: Awaited<ReturnType<typeof startNativeRuntimeInferenceSupervisor>> | undefined;
+@@ -193,0 +176,6 @@ export async function ensureNativeInference(
++          // Only a newly started service has provisional guardian ownership.
++          // A reused authenticated service never receives this start/commit path.
++          if (supervisor) {
++            if (supervisor.pid === existing.record.launcherPid) await supervisor.commit();
++            else await supervisor.cancel(); // A different authenticated owner won startup; preserve it.
++          }
+@@ -200,14 +188,5 @@ export async function ensureNativeInference(
+-        // The installed launcher assigns Node and all future descendants to a
+-        // kill-on-close Windows job before sending the start handshake.
+-        supervisor = spawn(layout.launcher, ["--native-inference", "serve"], {
+-          detached: true,
+-          stdio: "ignore",
+-          windowsHide: true,
+-          env: nativeHostEnvironment({ NEMOCLAW_NATIVE_INSTALL_ROOT: layout.root }),
+-        });
+-        supervisor.once("error", () => {
+-          supervisorEnded = true;
+-        });
+-        supervisor.once("close", () => {
+-          supervisorEnded = true;
+-        });
++        supervisor = await startNativeRuntimeInferenceSupervisor(signal);
++      }
++      if (supervisor) {
++        await supervisor.refresh();
++        supervisorEnded = supervisor.ended;
+@@ -234,2 +213 @@ export async function ensureNativeInference(
+-    if (ready) supervisor?.unref();
+-    else if (supervisor && !supervisorEnded) {
++    if (!ready && supervisor) {
+@@ -238 +216 @@ export async function ensureNativeInference(
+-      if (ownedInstance)
++      if (ownedInstance && !supervisorEnded)
+@@ -242 +220,2 @@ export async function ensureNativeInference(
+-      if (!supervisorEnded) supervisor.kill(); // Native job closes the whole owned tree.
++      try { await supervisor.cancel(); }
++      catch { console.error("The newly started native inference owner did not confirm cancellation."); }
+@@ -354,0 +334,5 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
++  const layout = installLayout(options.installRoot);
++  return await withNativeRuntimeSession(layout.launcher, options.installRoot, "inference", (lease) => servePrebuiltNativeInference(options, lease));
++}
++
++async function servePrebuiltNativeInference(options: NativeInferenceOptions, runtimeLease: NativeRuntimeSession): Promise<void> {
+@@ -375 +359 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
+-  let prepared: Awaited<ReturnType<typeof prepareNativeFiles>> | undefined;
++  let prepared: (ReturnType<typeof readPrebuiltNativeModel> & { environment: NodeJS.ProcessEnv; device: string }) | undefined;
+@@ -405 +389,6 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
+-    prepared = await prepareNativeFiles(options.installRoot, state.stateRoot, signal, onProgress);
++    const pack = readPrebuiltNativeModel(runtimeLease);
++    const catalog = await hardwareCatalog(options.installRoot, signal, { prebuilt: true });
++    if (!catalog.eligible) throw new Error(catalog.reasons.join(" "));
++    const environment = nativeHostEnvironment({ PATH: `${pack.runtimeRoot};${path.join(layout.systemRoot, "System32")};${layout.systemRoot}` });
++    const device = cudaDeviceFromListing(await captureNative(pack.executable, ["--list-devices"], { signal, timeoutMs: 60_000, environment, cwd: pack.runtimeRoot }));
++    prepared = { ...pack, environment, device };
+@@ -583 +572,2 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
+-        if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
++        // Prebuilt runtime bytes belong to the distribution, never this session.
++        runtimeLease.assertHeld();
+diff --git a/packaging/windows/runtime/native-main.mts b/packaging/windows/runtime/native-main.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a300a6a65fbfabc1ef1792c4d4111cb80834226e
+--- /dev/null
++++ b/packaging/windows/runtime/native-main.mts
+@@ -0,0 +1,13 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import { dispatchNativeEntry, nativeEntryModes } from "./native-dispatch.mts";
++
++if (process.argv[2] === "--describe-runtime" && process.argv.length === 3) {
++  process.stdout.write(JSON.stringify({ schemaVersion: 1, kind: "prebuilt-native-runtime", modes: nativeEntryModes }) + "\n");
++} else {
++  dispatchNativeEntry(process.argv[2], process.argv.slice(3)).catch((error) => {
++    console.error(error instanceof Error ? error.message : "The native application could not finish.");
++    process.exitCode = 1;
++  });
++}
+diff --git a/packaging/windows/runtime/native-prebuilt-inference.mts b/packaging/windows/runtime/native-prebuilt-inference.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..26f131d8b47f778f20a06e75c4fd185582e456df
+--- /dev/null
++++ b/packaging/windows/runtime/native-prebuilt-inference.mts
+@@ -0,0 +1,63 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import fs from "node:fs";
++import path from "node:path";
++import { createHash } from "node:crypto";
++import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
++import { readOpenedRegularFile } from "./native-security.mts";
++import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
++
++function exactKeys(value: unknown, names: readonly string[]): value is Record<string, unknown> {
++  return value !== null && typeof value === "object" && !Array.isArray(value)
++    && Object.keys(value).length === names.length && Object.keys(value).every((name) => names.includes(name));
++}
++function ordinarySize(file: string, expected: number) {
++  const before = fs.lstatSync(file);
++  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) throw new Error("The prebuilt model asset is not an ordinary sealed file.");
++  const descriptor = fs.openSync(file, "r");
++  try {
++    const current = fs.fstatSync(descriptor);
++    if (!current.isFile() || current.nlink !== 1 || current.ino !== before.ino || current.dev !== before.dev || current.size !== expected)
++      throw new Error("The prebuilt model asset differs from its installed identity.");
++  } finally { fs.closeSync(descriptor); }
++}
++
++export function readPrebuiltNativeModel(lease: Pick<NativeRuntimeSession, "runtimeRoot" | "runtimeId" | "manifestSha256" | "sourceRevision" | "assertHeld">) {
++  lease.assertHeld();
++  const root = path.join(lease.runtimeRoot, "inference", NATIVE_EXPRESS.id);
++  const text = readOpenedRegularFile(path.join(root, "pack.json"), { encoding: "utf8", maxBytes: 16384 });
++  if (text === null) throw new Error("This distribution does not include the selected prebuilt on-device model.");
++  const pack: unknown = JSON.parse(text);
++  if (!exactKeys(pack, ["schemaVersion", "classification", "id", "model", "modelRevision", "runtimeArchiveSha256", "cudaArchiveSha256", "server", "weights"])
++    || pack.schemaVersion !== 1 || pack.classification !== "prebuilt-native-model-pack" || pack.id !== NATIVE_EXPRESS.id
++    || pack.model !== NATIVE_EXPRESS.model || pack.modelRevision !== NATIVE_EXPRESS.modelRevision
++    || pack.runtimeArchiveSha256 !== NATIVE_EXPRESS.runtime.sha256 || pack.cudaArchiveSha256 !== NATIVE_EXPRESS.cuda.sha256
++    || !exactKeys(pack.server, ["file", "bytes", "sha256"]) || !exactKeys(pack.weights, ["file", "bytes", "sha256"]))
++    throw new Error("The installed model pack does not match this distribution's model catalog.");
++  const server = pack.server;
++  const weights = pack.weights;
++  if (server.file !== "bin/llama-server.exe" || typeof server.bytes !== "number" || !Number.isSafeInteger(server.bytes) || server.bytes <= 0 || server.bytes > 512 * 1024 * 1024
++    || typeof server.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(server.sha256)
++    || weights.file !== "model/" + NATIVE_EXPRESS.weights.name || weights.bytes !== NATIVE_EXPRESS.weights.bytes || weights.sha256 !== NATIVE_EXPRESS.weights.sha256)
++    throw new Error("The installed model files do not match their prebuilt catalog identities.");
++  const executable = path.join(root, "bin", "llama-server.exe");
++  const modelPath = path.join(root, "model", NATIVE_EXPRESS.weights.name);
++  ordinarySize(executable, server.bytes);
++  ordinarySize(modelPath, weights.bytes as number);
++  lease.assertHeld();
++  return {
++    root, runtimeRoot: path.dirname(executable), executable, modelPath,
++    metadata: {
++      schemaVersion: 1, id: NATIVE_EXPRESS.id, model: NATIVE_EXPRESS.model,
++      modelRevision: NATIVE_EXPRESS.modelRevision, weightsSha256: NATIVE_EXPRESS.weights.sha256, weightsBytes: NATIVE_EXPRESS.weights.bytes,
++      packSha256: createHash("sha256").update(text).digest("hex"), runtimeId: lease.runtimeId,
++      runtimeManifestSha256: lease.manifestSha256, sourceRevision: lease.sourceRevision,
++      availability: "prebuilt" as const, modelBytesRead: 0 as const,
++    },
++  };
++}
++
++export async function inspectPrebuiltNativeModel(installRoot: string, launcher: string) {
++  return await withNativeRuntimeSession(launcher, installRoot, "inference", async (lease) => readPrebuiltNativeModel(lease).metadata);
++}
+diff --git a/packaging/windows/runtime/native-prebuilt-inference.test.mts b/packaging/windows/runtime/native-prebuilt-inference.test.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e682ab350059d73aa47eb9a2d2929119becf5c21
+--- /dev/null
++++ b/packaging/windows/runtime/native-prebuilt-inference.test.mts
+@@ -0,0 +1,70 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import test from "node:test";
++import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
++import { readPrebuiltNativeModel } from "./native-prebuilt-inference.mts";
++
++function fixture() {
++  const root = fs.mkdtempSync(path.join(os.tmpdir(), "prebuilt-model-metadata-"));
++  const packRoot = path.join(root, "inference", NATIVE_EXPRESS.id);
++  fs.mkdirSync(path.join(packRoot, "bin"), { recursive: true });
++  fs.mkdirSync(path.join(packRoot, "model"));
++  const executable = path.join(packRoot, "bin", "llama-server.exe");
++  const weights = path.join(packRoot, "model", NATIVE_EXPRESS.weights.name);
++  fs.writeFileSync(executable, "not-executed");
++  const fd = fs.openSync(weights, "wx");
++  fs.ftruncateSync(fd, NATIVE_EXPRESS.weights.bytes); // Sparse size fixture, never a qualified model.
++  fs.closeSync(fd);
++  const descriptor = {
++    schemaVersion: 1, classification: "prebuilt-native-model-pack", id: NATIVE_EXPRESS.id,
++    model: NATIVE_EXPRESS.model, modelRevision: NATIVE_EXPRESS.modelRevision,
++    runtimeArchiveSha256: NATIVE_EXPRESS.runtime.sha256, cudaArchiveSha256: NATIVE_EXPRESS.cuda.sha256,
++    server: { file: "bin/llama-server.exe", bytes: 12, sha256: "a".repeat(64) },
++    weights: { file: "model/" + NATIVE_EXPRESS.weights.name, bytes: NATIVE_EXPRESS.weights.bytes, sha256: NATIVE_EXPRESS.weights.sha256 },
++  };
++  const save = () => fs.writeFileSync(path.join(packRoot, "pack.json"), JSON.stringify(descriptor));
++  save();
++  let assertions = 0;
++  const lease = { runtimeRoot: root, runtimeId: "b".repeat(64), manifestSha256: "c".repeat(64), sourceRevision: "d".repeat(40), assertHeld() { assertions++; } };
++  return { root, executable, weights, descriptor, save, lease, assertions: () => assertions, close: () => fs.rmSync(root, { recursive: true, force: true }) };
++}
++
++test("held-seal metadata reads do not read the20GB model or execute the server", (t) => {
++  const f = fixture(); t.after(f.close);
++  const original = fs.readFileSync;
++  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
++    assert.notEqual(args[0], f.weights);
++    assert.notEqual(args[0], f.executable);
++    return Reflect.apply(original, fs, args);
++  });
++  const result = readPrebuiltNativeModel(f.lease);
++  assert.equal(result.metadata.modelBytesRead, 0);
++  assert.equal(result.modelPath, f.weights);
++  assert.equal(result.metadata.weightsBytes, NATIVE_EXPRESS.weights.bytes);
++  assert.equal(f.assertions(), 2);
++});
++
++test("a redirected pack path cannot replace the exact executable location", (t) => {
++  const f = fixture(); t.after(f.close);
++  f.descriptor.server.file = "../../foreign.exe"; f.save();
++  assert.throws(() => readPrebuiltNativeModel(f.lease), /catalog identities/u);
++});
++
++test("changed model size or catalog identity prevents a prebuilt availability result", (t) => {
++  const f = fixture(); t.after(f.close);
++  fs.truncateSync(f.weights, 1);
++  assert.throws(() => readPrebuiltNativeModel(f.lease), /installed identity/u);
++  f.descriptor.weights.sha256 = "e".repeat(64); f.save();
++  assert.throws(() => readPrebuiltNativeModel(f.lease), /catalog identities/u);
++});
++
++test("a lost package authority is preserved as the primary failure", (t) => {
++  const f = fixture(); t.after(f.close);
++  const primary = new Error("owned lease stopped");
++  assert.throws(() => readPrebuiltNativeModel({ ...f.lease, assertHeld() { throw primary; } }), (error) => error === primary);
++});
+diff --git a/packaging/windows/runtime/native-runtime-inference.mts b/packaging/windows/runtime/native-runtime-inference.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d84124567dac6718414b0a422580ed214835afd8
+--- /dev/null
++++ b/packaging/windows/runtime/native-runtime-inference.mts
+@@ -0,0 +1,124 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import { createConnection } from "node:net";
++
++// A request to the existing native guardian, not a command or process-ID API.
++// That guardian starts the existing inference owner outside the agent's job.
++export async function startNativeRuntimeInferenceSupervisor(signal?: AbortSignal) {
++  const pipe = process.env.NEMOCLAW_RUNTIME_SERVICE_PIPE;
++  if (!pipe || !/^\\\\\.\\pipe\\NemoClawRuntime-[a-f0-9]{32}$/u.test(pipe))
++    throw new Error("The native inference lifetime owner is unavailable.");
++  signal?.throwIfAborted();
++  const socket = createConnection(pipe);
++  let closed = false;
++  let error: Error | undefined;
++  let pending: { resolve(value: string): void; reject(reason: Error): void } | undefined;
++  let text = "";
++  let committed = false;
++  let ended = false;
++  socket.setNoDelay(true);
++  const fail = (reason: string) => {
++    error ??= new Error(reason);
++    pending?.reject(error);
++    pending = undefined;
++  };
++  socket.on("error", () => fail("The native inference lifetime channel failed."));
++  socket.on("close", () => {
++    closed = true;
++    if (!committed) fail("The native inference lifetime owner closed before admission.");
++  });
++  socket.on("data", (bytes: Buffer) => {
++    if (!pending || bytes.some((byte) => byte > 0x7f) || text.length + bytes.length > 128) {
++      fail("The native inference lifetime reply is invalid.");
++      socket.destroy();
++      return;
++    }
++    text += bytes.toString("ascii");
++    if (!text.endsWith("\n")) return;
++    if (text.indexOf("\n") !== text.length - 1) {
++      fail("The native inference lifetime reply is invalid.");
++      socket.destroy();
++      return;
++    }
++    const reply = text.slice(0, -1);
++    text = "";
++    const receiver = pending;
++    pending = undefined;
++    receiver.resolve(reply);
++  });
++  const request = async (action: "start" | "status" | "commit" | "cancel") => {
++    if (closed || error || pending)
++      throw error ?? new Error("The native lifetime channel is unavailable.");
++    let timer: ReturnType<typeof setTimeout> | undefined;
++    const abortRequest = () => {
++      fail("The native inference admission was stopped.");
++      socket.destroy();
++    };
++    try {
++      if (action !== "cancel") {
++        signal?.throwIfAborted();
++        signal?.addEventListener("abort", abortRequest, { once: true });
++      }
++      return await new Promise<string>((resolve, reject) => {
++        pending = { resolve, reject };
++        timer = setTimeout(() => {
++          fail("The native inference lifetime request timed out.");
++          socket.destroy();
++        }, 10_000);
++        socket.write(`${action}\n`, (failure) => {
++          if (failure) fail("The native inference lifetime request could not be sent.");
++        });
++      });
++    } finally {
++      clearTimeout(timer);
++      signal?.removeEventListener("abort", abortRequest);
++    }
++  };
++  const abort = () => socket.destroy(new Error("The native inference admission was stopped."));
++  signal?.addEventListener("abort", abort, { once: true });
++  try {
++    if (signal?.aborted) abort();
++    const reply = await request("start");
++    const match = /^started ([1-9][0-9]{0,9}) ([a-f0-9]{16})$/u.exec(reply);
++    if (!match || Number(match[1]) > 0xffffffff)
++      throw new Error("The native inference owner identity is invalid.");
++    return {
++      pid: Number(match[1]),
++      creationTime: match[2],
++      get ended() {
++        return ended;
++      },
++      async refresh() {
++        const status = await request("status");
++        if (status === "running") return;
++        if (!/^exited [0-9]{1,10}$/u.test(status))
++          throw new Error("The native inference owner status is invalid.");
++        ended = true;
++      },
++      async commit() {
++        if ((await request("commit")) !== "committed")
++          throw new Error("The native inference owner did not confirm independent admission.");
++        committed = true;
++        socket.end();
++      },
++      async cancel() {
++        if (committed)
++          throw new Error("An admitted shared inference service cannot be cancelled here.");
++        try {
++          if ((await request("cancel")) !== "cancelled")
++            throw new Error("The owned inference start did not confirm cancellation.");
++          ended = true;
++          committed = true; // The owned failed start is closed; no shared service was admitted.
++        } finally {
++          socket.destroy();
++        }
++      },
++    };
++  } catch (failure) {
++    socket.destroy(); // Native owner cancels only its uncommitted newly started child.
++    throw failure;
++  } finally {
++    signal?.removeEventListener("abort", abort);
++  }
++}
+diff --git a/packaging/windows/runtime/native-runtime.mts b/packaging/windows/runtime/native-runtime.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d7f7fa6517e4a3b7d48c7483311b6f865c8d3cc8
+--- /dev/null
++++ b/packaging/windows/runtime/native-runtime.mts
+@@ -0,0 +1,313 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import { spawn } from "node:child_process";
++import path from "node:path";
++import { StringDecoder } from "node:string_decoder";
++
++export type NativeRuntimePurpose =
++  | "openclaw"
++  | "hermes"
++  | "pi"
++  | "langchain-deepagents-code"
++  | "nemocua"
++  | "inference";
++const PURPOSES: readonly NativeRuntimePurpose[] = [
++  "openclaw",
++  "hermes",
++  "pi",
++  "langchain-deepagents-code",
++  "nemocua",
++  "inference",
++];
++const HEX64 = /^[a-f0-9]{64}$/u;
++const HEX40 = /^[a-f0-9]{40}$/u;
++const NODE_VERSION = /^(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})$/u;
++const DIRECTORY = {
++  openclaw: "openclaw",
++  hermes: "hermes",
++  pi: "pi",
++  "langchain-deepagents-code": "deepagents",
++  nemocua: "nemocua",
++} as const;
++
++export function validateNativeRuntimeReceipt(
++  value: unknown,
++  installRoot: string,
++  purpose: NativeRuntimePurpose,
++) {
++  if (
++    !PURPOSES.includes(purpose) ||
++    !/^[A-Za-z]:\\/u.test(installRoot) ||
++    /[\u0000-\u001f]/u.test(installRoot)
++  )
++    throw new Error("The installed runtime identity is invalid.");
++  if (!value || typeof value !== "object" || Array.isArray(value))
++    throw new Error("The native runtime receipt is invalid.");
++  const record = value as Record<string, unknown>;
++  const names = [
++    "schemaVersion",
++    "kind",
++    "agent",
++    "runtimeRoot",
++    "runtimeId",
++    "manifestSha256",
++    "sourceRevision",
++    "nodeSha256",
++    "nodeVersion",
++    "integrity",
++    "leaseHeld",
++  ];
++  if (
++    Object.keys(record).some((name) => !names.includes(name)) ||
++    Object.keys(record).length !== names.length ||
++    record.schemaVersion !== 1 ||
++    record.kind !== "native-runtime-session" ||
++    record.agent !== purpose ||
++    record.leaseHeld !== true ||
++    record.integrity !== "installer-sealed-content" ||
++    typeof record.runtimeId !== "string" ||
++    !HEX64.test(record.runtimeId) ||
++    typeof record.manifestSha256 !== "string" ||
++    !HEX64.test(record.manifestSha256) ||
++    typeof record.sourceRevision !== "string" ||
++    !HEX40.test(record.sourceRevision) ||
++    typeof record.nodeSha256 !== "string" ||
++    !HEX64.test(record.nodeSha256) ||
++    typeof record.nodeVersion !== "string" ||
++    !NODE_VERSION.test(record.nodeVersion) ||
++    typeof record.runtimeRoot !== "string"
++  )
++    throw new Error("The native runtime receipt is invalid.");
++  const installation = path.win32.normalize(installRoot);
++  const runtimeRoot = path.win32.join(installation, "runtimes", record.runtimeId);
++  if (record.runtimeRoot.toLowerCase() !== runtimeRoot.toLowerCase())
++    throw new Error("The runtime lease names a different installed version.");
++  const node = path.win32.join(installation, "bin", "node.exe");
++  const agentRoot =
++    purpose === "inference" ? null : path.win32.join(runtimeRoot, DIRECTORY[purpose]);
++  const python =
++    purpose === "hermes"
++      ? path.win32.join(agentRoot!, "hermes-agent", "venv", "Scripts", "python.exe")
++      : purpose === "nemocua" || purpose === "langchain-deepagents-code"
++        ? path.win32.join(agentRoot!, "python", "python.exe")
++        : null;
++  const bash = purpose === "hermes" ? path.win32.join(agentRoot!, "git", "bin", "bash.exe") : null;
++  return Object.freeze({
++    purpose,
++    runtimeRoot,
++    runtimeId: record.runtimeId,
++    manifestSha256: record.manifestSha256,
++    sourceRevision: record.sourceRevision,
++    nodeSha256: record.nodeSha256,
++    nodeVersion: record.nodeVersion,
++    node,
++    agentRoot,
++    python,
++    bash,
++    readOnlyRoots: Object.freeze([node, path.win32.join(runtimeRoot, "workers"), ...(agentRoot ? [agentRoot] : [])]),
++    integrity: "installer-sealed-content" as const,
++    runtimeBytesCopied: 0 as const,
++    runtimeFilesHashedAtLaunch: 0 as const,
++  });
++}
++
++export async function acquireNativeRuntimeSession(
++  launcher: string,
++  installRoot: string,
++  purpose: NativeRuntimePurpose,
++  options: { signal?: AbortSignal; timeoutMs?: number } = {},
++) {
++  if (!PURPOSES.includes(purpose)) throw new Error("The native runtime purpose is invalid.");
++  const timeoutMs = options.timeoutMs ?? 15_000;
++  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15_000)
++    throw new Error("The runtime admission deadline is invalid.");
++  options.signal?.throwIfAborted();
++  const child = spawn(launcher, ["--runtime-session", purpose], {
++    stdio: ["pipe", "pipe", "pipe"],
++    windowsHide: true,
++  });
++  const decoder = new StringDecoder("utf8");
++  let text = "",
++    count = 0,
++    ended = false,
++    releasing = false,
++    received = false;
++  let failure: Error | null = null;
++  child.stdin.on("error", () => {});
++  child.stderr.resume(); // Native errors are fixed codes; no arbitrary helper output enters UI.
++  const closed = new Promise<number>((resolve) =>
++    child.once("close", (code) => {
++      ended = true;
++      resolve(code ?? 1);
++    }),
++  );
++  let rejectReady: (error: Error) => void = () => {};
++  let rejectFailure!: (error: Error) => void;
++  const cancellation = new AbortController();
++  const failed = new Promise<never>((_, reject) => {
++    rejectFailure = reject;
++  });
++  void failed.catch(() => {});
++  const recordFailure = (error: Error) => {
++    failure ??= error;
++    rejectReady(failure);
++    rejectFailure(failure);
++    cancellation.abort(failure);
++  };
++  child.once("error", () => {
++    recordFailure(new Error("The installed runtime lease owner could not start."));
++  });
++  child.once("close", () => {
++    if (!releasing)
++      recordFailure(new Error("The installed runtime lease owner stopped unexpectedly."));
++    else rejectReady(new Error("The runtime admission was interrupted."));
++  });
++  const settle = async () => {
++    if (ended) return await closed;
++    let timer: ReturnType<typeof setTimeout> | undefined;
++    const first = await Promise.race([
++      closed,
++      new Promise<null>((resolve) => {
++        timer = setTimeout(() => resolve(null), 5000);
++      }),
++    ]);
++    clearTimeout(timer);
++    if (first !== null) return first;
++    child.kill();
++    try {
++      return await Promise.race([
++        closed,
++        new Promise<never>((_, reject) => {
++          timer = setTimeout(
++            () =>
++              reject(new Error("The runtime lease owner did not close after its stop request.")),
++            5000,
++          );
++        }),
++      ]);
++    } catch (error) {
++      child.stdin.destroy();
++      child.stdout.destroy();
++      child.stderr.destroy();
++      child.unref();
++      throw error;
++    } finally {
++      clearTimeout(timer);
++    }
++  };
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  const aborted = () => rejectReady(new Error("The runtime admission was stopped."));
++  let selected: ReturnType<typeof validateNativeRuntimeReceipt>;
++  try {
++    selected = await new Promise((resolve, reject) => {
++      rejectReady = reject;
++      timer = setTimeout(
++        () => reject(new Error("Opening the installed runtime lease timed out.")),
++        timeoutMs,
++      );
++      options.signal?.addEventListener("abort", aborted, { once: true });
++      if (options.signal?.aborted) aborted();
++      child.stdout.on("data", (chunk: Buffer) => {
++        count += chunk.length;
++        if (count > 8192 || received) {
++          recordFailure(new Error("The runtime receipt exceeds its single-record limit."));
++          return;
++        }
++        text += decoder.write(chunk);
++        if (!text.endsWith("\n")) return;
++        try {
++          const value = validateNativeRuntimeReceipt(JSON.parse(text), installRoot, purpose);
++          received = true;
++          resolve(value);
++        } catch {
++          recordFailure(new Error("The native runtime receipt is invalid."));
++        }
++      });
++    });
++    if (ended || failure) throw failure ?? new Error("The runtime lease closed during admission.");
++  } catch (error) {
++    releasing = true;
++    child.stdin.end("release\n");
++    try {
++      await settle();
++    } catch (cleanup) {
++      throw new Error("Runtime admission failed and its owner did not close.", {
++        cause: new AggregateError([error, cleanup]),
++      });
++    }
++    throw error;
++  } finally {
++    clearTimeout(timer);
++    options.signal?.removeEventListener("abort", aborted);
++  }
++  return {
++    ...selected,
++    failure: failed,
++    signal: cancellation.signal,
++    assertHeld() {
++      if (failure || ended || releasing)
++        throw failure ?? new Error("The installed runtime lease is no longer held.");
++    },
++    async release() {
++      if (releasing) return;
++      releasing = true;
++      child.stdin.end("release\n");
++      const code = await settle();
++      if (failure || code !== 0)
++        throw failure ?? new Error("The installed runtime lease did not release cleanly.");
++    },
++  };
++}
++
++export type NativeRuntimeSession = Awaited<ReturnType<typeof acquireNativeRuntimeSession>>;
++
++export async function withNativeRuntimeSession<T>(
++  launcher: string,
++  installRoot: string,
++  purpose: NativeRuntimePurpose,
++  operation: (runtime: NativeRuntimeSession) => Promise<T>,
++  cleanupFailure?: (error: unknown) => void,
++): Promise<T> {
++  const runtime = await acquireNativeRuntimeSession(launcher, installRoot, purpose);
++  return await usingNativeRuntimeSession(runtime, operation, cleanupFailure);
++}
++
++export async function usingNativeRuntimeSession<T>(
++  runtime: NativeRuntimeSession,
++  operation: (runtime: NativeRuntimeSession) => Promise<T>,
++  cleanupFailure?: (error: unknown) => void,
++): Promise<T> {
++  let failed = false;
++  try {
++    return await operation(runtime);
++  } catch (error) {
++    failed = true;
++    throw error;
++  } finally {
++    try {
++      await runtime.release();
++    } catch (error) {
++      try {
++        cleanupFailure?.(error);
++      } catch {
++        console.error("The runtime cleanup diagnostic could not be recorded.");
++      }
++      if (!failed) throw error;
++      console.error("The immutable runtime lease also failed to release cleanly.");
++    }
++  }
++}
++
++export function bindNativeRuntimeGuard<T extends { assertHeld(): void }>(
++  state: T,
++  runtime: NativeRuntimeSession,
++): T {
++  return {
++    ...state,
++    assertHeld() {
++      state.assertHeld();
++      runtime.assertHeld();
++    },
++  };
++}
+diff --git a/packaging/windows/runtime/native-setup-configuration.mts b/packaging/windows/runtime/native-setup-configuration.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c80885ba0a01dae517627fff61a1dbfe2114e88e
+--- /dev/null
++++ b/packaging/windows/runtime/native-setup-configuration.mts
+@@ -0,0 +1,299 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++// Configuration is a separate executable entrypoint: it must not import agent startup.
++import fs from "node:fs";
++import path from "node:path";
++import { randomBytes } from "node:crypto";
++import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
++import { inspectPrebuiltNativeModel } from "./native-prebuilt-inference.mts";
++import {
++  NATIVE_SERVICES,
++  nativeServiceBinding,
++  normalizeNativeOptions,
++  readNativeServiceEnvironment,
++  selectedNativeServices,
++  type NativeOptions,
++} from "./native-options.mts";
++import {
++  deleteCredentialByBinding,
++  nativeCredentialBinding,
++  readOpenedRegularFile,
++  readWindowsCredential,
++} from "./native-security.mts";
++
++export type NativeOnboardingConfiguration = {
++  agent: string;
++  inference: string;
++  endpoint?: string;
++  model: string;
++  credential: string;
++  options: NativeOptions & Record<string, unknown>;
++  localModel?: string;
++};
++
++function fail(message: string): never {
++  throw new Error(`NemoClaw native Windows launch failed: ${message}`);
++}
++
++function requiredDirectory(directory: string, label: string): string {
++  const resolved = path.resolve(directory);
++  if (!fs.statSync(resolved, { throwIfNoEntry: false })?.isDirectory()) fail(`${label} is missing`);
++  return resolved;
++}
++
++const PROVIDER_CONFIGURATION: Record<
++  string,
++  { endpoint: string | null; credentialRequired: boolean; credentialPrefix: string | null }
++> = {
++  nvidia: {
++    endpoint: "https://integrate.api.nvidia.com/v1",
++    credentialRequired: true,
++    credentialPrefix: "nvapi-",
++  },
++  openrouter: {
++    endpoint: "https://openrouter.ai/api/v1",
++    credentialRequired: true,
++    credentialPrefix: "sk-or-",
++  },
++  compatible: { endpoint: null, credentialRequired: false, credentialPrefix: null },
++  local: { endpoint: null, credentialRequired: false, credentialPrefix: null },
++};
++
++function normalizeProviderCredential(inference: string, value: unknown): string {
++  const provider = PROVIDER_CONFIGURATION[inference];
++  const credential = typeof value === "string" ? value.trim() : "";
++  if (Buffer.byteLength(credential, "utf8") > 2048 || /[\u0000\r\n]/u.test(credential))
++    throw new Error("The provider credential is invalid.");
++  if (provider.credentialRequired && !credential)
++    throw new Error("The selected provider requires an API key.");
++  if (provider.credentialPrefix && !credential.startsWith(provider.credentialPrefix))
++    throw new Error(`The ${inference} API key has an unexpected format.`);
++  return credential;
++}
++
++export function normalizeOnboardingConfiguration(
++  submitted: { agent: string; inference: string; options: Record<string, unknown> },
++  qualification: boolean,
++  metadataOnly = false,
++): NativeOnboardingConfiguration {
++  const agents = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"]);
++  if (!agents.has(submitted?.agent)) throw new Error("Select a valid agent runtime.");
++  if (qualification) {
++    if (submitted?.inference !== "qualification")
++      throw new Error("Qualification must use its deterministic local inference endpoint.");
++    return {
++      agent: submitted.agent,
++      inference: "qualification",
++      endpoint: "http://127.0.0.1/qualification",
++      model: "native-preview",
++      credential: "",
++      options: submitted.options ?? {},
++    };
++  }
++  if (!Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference))
++    throw new Error("Select a valid inference provider.");
++  const provider = PROVIDER_CONFIGURATION[submitted.inference];
++  const options = submitted?.options;
++  if (options === null || typeof options !== "object" || Array.isArray(options))
++    throw new Error("Onboarding options are invalid.");
++  if (options.localModel !== undefined) {
++    if (submitted.inference !== "local" || options.localModel !== NATIVE_EXPRESS.id
++      || options.model !== NATIVE_EXPRESS.model || options.endpoint !== undefined
++      || (options.credential !== undefined && options.credential !== ""))
++      throw new Error("The prebuilt local model must be a logical selection without an endpoint or external key.");
++    return { agent: submitted.agent, inference: "local", model: NATIVE_EXPRESS.model,
++      localModel: NATIVE_EXPRESS.id, credential: "", options };
++  }
++  const submittedEndpoint = typeof options.endpoint === "string" ? options.endpoint.trim() : "";
++  const endpoint = provider.endpoint ?? submittedEndpoint;
++  let endpointUrl;
++  try {
++    endpointUrl = new URL(endpoint ?? "");
++  } catch {
++    throw new Error("Enter a complete inference endpoint URL.");
++  }
++  const endpointIsAllowed =
++    submitted.inference === "local"
++      ? endpointUrl.protocol === "http:" || endpointUrl.protocol === "https:"
++      : endpointUrl.protocol === "https:";
++  if (!endpointIsAllowed) throw new Error("The selected inference endpoint protocol is unsafe.");
++  if (
++    submitted.inference === "local" &&
++    !["127.0.0.1", "localhost", "[::1]"].includes(endpointUrl.hostname)
++  )
++    throw new Error("Local inference must use a loopback endpoint.");
++  const model = typeof options.model === "string" ? options.model.trim() : "";
++  if (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model))
++    throw new Error("Enter a valid model ID.");
++  const credential = metadataOnly
++    ? ""
++    : normalizeProviderCredential(submitted.inference, options.credential);
++  return {
++    agent: submitted.agent,
++    inference: submitted.inference,
++    endpoint: endpointUrl.toString().replace(/\/$/u, ""),
++    model,
++    credential,
++    options,
++  };
++}
++
++export function writeNativeAgentConfiguration(configuration: NativeOnboardingConfiguration) {
++  const localAppData = requiredDirectory(
++    process.env.LOCALAPPDATA ?? "",
++    "Windows local application-data directory",
++  );
++  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
++  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
++  const configPath = path.join(stateRoot, "native-windows.json");
++  const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
++  const persisted = {
++    schemaVersion: 1,
++    classification: "nemoclaw-native-windows-agent-configuration",
++    agent: configuration.agent,
++    inference: configuration.inference,
++    endpoint: configuration.endpoint,
++    model: configuration.model,
++    credentialStored: Boolean(configuration.credential),
++    profile: "personal",
++    ...(configuration.localModel ? { localModel: configuration.localModel } : {}),
++    options: Object.fromEntries(
++      Object.entries(configuration.options).filter(
++        ([name]) => !["credential", "endpoint", "model"].includes(name),
++      ),
++    ),
++  };
++  fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
++    encoding: "utf8",
++    flag: "wx",
++    mode: 0o600,
++  });
++  fs.renameSync(temporaryPath, configPath);
++  const activePath = path.join(localAppData, "NVIDIA", "NemoClaw", "active-agent.txt");
++  const activeTemporaryPath = `${activePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
++  fs.writeFileSync(activeTemporaryPath, `${configuration.agent}\n`, {
++    encoding: "utf8",
++    flag: "wx",
++    mode: 0o600,
++  });
++  fs.renameSync(activeTemporaryPath, activePath);
++  return configPath;
++}
++
++export async function configureNativeFromStdin(
++  launcher: string,
++  args: readonly string[] = process.argv,
++  input: AsyncIterable<Buffer> = process.stdin,
++  output: Pick<NodeJS.WriteStream, "write"> = process.stdout,
++  dependencies: { inspectModel?: typeof inspectPrebuiltNativeModel } = {},
++) {
++  const chunks: Buffer[] = [];
++  let bytes = 0;
++  for await (const chunk of input) {
++    bytes += chunk.length;
++    if (bytes > 16 * 1024) fail("native setup configuration exceeds its size limit");
++    chunks.push(chunk);
++  }
++  const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++  if (
++    submitted?.schemaVersion !== 1 ||
++    submitted?.classification !== "nemoclaw-native-windows-agent-configuration" ||
++    typeof submitted?.credentialStored !== "boolean" ||
++    (submitted?.localModel === undefined ? typeof submitted?.endpoint !== "string" : submitted.endpoint !== undefined) ||
++    typeof submitted?.model !== "string" ||
++    !Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference) ||
++    submitted?.options === null ||
++    typeof submitted?.options !== "object" ||
++    Array.isArray(submitted.options) ||
++    (submitted.profile !== undefined && submitted.profile !== "personal") ||
++    (submitted.localModel !== undefined &&
++      (submitted.localModel !== "n1x-qwen3.6-35b-a3b" ||
++        submitted.inference !== "local" ||
++        submitted.credentialStored || submitted.model !== NATIVE_EXPRESS.model))
++  )
++    fail("native setup configuration is invalid");
++  const normalized = normalizeOnboardingConfiguration(
++    {
++      agent: submitted.agent,
++      inference: submitted.inference,
++      options: { endpoint: submitted.endpoint, model: submitted.model, ...(submitted.localModel ? { localModel: submitted.localModel } : {}) },
++    },
++    false,
++    true,
++  );
++  normalized.options = normalizeNativeOptions(submitted.agent, submitted.options);
++  if (submitted.localModel) normalized.localModel = submitted.localModel;
++  const servicePosition = args.indexOf("--prepare-service");
++  if (servicePosition !== -1) {
++    const service = args[servicePosition + 1] ?? "";
++    if (!selectedNativeServices(normalized.options).some((selected) => selected === service))
++      fail("the service is not selected for this agent");
++    output.write(nativeServiceBinding(submitted.agent, service ?? ""));
++    return;
++  }
++  if (
++    PROVIDER_CONFIGURATION[normalized.inference].credentialRequired &&
++    !submitted.credentialStored
++  )
++    fail("the selected provider requires a credential");
++  const localModel = normalized.localModel
++    ? await (dependencies.inspectModel ?? inspectPrebuiltNativeModel)(path.dirname(path.dirname(launcher)), launcher)
++    : undefined;
++  const binding = normalized.localModel ? null : nativeCredentialBinding({ ...normalized, endpoint: normalized.endpoint! });
++  if (args.includes("--prepare-all")) {
++    output.write(
++      JSON.stringify({
++        schemaVersion: 1,
++        inference: binding,
++        ...(localModel ? { localModel } : {}),
++        services: Object.fromEntries(
++          selectedNativeServices(normalized.options).map((service) => [
++            service,
++            nativeServiceBinding(normalized.agent, service),
++          ]),
++        ),
++      }),
++    );
++    return;
++  }
++  if (args.includes("--prepare")) {
++    if (binding === null) fail("a prebuilt local model does not use an external inference credential binding");
++    output.write(binding);
++    return;
++  }
++  const credential = normalized.localModel ? "" : await readWindowsCredential(launcher, { ...normalized, endpoint: normalized.endpoint! }, submitted.credentialStored);
++  normalized.credential = normalizeProviderCredential(normalized.inference, credential);
++  await readNativeServiceEnvironment(launcher, normalized.agent, normalized.options);
++  const previousPath = path.join(
++    requiredDirectory(process.env.LOCALAPPDATA ?? "", "Windows local application-data directory"),
++    "NVIDIA",
++    "NemoClaw",
++    "agents",
++    normalized.agent,
++    "native-windows.json",
++  );
++  const previousText = readOpenedRegularFile(previousPath, {
++    encoding: "utf8",
++    maxBytes: 16 * 1024,
++  });
++  const previous = previousText === null ? null : JSON.parse(previousText);
++  const previousBinding =
++    previous?.schemaVersion === 1 &&
++    previous?.agent === normalized.agent &&
++    previous?.credentialStored === true
++      ? nativeCredentialBinding(previous)
++      : null;
++  writeNativeAgentConfiguration(normalized);
++  if (previousBinding && previousBinding !== binding)
++    await deleteCredentialByBinding(launcher, previous.inference, previousBinding);
++  const selectedServices = selectedNativeServices(normalized.options);
++  for (const service of Object.keys(NATIVE_SERVICES)) {
++    if (!selectedServices.some((selected) => selected === service))
++      await deleteCredentialByBinding(
++        launcher,
++        service,
++        nativeServiceBinding(normalized.agent, service),
++      );
++  }
++}
+diff --git a/packaging/windows/runtime/native-setup-configuration.test.mts b/packaging/windows/runtime/native-setup-configuration.test.mts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7d58579f160e79f3cd1e2e12474e8fd4eef895bd
+--- /dev/null
++++ b/packaging/windows/runtime/native-setup-configuration.test.mts
+@@ -0,0 +1,127 @@
++// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++// SPDX-License-Identifier: Apache-2.0
++
++import assert from "node:assert/strict";
++import { Readable } from "node:stream";
++import test from "node:test";
++import { configureNativeFromStdin } from "./native-setup-configuration.mts";
++import { nativeCredentialBinding } from "./native-security.mts";
++import { nativeServiceBinding } from "./native-options.mts";
++import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
++
++const configuration = {
++  schemaVersion: 1,
++  classification: "nemoclaw-native-windows-agent-configuration",
++  agent: "hermes",
++  inference: "nvidia",
++  endpoint: "https://integrate.api.nvidia.com/v1",
++  model: "test-model",
++  credentialStored: true,
++  profile: "personal",
++  options: {
++    search: { provider: "tavily", credentialStored: true },
++    messaging: { telegram: { credentialStored: true, allowedUsers: ["123456"] } },
++  },
++};
++
++async function prepare(value: unknown, args = ["--prepare-all"]): Promise<string> {
++  let result = "";
++  await configureNativeFromStdin(
++    "nonexistent-credential-helper",
++    args,
++    Readable.from([Buffer.from(JSON.stringify(value))]),
++    {
++      write: ((chunk: string | Uint8Array) => {
++        result += chunk.toString();
++        return true;
++      }) as NodeJS.WriteStream["write"],
++    },
++  );
++  return result;
++}
++
++test("one metadata-only call returns all selected existing credential identities", async () => {
++  assert.deepEqual(JSON.parse(await prepare(configuration)), {
++    schemaVersion: 1,
++    inference: nativeCredentialBinding(configuration),
++    services: {
++      tavily: nativeServiceBinding("hermes", "tavily"),
++      telegram: nativeServiceBinding("hermes", "telegram"),
++    },
++  });
++  assert.equal(await prepare(configuration, ["--prepare"]), nativeCredentialBinding(configuration));
++});
++
++test("invalid or missing credentials fail before emitting a preparation result", async () => {
++  await assert.rejects(
++    prepare({ ...configuration, credentialStored: false }),
++    /requires a credential/u,
++  );
++  await assert.rejects(
++    prepare({
++      ...configuration,
++      options: { search: { provider: "brave", credentialStored: true } },
++    }),
++    /does not support/u,
++  );
++  await assert.rejects(
++    prepare({
++      ...configuration,
++      options: { messaging: { telegram: { credentialStored: true, allowedUsers: ["invalid"] } } },
++    }),
++    /valid messaging/u,
++  );
++});
++
++test("custom provider bindings retain the broker endpoint security boundary", async () => {
++  await assert.rejects(
++    prepare({
++      ...configuration,
++      inference: "compatible",
++      endpoint: "https://user:password@example.invalid/v1",
++    }),
++    /endpoint violates/u,
++  );
++  const local = {
++    ...configuration,
++    inference: "local",
++    endpoint: "http://127.0.0.1:12345/v1",
++    credentialStored: false,
++    options: {},
++  };
++  assert.deepEqual(JSON.parse(await prepare(local)), {
++    schemaVersion: 1,
++    inference: nativeCredentialBinding(local),
++    services: {},
++  });
++});
++
++test("metadata input is bounded before parsing or credential access", async () => {
++  await assert.rejects(prepare({ ...configuration, model: "x".repeat(17 * 1024) }), /size limit/u);
++});
++
++test("logical prebuilt model preparation emits no endpoint or external credential binding", async () => {
++  const local = { ...configuration, inference: "local", endpoint: undefined, model: NATIVE_EXPRESS.model,
++    credentialStored: false, localModel: NATIVE_EXPRESS.id, options: {} };
++  const metadata = { schemaVersion: 1, id: NATIVE_EXPRESS.id, model: NATIVE_EXPRESS.model,
++    modelRevision: NATIVE_EXPRESS.modelRevision, weightsSha256: NATIVE_EXPRESS.weights.sha256,
++    weightsBytes: NATIVE_EXPRESS.weights.bytes, packSha256: "a".repeat(64), runtimeId: "b".repeat(64),
++    runtimeManifestSha256: "c".repeat(64), sourceRevision: "d".repeat(40), availability: "prebuilt" as const, modelBytesRead: 0 as const };
++  let inspections = 0;
++  let text = "";
++  await configureNativeFromStdin("unused-native-credential-helper", ["--prepare-all"], Readable.from([Buffer.from(JSON.stringify(local))]), {
++    write: ((chunk: string) => { text += chunk; return true; }) as NodeJS.WriteStream["write"],
++  }, { inspectModel: async () => { inspections++; return metadata; } });
++  assert.equal(inspections, 1);
++  assert.deepEqual(JSON.parse(text), { schemaVersion: 1, inference: null, localModel: metadata, services: {} });
++  assert.equal(text.includes("endpoint"), false);
++});
++
++test("a local-model endpoint placeholder is rejected before inspecting a pack", async () => {
++  let called = false;
++  await assert.rejects(configureNativeFromStdin("unused", ["--prepare-all"], Readable.from([Buffer.from(JSON.stringify({
++    ...configuration, inference: "local", endpoint: "http://127.0.0.1:1", model: NATIVE_EXPRESS.model,
++    credentialStored: false, localModel: NATIVE_EXPRESS.id, options: {},
++  }))]), process.stdout, { inspectModel: async () => { called = true; throw new Error("must not inspect"); } }), /configuration is invalid/u);
++  assert.equal(called, false);
++});
+diff --git a/packaging/windows/runtime/run-installed-native-console-agent.mts b/packaging/windows/runtime/run-installed-native-console-agent.mts
+index 971b5aadbaf7f529e74f4abd5e4a59a82c919e22..252e5d6c0250955b9d3f7a2204a4a963a4317dca 100644
+--- a/packaging/windows/runtime/run-installed-native-console-agent.mts
++++ b/packaging/windows/runtime/run-installed-native-console-agent.mts
+@@ -3,0 +4,3 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
++import { nativeWorkerAssets } from "./native-assets.mts";
+@@ -9,0 +13,5 @@ import { fileURLToPath } from "node:url";
++import {
++  withNativeRuntimeSession,
++  bindNativeRuntimeGuard,
++  type NativeRuntimeSession,
++} from "./native-runtime.mts";
+@@ -13 +21 @@ import { startFileTcpRelay } from "./native-ui-relay.mts";
+-import { copyNativeRuntime, openNativeWebSession } from "./native-web-session.mts";
++import { openNativeWebSession } from "./native-web-session.mts";
+@@ -143 +151 @@ function readConfiguration(agentId) {
+-    typeof config?.endpoint !== "string" ||
++    (typeof config?.endpoint !== "string" && config.localModel === undefined) ||
+@@ -229,0 +238 @@ const sitePackages = process.env.NEMOCLAW_AGENT_SITE_PACKAGES;
++const hermesSource = process.env.NEMOCLAW_HERMES_SOURCE_ROOT;
+@@ -331 +340 @@ if (agent === "pi") {
+-  if (!python || !sitePackages) throw new Error("Hermes Python runtime is incomplete");
++  if (!python || !hermesSource) throw new Error("Hermes Python runtime is incomplete");
+@@ -346,0 +356,2 @@ if (agent === "pi") {
++    "security:",
++    "  allow_lazy_installs: false",
+@@ -347,0 +359 @@ if (agent === "pi") {
++    "  check: false",
+@@ -388 +400,2 @@ if (agent === "pi") {
+-    "sys.path.insert(0, os.environ['NEMOCLAW_AGENT_SITE_PACKAGES'])",
++    "from hermes_cli import __version__ as _hermes_version",
++    "if _hermes_version != '0.21.1': raise RuntimeError('The official Hermes runtime version does not match its installation')",
+@@ -401 +414 @@ if (agent === "pi") {
+-  extraEnvironment = { HERMES_HOME: hermesHome, ...(dashboard ? {
++  extraEnvironment = { HERMES_HOME: hermesHome, HERMES_TUI_DIR: process.env.NEMOCLAW_HERMES_TUI_DIR, HERMES_NODE: node, HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1", HERMES_DISABLE_LAZY_INSTALLS: "1", ...(dashboard ? {
+@@ -406 +418,0 @@ if (agent === "pi") {
+-    HERMES_NODE: node, HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1",
+@@ -440 +451,0 @@ if (agent === "pi") {
+-    "sys.path.insert(0, os.environ['NEMOCLAW_AGENT_SITE_PACKAGES'])",
+@@ -654,0 +666 @@ async function runNativeConsoleAgentInternal(
++  runtimeLease: NativeRuntimeSession,
+@@ -695 +707 @@ async function runNativeConsoleAgentInternal(
+-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
++  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
+@@ -702,2 +714,2 @@ async function runNativeConsoleAgentInternal(
+-    path.join(installRoot, adapter.runtimeDirectory),
+-    `${adapter.displayName} runtime`,
++    runtimeLease.agentRoot,
++    `${adapter.displayName} sealed runtime`,
+@@ -706 +718,3 @@ async function runNativeConsoleAgentInternal(
+-    agentId === "pi" ? null : requiredDirectory(path.join(installRoot, "python"), "Python runtime");
++    runtimeLease.python === null
++      ? null
++      : requiredDirectory(path.dirname(runtimeLease.python), "sealed Python directory");
+@@ -734 +748,4 @@ async function runNativeConsoleAgentInternal(
+-  const stateSession = await acquireNativeStateSession(launcher, agentId);
++  const stateSession = bindNativeRuntimeGuard(
++    await acquireNativeStateSession(launcher, agentId),
++    runtimeLease,
++  );
+@@ -792,35 +809,3 @@ async function runNativeConsoleAgentInternal(
+-    const node = path.join(runtimeRoot, "node.exe");
+-    const runtime = path.join(runtimeRoot, adapter.runtimeDirectory);
+-    const pythonRoot = path.join(runtimeRoot, "python");
+-    if (dashboard) {
+-      await copyNativeRuntime(
+-        [
+-          { source: installedNode, destination: node },
+-          { source: installedRuntime, destination: runtime },
+-          ...(installedPython === null
+-            ? []
+-            : [{ source: installedPython, destination: pythonRoot }]),
+-        ],
+-        {
+-          signal: webSession?.signal,
+-          onTargetStart: (index) =>
+-            diagnostics.stage(
+-              index === 0
+-                ? "runtime-copy-node"
+-                : index === 1
+-                  ? "runtime-copy-agent"
+-                  : "runtime-copy-python",
+-            ),
+-          onProgress: (counts) => webSession?.progress("runtime", counts),
+-        },
+-      );
+-    } else {
+-      diagnostics.stage("runtime-copy-node");
+-      fs.copyFileSync(installedNode, node);
+-      diagnostics.stage("runtime-copy-agent");
+-      fs.cpSync(installedRuntime, runtime, { recursive: true });
+-      if (installedPython !== null) {
+-        diagnostics.stage("runtime-copy-python");
+-        fs.cpSync(installedPython, pythonRoot, { recursive: true });
+-      }
+-    }
++    runtimeLease.assertHeld();
++    const node = installedNode;
++    const runtime = installedRuntime;
+@@ -828,14 +813,2 @@ async function runNativeConsoleAgentInternal(
+-    if (installedPython !== null) {
+-      fs.writeFileSync(
+-        path.join(pythonRoot, "python313._pth"),
+-        [
+-          "python313.zip",
+-          ".",
+-          path.relative(pythonRoot, path.join(runtime, "site-packages")),
+-          "import site",
+-          "",
+-        ].join("\r\n"),
+-        "ascii",
+-      );
+-    }
+-    const workload = path.join(runtimeRoot, "run-native-agent.mjs");
++    const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "interactive");
++    const workload = requiredFile(worker.entry, "prebuilt interactive agent worker");
+@@ -858,14 +830,0 @@ async function runNativeConsoleAgentInternal(
+-    fs.writeFileSync(workload, interactiveWorkloadSource(), "utf8");
+-    for (const file of ["native-broker-tunnel.mts", "native-broker-relay-protocol.mts"])
+-      fs.copyFileSync(
+-        requiredFile(path.join(installRoot, "qualification", file), "native broker transport"),
+-        path.join(runtimeRoot, file),
+-      );
+-    if (dashboard)
+-      fs.copyFileSync(
+-        requiredFile(
+-          path.join(installRoot, "qualification", "native-ui-tunnel.mts"),
+-          "native UI tunnel",
+-        ),
+-        path.join(runtimeRoot, "native-ui-tunnel.mts"),
+-      );
+@@ -883,0 +843 @@ async function runNativeConsoleAgentInternal(
++        ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
+@@ -952,0 +913 @@ async function runNativeConsoleAgentInternal(
++        ...worker.environment,
+@@ -976 +937 @@ async function runNativeConsoleAgentInternal(
+-        NEMOCLAW_AGENT_PYTHON: installedPython === null ? "" : path.join(pythonRoot, "python.exe"),
++        NEMOCLAW_AGENT_PYTHON: runtimeLease.python ?? "",
+@@ -977,0 +939,3 @@ async function runNativeConsoleAgentInternal(
++        NEMOCLAW_HERMES_SOURCE_ROOT: agentId === "hermes" ? path.join(runtime, "hermes-agent") : "",
++        NEMOCLAW_HERMES_TUI_DIR:
++          agentId === "hermes" ? path.join(runtime, "hermes-agent", "ui-tui") : "",
+@@ -979 +943 @@ async function runNativeConsoleAgentInternal(
+-          installedPython === null ? "" : path.join(runtime, "site-packages"),
++          agentId === "langchain-deepagents-code" ? path.join(runtime, "site-packages") : "",
+@@ -1473 +1437,24 @@ export async function runNativeConsoleAgent(
+-    await runNativeConsoleAgentInternal(options, diagnostics);
++    await withNativeRuntimeSession(
++      path.join(installRoot, "bin", "NemoClaw.exe"),
++      installRoot,
++      agent as NativeRuntimeSession["purpose"],
++      (runtimeLease) => {
++        const opened = options.webSession;
++        const guarded = opened
++          ? {
++              ...opened,
++              signal: AbortSignal.any([opened.signal, runtimeLease.signal]),
++              assertRunning() {
++                opened.assertRunning();
++                runtimeLease.assertHeld();
++              },
++            }
++          : undefined;
++        return runNativeConsoleAgentInternal(
++          { ...options, webSession: guarded },
++          diagnostics,
++          runtimeLease,
++        );
++      },
++      () => diagnostics.cleanupFailed("immutable runtime lease"),
++    );
+@@ -1527,2 +1514,2 @@ export async function runNativeConsoleAgent(
+-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+-  runNativeConsoleAgent().catch((error) => {
++export async function runNativeConsoleEntry() {
++  await runNativeConsoleAgent().catch((error) => {
+@@ -1536,0 +1524,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
++
++}
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeConsoleEntry();
++}
+diff --git a/packaging/windows/runtime/run-installed-native-hermes-ui.mts b/packaging/windows/runtime/run-installed-native-hermes-ui.mts
+index 3d4b8fa4009fa2782035e8ff7b2b4d3934fca54e..f33c315b7588bed363f3854fd9fb77150198c10e 100644
+--- a/packaging/windows/runtime/run-installed-native-hermes-ui.mts
++++ b/packaging/windows/runtime/run-installed-native-hermes-ui.mts
+@@ -3,0 +4,2 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
+@@ -6,0 +9 @@ import { openNativeWebSession } from "./native-web-session.mts";
++import { runNativeConsoleAgent } from "./run-installed-native-console-agent.mts";
+@@ -8,2 +11 @@ import { openNativeWebSession } from "./native-web-session.mts";
+-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+-  const { runNativeConsoleAgent } = await import("./run-installed-native-console-agent.mts");
++export async function runNativeHermesUiEntry() {
+@@ -34,0 +37,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeHermesUiEntry();
++}
+diff --git a/packaging/windows/runtime/run-installed-native-nemocua.mts b/packaging/windows/runtime/run-installed-native-nemocua.mts
+index e74662db5d22af94867d734196292df603ef6a2b..8f3b2603ecc20d16355496d7744fc3bbf87e37c4 100644
+--- a/packaging/windows/runtime/run-installed-native-nemocua.mts
++++ b/packaging/windows/runtime/run-installed-native-nemocua.mts
+@@ -3,0 +4,4 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
++import { nativeWorkerAssets } from "./native-assets.mts";
++import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+@@ -67 +71 @@ function readNativeConfiguration() {
+-    typeof config?.endpoint !== "string" ||
++    (typeof config?.endpoint !== "string" && config.localModel === undefined) ||
+@@ -209 +213 @@ async function startBrowserBridge(
+-  const require = createRequire(import.meta.url);
++  const require = createRequire(path.join(openClawRoot, "package.json"));
+@@ -412 +416 @@ async function waitForGuardedResult(
+-async function main() {
++async function mainInternal(runtimeLease: NativeRuntimeSession) {
+@@ -425 +429 @@ async function main() {
+-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
++  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
+@@ -431,4 +435,3 @@ async function main() {
+-  const installedPythonRoot = requiredDirectory(path.join(installRoot, "python"), "Python runtime");
+-  const installedNemoCuaRoot = requiredDirectory(
+-    path.join(installRoot, "nemocua"),
+-    "NemoCUA runtime",
++  const installedPythonRoot = requiredDirectory(
++    path.dirname(runtimeLease.python!),
++    "sealed Python directory",
+@@ -435,0 +439 @@ async function main() {
++  const installedNemoCuaRoot = requiredDirectory(runtimeLease.agentRoot, "sealed NemoCUA runtime");
+@@ -437,2 +441,2 @@ async function main() {
+-    path.join(installRoot, "openclaw"),
+-    "OpenClaw browser-driver runtime",
++    path.join(runtimeLease.runtimeRoot, "openclaw"),
++    "sealed OpenClaw browser-driver runtime",
+@@ -488,7 +492,4 @@ async function main() {
+-    const pythonRoot = path.join(runtimeRoot, "python");
+-    const nemocuaRoot = path.join(runtimeRoot, "nemocua");
+-    const node = path.join(runtimeRoot, "node.exe");
+-    fs.copyFileSync(installedNode, node);
+-    fs.cpSync(installedPythonRoot, pythonRoot, { recursive: true });
+-    fs.cpSync(installedNemoCuaRoot, nemocuaRoot, { recursive: true });
+-    const python = requiredFile(path.join(pythonRoot, "python.exe"), "staged Python runtime");
++    runtimeLease.assertHeld();
++    const nemocuaRoot = installedNemoCuaRoot;
++    const node = installedNode;
++    const python = requiredFile(runtimeLease.python, "sealed NemoCUA Python runtime");
+@@ -497 +498 @@ async function main() {
+-      "staged NemoCUA harness",
++      "sealed NemoCUA harness",
+@@ -508,0 +510 @@ async function main() {
++        ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
+@@ -531,2 +533,2 @@ async function main() {
+-    const relayWorkload = path.join(runtimeRoot, "nemocua-native-relay.mjs");
+-    fs.writeFileSync(relayWorkload, relayWorkloadSource(), "utf8");
++    const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "nemocua");
++    const relayWorkload = requiredFile(worker.entry, "prebuilt NemoCUA worker");
+@@ -574,0 +577 @@ async function main() {
++      ...worker.environment,
+@@ -643 +646 @@ async function main() {
+-      resultMonitoring.signal,
++      AbortSignal.any([resultMonitoring.signal, runtimeLease.signal]),
+@@ -647 +650,3 @@ async function main() {
+-      agentResult = JSON.parse(await Promise.race([resultWait, browserRelay.failure]));
++      agentResult = JSON.parse(
++        await Promise.race([resultWait, browserRelay.failure, runtimeLease.failure]),
++      );
+@@ -651,0 +657 @@ async function main() {
++    runtimeLease.assertHeld();
+@@ -708,7 +714,21 @@ async function main() {
+-      runtimeEntrypointSha256: createHash("sha256")
+-        .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
+-        .digest("hex"),
+-      pythonSha256: createHash("sha256")
+-        .update(fs.readFileSync(path.join(installedPythonRoot, "python.exe")))
+-        .digest("hex"),
+-      openShellSha256: createHash("sha256").update(fs.readFileSync(openshell)).digest("hex"),
++      runtimeEntrypointSha256: qualification
++        ? createHash("sha256")
++            .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
++            .digest("hex")
++        : null,
++      pythonSha256: qualification
++        ? createHash("sha256")
++            .update(fs.readFileSync(path.join(installedPythonRoot, "python.exe")))
++            .digest("hex")
++        : null,
++      openShellSha256: qualification
++        ? createHash("sha256").update(fs.readFileSync(openshell)).digest("hex")
++        : null,
++      runtimeIdentity: {
++        runtimeId: runtimeLease.runtimeId,
++        manifestSha256: runtimeLease.manifestSha256,
++        sourceRevision: runtimeLease.sourceRevision,
++        integrity: runtimeLease.integrity,
++      },
++      runtimeFilesHashed: qualification ? 3 : 0,
++      runtimeBytesCopied: 0,
+@@ -815 +835,19 @@ async function main() {
+-main().catch((error) => {
++async function main() {
++  const installRoot = requiredDirectory(
++    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
++    "NemoClaw installation root",
++  );
++  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
++  const purpose = "nemocua";
++  if (!["openclaw", "hermes", "pi", "langchain-deepagents-code", "nemocua"].includes(purpose))
++    fail("unsupported native runtime purpose");
++  return await withNativeRuntimeSession(
++    launcher,
++    installRoot,
++    purpose as NativeRuntimeSession["purpose"],
++    mainInternal,
++  );
++}
++
++export async function runNativeNemoCuaEntry() {
++  await main().catch((error) => {
+@@ -823,0 +862,6 @@ main().catch((error) => {
++
++}
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeNemoCuaEntry();
++}
+diff --git a/packaging/windows/runtime/run-installed-native-pi.mts b/packaging/windows/runtime/run-installed-native-pi.mts
+index 2ea5fc0f10106bb61f552b0c6836c76190689c1f..5fb2f54999a8bb2b3f0a9a66beb8eec218913f31 100644
+--- a/packaging/windows/runtime/run-installed-native-pi.mts
++++ b/packaging/windows/runtime/run-installed-native-pi.mts
+@@ -3,0 +4,4 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
++import { nativeWorkerAssets } from "./native-assets.mts";
++import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+@@ -389 +392,0 @@ const python = required("NEMOCLAW_HERMES_PYTHON");
+-const sitePackages = required("NEMOCLAW_HERMES_SITE_PACKAGES");
+@@ -461,0 +465,2 @@ writeFileSync(join(hermesHome, "config.yaml"), [
++  "security:",
++  "  allow_lazy_installs: false",
+@@ -462,0 +468 @@ writeFileSync(join(hermesHome, "config.yaml"), [
++  "  check: false",
+@@ -472 +477,0 @@ writeFileSync(runner, [
+-  "sys.path.insert(0, os.environ['NEMOCLAW_HERMES_SITE_PACKAGES'])",
+@@ -493,0 +499,2 @@ writeFileSync(runner, [
++  "from hermes_cli import __version__ as _hermes_version",
++  "if _hermes_version != '0.21.1': raise RuntimeError('The official Hermes runtime version does not match its installation')",
+@@ -509,0 +517,4 @@ const execute = (prompt) => new Promise((resolve, reject) => {
++      HERMES_DISABLE_LAZY_INSTALLS: "1",
++      HERMES_NODE: process.execPath,
++      HERMES_PYTHON: python,
++      HERMES_SKIP_NODE_BOOTSTRAP: "1",
+@@ -547 +558 @@ try {
+-    hermesVersion: "0.19.0",
++    hermesVersion: "0.21.1",
+@@ -743 +754 @@ try {
+-async function main() {
++async function mainInternal(runtimeLease: NativeRuntimeSession) {
+@@ -755 +766 @@ async function main() {
+-  const agentVersion = isHermes ? "0.19.0" : isDeepAgents ? "0.1.55" : "0.84.1";
++  const agentVersion = isHermes ? "0.21.1" : isDeepAgents ? "0.1.55" : "0.84.1";
+@@ -768 +779 @@ async function main() {
+-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
++  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
+@@ -774,4 +785 @@ async function main() {
+-  const installedAgentRoot = requiredDirectory(
+-    path.join(installRoot, isHermes ? "hermes" : isDeepAgents ? "deepagents" : "pi"),
+-    `${agentLabel} runtime`,
+-  );
++  const installedAgentRoot = requiredDirectory(runtimeLease.agentRoot, `${agentLabel} runtime`);
+@@ -780 +788 @@ async function main() {
+-      ? requiredDirectory(path.join(installRoot, "python"), "Python runtime")
++      ? requiredDirectory(path.dirname(runtimeLease.python!), "sealed Python directory")
+@@ -784 +792 @@ async function main() {
+-      ? path.join(installedAgentRoot, "site-packages", "hermes_cli", "main.py")
++      ? path.join(installedAgentRoot, "hermes-agent", "hermes_cli", "main.py")
+@@ -822,4 +830,3 @@ async function main() {
+-  const node = path.join(runtimeRoot, "node.exe");
+-  fs.copyFileSync(installedNode, node);
+-  const stagedAgentRoot = path.join(runtimeRoot, isDeepAgents ? "deepagents" : agentId);
+-  fs.cpSync(installedAgentRoot, stagedAgentRoot, { recursive: true });
++  runtimeLease.assertHeld();
++  const node = installedNode;
++  const stagedAgentRoot = installedAgentRoot;
+@@ -827 +833,0 @@ async function main() {
+-  let workloadText;
+@@ -829,13 +835 @@ async function main() {
+-    const stagedPythonRoot = path.join(runtimeRoot, "python");
+-    fs.cpSync(installedPythonRoot, stagedPythonRoot, { recursive: true });
+-    fs.writeFileSync(
+-      path.join(stagedPythonRoot, "python313._pth"),
+-      [
+-        "python313.zip",
+-        ".",
+-        path.relative(stagedPythonRoot, path.join(stagedAgentRoot, "site-packages")),
+-        "import site",
+-        "",
+-      ].join("\r\n"),
+-      "ascii",
+-    );
++    const stagedPythonRoot = installedPythonRoot;
+@@ -849,4 +843 @@ async function main() {
+-        NEMOCLAW_DEEP_AGENTS_PYTHON: requiredFile(
+-          path.join(stagedPythonRoot, "python.exe"),
+-          "staged Python runtime",
+-        ),
++        NEMOCLAW_DEEP_AGENTS_PYTHON: requiredFile(runtimeLease.python, "staged Python runtime"),
+@@ -859 +850 @@ async function main() {
+-      workloadText = deepAgentsWorkloadSource();
++
+@@ -864,4 +855 @@ async function main() {
+-        NEMOCLAW_HERMES_PYTHON: requiredFile(
+-          path.join(stagedPythonRoot, "python.exe"),
+-          "staged Python runtime",
+-        ),
++        NEMOCLAW_HERMES_PYTHON: requiredFile(runtimeLease.python, "staged Python runtime"),
+@@ -869,4 +856,0 @@ async function main() {
+-        NEMOCLAW_HERMES_SITE_PACKAGES: requiredDirectory(
+-          path.join(stagedAgentRoot, "site-packages"),
+-          "staged Hermes site-packages",
+-        ),
+@@ -874 +858 @@ async function main() {
+-      workloadText = hermesWorkloadSource();
++
+@@ -893 +876,0 @@ async function main() {
+-    workloadText = piWorkloadSource();
+@@ -895,2 +878,2 @@ async function main() {
+-  const workload = path.join(shareRoot, `${agentId}-native-qualification.mjs`);
+-  fs.writeFileSync(workload, workloadText, "utf8");
++  const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, isHermes ? "hermes-turn" : isDeepAgents ? "deepagents-turn" : "pi-turn");
++  const workload = requiredFile(worker.entry, "prebuilt terminal qualification worker");
+@@ -911,0 +895 @@ async function main() {
++      ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
+@@ -983,0 +968 @@ async function main() {
++      ...worker.environment,
+@@ -1035,8 +1020,12 @@ async function main() {
+-    const agentResultText = await waitForTerminalAgentResult(
+-      resultPath,
+-      finalToken,
+-      create,
+-      gateway,
+-      createFailure,
+-      agentLabel,
+-    );
++    const agentResultText = await Promise.race([
++      waitForTerminalAgentResult(
++        resultPath,
++        finalToken,
++        create,
++        gateway,
++        createFailure,
++        agentLabel,
++      ),
++      runtimeLease.failure,
++    ]);
++    runtimeLease.assertHeld();
+@@ -1175 +1164,19 @@ async function main() {
+-main().catch((error) => {
++async function main() {
++  const installRoot = requiredDirectory(
++    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
++    "NemoClaw installation root",
++  );
++  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
++  const purpose = argumentValue("--agent") ?? "pi";
++  if (!["openclaw", "hermes", "pi", "langchain-deepagents-code", "nemocua"].includes(purpose))
++    fail("unsupported native runtime purpose");
++  return await withNativeRuntimeSession(
++    launcher,
++    installRoot,
++    purpose as NativeRuntimeSession["purpose"],
++    mainInternal,
++  );
++}
++
++export async function runNativeTerminalTurnEntry() {
++  await main().catch((error) => {
+@@ -1180,0 +1188,6 @@ main().catch((error) => {
++
++}
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeTerminalTurnEntry();
++}
+diff --git a/packaging/windows/runtime/run-installed-native-turn.mts b/packaging/windows/runtime/run-installed-native-turn.mts
+index bb9d090a83f2f27896bbf2ebaa9427721ebf30b0..30eed72e4229658f69d41ecbbc6d3bdb3dde30f1 100644
+--- a/packaging/windows/runtime/run-installed-native-turn.mts
++++ b/packaging/windows/runtime/run-installed-native-turn.mts
+@@ -3,0 +4,4 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
++import { nativeWorkerAssets } from "./native-assets.mts";
++import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+@@ -385 +389 @@ process.exit(version.exitCode === 0 && normalizedVersion === "2026.7.1" && chat.
+-async function main() {
++async function main(runtimeLease: NativeRuntimeSession) {
+@@ -394 +398 @@ async function main() {
+-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
++  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
+@@ -401,2 +405,2 @@ async function main() {
+-    path.join(installRoot, "openclaw"),
+-    "OpenClaw runtime",
++    runtimeLease.agentRoot,
++    "sealed OpenClaw runtime",
+@@ -428,5 +432,4 @@ async function main() {
+-  console.log("NEMOCLAW> Staging exact installed Node/OpenClaw bytes at the shallow MXC root");
+-  const node = path.join(runtimeRoot, "node.exe");
+-  const openClawRoot = path.join(runtimeRoot, "openclaw");
+-  fs.copyFileSync(installedNode, node);
+-  fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
++  runtimeLease.assertHeld();
++  console.log("NEMOCLAW> Selecting the sealed installed Node/OpenClaw runtime without copying");
++  const node = installedNode;
++  const openClawRoot = installedOpenClawRoot;
+@@ -435 +438 @@ async function main() {
+-    "Staged OpenClaw entrypoint",
++    "sealed OpenClaw entrypoint",
+@@ -454 +457,2 @@ async function main() {
+-  const probePath = path.join(shareRoot, "probe.mjs");
++  const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "openclaw-turn");
++  const probePath = requiredFile(worker.entry, "prebuilt OpenClaw worker");
+@@ -457 +460,0 @@ async function main() {
+-  fs.writeFileSync(probePath, probeSource(), "utf8");
+@@ -466,0 +470 @@ async function main() {
++      ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
+@@ -525,0 +530 @@ async function main() {
++      ...worker.environment,
+@@ -568 +573,5 @@ async function main() {
+-    await waitForNativeTurnResult(resultPath, create, gateway, createFailure);
++    await Promise.race([
++      waitForNativeTurnResult(resultPath, create, gateway, createFailure),
++      runtimeLease.failure,
++    ]);
++    runtimeLease.assertHeld();
+@@ -668,2 +677,11 @@ async function main() {
+-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+-  main().catch((error) => {
++async function runLeasedNativeTurn() {
++  const installRoot = requiredDirectory(
++    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
++    "NemoClaw installation root",
++  );
++  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
++  return await withNativeRuntimeSession(launcher, installRoot, "openclaw", main);
++}
++
++export async function runNativeTurnEntry() {
++  await runLeasedNativeTurn().catch((error) => {
+@@ -675,0 +694,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeTurnEntry();
++}
+diff --git a/packaging/windows/runtime/run-installed-native-web-ui.mts b/packaging/windows/runtime/run-installed-native-web-ui.mts
+index 023d0a29759198fd33952b617c7ab5ed2707f631..8255c9874c4c7536d6715edbffd66da289d18925 100644
+--- a/packaging/windows/runtime/run-installed-native-web-ui.mts
++++ b/packaging/windows/runtime/run-installed-native-web-ui.mts
+@@ -3,0 +4,3 @@
++import { fileURLToPath as nativeEntryFile } from "node:url";
++declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
++import { nativeWorkerAssets, nativeDistributionAsset } from "./native-assets.mts";
+@@ -17,0 +21,2 @@ import { fileURLToPath } from "node:url";
++import { readNativeServiceEnvironment } from "./native-options.mts";
++
+@@ -19,6 +24,4 @@ import {
+-  NATIVE_SERVICES,
+-  nativeServiceBinding,
+-  normalizeNativeOptions,
+-  readNativeServiceEnvironment,
+-  selectedNativeServices,
+-} from "./native-options.mts";
++  configureNativeFromStdin,
++  normalizeOnboardingConfiguration,
++  writeNativeAgentConfiguration,
++} from "./native-setup-configuration.mts";
+@@ -26 +29 @@ import {
+-import { copyNativeRuntime, openNativeWebSession } from "./native-web-session.mts";
++import { openNativeWebSession } from "./native-web-session.mts";
+@@ -35,0 +39 @@ import { acquireNativeStateSession } from "./native-state.mts";
++import { withNativeRuntimeSession, usingNativeRuntimeSession, bindNativeRuntimeGuard, type NativeRuntimeSession } from "./native-runtime.mts";
+@@ -40 +43,0 @@ import {
+-  deleteCredentialByBinding,
+@@ -43 +45,0 @@ import {
+-  readWindowsCredential,
+@@ -94,82 +95,0 @@ async function withTimeout(promise, timeout, label) {
+-const PROVIDER_CONFIGURATION = {
+-  nvidia: {
+-    endpoint: "https://integrate.api.nvidia.com/v1",
+-    credentialRequired: true,
+-    credentialPrefix: "nvapi-",
+-  },
+-  openrouter: {
+-    endpoint: "https://openrouter.ai/api/v1",
+-    credentialRequired: true,
+-    credentialPrefix: "sk-or-",
+-  },
+-  compatible: { endpoint: null, credentialRequired: false, credentialPrefix: null },
+-  local: { endpoint: null, credentialRequired: false, credentialPrefix: null },
+-};
+-
+-function normalizeProviderCredential(inference, value) {
+-  const provider = PROVIDER_CONFIGURATION[inference];
+-  const credential = typeof value === "string" ? value.trim() : "";
+-  if (Buffer.byteLength(credential, "utf8") > 2048 || /[\u0000\r\n]/u.test(credential))
+-    throw new Error("The provider credential is invalid.");
+-  if (provider.credentialRequired && !credential)
+-    throw new Error("The selected provider requires an API key.");
+-  if (provider.credentialPrefix && !credential.startsWith(provider.credentialPrefix))
+-    throw new Error(`The ${inference} API key has an unexpected format.`);
+-  return credential;
+-}
+-
+-function normalizeOnboardingConfiguration(submitted, qualification, metadataOnly = false) {
+-  const agents = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"]);
+-  if (!agents.has(submitted?.agent)) throw new Error("Select a valid agent runtime.");
+-  if (qualification) {
+-    if (submitted?.inference !== "qualification")
+-      throw new Error("Qualification must use its deterministic local inference endpoint.");
+-    return {
+-      agent: submitted.agent,
+-      inference: "qualification",
+-      endpoint: "http://127.0.0.1/qualification",
+-      model: "native-preview",
+-      credential: "",
+-      options: submitted.options ?? {},
+-    };
+-  }
+-  if (!Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference))
+-    throw new Error("Select a valid inference provider.");
+-  const provider = PROVIDER_CONFIGURATION[submitted.inference];
+-  const options = submitted?.options;
+-  if (options === null || typeof options !== "object" || Array.isArray(options))
+-    throw new Error("Onboarding options are invalid.");
+-  const submittedEndpoint = typeof options.endpoint === "string" ? options.endpoint.trim() : "";
+-  const endpoint = provider.endpoint ?? submittedEndpoint;
+-  let endpointUrl;
+-  try {
+-    endpointUrl = new URL(endpoint);
+-  } catch {
+-    throw new Error("Enter a complete inference endpoint URL.");
+-  }
+-  const endpointIsAllowed =
+-    submitted.inference === "local"
+-      ? endpointUrl.protocol === "http:" || endpointUrl.protocol === "https:"
+-      : endpointUrl.protocol === "https:";
+-  if (!endpointIsAllowed) throw new Error("The selected inference endpoint protocol is unsafe.");
+-  if (
+-    submitted.inference === "local" &&
+-    !["127.0.0.1", "localhost", "[::1]"].includes(endpointUrl.hostname)
+-  )
+-    throw new Error("Local inference must use a loopback endpoint.");
+-  const model = typeof options.model === "string" ? options.model.trim() : "";
+-  if (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model))
+-    throw new Error("Enter a valid model ID.");
+-  const credential = metadataOnly
+-    ? ""
+-    : normalizeProviderCredential(submitted.inference, options.credential);
+-  return {
+-    agent: submitted.agent,
+-    inference: submitted.inference,
+-    endpoint: endpointUrl.toString().replace(/\/$/u, ""),
+-    model,
+-    credential,
+-    options,
+-  };
+-}
+-
+@@ -205,133 +124,0 @@ async function updateWindowsCredential(launcher, configuration) {
+-function writeNativeAgentConfiguration(configuration) {
+-  const localAppData = requiredDirectory(
+-    process.env.LOCALAPPDATA ?? "",
+-    "Windows local application-data directory",
+-  );
+-  const stateRoot = path.join(localAppData, "NVIDIA", "NemoClaw", "agents", configuration.agent);
+-  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+-  const configPath = path.join(stateRoot, "native-windows.json");
+-  const temporaryPath = `${configPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+-  const persisted = {
+-    schemaVersion: 1,
+-    classification: "nemoclaw-native-windows-agent-configuration",
+-    agent: configuration.agent,
+-    inference: configuration.inference,
+-    endpoint: configuration.endpoint,
+-    model: configuration.model,
+-    credentialStored: Boolean(configuration.credential),
+-    profile: "personal",
+-    ...(configuration.localModel ? { localModel: configuration.localModel } : {}),
+-    options: Object.fromEntries(
+-      Object.entries(configuration.options).filter(
+-        ([name]) => !["credential", "endpoint", "model"].includes(name),
+-      ),
+-    ),
+-  };
+-  fs.writeFileSync(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, {
+-    encoding: "utf8",
+-    flag: "wx",
+-    mode: 0o600,
+-  });
+-  fs.renameSync(temporaryPath, configPath);
+-  const activePath = path.join(localAppData, "NVIDIA", "NemoClaw", "active-agent.txt");
+-  const activeTemporaryPath = `${activePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+-  fs.writeFileSync(activeTemporaryPath, `${configuration.agent}\n`, {
+-    encoding: "utf8",
+-    flag: "wx",
+-    mode: 0o600,
+-  });
+-  fs.renameSync(activeTemporaryPath, activePath);
+-  return configPath;
+-}
+-
+-async function configureNativeFromStdin(launcher) {
+-  const chunks = [];
+-  let bytes = 0;
+-  for await (const chunk of process.stdin) {
+-    bytes += chunk.length;
+-    if (bytes > 16 * 1024) fail("native setup configuration exceeds its size limit");
+-    chunks.push(chunk);
+-  }
+-  const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+-  if (
+-    submitted?.schemaVersion !== 1 ||
+-    submitted?.classification !== "nemoclaw-native-windows-agent-configuration" ||
+-    typeof submitted?.credentialStored !== "boolean" ||
+-    typeof submitted?.endpoint !== "string" ||
+-    typeof submitted?.model !== "string" ||
+-    !Object.hasOwn(PROVIDER_CONFIGURATION, submitted?.inference) ||
+-    submitted?.options === null ||
+-    typeof submitted?.options !== "object" ||
+-    Array.isArray(submitted.options) ||
+-    (submitted.profile !== undefined && submitted.profile !== "personal") ||
+-    (submitted.localModel !== undefined &&
+-      (submitted.localModel !== "n1x-qwen3.6-35b-a3b" ||
+-        submitted.inference !== "local" ||
+-        submitted.credentialStored))
+-  )
+-    fail("native setup configuration is invalid");
+-  const normalized = normalizeOnboardingConfiguration(
+-    {
+-      agent: submitted.agent,
+-      inference: submitted.inference,
+-      options: { endpoint: submitted.endpoint, model: submitted.model },
+-    },
+-    false,
+-    true,
+-  );
+-  normalized.options = normalizeNativeOptions(submitted.agent, submitted.options);
+-  if (submitted.localModel) normalized.localModel = submitted.localModel;
+-  const servicePosition = process.argv.indexOf("--prepare-service");
+-  if (servicePosition !== -1) {
+-    const service = process.argv[servicePosition + 1];
+-    if (!selectedNativeServices(normalized.options).includes(service))
+-      fail("the service is not selected for this agent");
+-    process.stdout.write(nativeServiceBinding(submitted.agent, service ?? ""));
+-    return;
+-  }
+-  if (
+-    PROVIDER_CONFIGURATION[normalized.inference].credentialRequired &&
+-    !submitted.credentialStored
+-  )
+-    fail("the selected provider requires a credential");
+-  const binding = nativeCredentialBinding(normalized);
+-  if (process.argv.includes("--prepare")) {
+-    process.stdout.write(binding);
+-    return;
+-  }
+-  const credential = await readWindowsCredential(launcher, normalized, submitted.credentialStored);
+-  normalized.credential = normalizeProviderCredential(normalized.inference, credential);
+-  await readNativeServiceEnvironment(launcher, normalized.agent, normalized.options);
+-  const previousPath = path.join(
+-    process.env.LOCALAPPDATA,
+-    "NVIDIA",
+-    "NemoClaw",
+-    "agents",
+-    normalized.agent,
+-    "native-windows.json",
+-  );
+-  const previousText = readOpenedRegularFile(previousPath, {
+-    encoding: "utf8",
+-    maxBytes: 16 * 1024,
+-  });
+-  const previous = previousText === null ? null : JSON.parse(previousText);
+-  const previousBinding =
+-    previous?.schemaVersion === 1 &&
+-    previous?.agent === normalized.agent &&
+-    previous?.credentialStored === true
+-      ? nativeCredentialBinding(previous)
+-      : null;
+-  writeNativeAgentConfiguration(normalized);
+-  if (previousBinding && previousBinding !== binding)
+-    await deleteCredentialByBinding(launcher, previous.inference, previousBinding);
+-  const selectedServices = selectedNativeServices(normalized.options);
+-  for (const service of Object.keys(NATIVE_SERVICES)) {
+-    if (!selectedServices.includes(service))
+-      await deleteCredentialByBinding(
+-        launcher,
+-        service,
+-        nativeServiceBinding(normalized.agent, service),
+-      );
+-  }
+-}
+-
+@@ -356 +143 @@ function readNativeAgentConfiguration(agent) {
+-    typeof config?.endpoint !== "string" ||
++    (typeof config?.endpoint !== "string" && config.localModel === undefined) ||
+@@ -805 +592 @@ async function driveBrowser(
+-  const require = createRequire(import.meta.url);
++  const require = createRequire(path.join(openClawRoot, "package.json"));
+@@ -1043,16 +830,2 @@ async function runSelectedNonOpenClaw(
+-  const runner = requiredFile(
+-    path.join(
+-      installRoot,
+-      "qualification",
+-      isNemoCua ? "run-installed-native-nemocua.mts" : "run-installed-native-pi.mts",
+-    ),
+-    `${agentNamesForLaunch[targetAgent]} native adapter`,
+-  );
+-  const arguments_ = [
+-    "--experimental-strip-types",
+-    "--no-warnings",
+-    runner,
+-    "--qualification",
+-    "--artifact-directory",
+-    runtimeEvidence,
+-  ];
++  const runner = requiredFile(nativeDistributionAsset("native-host.mjs"), "prebuilt native adapter");
++  const arguments_ = [runner, isNemoCua ? "nemocua" : "terminal-turn", "--qualification", "--artifact-directory", runtimeEvidence];
+@@ -1125 +898 @@ async function runSelectedNonOpenClaw(
+-async function main() {
++async function mainInternal(runtimeLease: NativeRuntimeSession) {
+@@ -1153 +926 @@ async function main() {
+-  const installedNode = requiredFile(path.join(binRoot, "node.exe"), "Node.js runtime");
++  const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
+@@ -1160,2 +933,2 @@ async function main() {
+-    path.join(installRoot, "openclaw"),
+-    "OpenClaw runtime",
++    runtimeLease.agentRoot,
++    "sealed OpenClaw runtime",
+@@ -1216,2 +989,2 @@ async function main() {
+-  let presentation;
+-  try {
++  let presentation: Awaited<ReturnType<typeof diagnostics.persist>> | undefined;
++  async function runOpenedSession() {
+@@ -1220 +993,9 @@ async function main() {
+-      webSession = await openNativeWebSession(installRoot, "openclaw");
++      const opened = await openNativeWebSession(installRoot, "openclaw");
++      webSession = {
++        ...opened,
++        signal: AbortSignal.any([opened.signal, runtimeLease.signal]),
++        assertRunning() {
++          opened.assertRunning();
++          runtimeLease.assertHeld();
++        },
++      };
+@@ -1260 +1041,4 @@ async function main() {
+-      ? await acquireNativeStateSession(launcherPath, "openclaw")
++      ? bindNativeRuntimeGuard(
++          await acquireNativeStateSession(launcherPath, "openclaw"),
++          runtimeLease,
++        )
+@@ -1498,22 +1282,5 @@ async function main() {
+-      const node = path.join(runtimeRoot, "node.exe");
+-      const openClawRoot = path.join(runtimeRoot, "openclaw");
+-      console.log("WEB UI> Staging the exact installed OpenClaw runtime for MXC");
+-      if (webSession) {
+-        await copyNativeRuntime(
+-          [
+-            { source: installedNode, destination: node },
+-            { source: installedOpenClawRoot, destination: openClawRoot },
+-          ],
+-          {
+-            signal: webSession.signal,
+-            onTargetStart: (index) =>
+-              diagnostics.stage(index === 0 ? "runtime-copy-node" : "runtime-copy-agent"),
+-            onProgress: (counts) => webSession?.progress("runtime", counts),
+-          },
+-        );
+-      } else {
+-        diagnostics.stage("runtime-copy-node");
+-        fs.copyFileSync(installedNode, node);
+-        diagnostics.stage("runtime-copy-agent");
+-        fs.cpSync(installedOpenClawRoot, openClawRoot, { recursive: true });
+-      }
++      runtimeLease.assertHeld();
++      const node = installedNode;
++      const openClawRoot = installedOpenClawRoot;
++      const openClawEntry = installedOpenClawEntry;
++      console.log("WEB UI> Opening the installed OpenClaw runtime");
+@@ -1521,17 +1288,2 @@ async function main() {
+-      const openClawEntry = requiredFile(
+-        path.join(openClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
+-        "staged OpenClaw entrypoint",
+-      );
+-      if (!fs.readFileSync(openClawEntry).equals(fs.readFileSync(installedOpenClawEntry)))
+-        fail("staged OpenClaw entrypoint does not match the installed payload");
+-      const gatewayScript = path.join(runtimeRoot, "openclaw-native-ui.mjs");
+-      fs.writeFileSync(gatewayScript, gatewaySource(), "utf8");
+-      fs.copyFileSync(
+-        path.join(installRoot, "qualification", "native-ui-tunnel.mts"),
+-        path.join(runtimeRoot, "native-ui-tunnel.mts"),
+-      );
+-      for (const file of ["native-broker-tunnel.mts", "native-broker-relay-protocol.mts"])
+-        fs.copyFileSync(
+-          path.join(installRoot, "qualification", file),
+-          path.join(runtimeRoot, file),
+-        );
++      const worker = nativeWorkerAssets(runtimeLease.runtimeRoot, "openclaw-web");
++      const gatewayScript = requiredFile(worker.entry, "prebuilt OpenClaw UI worker");
+@@ -1551,0 +1304 @@ async function main() {
++          ...runtimeLease.readOnlyRoots.map((root) => `    - ${quoteYamlPath(root)}`),
+@@ -1634,0 +1388 @@ async function main() {
++        ...worker.environment,
+@@ -1798,4 +1552,12 @@ async function main() {
+-        openClawEntrypointSha256: sha256(installedOpenClawEntry),
+-        nodeSha256: sha256(installedNode),
+-        openShellSha256: sha256(openshell),
+-        openShellGatewaySha256: sha256(gatewayExecutable),
++        openClawEntrypointSha256: qualification ? sha256(installedOpenClawEntry) : null,
++        nodeSha256: qualification ? sha256(installedNode) : runtimeLease.nodeSha256,
++        openShellSha256: qualification ? sha256(openshell) : null,
++        openShellGatewaySha256: qualification ? sha256(gatewayExecutable) : null,
++        runtimeIdentity: {
++          runtimeId: runtimeLease.runtimeId,
++          manifestSha256: runtimeLease.manifestSha256,
++          sourceRevision: runtimeLease.sourceRevision,
++          integrity: runtimeLease.integrity,
++        },
++        runtimeFilesHashed: qualification ? 4 : 0,
++        runtimeBytesCopied: 0,
+@@ -1839,0 +1602,5 @@ async function main() {
++  }
++  try {
++    await usingNativeRuntimeSession(runtimeLease, runOpenedSession, () =>
++      diagnostics.cleanupFailed("immutable runtime lease"),
++    );
+@@ -1844 +1611 @@ async function main() {
+-  try {
++  async function completeWebSession() {
+@@ -1847,0 +1615,3 @@ async function main() {
++  }
++  try {
++    await completeWebSession();
+@@ -1858,2 +1628,11 @@ async function main() {
+-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+-  main().catch((error) => {
++async function main() {
++  const installRoot = requiredDirectory(
++    process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
++    "NemoClaw installation root",
++  );
++  const launcher = requiredFile(path.join(installRoot, "bin", "NemoClaw.exe"), "NemoClaw launcher");
++  return await withNativeRuntimeSession(launcher, installRoot, "openclaw", mainInternal);
++}
++
++export async function runNativeWebEntry() {
++  await main().catch((error) => {
+@@ -1864,0 +1644,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
++
++}
++
++if (typeof NEMOCLAW_BUNDLED_RUNTIME === "undefined" && process.argv[1] && path.resolve(process.argv[1]) === nativeEntryFile(import.meta.url)) {
++  void runNativeWebEntry();
++}
