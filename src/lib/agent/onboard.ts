@@ -575,6 +575,18 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
 }
 
 /**
+ * Resolve the API port this sandbox owns. The manifest names Hermes' default
+ * API port, but each Hermes sandbox can be allocated its own. Other agents keep
+ * their declared port, so this returns undefined for them.
+ */
+function resolveSandboxApiPort(agent: AgentDefinition, sandboxName?: string): number | undefined {
+  if (agent.name !== "hermes") return undefined;
+  return resolveSandboxHermesApiPort(
+    (sandboxName ? registry.getSandbox(sandboxName) : undefined) ?? {},
+  );
+}
+
+/**
  * Redact browser token fragments before printing dashboard URLs.
  */
 function dashboardUrlForDisplay(url: string): string {
@@ -605,6 +617,7 @@ export function printDashboardUi(
   const effectiveDashboardPort = isValidForwardPort(deps.effectiveDashboardPort)
     ? deps.effectiveDashboardPort
     : info.port;
+  const sandboxApiPort = resolveSandboxApiPort(agent, sandboxName);
 
   if (kind === "api") {
     console.log(`  ${info.displayName} ${label}`);
@@ -617,7 +630,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
-    printBearerTokenApiAccess(sandboxName, agent, cliName);
+    printBearerTokenApiAccess(sandboxName, agent, cliName, sandboxApiPort);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls, sandboxName);
     return;
@@ -629,7 +642,7 @@ export function printDashboardUi(
     for (const url of deps.buildControlUiUrls(null, effectiveDashboardPort)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
-    printBearerTokenApiAccess(sandboxName, agent, cliName);
+    printBearerTokenApiAccess(sandboxName, agent, cliName, sandboxApiPort);
     printOptionalDashboardUi(agent, {
       ...deps,
       effectiveDashboardPort,
@@ -697,20 +710,13 @@ function printAdditionalForwardPorts(
   const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
   if (declared.length === 0) return;
   const declaredApiPort = agent.healthProbe?.port;
-  // The manifest names Hermes' default API port. This sandbox owns its own, so
-  // announce the port the operator actually has to forward. Only Hermes
-  // allocates a per-sandbox API port; every other agent keeps its declared one.
-  const sandboxApiPort =
-    agent.name === "hermes"
-      ? resolveSandboxHermesApiPort(
-          (sandboxName ? registry.getSandbox(sandboxName) : undefined) ?? {},
-        )
-      : 0;
+  // Announce the API port the operator actually has to forward.
+  const sandboxApiPort = resolveSandboxApiPort(agent, sandboxName);
   for (const declaredPort of declared) {
     if (!Number.isInteger(declaredPort) || declaredPort < 1024 || declaredPort > 65535) continue;
     if (declaredPort === primaryPort || declaredPort === agent.forwardPort) continue;
     const isApi = declaredPort === declaredApiPort;
-    const port = isApi && agent.name === "hermes" ? sandboxApiPort : declaredPort;
+    const port = isApi ? (sandboxApiPort ?? declaredPort) : declaredPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
     console.log("");
     console.log(`  ${agent.displayName} ${sectionLabel}`);
