@@ -16,6 +16,35 @@
 # the stub at a path only the document grants, and OpenShell refuses its
 # connection to the managed gateway, which no grant names. Destroy keeps only
 # the gateway's storage. cargo ci live-docker runs it.
+#
+# Each agent starts with two skills.paths entries, each on its own volume: a
+# folder of skills and a folder that is one skill. OpenClaw's folder holds
+# two skills and a file that isn't one; Hermes's is empty.
+
+# The skills volumes, which a platform provides before apply. The agent images
+# run agents as 10001:10001 (image/fabric/Dockerfile).
+run "volume" {
+  module {
+    source = "./volume"
+  }
+
+  variables {
+    owner = "10001:10001"
+    files = {
+      "claw:/sandbox/skills" = {
+        "summarize/SKILL.md" = "---\nname: summarize\ndescription: Summarize the workspace.\n---\n\nSummarize the workspace.\n"
+        "translate/SKILL.md" = "---\nname: translate\ndescription: Translate the reply.\n---\n\nTranslate the reply.\n"
+        "README.md"          = "Skills shared by the deployment's agents.\n"
+      }
+      "claw:/sandbox/review-skill" = {
+        "SKILL.md" = "---\nname: review\ndescription: Review the change.\n---\n\nReview the change.\n"
+      }
+      "hermes:/sandbox/notes-skill" = {
+        "SKILL.md" = "---\nname: notes\ndescription: Keep notes.\n---\n\nKeep notes.\n"
+      }
+    }
+  }
+}
 
 run "model" {
   module {

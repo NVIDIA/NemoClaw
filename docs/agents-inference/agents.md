@@ -55,7 +55,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/934ab7eca1ec9ac86a22fd24913f2e9d68637c4a/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/ec77dcc0132bb02198f7aac736671bd0effa87eb/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID and send a request:
@@ -157,9 +157,31 @@ NemoClaw does not wrap its refresh contract, and manual sandbox attachments affe
 ## Skills on a Mounted Volume
 
 Fabric reads skills from the paths in `fabric_agent`'s `skills` block.
+For OpenClaw and Hermes, each path is a skill or a folder of skills:
+
+- A folder that contains `SKILL.md` is one skill.
+- Otherwise, each folder directly inside it that contains `SKILL.md` is a skill; Fabric ignores the folder's other files and folders.
+- A folder that holds no skills, such as a new, empty volume, adds none.
+
+The agent doesn't start when a path doesn't exist or two skills have the same name; Fabric's error names the path or both skills' folders.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/ec77dcc0132bb02198f7aac736671bd0effa87eb/adapters) say what a path must hold.
+
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
 The gateway must allow driver configuration: for a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment (see [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); for an external gateway, its administrator enables OpenShell's `allow_driver_config`.
-In YAML, set the sandbox's `driverConfig` and list the mount in the harness configuration's `skills`:
+
+Mix the two forms to share a folder of skills between agents and give one agent a skill of its own, with its own mount settings.
+In this example, the `team-skills` volume holds a folder per skill, and the `review-skill` volume holds one skill at its root:
+
+```text
+team-skills            review-skill
+├── summarize/         └── SKILL.md
+│   └── SKILL.md
+└── translate/
+    └── SKILL.md
+```
+
+Both agents mount `team-skills` read-only; only the OpenClaw agent mounts `review-skill`, and it can write there.
+In YAML, set each sandbox's `driverConfig` and list its mounts in the harness configuration's `skills`:
 
 ```yaml
 sandboxes:
@@ -168,14 +190,34 @@ sandboxes:
       docker:
         mounts:
           - type: volume
-            source: assistant-skills
+            source: team-skills
             target: /sandbox/skills
+            read_only: true
+          - type: volume
+            source: review-skill
+            target: /sandbox/review-skill
+            read_only: false
     harness:
       kind: nvidia.fabric.openclaw
       config:
         skills:
+          paths: [/sandbox/skills, /sandbox/review-skill]
+  researcher:
+    driverConfig:
+      docker:
+        mounts:
+          - type: volume
+            source: team-skills
+            target: /sandbox/skills
+            read_only: true
+    harness:
+      kind: nvidia.fabric.hermes
+      config:
+        skills:
           paths: [/sandbox/skills]
 ```
+
+The `assistant` agent loads `summarize`, `translate`, and the skill in `review-skill`; `researcher` loads `summarize` and `translate`.
 
 In HCL, use `openshell_sandbox`'s [`driver_config`](../references/provider.md#openshell-resources-and-data-sources) and `fabric_agent`'s `skills` block:
 
@@ -184,7 +226,10 @@ resource "openshell_sandbox" "assistant" {
   # ...
   driver_config = jsonencode({
     docker = {
-      mounts = [{ type = "volume", source = "assistant-skills", target = "/sandbox/skills" }]
+      mounts = [
+        { type = "volume", source = "team-skills", target = "/sandbox/skills", read_only = true },
+        { type = "volume", source = "review-skill", target = "/sandbox/review-skill", read_only = false },
+      ]
     }
   })
 }
@@ -192,7 +237,7 @@ resource "openshell_sandbox" "assistant" {
 resource "fabric_agent" "assistant" {
   # ...
   skills {
-    paths = ["/sandbox/skills"]
+    paths = ["/sandbox/skills", "/sandbox/review-skill"]
   }
 }
 ```
