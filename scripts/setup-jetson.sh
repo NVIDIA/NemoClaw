@@ -63,6 +63,8 @@ warn_host_setup_skipped() {
   warn "Installation continues in an untested configuration."
 }
 
+# Prints the release family only. main() calls this in a command substitution,
+# where set -e is off, so host changes made here would hide their failures.
 get_jetpack_version() {
   local release_line release revision l4t_version
 
@@ -80,31 +82,7 @@ get_jetpack_version() {
   fi
 
   if ((release >= 39)); then
-    # JP7 R39 does not need iptables / daemon.json changes, but k3s inside
-    # the OpenShell gateway container still needs br_netfilter +
-    # bridge-nf-call-iptables=1 for ClusterIP service routing. Some R39
-    # kernel images ship with it already in place, so check first and only
-    # apply when missing — avoids planting NemoClaw-owned drop-ins in
-    # /etc/modules-load.d and /etc/sysctl.d on systems that don't need
-    # them. See #2418.
-    if bridge_netfilter_ready; then
-      info "Jetson detected (L4T $l4t_version) — br_netfilter already configured; no host setup needed" >&2
-    else
-      info "Jetson detected (L4T $l4t_version) — loading br_netfilter (required by k3s inside the OpenShell gateway; see #2418)" >&2
-      if ((EUID != 0)); then
-        "${SUDO[@]}" true >/dev/null \
-          || error "Sudo is required to load br_netfilter and write /etc/modules-load.d and /etc/sysctl.d drop-ins."
-      fi
-      apply_br_netfilter_setup
-      # Read the value back from /proc (not just "we set it to 1") so the
-      # log is actual evidence that the apply path landed — useful when a
-      # user is validating the fix on their own Jetson and needs to confirm
-      # from log output alone that the runtime state is correct.
-      local v4
-      v4="$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo '?')"
-      info "br_netfilter runtime: bridge-nf-call-iptables=$v4 — sandbox → ClusterIP routing (CoreDNS, services) is unblocked; no docker or k3s restart needed" >&2
-      info "Reboot persistence: /etc/modules-load.d/nemoclaw.conf, /etc/sysctl.d/99-nemoclaw.conf" >&2
-    fi
+    printf "%s" "jp7-r39:$l4t_version"
     return 0
   fi
 
@@ -120,6 +98,35 @@ get_jetpack_version() {
       warn_host_setup_skipped
       ;;
   esac
+}
+
+# JP7 R39 does not need iptables / daemon.json changes, but k3s inside the
+# OpenShell gateway container still needs br_netfilter +
+# bridge-nf-call-iptables=1 for ClusterIP service routing. Some R39 kernel
+# images ship with it already in place, so check first and only apply when
+# missing — avoids planting NemoClaw-owned drop-ins in /etc/modules-load.d and
+# /etc/sysctl.d on systems that don't need them. See #2418.
+configure_jetson_r39_host() {
+  local l4t_version="$1"
+
+  if bridge_netfilter_ready; then
+    info "Jetson detected (L4T $l4t_version) — br_netfilter already configured; no host setup needed"
+    return 0
+  fi
+
+  info "Jetson detected (L4T $l4t_version) — loading br_netfilter (required by k3s inside the OpenShell gateway; see #2418)"
+  if ((EUID != 0)); then
+    "${SUDO[@]}" true >/dev/null \
+      || error "Sudo is required to load br_netfilter and write /etc/modules-load.d and /etc/sysctl.d drop-ins."
+  fi
+  apply_br_netfilter_setup
+  # Report success only when the kernel reads the setting back as enabled.
+  local v4
+  v4="$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo '?')"
+  [[ "$v4" == "1" ]] \
+    || error "bridge-nf-call-iptables reads back as '$v4' after setup; expected 1. Sandbox pods cannot reach CoreDNS until br_netfilter is loaded."
+  info "br_netfilter runtime: bridge-nf-call-iptables=$v4 — sandbox → ClusterIP routing (CoreDNS, services) is unblocked; no docker or k3s restart needed"
+  info "Reboot persistence: /etc/modules-load.d/nemoclaw.conf, /etc/sysctl.d/99-nemoclaw.conf"
 }
 
 configure_jetson_host() {
@@ -208,6 +215,11 @@ main() {
   local jetpack_version
   jetpack_version="$(get_jetpack_version)"
   [[ -n "$jetpack_version" ]] || exit 0
+
+  if [[ "$jetpack_version" == jp7-r39:* ]]; then
+    configure_jetson_r39_host "${jetpack_version#jp7-r39:}"
+    return 0
+  fi
 
   info "Jetson detected ($jetpack_version) — applying required host configuration"
   configure_jetson_host "$jetpack_version"
