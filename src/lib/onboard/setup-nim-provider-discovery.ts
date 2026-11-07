@@ -9,7 +9,7 @@ import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-rout
 interface ProviderDiscoveryDeps {
   remoteProviderConfig: Record<string, { providerName: string }>;
   isNonInteractive(): boolean;
-  getNonInteractiveProvider(): string | null;
+  getNonInteractiveProvider(agentName?: string | null): string | null;
   getNonInteractiveModel(
     providerKey: string,
     options?: { allowProviderModelFallback?: boolean },
@@ -100,6 +100,7 @@ function bindRecordedProviderReaders(
 
 export function prepareProviderDiscovery(options: {
   deps: ProviderDiscoveryDeps;
+  agentName?: string | null;
   sandboxName: string | null;
   recoverProvider: boolean;
   rebuildRegistryInferenceRoute: RebuildRouteHandoff | null;
@@ -116,6 +117,7 @@ export function prepareProviderDiscovery(options: {
 } {
   const {
     deps,
+    agentName = null,
     sandboxName,
     recoverProvider,
     rebuildRegistryInferenceRoute,
@@ -135,7 +137,7 @@ export function prepareProviderDiscovery(options: {
     recoverySessionId,
   );
   const nonInteractive = deps.isNonInteractive();
-  const requestedProvider = deps.getNonInteractiveProvider();
+  const requestedProvider = deps.getNonInteractiveProvider(agentName);
   let providerChanged = false;
   if (nonInteractive && requestedProvider && recoverProvider) {
     const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
