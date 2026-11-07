@@ -587,10 +587,9 @@ Put each test at the layer that owns its behavior, and don't repeat a check that
 1. Unit: one crate's rule, with in-process fakes.
 2. Contract: one provider type through OpenTofu, in its `tests/contract/hcl/` scenarios.
 3. Integration: the compiled graph across providers in a `tests/integration/hcl/` scenario, or, in `tests/integration/rust/`, what `tofu test` cannot observe: the SDK and CLI, expected provider errors, saved plans, and interrupted or cancelled operations.
-4. Live E2E: successful paths, and failures or recoveries that only a real engine, cluster, image, model, or host produces.
+4. Live E2E: successful paths that need a real engine, cluster, image, model, or host.
 
 At each layer, prefer a `tofu test` scenario to a Rust test. The [`write-tests` skill](../../.agents/skills/write-tests/SKILL.md) walks through the choice.
-For a behavior at the NemoClaw–NeMo Fabric boundary, the [`fabric-boundary-testing-reference` skill](../../.agents/skills/fabric-boundary-testing-reference/SKILL.md) first decides which repository owns each part.
 
 Write each test as input, operation, and expected result, and name the observable behavior and its conditions in its title.
 For deployment tests, keep the YAML and expected plan and apply resource actions easy to find.
