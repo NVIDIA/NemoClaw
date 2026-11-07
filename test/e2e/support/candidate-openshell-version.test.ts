@@ -85,7 +85,7 @@ describe("candidate OpenShell selection", () => {
           ? expected017Runtime
           : reviewedOpenShellMcpRuntime(expectedVersion);
       expect(actual.selected).toBe(expectedVersion);
-      expect(actual.status, actual.stderr).toBe(0);
+      expect(actual.status, actual.diagnostic).toBe(0);
       expect(actual.emitted.version).toBe(expectedVersion);
       expect(actual.emitted.supervisor_image).toBe(expected.supervisorImage);
       expect(JSON.parse(actual.emitted.runtime_provenance!)).toEqual(expected.provenance);
@@ -94,7 +94,7 @@ describe("candidate OpenShell selection", () => {
 
   it("rejects an unapproved candidate upgrade before emitting MCP CLI output", async () => {
     const actual = await runCandidateOpenShellCli({ upgradeVersion: "9.8.7", approved: false });
-    expect(actual.status, actual.stderr).toBe(1);
+    expect(actual.status, actual.diagnostic).toBe(1);
     expect(actual.stderr).toContain("approval");
     expect(actual.outputExists).toBe(false);
   });

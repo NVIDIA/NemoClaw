@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { candidateOpenShellVersion } from "../../tools/e2e/candidate-openshell-version.mts";
 import { CANDIDATE_OPENSHELL_SOURCES } from "../../tools/e2e/candidate-openshell-trust.mts";
 import { validateInstallerSources } from "../../scripts/checks/extract-installer-pins.mts";
@@ -77,11 +78,14 @@ export async function runCandidateOpenShellCli(options: {
           status: 200, headers: { "content-type": "application/json" }
         });
       };`;
+    // Keep fixture bytes out of Linux's per-argument size limit.
+    const preloadPath = join(directory, "offline-fetch.mjs");
+    writeFileSync(preloadPath, preload, { mode: 0o600 });
     const result = spawnSync(
       process.execPath,
       [
         "--import",
-        `data:text/javascript,${encodeURIComponent(preload)}`,
+        pathToFileURL(preloadPath).href,
         new URL("../../tools/e2e/candidate-openshell-version.mts", import.meta.url).pathname,
       ],
       {
@@ -116,7 +120,14 @@ export async function runCandidateOpenShellCli(options: {
             }),
         )
       : {};
-    return { selected, status: result.status, stderr: result.stderr, outputExists, emitted };
+    return {
+      selected,
+      status: result.status,
+      stderr: result.stderr,
+      diagnostic: result.error?.message ?? result.signal ?? result.stderr,
+      outputExists,
+      emitted,
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
