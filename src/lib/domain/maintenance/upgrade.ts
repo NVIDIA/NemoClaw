@@ -162,6 +162,9 @@ export function compareDottedVersions(a: string, b: string): number {
 // the sandbox); call it out instead of framing it as a routine upgrade step.
 function downgradeSuffix(current?: string | null, expected?: string | null): string {
   if (!current || !expected) return "";
+  // #13076: with the same core, `X-rc.1` is below `X`; other pairs keep numeric order.
+  const [cur, exp] = [current, expected].map((v) => /^v?([^-+]+)(-[A-Za-z][^+]*)?/.exec(v));
+  if (cur && exp && cur[1] === exp[1] && !cur[2] !== !exp[2]) return exp[2] ? " (downgrade)" : "";
   return compareDottedVersions(expected, current) < 0 ? " (downgrade)" : "";
 }
 
