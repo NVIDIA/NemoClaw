@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
-  connectModulePath,
   createConnectHarness,
   requireDist,
+  useConnectFlowProcessLifecycle,
 } from "../../../../test/support/connect-flow-test-harness";
 import type {
   OpenShellSandboxBufferedCommandCompletion,
@@ -73,12 +73,7 @@ function configureAlignedInferenceGet(harness: ReturnType<typeof createConnectHa
 }
 
 describe("connectSandbox flow", () => {
-  let exitSpy: MockInstance;
-  const originalStdinIsTty = process.stdin.isTTY;
-  const originalStdinSetRawMode = (
-    process.stdin as typeof process.stdin & { setRawMode?: (mode: boolean) => unknown }
-  ).setRawMode;
-  const originalStdoutIsTty = process.stdout.isTTY;
+  const lifecycle = useConnectFlowProcessLifecycle();
   const nativeNvidiaEntry = {
     provider: "nvidia-prod",
     model: "nvidia/nemotron-3-super-120b-a12b",
@@ -89,37 +84,6 @@ describe("connectSandbox flow", () => {
       providerId: "provider-123",
     },
   };
-
-  beforeEach(() => {
-    process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
-    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
-    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-      throw new Error(`process.exit(${code ?? 0})`);
-    }) as never);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-    if (originalStdoutIsTty === undefined) {
-      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: undefined });
-    } else {
-      Object.defineProperty(process.stdout, "isTTY", {
-        configurable: true,
-        value: originalStdoutIsTty,
-      });
-    }
-    Object.defineProperty(process.stdin, "isTTY", {
-      configurable: true,
-      value: originalStdinIsTty,
-    });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: originalStdinSetRawMode,
-    });
-    delete process.env.NEMOCLAW_TEST_NO_SLEEP;
-    delete require.cache[requireDist.resolve(connectModulePath)];
-  });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
     const harness = createConnectHarness();
@@ -139,12 +103,12 @@ describe("connectSandbox flow", () => {
       target: { kind: "named", gatewayName: "nemoclaw" },
     });
     expect(harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!).toBeLessThan(
-      exitSpy.mock.invocationCallOrder[0]!,
+      lifecycle.exitSpy.mock.invocationCallOrder[0]!,
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("existing active sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(0);
   });
 
   it.each([
@@ -255,7 +219,7 @@ describe("connectSandbox flow", () => {
       expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
         "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
       );
-      expect(exitSpy).toHaveBeenCalledWith(exitCode);
+      expect(lifecycle.exitSpy).toHaveBeenCalledWith(exitCode);
     },
   );
 
@@ -274,7 +238,7 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("Inside the sandbox, run the configured command to start chatting.");
     expect(output).not.toContain("dcode");
     expect(output).not.toContain("langchain-deepagents-code");
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(0);
   });
 
   it("runs the DCode route probe through its managed runtime boundary (#6191)", async () => {
@@ -366,7 +330,7 @@ describe("connectSandbox flow", () => {
         skipOllamaAuthProxySubprobe: true,
       });
       expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalledTimes(1);
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
     },
   );
 
@@ -413,7 +377,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain("Run:  nemoclaw alpha doctor");
     expect(errorOutput).not.toContain("super-secret");
     expect(errorOutput).not.toContain("x".repeat(241));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("fails closed without repair when the route probe transport throws (#6192)", async () => {
@@ -439,7 +403,7 @@ describe("connectSandbox flow", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("fails closed without repair when the route probe transport times out (#6192)", async () => {
@@ -476,7 +440,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain("did not return a trusted result");
     expect(errorOutput).toContain("openshell sandbox exec exited with status 1");
     expect(errorOutput).not.toContain("after DNS and route repair");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("fails closed without repair when the OpenShell CA boundary is unavailable (#6192)", async () => {
@@ -505,7 +469,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain("did not return a trusted result");
     expect(errorOutput).toContain("OpenShell CA bundle missing or unreadable");
     expect(errorOutput).not.toContain("after DNS and route repair");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("stops before opening SSH when the sandbox list reports a terminal failure phase", async () => {
@@ -520,7 +484,7 @@ describe("connectSandbox flow", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("probe-only mode reports recovered gateways without opening an interactive shell", async () => {
@@ -717,7 +681,7 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
     expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(lifecycle.exitSpy).not.toHaveBeenCalled();
     expect(harness.logSpy).toHaveBeenCalledWith(
       "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
     );
@@ -749,7 +713,7 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
     expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(lifecycle.exitSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy).not.toHaveBeenCalled();
   });
 
@@ -897,7 +861,7 @@ describe("connectSandbox flow", () => {
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "inference route is not known healthy",
     );
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("probe-only mode reports a healthy native gateway as running", async () => {
@@ -931,7 +895,7 @@ describe("connectSandbox flow", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
   it("probe-only mode exits when primary dashboard/API forward recovery fails", async () => {
     const harness = createConnectHarness({
@@ -961,7 +925,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain("nemoclaw alpha recover");
     const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(logOutput).not.toContain("Probe complete");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("keeps OpenShell-managed Hermes on the ordinary probe path when portable authority is absent", async () => {
@@ -1372,7 +1336,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).not.toContain("gateway is running");
     expect(errorOutput).not.toContain("openshell forward start");
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it.each([
@@ -1442,7 +1406,7 @@ describe("connectSandbox flow", () => {
         ["sandbox", "connect", "alpha"],
         expect.any(Object),
       );
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
     },
   );
 
@@ -1467,7 +1431,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).not.toContain(opaqueToken);
     expect(errorOutput).not.toContain("\u001b");
     expect(errorOutput).toMatch(/Recovery detail: .*\.$/mu);
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(lifecycle.exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("keeps a direct recovery failure detail separate from an earlier callback layer", async () => {
