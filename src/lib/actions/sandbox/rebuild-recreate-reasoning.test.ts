@@ -1,7 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+
+import {
+  createRebuildFlowHarness,
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
+
+import {
+  installRebuildResourceOnboardFixture,
+  RESOURCE_CREATE_BOUNDARY,
+} from "../../../../test/helpers/rebuild-resource-onboard-fixture";
+import type { SandboxCreateIntent } from "../../onboard/types";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
@@ -188,6 +199,47 @@ describe("rebuild recreate OpenClaw dashboard origin (#13177)", () => {
     });
     return () => observed;
   }
+
+  it.each([{ cpu: "4", memory: "8Gi" }, null])(
+    "preserves the recorded resource decision %j during recreation (#13623)",
+    async (resourceProfile) => {
+      const source = onboardSession.createSession({ sandboxName: SANDBOX_NAME });
+      source.resourceProfile = resourceProfile;
+      source.sandboxPromptProgress.resourceProfile = true;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        expect(session.resourceProfile).toEqual(resourceProfile);
+        expect(session.sandboxPromptProgress.resourceProfile).toBe(true);
+        expect(session.checkpoint?.resourceProfile).toEqual(
+          deriveCheckpointFromSession(source).resourceProfile,
+        );
+      });
+
+      await expect(runRebuildRecreatePhase(makeInput({ sessionSnapshot: source }))).resolves.toBe(
+        true,
+      );
+      expect(rebuildOnboardDependencies.onboard).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not reuse resource limits from a different sandbox session (#13623)", async () => {
+    const source = onboardSession.createSession({ sandboxName: "different" });
+    source.resourceProfile = { cpu: "4", memory: "8Gi" };
+    source.sandboxPromptProgress.resourceProfile = true;
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      expect(session.resourceProfile).toBeNull();
+      expect(session.sandboxPromptProgress.resourceProfile).toBe(false);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sessionSnapshot: source,
+          sessionMatchesSandbox: false,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(rebuildOnboardDependencies.onboard).toHaveBeenCalledOnce();
+  });
 
   it("replays the recorded origin instead of the rebuild environment's CHAT_UI_URL", async () => {
     process.env.CHAT_UI_URL = "https://ambient.example.test";
@@ -379,4 +431,51 @@ describe("rebuild recreate compatible-endpoint reasoning handoff (#7940)", () =>
     expect(process.env.NEMOCLAW_REASONING).toBe("true");
     expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("high");
   });
+});
+
+describe("public rebuild resource replay through inner onboarding (#13623)", () => {
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+  beforeEach(() => {
+    vi.stubEnv("NEMOCLAW_CPU", "");
+    vi.stubEnv("NEMOCLAW_RAM", "");
+    vi.stubEnv("NEMOCLAW_RESOURCE_PROFILE", "");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    {
+      resourceProfile: { cpu: "4", memory: "8Gi" },
+      resourceArgs: ["--cpu", "4", "--memory", "8Gi"],
+    },
+    { resourceProfile: null, resourceArgs: [] },
+  ])(
+    "passes the recorded decision $resourceProfile to recreation",
+    async ({ resourceProfile, resourceArgs }) => {
+      const harness = createRebuildFlowHarness();
+      const resourceSession = harness.session as unknown as Session;
+      resourceSession.resourceProfile = resourceProfile;
+      resourceSession.sandboxPromptProgress.resourceProfile = true;
+      const fixture = installRebuildResourceOnboardFixture(harness);
+      onTestFinished(fixture.cleanup);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(fixture.selectResourceProfile).not.toHaveBeenCalled();
+      expect(fixture.createSandbox).toHaveBeenCalledOnce();
+      const createArgs = fixture.createSandbox.mock.calls[0];
+      expect(createArgs[11]).toEqual(resourceProfile);
+      expect((createArgs[15] as SandboxCreateIntent).resolved?.resourceCreateArgs).toEqual(
+        resourceArgs,
+      );
+      expect(fixture.loadPersistedSession()).toMatchObject({
+        resourceProfile,
+        sandboxPromptProgress: { resourceProfile: true },
+      });
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(RESOURCE_CREATE_BOUNDARY),
+      );
+    },
+  );
 });
