@@ -4,7 +4,10 @@
 import path from "node:path";
 import vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
-import { patchPluginSourceRoot } from "../../../scripts/lib/patch-openclaw-plugin-source-root.mts";
+import {
+  patchPluginSourceRoot,
+  patchPluginSourceVerification,
+} from "../../../scripts/lib/patch-openclaw-plugin-source-root.mts";
 
 const fixture = `function withPluginSourceFile(source, boundary, read) {
 \tconst opened = openRootFileSync$1({
@@ -172,5 +175,106 @@ describe("OpenClaw plugin source root admission", () => {
       }),
     ).toThrow(failure);
     expect(proof.close).toHaveBeenCalledExactlyOnceWith(17);
+  });
+});
+
+const verificationFixture = `function verifyPluginSourceInputs(inputs, sources) {
+  for (const source of sources) {
+    const input = inputs.get(source), identity = input.actualIdentity;
+    if (fs.realpathSync(source) !== source || identity !== input.identity || !input.contentValid)
+      throw new Error("source changed");
+  }
+}
+function createRetainedSourceVerification(root, sources) {
+  return () => {
+    for (const { source, input } of sources) {
+\t\t\tconst canonical = fs.realpathSync(source);
+      verifyPluginSourceInputs(new Map([[canonical, input]]), [canonical]);
+    }
+  };
+}`;
+
+function verificationRuntime(platform: string, native: (source: string) => string) {
+  const original = vi.fn((source: string) => source);
+  const nativeLookup = vi.fn(native);
+  const functions = vm.runInNewContext(
+    patchPluginSourceVerification(verificationFixture) +
+      "; ({ resolve: freshCanonicalPluginSource, verify: verifyPluginSourceInputs, retain: createRetainedSourceVerification })",
+    {
+      process: { platform },
+      fs: { realpathSync: Object.assign(original, { native: nativeLookup }) },
+    },
+  );
+  return { ...functions, original, nativeLookup };
+}
+
+describe("OpenClaw source verification canonical paths", () => {
+  it.each(["linux", "darwin", "win32"])(
+    "keeps the existing resolver on %s unless a fresh Linux lookup proves the input canonical",
+    (platform) => {
+      const proof = verificationRuntime(platform, (source) => source);
+      expect(proof.resolve("/canonical/file")).toBe("/canonical/file");
+      expect(proof.nativeLookup).toHaveBeenCalledTimes(platform === "linux" ? 1 : 0);
+      expect(proof.original).toHaveBeenCalledTimes(platform === "linux" ? 0 : 1);
+    },
+  );
+
+  it("uses original alias resolution and preserves its error", () => {
+    const proof = verificationRuntime("linux", () => "/physical/target");
+    proof.original.mockReturnValueOnce("/original/target");
+    expect(proof.resolve("/alias")).toBe("/original/target");
+    expect(proof.original).toHaveBeenCalledExactlyOnceWith("/alias");
+    const error = new Error("original resolver rejected alias");
+    proof.original.mockImplementationOnce(() => {
+      throw error;
+    });
+    expect(() => proof.resolve("/alias")).toThrow(error);
+  });
+
+  it("falls back after native failure and never caches a previous observation", () => {
+    const proof = verificationRuntime("linux", (source) => source);
+    expect(proof.resolve("/file")).toBe("/file");
+    proof.nativeLookup.mockImplementationOnce(() => {
+      throw new Error("native unavailable");
+    });
+    proof.original.mockReturnValueOnce("/changed");
+    expect(proof.resolve("/file")).toBe("/changed");
+    expect(proof.nativeLookup).toHaveBeenCalledTimes(2);
+    expect(proof.original).toHaveBeenCalledExactlyOnceWith("/file");
+  });
+
+  it("retains identity and content checks after a canonical lookup and source adoption", () => {
+    const proof = verificationRuntime("linux", (source) => source);
+    const input = { identity: "initial", actualIdentity: "initial", contentValid: true };
+    const retained = proof.retain({}, [{ source: "/file", input }]);
+    expect(retained).not.toThrow();
+    input.actualIdentity = "replacement";
+    expect(retained).toThrow("source changed");
+    input.actualIdentity = "initial";
+    input.contentValid = false;
+    expect(() => proof.verify(new Map([["/file", input]]), ["/file"])).toThrow("source changed");
+  });
+
+  it.each(["missing", "duplicate", "mixed", "partial"] as const)(
+    "refuses a %s verification patch without weakening its source guards",
+    (scenario) => {
+      const patched = patchPluginSourceVerification(verificationFixture);
+      const sources = {
+        missing: "",
+        duplicate: verificationFixture + verificationFixture,
+        mixed: patched + verificationFixture,
+        partial: patched.replace(
+          "const canonical = freshCanonicalPluginSource(source);",
+          "const canonical = fs.realpathSync(source);",
+        ),
+      };
+      expect(() => patchPluginSourceVerification(sources[scenario])).toThrow("boundary");
+    },
+  );
+
+  it("accepts a complete patch idempotently and rejects duplicated helpers", () => {
+    const patched = patchPluginSourceVerification(verificationFixture);
+    expect(patchPluginSourceVerification(patched)).toBe(patched);
+    expect(() => patchPluginSourceVerification(patched + patched)).toThrow("Incomplete");
   });
 });

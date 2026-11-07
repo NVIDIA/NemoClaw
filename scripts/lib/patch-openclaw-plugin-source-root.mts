@@ -26,6 +26,50 @@ const CONTRACTS = {
   },
 } as const;
 const MARKER = "// nemoclaw: resolve each Linux source root with the native filesystem API";
+const VERIFICATION_MARKER = "// nemoclaw: resolve canonical Linux verification paths freshly";
+const VERIFICATION_HELPER = `${VERIFICATION_MARKER}
+function freshCanonicalPluginSource(source) {
+\tif (process.platform === "linux") {
+\t\ttry { if (fs.realpathSync.native(source) === source) return source; } catch {}
+\t}
+\treturn fs.realpathSync(source);
+}
+`;
+const VERIFICATION_FRAGMENTS = [
+  [
+    "function verifyPluginSourceInputs(inputs, sources) {",
+    VERIFICATION_HELPER + "function verifyPluginSourceInputs(inputs, sources) {",
+  ],
+  [
+    "if (fs.realpathSync(source) !== source || identity !== input.identity ||",
+    "if (freshCanonicalPluginSource(source) !== source || identity !== input.identity ||",
+  ],
+  [
+    "for (const { source, input } of sources) {\n\t\t\tconst canonical = fs.realpathSync(source);",
+    "for (const { source, input } of sources) {\n\t\t\tconst canonical = freshCanonicalPluginSource(source);",
+  ],
+] as const;
+
+export function patchPluginSourceVerification(source: string): string {
+  const patched = source.includes(VERIFICATION_MARKER);
+  if (patched && source.split(VERIFICATION_MARKER).length !== 2)
+    throw new Error("Incomplete OpenClaw source verification patch");
+  for (const [before, after] of VERIFICATION_FRAGMENTS) {
+    const expected = patched ? after : before;
+    if (
+      source.split(expected).length !== 2 ||
+      (patched && source.replace(expected, "").includes(before))
+    ) {
+      throw new Error("Unrecognized OpenClaw source verification boundary");
+    }
+  }
+  return patched
+    ? source
+    : VERIFICATION_FRAGMENTS.reduce(
+        (result, [before, after]) => result.replace(before, () => after),
+        source,
+      );
+}
 
 function sourceContract(version: string) {
   if (!Object.hasOwn(CONTRACTS, version))
@@ -99,11 +143,21 @@ export function patchOpenClawPluginSourceRoot(dist: string, audit = false): void
   }
   const file = path.join(realDist, contract.file);
   const source = fs.readFileSync(file, "utf8");
-  const patched = patchPluginSourceRoot(source, version);
+  const rooted = patchPluginSourceRoot(source, version);
+  const patched = version === "2026.10.5" ? patchPluginSourceVerification(rooted) : rooted;
   // Invert only this complete patch before verifying the reviewed native bytes.
   // Keep every root/leaf/descriptor check in the existing guarded-open API.
   const { before, after } = sourceFragments(version);
-  const original = source.includes(MARKER) ? source.replace(after, before) : source;
+  const withoutVerification =
+    version === "2026.10.5" && source.includes(VERIFICATION_MARKER)
+      ? VERIFICATION_FRAGMENTS.reduce(
+          (result, [original, replacement]) => result.replace(replacement, () => original),
+          source,
+        )
+      : source;
+  const original = withoutVerification.includes(MARKER)
+    ? withoutVerification.replace(after, before)
+    : withoutVerification;
   if (createHash("sha256").update(original).digest("hex") !== contract.sha256) {
     throw new Error("OpenClaw plugin source lookup bytes changed");
   }
