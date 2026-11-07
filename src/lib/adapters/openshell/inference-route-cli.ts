@@ -10,6 +10,7 @@ import {
 } from "./gateway-scope";
 import {
   isValidOpenShellInferenceRoute,
+  MAX_INFERENCE_ROUTE_TIMEOUT_SECONDS,
   type OpenShellInferenceRouteError,
   type OpenShellInferenceRouteMutationError,
   type OpenShellInferenceRouteMutationResult,
@@ -28,7 +29,6 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MUTATION_TIMEOUT_MS = 30_000;
 const DEFAULT_VERIFICATION_TIMEOUT_SECONDS = 60;
 const MUTATION_VERIFICATION_GRACE_MS = 15_000;
-const MAX_VERIFICATION_TIMEOUT_SECONDS = 3_600;
 const MUTATION_DETAIL_LIMIT = 2_000;
 const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
 const TERMINAL_STRING_RE = /(?:\x1B[PX^_]|[\x90\x98\x9E\x9F])[\s\S]*?(?:\x1B\\|\x9C|$)/gu;
@@ -434,7 +434,7 @@ function mutationRequestError(
     (request.verificationTimeoutSeconds !== undefined &&
       (!Number.isSafeInteger(request.verificationTimeoutSeconds) ||
         request.verificationTimeoutSeconds <= 0 ||
-        request.verificationTimeoutSeconds > MAX_VERIFICATION_TIMEOUT_SECONDS)) ||
+        request.verificationTimeoutSeconds > MAX_INFERENCE_ROUTE_TIMEOUT_SECONDS)) ||
     (request.timeoutMs !== undefined &&
       (!Number.isSafeInteger(request.timeoutMs) ||
         request.timeoutMs <= 0 ||

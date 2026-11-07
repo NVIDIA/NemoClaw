@@ -89,6 +89,9 @@ export type ObserveOpenShellInferenceRouteRequest = Readonly<{
   timeoutMs?: number;
 }>;
 
+/** Largest route request timeout NemoClaw passes to `openshell inference set --timeout`. */
+export const MAX_INFERENCE_ROUTE_TIMEOUT_SECONDS = 3_600;
+
 export type SetOpenShellInferenceRouteRequest = Readonly<{
   target: Readonly<{ kind: "named"; gatewayName: string }>;
   route: OpenShellInferenceRoute;

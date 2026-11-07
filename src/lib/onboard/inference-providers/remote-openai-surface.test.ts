@@ -213,6 +213,36 @@ describe("OpenAI-compatible scoped credential registration", () => {
   });
 });
 
+describe("compatible endpoint route timeout (#13734)", () => {
+  it("sends the largest accepted local inference timeout with the route request", async () => {
+    const harness = createHarness();
+    harness.deps.LOCAL_INFERENCE_TIMEOUT_SECS = 3600;
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: SANDBOX,
+          model: MODEL,
+          provider: "compatible-endpoint",
+          endpointUrl: "https://inference.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+          pinnedAddresses: ["93.184.216.34"],
+        },
+        harness.deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(harness.deps.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ verificationTimeoutSeconds: 3600 }),
+    );
+    expect(harness.runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set", "--timeout", "3600"]),
+      expect.anything(),
+    );
+  });
+});
+
 describe("custom Anthropic provider replacement on the OpenAI surface", () => {
   it("probes chat completions before replacing a stale Anthropic provider as OpenAI (#6294)", async () => {
     const harness = createHarness();
