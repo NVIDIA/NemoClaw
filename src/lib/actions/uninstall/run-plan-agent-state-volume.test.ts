@@ -118,14 +118,14 @@ async function runManagedStateVolumeUninstall(
     dockerCalls.push(args);
     events.push(`docker ${args.join(" ")}`);
     switch (args.join(" ")) {
-      case "ps -a --format {{.ID}} {{.Image}} {{.Names}}":
+      case "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}":
         switch (containerPresent ? containerMode : "absent") {
           case "owned":
             return ok(
-              `${containerId} ghcr.io/nvidia/nemoclaw/${agent}-sandbox:latest openshell-default--${sandboxName}-runtime-id\n`,
+              `${containerId}|ghcr.io/nvidia/nemoclaw/${agent}-sandbox:latest|openshell-default--${sandboxName}-runtime-id\n`,
             );
           case "foreign":
-            return ok(`${containerId} redis:7 foreign-service\n`);
+            return ok(`${containerId}|redis:7|foreign-service\n`);
           default:
             return ok();
         }
