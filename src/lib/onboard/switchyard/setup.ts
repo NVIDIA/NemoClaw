@@ -74,6 +74,8 @@ export async function setupSwitchyardInference(input: {
     const expected = validateSwitchyardBindingState(previous.hermesSwitchyard);
     if (
       previous.name !== sandboxName ||
+      (previous.agent !== undefined && previous.agent !== "hermes") ||
+      previous.pendingCreateIdentity !== undefined ||
       previous.workload !== undefined ||
       previous.pendingRouteReservation !== true ||
       !input.options.reservationSessionId ||

@@ -37,6 +37,7 @@ const routing = createHermesSwitchyardRoutingIntent({
 
 async function interruptedOnboarding() {
   const fixture = createSwitchyardProviderFixture(routing, "nemoclaw", "hermes");
+  fixture.input.readCredential = vi.fn(fixture.input.readCredential);
   const env: NodeJS.ProcessEnv = {
     [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
   };
@@ -122,6 +123,8 @@ describe("Switchyard interrupted onboarding", () => {
   it("resumes after inference through sandbox creation without creating providers again (#13863)", async () => {
     const state = await interruptedOnboarding();
     const result = await state.runInference(true);
+    expect(state.calls.hydrate).not.toHaveBeenCalled();
+    expect(state.fixture.input.readCredential).not.toHaveBeenCalled();
     const recorded = state.entry();
     const expected = recorded.hermesSwitchyard!;
     const bindingEnvironment = encodeSwitchyardProviderBindings(expected.bindings, routing);
@@ -158,6 +161,8 @@ describe("Switchyard interrupted onboarding", () => {
     const state = await interruptedOnboarding();
     state.entry().reservationSessionId = "foreign-session";
     await expect(state.runInference(true)).rejects.toThrow("onboarding session");
+    expect(state.calls.hydrate).not.toHaveBeenCalled();
+    expect(state.fixture.input.readCredential).not.toHaveBeenCalled();
     expect(state.env).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
     expect(state.fixture.methods.getProvider).not.toHaveBeenCalled();
     expect(state.fixture.methods.createProvider).not.toHaveBeenCalled();

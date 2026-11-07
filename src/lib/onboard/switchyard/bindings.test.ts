@@ -9,6 +9,7 @@ import {
 } from "../../hermes-switchyard-routing";
 import {
   assertSwitchyardRootApplyEnvironment,
+  SwitchyardProviderBindingError,
   validateSwitchyardProviderBindings,
 } from "../../hermes-switchyard-routing";
 import { observeSwitchyardProviderBindings, verifySwitchyardProviderBindings } from "./bindings";
@@ -388,6 +389,27 @@ describe("Switchyard provider bindings", () => {
       },
     },
     {
+      failure: "started sandbox creation",
+      mutate: (_input, recorded) => {
+        recorded.pendingCreateIdentity = {
+          schemaVersion: 1,
+          state: "verified-create",
+          gatewayName: recorded.gatewayName!,
+          gatewayPort: 8080,
+          sandboxName: recorded.name,
+          lifecycleGeneration: "generation-test",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          route: "native",
+        };
+      },
+    },
+    {
+      failure: "changed agent",
+      mutate: (_input, recorded) => {
+        recorded.agent = "openclaw";
+      },
+    },
+    {
       failure: "changed routing",
       mutate: (_input, recorded) => {
         recorded.hermesSwitchyard = {
@@ -438,10 +460,12 @@ describe("Switchyard provider bindings", () => {
       const updateSandbox = vi.fn(() => false);
       const input = setupInput(f, updateSandbox, () => recorded);
       input.options = { ...input.options, resumeSwitchyardReservation: true };
+      input.deps.hydrateCredentialEnv = vi.fn(input.deps.hydrateCredentialEnv);
       mutate(input, recorded, f);
       vi.clearAllMocks();
-      await expect(setupSwitchyardInference(input)).rejects.toThrow();
+      await expect(setupSwitchyardInference(input)).rejects.toThrow(SwitchyardProviderBindingError);
       expect(input.environment).not.toHaveProperty(HERMES_SWITCHYARD_BINDINGS_ENV);
+      expect(input.deps.hydrateCredentialEnv).not.toHaveBeenCalled();
       expect(f.methods.createProvider).not.toHaveBeenCalled();
       expect(f.methods.updateProvider).not.toHaveBeenCalled();
       expect(f.methods.deleteProvider).not.toHaveBeenCalled();

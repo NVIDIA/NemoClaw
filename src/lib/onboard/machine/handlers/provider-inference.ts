@@ -105,6 +105,15 @@ async function resumeProviderReadiness<Gpu, Agent, Host>(
     : deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv, undefined, selection);
 }
 
+function hydrateResumeProviderCredential<Gpu, Agent, Host>(
+  deps: ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"],
+  switchyard: boolean,
+  credentialEnv: string | null,
+) {
+  // Switchyard setup re-attests owned bindings or acquires fresh credentials itself.
+  return switchyard ? undefined : deps.hydrateCredentialEnv(credentialEnv);
+}
+
 function switchyardReservationResumeOptions(
   configured: boolean,
   resume: boolean,
@@ -1750,7 +1759,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           "  [resume] Refreshing the gateway provider to match the required inference surface.",
         );
       }
-      const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
+      const hydratedCredential = hydrateResumeProviderCredential(
+        deps,
+        switchyardConfigured,
+        credentialEnv,
+      );
       // A retained OpenRouter gateway provider still owns the credential,
       // while the host adapter needs only its persisted authorization hash
       // to recover a stopped process. Do not export the gateway credential
