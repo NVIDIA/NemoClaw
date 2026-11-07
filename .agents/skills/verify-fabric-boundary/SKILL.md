@@ -200,6 +200,7 @@ Run checks only at their listed phases; don't add repetitions.
 Run one request at a time: two model requests at once can make a reply arrive after the check that waits for it.
 Continue independent checks after a failure; reassess blocked checks after each transition.
 Never repair the baseline between phases: no reseeding, reinstalling, re-enabling, or editing state or generated native configuration.
+Native evolution of writable skill contents follows [Evolving Skill Contents](features/skills.md#evolving-skill-contents): retain diagnostic snapshots and verify behavior without requiring initial byte identity. This does not permit runner repairs or relax other fixture hashes.
 
 ## Evidence
 
