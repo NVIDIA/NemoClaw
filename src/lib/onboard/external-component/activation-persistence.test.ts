@@ -61,7 +61,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-function finalization(componentId = evidence.componentId) {
+function finalization(componentId = evidence.componentId, schemaVersion = 2) {
   const activate = vi.fn(async () => {
     // Reload inside the callback to prove evidence reached disk before activation.
     expect(session.loadSession()?.externalComponentActivation).toEqual({
@@ -84,12 +84,21 @@ function finalization(componentId = evidence.componentId) {
     webSearchProvider: null,
     providerless: true,
     externalComponent: {
-      declaration: parseExternalComponentDeclaration(declaration(componentId)),
+      declaration: parseExternalComponentDeclaration(declaration(componentId, schemaVersion)),
       revalidateBeforeGateway: vi.fn(),
       revalidateBeforeActivation: vi.fn(),
     },
     deps: {
-      ...finalDeps("example", session, { getSandbox: () => null, setDefault: vi.fn() }, vi.fn()),
+      ...finalDeps(
+        "example",
+        session,
+        {
+          getSandbox: () => null,
+          setDefault: vi.fn(),
+          recordCompletedExternalComponentSelection: vi.fn(() => true),
+        },
+        vi.fn(),
+      ),
       createExternalComponentActivationId: () => evidence.activationId,
       createExternalComponentActivationProof: () => ({
         gatewayName: "example",
@@ -126,6 +135,53 @@ function finalization(componentId = evidence.componentId) {
 }
 
 describe("component ID registration and activation persistence", () => {
+  async function registerVerifiedSandbox() {
+    const registry = await import("../../state/registry");
+    registry.registerSandbox({
+      name: "example",
+      gatewayName: "example",
+      gatewayPort: 8080,
+      lifecycleGeneration: evidence.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: "b".repeat(64),
+    });
+    return registry;
+  }
+
+  it("retains verified version 1 participation before clearing activation evidence", async () => {
+    const registry = await registerVerifiedSandbox();
+    const componentId = "policy-governance";
+    const { options, activate } = finalization(componentId, 1);
+    options.deps.recordCompletedExternalComponentSelection =
+      registry.recordCompletedExternalComponentSelection;
+
+    const result = await handleFinalizationState(options);
+
+    expect(result.stateResult).toMatchObject({ type: "transition", next: "post_verify" });
+    expect(activate).toHaveBeenCalledOnce();
+    expect(registry.getSandbox("example")?.externalComponentSelection).toEqual({
+      schemaVersion: 1,
+      componentId,
+      gatewayName: "example",
+      lifecycleGeneration: evidence.lifecycleGeneration,
+      sandboxIdentityFingerprint: "b".repeat(64),
+    });
+    expect(session.loadSession()?.externalComponentActivation).toBeNull();
+  });
+
+  it("completes version 2 activation without a version 1 selection record", async () => {
+    const registry = await registerVerifiedSandbox();
+    const { options, activate } = finalization("example/policy-adapter");
+    options.deps.recordCompletedExternalComponentSelection =
+      registry.recordCompletedExternalComponentSelection;
+
+    const result = await handleFinalizationState(options);
+
+    expect(result.stateResult).toMatchObject({ type: "transition", next: "post_verify" });
+    expect(activate).toHaveBeenCalledOnce();
+    expect(registry.getSandbox("example")?.externalComponentSelection).toBeUndefined();
+    expect(session.loadSession()?.externalComponentActivation).toBeNull();
+  });
+
   it.each([
     "example/policy-adapter",
     "a",
