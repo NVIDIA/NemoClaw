@@ -357,15 +357,7 @@ describe("abandoned inference route reservation (#11051)", () => {
       verifyOnboardInferenceSmoke: vi.fn(),
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      isRoutedInferenceProvider: () => true,
-      reconcileModelRouter: async () => undefined,
-      routedInference: {
-        upsertRoutedProvider: () => ({
-          ok: true,
-          endpointUrl: route.endpointUrl,
-          result: { ok: true },
-        }),
-      },
+
       hydrateCredentialEnv: () => "fixture-key",
       redact: (value: string) => value,
       compactText: (value: string) => value,

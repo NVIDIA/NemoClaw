@@ -187,7 +187,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     }),
     detectInferenceProviderHostState: () => makeSetupNimHostState(),
     getAgentInferenceProviderOptions: () => [],
-    loadRoutedProfile: () => null,
+
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
     readRecordedModel: () => null,
@@ -210,7 +210,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     handleInstallOllamaSelection: async () => unexpected("Ollama install selection"),
     installVllm: async () => unexpected("vLLM install"),
     handleVllmSelection: async () => unexpected("vLLM selection"),
-    handleRoutedSelection: async () => unexpected("routed selection"),
+
     coerceAgentInferenceApi: (_agent, preferredInferenceApi) => preferredInferenceApi,
     resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
       preferredInferenceApi,
@@ -402,7 +402,7 @@ function buildProviderMenu(overrides: ProviderMenuOverrides = {}) {
     winOllamaLoopbackOnly: false,
     ollamaInstallEntry: null,
     vllmEntries: [],
-    routedEnabled: false,
+
     ...overrides,
   });
 }

@@ -76,20 +76,21 @@ describe("standard E2E execution profile", () => {
     { field: "with", value: { "python-version": "3.14" } },
     { field: "env", value: { UNREVIEWED_INPUT: "present" } },
     { field: "run", value: "python3 --version" },
-  ])("rejects unreviewed Model Router Python $field", ({ field, value }) => {
+  ])("rejects reintroduced Model Router Python $field", ({ field, value }) => {
     const profile = YAML.parse(
       fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
     ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
-    const python = profile.jobs.run.steps.find(
-      (step) => step.name === "Set up supported Model Router Python",
-    )!;
-    python[field] = value;
+    const python: Record<string, unknown> = {
+      name: "Set up supported Model Router Python",
+      [field]: value,
+    };
+    profile.jobs.run.steps.push(python);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-router-python-"));
     const profilePath = path.join(directory, "profile.yaml");
     try {
       fs.writeFileSync(profilePath, YAML.stringify(profile));
       expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
-        "standard E2E profile must provision reviewed Python only for Model Router",
+        "standard E2E profile must keep its reviewed step set and order",
       );
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
