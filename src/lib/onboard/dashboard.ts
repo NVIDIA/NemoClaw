@@ -779,8 +779,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log("");
     console.log(`${indent}  Or open a sandbox shell first:`);
     console.log(`${indent}    ${deps.cliName()} ${sandboxName} connect`);
-    void getInteractiveAgentCommand(agent, agent?.name);
-    console.log(`${indent}    then run the configured interactive agent command`);
+    let agentCommand = "openclaw tui";
+    try {
+      agentCommand = getInteractiveAgentCommand(agent, agent?.name) || "openclaw tui";
+    } catch {
+      agentCommand = "openclaw tui";
+    }
+    console.log(`${indent}    then run: ${agentCommand}`);
   }
 
   async function printDashboard(

@@ -271,8 +271,7 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("Inside the sandbox, run the configured command to start chatting.");
-    expect(output).not.toContain("dcode");
+    expect(output).toContain("Inside the sandbox, run dcode to start chatting.");
     expect(output).not.toContain("langchain-deepagents-code");
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
