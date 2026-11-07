@@ -125,9 +125,14 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
           target: { kind: "named", gatewayName },
           credentialValue: "test-secret",
         }),
-      ).rejects.toThrow(
-        `OpenShell provider '${definition.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed. Check whether any sandbox on this gateway uses this provider. If none does, remove it with \`openshell provider delete -g ${quotedGateway} '${definition.providerName}'\`, then run onboarding again.`,
-      );
+      ).rejects.toMatchObject({
+        lines: [
+          `OpenShell provider '${definition.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+          "Check whether any sandbox on this gateway uses this provider. If none does, remove it with:",
+          `  openshell provider delete '${definition.providerName}' -g ${quotedGateway}`,
+          "Then run onboarding again.",
+        ],
+      });
       expect(methods.updateProvider).not.toHaveBeenCalled();
       expect(methods.ensureProviderPolicyComposition).not.toHaveBeenCalled();
       expect(methods.createProvider).not.toHaveBeenCalled();

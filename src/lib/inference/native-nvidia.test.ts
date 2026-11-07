@@ -341,9 +341,14 @@ describe("native NVIDIA OpenShell provider", () => {
           target: { kind: "named", gatewayName },
           credentialValue: "opaque-test-secret",
         }),
-      ).rejects.toThrow(
-        `OpenShell provider 'nemoclaw-nvidia-prod-v1' already exists without a matching NemoClaw ownership receipt. No provider was changed. Check whether any sandbox on this gateway uses this provider. If none does, remove it with \`openshell provider delete -g ${quotedGateway} 'nemoclaw-nvidia-prod-v1'\`, then run onboarding again.`,
-      );
+      ).rejects.toMatchObject({
+        lines: [
+          "OpenShell provider 'nemoclaw-nvidia-prod-v1' already exists without a matching NemoClaw ownership receipt. No provider was changed.",
+          "Check whether any sandbox on this gateway uses this provider. If none does, remove it with:",
+          `  openshell provider delete 'nemoclaw-nvidia-prod-v1' -g ${quotedGateway}`,
+          "Then run onboarding again.",
+        ],
+      });
       expect(updateProvider).not.toHaveBeenCalled();
       expect(attachProvider).not.toHaveBeenCalled();
       expect(providerAdapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
