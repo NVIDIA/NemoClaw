@@ -762,6 +762,10 @@ These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
 The workflow does not republish those inputs as artifacts.
+Before the historical install, GitHub-hosted Linux runners remove group and world
+write permissions from a verified root- or runner-owned `/usr/local/bin`.
+Preparation rejects symlinks, foreign owners, and unsafe ancestors. It records
+the original and resulting modes. Other hosts retain their existing permissions.
 Deterministic tests own installer identity, OpenShell release asset selection,
 NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
 assert OpenClaw database tables, migration checkpoints, or other third-party

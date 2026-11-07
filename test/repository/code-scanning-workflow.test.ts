@@ -183,24 +183,36 @@ describe("Complete CodeQL query partition qualification", () => {
       upload: false,
       category: "/language:javascript-typescript/partition:${{ matrix.partition }}",
     });
-    expect(partitionAggregate.needs).toEqual(["codeql-javascript", "codeql"]);
+    expect(partitionAggregate.needs).toEqual([
+      "codeql-javascript",
+      "codeql-javascript-report",
+      "codeql",
+    ]);
     expect(partitionAggregate.if).toBe("${{ always() }}");
     expect(
       partitionStep(partitionAggregate, "Require every query partition to succeed").env,
     ).toEqual({
       PARTITION_RESULT: "${{ needs.codeql-javascript.result }}",
-      REPORT_RESULT: "${{ needs.codeql.result }}",
+      REPORT_RESULT: "${{ needs.codeql-javascript-report.result }}",
+      PYTHON_RESULT: "${{ needs.codeql.result }}",
     });
-    expect(publisher.strategy?.matrix).toEqual({ language: ["javascript-typescript", "python"] });
+    const python = workflow.jobs.codeql!;
+    expect(python.needs).toBeUndefined();
+    expect(python.strategy?.matrix).toEqual({ language: ["python"] });
+    expect(python.name).toBe("CodeQL (python)");
+    expect(python["timeout-minutes"]).toBe(15);
     expect(publisher["timeout-minutes"]).toBe(15);
     expect(partitionAggregate["timeout-minutes"]).toBe(1);
     expect(publisher.needs).toEqual(["codeql-javascript"]);
-    expect(partitionStep(publisher, "Initialize CodeQL").if).toBe(
-      "${{ matrix.language == 'python' }}",
-    );
-    expect(partitionStep(publisher, "Perform CodeQL analysis").if).toBe(
-      "${{ matrix.language == 'python' }}",
-    );
+    expect(partitionStep(python, "Initialize CodeQL").with).toEqual({
+      languages: "${{ matrix.language }}",
+      queries: "security-and-quality",
+    });
+    expect(partitionStep(python, "Initialize CodeQL").if).toBeUndefined();
+    expect(partitionStep(python, "Perform CodeQL analysis").if).toBeUndefined();
+    expect(
+      partitionStep(publisher, "Publish complete JavaScript report in the former category").env,
+    ).toEqual({ CODEQL_ACTION_ANALYSIS_KEY: ".github/workflows/code-scanning.yaml:codeql" });
     expect(
       partitionStep(publisher, "Publish complete JavaScript report in the former category").with,
     ).toEqual({
@@ -232,9 +244,16 @@ describe("Complete CodeQL query partition qualification", () => {
   });
 
   const states = ["success", "failure", "cancelled", "skipped"];
-  it.each(states.flatMap((partition) => states.map((report) => ({ partition, report }))))(
-    "requires complete queries and publication ($partition, $report)",
-    ({ partition, report }) => {
+  const qualificationStates = states
+    .flatMap((partition) => states.map((report) => ({ partition, report, python: "success" })))
+    .concat(
+      states
+        .filter((python) => python !== "success")
+        .map((python) => ({ partition: "success", report: "success", python })),
+    );
+  it.each(qualificationStates)(
+    "requires complete queries, publication, and Python ($partition, $report, $python)",
+    ({ partition, report, python }) => {
       const result = spawnSync(
         "bash",
         [
@@ -245,15 +264,22 @@ describe("Complete CodeQL query partition qualification", () => {
         ],
         {
           encoding: "utf8",
-          env: { PATH: process.env.PATH, PARTITION_RESULT: partition, REPORT_RESULT: report },
+          env: {
+            PATH: process.env.PATH,
+            PARTITION_RESULT: partition,
+            REPORT_RESULT: report,
+            PYTHON_RESULT: python,
+          },
         },
       );
-      expect(result.status).toBe(partition === "success" && report === "success" ? 0 : 1);
+      expect(result.status).toBe(
+        partition === "success" && report === "success" && python === "success" ? 0 : 1,
+      );
     },
   );
 });
 
-const publisher = workflow.jobs.codeql!;
+const publisher = workflow.jobs["codeql-javascript-report"]!;
 const legacyCategory =
   ".github/workflows/code-scanning.yaml:codeql/language:javascript-typescript/";
 

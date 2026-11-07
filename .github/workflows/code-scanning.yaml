@@ -22,17 +22,35 @@ permissions:
 
 jobs:
   codeql:
-    # Preserve the former job identity for the complete JavaScript report.
-    name: ${{ matrix.language == 'python' && 'CodeQL (python)' || 'CodeQL JS combined report' }}
-    needs: [codeql-javascript]
-    if: ${{ always() }}
+    # Keep Python independent and preserve its original analysis identity.
+    name: CodeQL (python)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript, python]
+        language: [python]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+
+  codeql-javascript-report:
+    name: CodeQL JS combined report
+    needs: [codeql-javascript]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,24 +58,11 @@ jobs:
           persist-credentials: false
 
       - name: Require complete JavaScript query evidence
-        if: ${{ matrix.language == 'javascript-typescript' }}
         env:
           PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
         run: test "$PARTITION_RESULT" = success
 
-      - name: Initialize CodeQL
-        if: ${{ matrix.language == 'python' }}
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-and-quality
-
-      - name: Perform CodeQL analysis
-        if: ${{ matrix.language == 'python' }}
-        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-
       - name: Download first JavaScript query report
-        if: ${{ matrix.language == 'javascript-typescript' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: codeql-javascript-sarif-${{ github.run_id }}-${{ github.run_attempt }}-a-m
@@ -65,7 +70,6 @@ jobs:
           digest-mismatch: error
 
       - name: Download complementary JavaScript query report
-        if: ${{ matrix.language == 'javascript-typescript' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: codeql-javascript-sarif-${{ github.run_id }}-${{ github.run_attempt }}-other
@@ -73,7 +77,6 @@ jobs:
           digest-mismatch: error
 
       - name: Prepare complete JavaScript report identity
-        if: ${{ matrix.language == 'javascript-typescript' }}
         run: |
           python3 - <<'PY'
           import json
@@ -96,7 +99,9 @@ jobs:
           PY
 
       - name: Publish complete JavaScript report in the former category
-        if: ${{ matrix.language == 'javascript-typescript' }}
+        # The pinned action supports an explicit key for non-standard publishers.
+        env:
+          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/code-scanning.yaml:codeql
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
           sarif_file: codeql-sarif
@@ -152,7 +157,7 @@ jobs:
   codeql-javascript-complete:
     # Keep the existing check name. A partial suite can never satisfy it.
     name: CodeQL (javascript-typescript)
-    needs: [codeql-javascript, codeql]
+    needs: [codeql-javascript, codeql-javascript-report, codeql]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -161,8 +166,9 @@ jobs:
       - name: Require every query partition to succeed
         env:
           PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
-          REPORT_RESULT: ${{ needs.codeql.result }}
-        run: test "$PARTITION_RESULT" = success && test "$REPORT_RESULT" = success
+          REPORT_RESULT: ${{ needs.codeql-javascript-report.result }}
+          PYTHON_RESULT: ${{ needs.codeql.result }}
+        run: test "$PARTITION_RESULT" = success && test "$REPORT_RESULT" = success && test "$PYTHON_RESULT" = success
 
   shellcheck:
     name: ShellCheck SARIF
