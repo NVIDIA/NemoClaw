@@ -88,7 +88,7 @@ tmux new-session -d -s "$SESSION" -x 200 -y 50 "openshell term"
 # NVIDIA_INFERENCE_API_KEY is not needed inside the sandbox — inference is proxied
 # through the OpenShell gateway which injects credentials server-side.
 tmux split-window -h -t "$SESSION" \
-  "openshell sandbox connect nemoclaw -- bash -c 'nemoclaw-start openclaw agent --agent main --local --session-id live'"
+  "openshell sandbox exec --name nemoclaw --tty -- bash -c 'nemoclaw-start openclaw agent --agent main --local --session-id live'"
 
 # Even split
 tmux select-layout -t "$SESSION" even-horizontal
