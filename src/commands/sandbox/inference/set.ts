@@ -26,7 +26,7 @@ export default class SandboxInferenceSetCommand extends NemoClawCommand {
     "<name> inference set --provider <provider> --model <model> [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]",
   ];
   static examples = [
-    "<%= config.bin %> my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b",
+    "<%= config.bin %> my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3.5-super-vl-120b-a12b",
     "<%= config.bin %> my-assistant inference set --provider openai-api --model gpt-5.4",
   ];
   static args = {
