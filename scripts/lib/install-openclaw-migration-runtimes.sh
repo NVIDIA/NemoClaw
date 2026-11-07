@@ -43,6 +43,7 @@ case "${1:-}" in
       node /scripts/lib/reviewed-npm-archive.mts --verify-installed-lock \
         --lock-sha256 "$migration_lock" --lockfile "$migration_root/package-lock.json" \
         --install-root "$migration_root" --label "OpenClaw migration $migration_version"
+      node /scripts/lib/patch-openclaw-plugin-source-root.mts "$migration_root/node_modules/openclaw/dist"
       chown -R root:root "$migration_root"
       chmod -R a+rX,go-w "$migration_root"
     done

@@ -683,8 +683,8 @@ COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
 FROM npm12 AS openclaw-migration-runtime
 COPY --from=openclaw-dependency-payload /usr/local/lib/nemoclaw/openclaw-migrations/ /usr/local/lib/nemoclaw/openclaw-migrations/
-# Pinned migration-only runtimes retain the retired JSON importers. They are
-# never linked onto PATH and run only inside the gateway-down restore window.
+COPY scripts/lib/patch-openclaw-plugin-source-root.mts /scripts/lib/
+# Off-PATH JSON importers run only during gateway-down restores.
 # hadolint ignore=DL3059
 RUN /scripts/lib/install-openclaw-migration-runtimes.sh install
 # Lifecycle repair cannot download a missing platform dependency outside the lock.

@@ -8,69 +8,103 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SOURCE_SHA256 = "f5d2a7a135361cd39680344842b825c9f9db2e1524417c3c1297a53ce7913ff8";
+const CONTRACTS = {
+  "2026.9.5": {
+    file: "plugin-generation-artifact-CjuoUs0e.mjs",
+    sha256: "37a97a0b9e3e1765cd81449c6f72cd7da34e90d59bb9fecd6bbcedb45c083a4c",
+    dependencyVersion: "0.13.1",
+  },
+  "2026.9.7": {
+    file: "plugin-generation-artifact-B__8bgF_.mjs",
+    sha256: "e1a168a33d43ec95d7f2dbd43449b7d39413fd5aabf293e53d2e7e650ae28fc9",
+    dependencyVersion: "0.21.1",
+  },
+  "2026.10.5": {
+    file: "plugin-generation-source-lookup-Dg6DuWgm.mjs",
+    sha256: "f5d2a7a135361cd39680344842b825c9f9db2e1524417c3c1297a53ce7913ff8",
+    dependencyVersion: "0.25.0",
+  },
+} as const;
 const MARKER = "// nemoclaw: resolve each Linux source root with the native filesystem API";
-const BEFORE =
-  "function withPluginSourceFile(source, boundary, read) {\n\tconst opened = openRootFileSync$1({";
-const AFTER = `function withPluginSourceFile(source, boundary, read) {
+
+function sourceContract(version: string) {
+  if (!Object.hasOwn(CONTRACTS, version))
+    throw new Error("Unsupported OpenClaw plugin source root version");
+  return CONTRACTS[version as keyof typeof CONTRACTS];
+}
+
+function sourceFragments(version: string) {
+  sourceContract(version);
+  const before =
+    version === "2026.9.5"
+      ? "function readPluginSourceBytes(source, boundary) {\n\tconst opened = openRootFileSync({"
+      : "function withPluginSourceFile(source, boundary, read) {\n\tconst opened = openRootFileSync$1({";
+  const [declaration, opening] = before.split("\n");
+  const after = `${declaration}
 \t${MARKER}
 \tlet rootRealPath;
 \tif (process.platform === "linux") {
 \t\ttry { rootRealPath = fs.realpathSync.native(path.resolve(boundary)); } catch {}
 \t}
-\tconst opened = openRootFileSync$1({
+${opening}
 \t\trootRealPath,`;
+  return { before, after };
+}
 
-export function patchPluginSourceRoot(source: string): string {
+export function patchPluginSourceRoot(source: string, version = "2026.10.5"): string {
+  const { before, after } = sourceFragments(version);
   if (source.includes(MARKER)) {
     if (
       source.split(MARKER).length !== 2 ||
-      source.split(AFTER).length !== 2 ||
-      source.replace(AFTER, "").includes(BEFORE)
+      source.split(after).length !== 2 ||
+      source.replace(after, "").includes(before)
     ) {
       throw new Error("Incomplete OpenClaw plugin source root patch");
     }
     return source;
   }
-  if (source.split(BEFORE).length !== 2)
+  if (source.split(before).length !== 2)
     throw new Error("Unrecognized OpenClaw plugin source root boundary");
-  return source.replace(BEFORE, () => AFTER);
+  return source.replace(before, () => after);
 }
 
 export function patchOpenClawPluginSourceRoot(dist: string, audit = false): void {
   const realDist = fs.realpathSync(dist);
   const root = path.dirname(realDist);
-  if (
-    JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version !== "2026.10.5"
-  ) {
-    throw new Error("Unsupported OpenClaw plugin source root version");
-  }
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const contract = sourceContract(version);
   const entry = createRequire(path.join(root, "package.json")).resolve(
     "@openclaw/fs-safe/advanced",
   );
   const dependency = JSON.parse(
     fs.readFileSync(path.join(path.dirname(path.dirname(entry)), "package.json"), "utf8"),
   );
-  if (dependency.name !== "@openclaw/fs-safe" || dependency.version !== "0.25.0") {
+  if (
+    dependency.name !== "@openclaw/fs-safe" ||
+    dependency.version !== contract.dependencyVersion
+  ) {
     throw new Error("Unsupported OpenClaw filesystem admission dependency");
   }
-  // The second member of this family is a facade, not another implementation.
-  const facade = fs.readFileSync(
-    path.join(realDist, "plugin-generation-source-lookup-LM75CqdW.mjs"),
-  );
-  if (
-    createHash("sha256").update(facade).digest("hex") !==
-    "12dd0e53296c02dc5201ee6c5efdec0f9f85e4dd7460fb568df3af612547ffc0"
-  ) {
-    throw new Error("OpenClaw plugin source lookup facade changed");
+  if (version === "2026.10.5") {
+    // The second member of this family is a facade, not another implementation.
+    const facade = fs.readFileSync(
+      path.join(realDist, "plugin-generation-source-lookup-LM75CqdW.mjs"),
+    );
+    if (
+      createHash("sha256").update(facade).digest("hex") !==
+      "12dd0e53296c02dc5201ee6c5efdec0f9f85e4dd7460fb568df3af612547ffc0"
+    ) {
+      throw new Error("OpenClaw plugin source lookup facade changed");
+    }
   }
-  const file = path.join(realDist, "plugin-generation-source-lookup-Dg6DuWgm.mjs");
+  const file = path.join(realDist, contract.file);
   const source = fs.readFileSync(file, "utf8");
-  const patched = patchPluginSourceRoot(source);
+  const patched = patchPluginSourceRoot(source, version);
   // Invert only this complete patch before verifying the reviewed native bytes.
   // Keep every root/leaf/descriptor check in the existing guarded-open API.
-  const original = source.includes(MARKER) ? source.replace(AFTER, BEFORE) : source;
-  if (createHash("sha256").update(original).digest("hex") !== SOURCE_SHA256) {
+  const { before, after } = sourceFragments(version);
+  const original = source.includes(MARKER) ? source.replace(after, before) : source;
+  if (createHash("sha256").update(original).digest("hex") !== contract.sha256) {
     throw new Error("OpenClaw plugin source lookup bytes changed");
   }
   if (audit && source !== patched) throw new Error("Missing OpenClaw plugin source root patch");
