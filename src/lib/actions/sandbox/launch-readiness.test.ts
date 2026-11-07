@@ -45,6 +45,8 @@ network_policies:
 `;
 
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
+// OpenShell composes provider-owned entries that carry only a name (#13956).
+const POLICY_PROVIDER = `${POLICY_A}  _provider_alpha_mcp_deepwiki:\n    name: _provider_alpha_mcp_deepwiki\n`;
 
 function fence(): LaunchReadinessFence {
   return {
@@ -767,14 +769,17 @@ describe("launch readiness validation", () => {
     testCase.restore();
   });
 
-  it("accepts an externally changed valid OpenShell policy without shadow identity state", async () => {
-    const currentDeps = await createAcceptedLease();
-    policy = POLICY_B;
+  it.each([POLICY_B, POLICY_PROVIDER])(
+    "accepts a valid changed OpenShell policy %#",
+    async (livePolicy) => {
+      const currentDeps = await createAcceptedLease();
+      policy = livePolicy;
 
-    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
-      kind: "accepted",
-    });
-  });
+      await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+        kind: "accepted",
+      });
+    },
+  );
 
   it("requires exact owning-gateway policy, inference route, and semantic health", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
