@@ -2,20 +2,45 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import JSON5 from "json5";
+import type { ParseOptions, ScalarTag, Tags } from "yaml";
 
 import { assertSafeConfigStructure } from "../security/config-structure.js";
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 
+const MIN_SAFE_CONFIG_INTEGER = BigInt(Number.MIN_SAFE_INTEGER);
+const MAX_SAFE_CONFIG_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
+
+function preserveUnsafeYamlIntegers(tags: Tags): Tags {
+  return tags.map((tag) => {
+    if (
+      typeof tag === "string" ||
+      tag.tag !== "tag:yaml.org,2002:int" ||
+      typeof tag.resolve !== "function"
+    ) {
+      return tag;
+    }
+    const integerTag = tag as ScalarTag;
+    return {
+      ...integerTag,
+      resolve(value: string, onError: (message: string) => void, options: ParseOptions) {
+        const parsed = integerTag.resolve(value, onError, { ...options, intAsBigInt: true });
+        if (typeof parsed !== "bigint") return parsed;
+        return parsed < MIN_SAFE_CONFIG_INTEGER || parsed > MAX_SAFE_CONFIG_INTEGER
+          ? parsed.toString()
+          : Number(parsed);
+      },
+    };
+  });
+}
+
 /** Parse raw agent configuration according to its manifest-declared format. */
 export function parseConfig(raw: string, format: string): ConfigObject {
   let parsed: unknown;
   if (format === "yaml") {
-    const YAML = require("yaml") as {
-      parse: (text: string) => unknown;
-    };
+    const YAML = require("yaml") as typeof import("yaml");
     try {
-      parsed = YAML.parse(raw);
+      parsed = YAML.parse(raw, { customTags: preserveUnsafeYamlIntegers });
     } catch {
       throw new Error("Invalid YAML configuration syntax.");
     }

@@ -40,6 +40,29 @@ describe("sandbox config formats", () => {
     });
   });
 
+  it("preserves unsafe YAML integers without changing other value types (#12410)", () => {
+    const parsed = parseConfig(
+      [
+        "chat_id: 1234567890123456789",
+        'quoted_id: "1234567890123456789"',
+        "small: 42",
+        "enabled: true",
+        "nested:",
+        "  mode: fast",
+      ].join("\n"),
+      "yaml",
+    );
+
+    expect(parsed).toEqual({
+      chat_id: "1234567890123456789",
+      quoted_id: "1234567890123456789",
+      small: 42,
+      enabled: true,
+      nested: { mode: "fast" },
+    });
+    expect(require("yaml").parse(serializeConfig(parsed, "yaml"))).toEqual(parsed);
+  });
+
   it("parses native OpenClaw JSON5 without weakening strict JSON parsing", () => {
     const source = "{ // native comment\n model: { id: 'nemotron', }, }";
 
