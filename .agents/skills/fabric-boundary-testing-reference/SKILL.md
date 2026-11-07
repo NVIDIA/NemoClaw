@@ -25,7 +25,7 @@ It needs a NemoClaw `v1` checkout and `gh` read access to `NVIDIA/NemoClaw` and 
 
 For each behavior:
 
-1. **State it:** the circumstances, the observable outcome, and the lifecycle phase: configure, launch, interact, change, resume, or clean up.
+1. **State it:** the circumstances, the observable outcome, and the lifecycle phase: configure, launch, interact, change (a configuration change or sandbox replacement), resume (state and sessions returning afterward), or clean up.
 2. **Record revisions** from the NemoClaw checkout's root:
 
    ```sh
@@ -33,16 +33,19 @@ For each behavior:
    PIN=$(sed -n 's/^ARG FABRIC_REVISION=//p' image/fabric/Dockerfile)
    gh api "repos/NVIDIA/NeMo-Fabric/compare/$PIN...main" -q .status
    gh api "repos/NVIDIA/NeMo-Fabric/contents/PATH?ref=$PIN" -H 'Accept: application/vnd.github.raw'
+   gh pr list --base v1 --state open --limit 100 --json number,title,files --jq '.[] | select(any(.files[]; .path == "image/fabric/Dockerfile")) | "#\(.number) \(.title)"'
    ```
 
    Read Fabric at `$PIN`, the revision the agent images install; GitHub code search shows only `main`.
-   A test or fix on Fabric `main` covers NemoClaw only once the pin contains it.
-3. **Find the owner in both repositories.** Read NemoClaw's [upstream boundaries](../../../internal-docs/design/scope.md#upstream-boundaries) and design documents, and, at the pin, Fabric's `AGENTS.md`, the Testing section of `CONTRIBUTING.md`, `.agents/skills/validate-change/SKILL.md`, and `adapter-contract/`.
-   Follow OpenShell or native-harness ownership when the sources point there.
+   Unless the status is `identical` or `behind`, `main` has commits the pin lacks, and a test or fix there covers NemoClaw only once the pin contains it; `diverged` also means the pin has commits `main` lacks.
+   When an open PR moves the pin, name it and say which answer it would change.
+3. **Find the owner in both repositories.** Read NemoClaw's [upstream boundaries](../../../internal-docs/design/scope.md#upstream-boundaries), `internal-docs/design/`, and the user documentation under `docs/` for the feature.
+   At the pin, start with the Testing section of Fabric's `CONTRIBUTING.md`, `.agents/skills/validate-change/SKILL.md`, the adapter's source and tests, and the `justfile` and `.github/workflows/`, which show what CI runs.
+   Follow OpenShell or native-harness ownership when the sources point there: read `NVIDIA/OpenShell` at the release `versions.json` names, and each harness at the version `image/fabric/Dockerfile` pins.
    Keep four kinds of source apart: a required contract, proposed scope such as an open issue, the current implementation, and observed passing evidence.
    Check each issue's and PR's current state before relying on it.
    When evidence is missing or conflicts, report an open ownership or contract question; don't invent scope or propose a workaround.
-4. **Find existing coverage first**, in both repositories.
+4. **Find existing coverage first**, in both repositories, including the manual checks in [`verify-fabric-boundary`](../verify-fabric-boundary/SKILL.md).
    Split a composite requirement into parts with their own owners.
    For example, "an installed plugin survives a runtime restart" splits into NemoClaw binding the retained volume, the adapter keeping native state there, the harness reloading the plugin, and the files surviving a real restart.
 5. **Choose the cheapest layer** in the owner's repository that observes the part:
@@ -61,10 +64,11 @@ For each behavior:
 
 ## Evidence Strength
 
-- A scripted model makes a native process's inputs repeatable; the test is still an integration test, and it proves nothing about model behavior.
+- A scripted model makes inputs repeatable at any layer; a native process it drives is still an integration test, and it proves nothing about model behavior.
 - A test whose native objects are mocks proves the adapter's handling, not native behavior.
 - A directory name, such as `tests/e2e/`, doesn't show what a test proves; read what it starts and asserts.
-- A test that skips without its harness or credentials counts only where the owner's CI provides them; check the workflow.
+- A test is CI evidence only when the owner's CI runs it: check Fabric's workflows and `justfile`, and NemoClaw's [CI selection](../../../internal-docs/contributing/testing.md#how-ci-runs-the-tests), which runs some live cases only when a change selects them.
+- Configuration that NemoClaw passes through unchanged in an upstream format needs one pass-through test, not one per upstream field.
 - Configuration or an advertised tool list doesn't prove native execution, denial, or loading.
 - An API reply, an HTML fetch, or an allocated pseudo-terminal doesn't prove a usable browser or terminal session.
 - Retained bytes don't prove a resumed conversation, and reuse within one runtime doesn't prove resume in a new one.
@@ -89,7 +93,7 @@ A missing feature is Failed and missing access is Not tested; neither passes thr
 For each behavior or part, report:
 
 - **Owner:** repository and component, citing scope and implementation sources separately.
-- **Revisions:** the NemoClaw commit and the Fabric pin.
+- **Revisions:** the NemoClaw commit and the Fabric pin, once when every part shares them.
 - **Existing coverage:** each test by path and name, what it doesn't observe, and whether the owner's CI runs it.
 - **Destination:** repository, layer, and the suite or scenario to extend, with the reason; or `no new test`.
 - **Remaining evidence:** each manual check or evaluation, with its reason, owner, and exit condition.
