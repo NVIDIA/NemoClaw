@@ -36,7 +36,8 @@ jobs:
     if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/v1' && github.event_name == 'workflow_dispatch'
     runs-on:
       group: nv-cpu-general
-      labels: [linux, x64]
+      # Enterprise autoscaling matches its custom label rather than generic OS labels.
+      labels: [linux-amd64-cpu4]
     environment: colossus-connectivity
     timeout-minutes: 2
     permissions:

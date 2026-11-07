@@ -105,12 +105,8 @@ fn ssh_probe_selects_linux_from_the_shared_runner_group() {
         .as_array()
         .expect("explicit runner labels");
     assert!(
-        labels.iter().any(|label| label == "linux"),
-        "shared runner selection must require Linux"
-    );
-    assert!(
-        labels.iter().any(|label| label == "x64"),
-        "shared runner selection must require x64"
+        labels.iter().any(|label| label == "linux-amd64-cpu4"),
+        "shared runner selection must use the supported enterprise Linux x64 label"
     );
 }
 
