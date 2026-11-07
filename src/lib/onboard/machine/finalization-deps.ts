@@ -74,6 +74,8 @@ export type OrdinaryOpenClawPairingSettlementResult =
         | "runtime-identity-invalid"
         | "pairing-lock-unavailable"
         | "pairing-unavailable"
+        | "startup-timeout"
+        | "startup-gateway-exited"
         | "pairing-incompatible"
         | "scope-warmup-failed"
         | "scope-upgrade-not-requested"
@@ -96,6 +98,8 @@ const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
   "runtime-identity-invalid": "its recorded OpenClaw runtime identity changed or is invalid",
   "pairing-lock-unavailable": "NemoClaw could not acquire the pairing settlement locks",
   "pairing-unavailable": "its canonical CLI device pairing did not appear",
+  "startup-timeout": "the native gateway startup deadline expired before pairing could start",
+  "startup-gateway-exited": "the native gateway exited before pairing could start",
   "pairing-incompatible":
     "its existing CLI pairing has incompatible metadata, scopes, or credentials",
   "scope-warmup-failed": "the bounded CLI scope warm-up could not run",
@@ -362,15 +366,25 @@ export async function settleOrdinaryOpenClawPairing(
               return { kind: "incomplete", reason: "runtime-identity-invalid" };
             }
             if (pairingAppearance.kind === "timeout") {
-              return {
-                kind: "incomplete",
-                reason: pairingAppearance.incompatible
-                  ? "pairing-incompatible"
-                  : "pairing-unavailable",
-                ...(pairingAppearance.incompatible && pairingAppearance.pairingField
-                  ? { pairingField: pairingAppearance.pairingField }
-                  : {}),
-              };
+              const watcher = deps.readWatcherStatus(name, target.gatewayName);
+              if (!samePairingTarget(target, deps.getTarget(name))) {
+                return { kind: "incomplete", reason: "runtime-identity-invalid" };
+              }
+              if (pairingAppearance.incompatible) {
+                return {
+                  kind: "incomplete",
+                  reason: "pairing-incompatible",
+                  ...(pairingAppearance.pairingField
+                    ? { pairingField: pairingAppearance.pairingField }
+                    : {}),
+                };
+              }
+              const state = watcher?.state;
+              const reason =
+                state === "startup-timeout" || state === "startup-gateway-exited"
+                  ? state
+                  : "pairing-unavailable";
+              return { kind: "incomplete", reason };
             }
             initial = pairingAppearance.value;
           }
@@ -458,6 +472,9 @@ export function ordinaryOpenClawPairingIncompleteMessage(
   pairingField?: string,
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
+  if (reason === "startup-timeout" || reason === "startup-gateway-exited") {
+    return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Read the startup log with \`nemoclaw ${name} exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log\`. Correct the reported error, then run \`nemoclaw ${name} gateway restart\`. After the restart succeeds, resume onboarding.`;
+  }
   const field =
     reason === "pairing-incompatible" ? formatOpenClawPairingMismatchField(pairingField) : "";
   return `OpenClaw onboarding for '${name}' is incomplete because ${cause}${field}. Resume or rerun onboarding.`;
@@ -535,7 +552,7 @@ export const finalizationHandlerDeps = {
         "openclaw",
         target.gatewayName,
       );
-      if (startup === false) {
+      if (startup !== true) {
         console.error(
           `  OpenClaw startup did not settle for '${name}' on gateway '${target.gatewayName}'.`,
         );

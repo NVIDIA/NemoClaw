@@ -1,0 +1,10 @@
+import { m as StateDatabaseAdmissionPendingError } from "./gateway-state-owner-DZeVbzO0.mjs";
+async function withOpenClawStateDatabaseReadSnapshot(operation, options = {}) {
+ return acquireWithWait({
+  acquire: captureOpenClawStateDatabaseReadAdmission,
+  shouldRetry: (error) => error instanceof StateDatabaseAdmissionPendingError && error.databasePath === pathname,
+  deadlineMs: performance.now() + (options.admissionTimeoutMs ?? 0),
+  pollIntervalMs: 250,
+  sleep: (ms) => sleepWithAbort(ms, admissionSignal)
+ });
+}

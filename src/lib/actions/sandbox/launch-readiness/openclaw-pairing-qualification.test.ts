@@ -276,54 +276,31 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     vi.restoreAllMocks();
   });
 
-  function observe(approvalPolicy = POLICY) {
-    return observeOpenClawPairingQualification(
-      "alpha",
-      "nemoclaw-8080",
-      "2026.7.1",
-      stateDirectory,
-      {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
-      },
-    );
-  }
-
-  function observeSettlement(approvalPolicy = POLICY) {
-    return observeOpenClawPairingSettlement("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
+  function observeWith<T>(
+    observer: (...args: Parameters<typeof observeOpenClawPairingQualification>) => T,
+    approvalPolicy = POLICY,
+  ): T {
+    return observer("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
       getOpenshellBinary: () => "openshell",
       readApprovalPolicy: () => approvalPolicy,
       spawnSync: localScriptSpawn as typeof spawnSync,
     });
   }
 
+  function observe(approvalPolicy = POLICY) {
+    return observeWith(observeOpenClawPairingQualification, approvalPolicy);
+  }
+
+  function observeSettlement(approvalPolicy = POLICY) {
+    return observeWith(observeOpenClawPairingSettlement, approvalPolicy);
+  }
+
   function observeOrdinarySettlement(approvalPolicy = POLICY) {
-    return observeOrdinaryOpenClawPairingSettlement(
-      "alpha",
-      "nemoclaw-8080",
-      "2026.7.1",
-      stateDirectory,
-      {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
-      },
-    );
+    return observeWith(observeOrdinaryOpenClawPairingSettlement, approvalPolicy);
   }
 
   function observeRepairSettlement(approvalPolicy = POLICY) {
-    return observeOpenClawPairingRepairSettlement(
-      "alpha",
-      "nemoclaw-8080",
-      "2026.7.1",
-      stateDirectory,
-      {
-        getOpenshellBinary: () => "openshell",
-        readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
-      },
-    );
+    return observeWith(observeOpenClawPairingRepairSettlement, approvalPolicy);
   }
 
   it("embeds the same packaged versioned pairing-state adapter as auto-pair approval", () => {
@@ -499,6 +476,26 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         expect(fs.readdirSync(sqliteStateDirectory).sort()).toEqual(entriesBefore);
       },
     );
+
+    sqliteIt("waits for a pairing-only SQLite device's client token publication", () => {
+      writeSqlitePairingState(stateDirectory, {
+        deviceId,
+        publicKey,
+        privateKeyPem,
+        scopes: ["operator.pairing"],
+      });
+      updateSqlitePairingState(stateDirectory, "DELETE FROM device_auth_tokens");
+
+      expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingObservationRetryableError);
+      expect(() => observe()).toThrow(OpenClawPairingIncompatibleError);
+      expect(() => observeSettlement()).toThrow(OpenClawPairingIncompatibleError);
+
+      updateSqlitePairingState(
+        stateDirectory,
+        `INSERT INTO device_auth_tokens SELECT device_id, 'operator', '${TOKEN}', '["operator.pairing"]', 1 FROM device_identities`,
+      );
+      expect(observeOrdinarySettlement().state).toBe("pairing-only");
+    });
 
     sqliteIt("qualifies the exact persisted admin-upgraded CLI state", () => {
       writeSqlitePairingState(stateDirectory, {

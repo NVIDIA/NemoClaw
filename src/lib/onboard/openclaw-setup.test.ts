@@ -257,6 +257,7 @@ describe("OpenClaw sandbox setup", () => {
               now += ms;
             },
             environment: {},
+            defaultTimeoutSeconds: 30,
           }),
       });
       await expect(
