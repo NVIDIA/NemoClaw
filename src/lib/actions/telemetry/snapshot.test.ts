@@ -37,6 +37,10 @@ import {
   managedWorkload,
   profileInput,
 } from "../../domain/config/export-source-test-fixture";
+import {
+  nativeLocalIdentity,
+  type NativeLocalBinding,
+} from "../../inference/native-local/contract";
 import type { SandboxEntry } from "../../state/registry/types";
 
 beforeEach(() => {
@@ -628,3 +632,156 @@ it.each(hostedRouteBranches)(
     expect(isOperationEvent(event)).toBe(true);
   },
 );
+
+const hermesConfigPath = "/sandbox/.hermes/config.yaml";
+// Hermes has no roster command, so these route tests do not depend on how the roster is read.
+const hermesConfig = (model: string, baseUrl: string) =>
+  `model:\n  default: ${model}\n  provider: custom\n  base_url: "${baseUrl}"\n`;
+const nativeLocalBinding: NativeLocalBinding = {
+  provider: "ollama-local",
+  agent: "hermes",
+  endpointUrl: "http://host.openshell.internal:11435/v1",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  authMode: "authenticated",
+  gatewayName: "nemoclaw",
+  sandboxName: "native",
+};
+
+// Native providers are attached to the sandbox, so the gateway keeps no shared route for them.
+const nativeRouteCases = [
+  {
+    label: "native NVIDIA",
+    config: hermesConfig(hostedNvidiaModel, hostedNvidiaEndpoint),
+    entry: {
+      provider: "nvidia-prod",
+      model: hostedNvidiaModel,
+      modelSelectionProvenance: hostedNvidiaProvenance,
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-id",
+      },
+    },
+    route: {
+      modelId: hostedNvidiaModel,
+      providerProfile: "nvidia",
+      modelSource: "custom",
+      apiFamily: "openai-completions",
+    },
+  },
+  {
+    label: "native hosted OpenAI",
+    config: hermesConfig("gpt-4o", "https://api.openai.com/v1"),
+    entry: {
+      provider: "openai-api",
+      model: "gpt-4o",
+      modelSelectionProvenance: {
+        schemaVersion: 1,
+        model: "gpt-4o",
+        provider: "openai-api",
+        providerProfile: "openai",
+        modelSource: "provider_catalog",
+        apiFamily: "openai-completions",
+      },
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "provider-id",
+      },
+    },
+    route: {
+      modelId: "gpt-4o",
+      providerProfile: "openai",
+      modelSource: "provider_catalog",
+      apiFamily: "openai-completions",
+    },
+  },
+  {
+    label: "native local Ollama",
+    config: hermesConfig("qwen2.5:7b", nativeLocalBinding.endpointUrl),
+    entry: {
+      provider: "ollama-local",
+      model: "qwen2.5:7b",
+      modelSelectionProvenance: {
+        schemaVersion: 1,
+        model: "qwen2.5:7b",
+        provider: "ollama-local",
+        providerProfile: "ollama",
+        modelSource: "local",
+        apiFamily: "openai-completions",
+      },
+      nativeLocalProviderAttachment: {
+        ...nativeLocalBinding,
+        ...nativeLocalIdentity(nativeLocalBinding),
+        schemaVersion: 1,
+        providerId: "provider-id",
+      },
+    },
+    route: {
+      modelId: "qwen2.5:7b",
+      providerProfile: "ollama",
+      modelSource: "local",
+      apiFamily: "openai-completions",
+    },
+  },
+] as const;
+
+it.each(nativeRouteCases)(
+  "reports the recorded $label selection as the current route (#14241)",
+  async ({ config, entry, route }) => {
+    const event = await collectNativeConfiguration(
+      "hermes",
+      hermesConfigPath,
+      config,
+      entry as unknown as Partial<SandboxEntry>,
+    );
+    const row = event.parameters.configurations[0];
+    expect(row.agents[0].models[0].modelStatus).toBe("reported");
+    expect(row.currentInferenceRouteStatus).toBe("reported");
+    expect(row.currentInferenceRoute).toEqual({
+      assignment: "primary",
+      modelId: route.modelId,
+      modelStatus: "reported",
+      modelSource: route.modelSource,
+      modelSourceStatus: "reported",
+      providerProfile: route.providerProfile,
+      providerStatus: "reported",
+      apiFamily: route.apiFamily,
+      apiStatus: "reported",
+    });
+    // The shared gateway route belongs to other sandboxes, not to this one.
+    expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+it("reports not_configured when the gateway has no route for a shared-route sandbox (#14241)", async () => {
+  const event = await collectNativeConfiguration(
+    "hermes",
+    hermesConfigPath,
+    hermesConfig("custom-model", "https://inference.local/v1"),
+    { provider: "compatible-endpoint", model: "custom-model" },
+  );
+  expect(event.parameters.configurations[0]).toMatchObject({
+    currentInferenceRouteStatus: "not_configured",
+    currentInferenceRoute: { modelStatus: "not_configured", providerStatus: "not_configured" },
+  });
+  expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).toHaveBeenCalledTimes(1);
+  expect(isOperationEvent(event)).toBe(true);
+});
+
+it("marks an invalid recorded native selection as a route collection error (#14241)", async () => {
+  const { config, entry } = nativeRouteCases[0];
+  const event = await collectNativeConfiguration("hermes", hermesConfigPath, config, {
+    ...entry,
+    provider: "openai-api",
+  } as unknown as Partial<SandboxEntry>);
+  expect(event.parameters.configurations[0]).toMatchObject({
+    currentInferenceRouteStatus: "collection_error",
+    currentInferenceRoute: { modelStatus: "collection_error" },
+  });
+  expect(mocks.createReader.mock.results[0].value.observeInferenceRoute).not.toHaveBeenCalled();
+  expect(isOperationEvent(event)).toBe(true);
+});
