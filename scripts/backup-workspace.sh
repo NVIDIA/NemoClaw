@@ -173,12 +173,14 @@ do_restore() {
   info "Restoring workspace to sandbox '${sandbox}' from ${src}..."
 
   local count=0
+  local failed_items=""
   for f in "${FILES[@]}"; do
     if [ -f "${src}/${f}" ]; then
       if openshell sandbox upload "$sandbox" "${src}/${f}" "${WORKSPACE_PATH}/"; then
         count=$((count + 1))
       else
         warn "Failed to restore ${f}"
+        failed_items="${failed_items:+${failed_items}, }${f}"
       fi
     fi
   done
@@ -194,6 +196,7 @@ do_restore() {
       else
         count=$((count + RESTORE_DIR_COUNT))
         warn "Failed to restore one or more files from ${d}/"
+        failed_items="${failed_items:+${failed_items}, }${d}/"
       fi
     fi
   done
@@ -201,6 +204,9 @@ do_restore() {
   if [ "$count" -eq 0 ]; then
     fail "No files were restored. Check that the sandbox '${sandbox}' is running."
   fi
+
+  [ -z "$failed_items" ] \
+    || fail "Restore incomplete: could not restore ${failed_items}. ${count} other items were restored to sandbox '${sandbox}'. Fix the upload errors above and rerun the restore."
 
   info "Restored ${count} items to sandbox '${sandbox}'."
 }
