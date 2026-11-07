@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type { InstalledRuntimeSession, InstalledRuntimeSessionInput } from "./installed-session";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
@@ -634,6 +635,12 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
 }>;
 
 type RuntimeProviderGatewaySurfaceBase = {
+  /** Private installed previews do not confer portable-provider activation authority. */
+  readonly installedSession?:
+    | RuntimeProviderSupportedSurface<{
+        create(input: InstalledRuntimeSessionInput): InstalledRuntimeSession;
+      }>
+    | RuntimeProviderUnsupportedSurface;
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
   /** Evidence source that authorizes final shared-gateway cleanup. */

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 3,
+  "classification": "personal-passing-hermes-installer-input",
+  "status": "edge-broker-prepared",
+  "evidenceMode": "immutable-replay-with-host-edge",
+  "browserMode": "host-native-edge-cdp",
+  "candidateSourceRevision": "8d78fe458e9268a7afdc8ed06b85c23306452036",
+  "candidateRunId": 34679482914,
+  "candidateArtifact": {
+    "id": 10293082661,
+    "bytes": 1073328197,
+    "sha256": "753aa3e7addcc1c274b4a59b6785706715ccba661eaa31bfe77a95e20271bda1"
+  },
+  "candidateReceiptSha256": "c682b3cd2f9691ad7d65312682522b59a5a5105c19688621153261d92c4f1c4f",
+  "personalSourceRevision": "a3d47d701c57ba67ad3ec89bbd472208cab77a73",
+  "personalRunId": 34767074356,
+  "personalEvidenceArtifact": {
+    "id": 10320233154,
+    "bytes": 3455703,
+    "sha256": "446e54ec2680d723cf4f5fca6371ff9e56df97eeeaa0f69a1c88bbfcd862d6e0"
+  },
+  "personalReceiptSha256": "73083e61b33a5b95ef3eae1d1c444cfbb313ba9b1d75346963a4a345ab4ec98b",
+  "edgeSourceRevision": "23dfbc5b3304dd3dd36f0f1a6083ac8315a847a1",
+  "edgeRunId": 34781308550,
+  "edgeEvidenceArtifact": {
+    "id": 10324823363,
+    "bytes": 571,
+    "sha256": "0651a2c56638aba2b37469e729c772dd2f125447b30317e1d70dfe1e64e5c8c8"
+  },
+  "edgeReceiptSha256": "9136ab931d0876434edb54e337a1b8865ff61a720ef556d4f813015578a88e7d",
+  "note": "The complete canonical runtime and Python/Bash/ConPTY Personal evidence are pinned independently. Bundled Chrome failed and is not admitted. Installed acceptance must qualify the host-owned native ARM64 Edge CDP relay before publication."
+}

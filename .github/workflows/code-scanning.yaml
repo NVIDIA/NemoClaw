@@ -24,7 +24,8 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Keep matrix keys stable because CodeQL uses them in its analysis identity.
+    timeout-minutes: ${{ matrix.language == 'javascript-typescript' && 20 || 15 }}
     strategy:
       fail-fast: false
       matrix:
