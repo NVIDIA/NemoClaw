@@ -26,6 +26,7 @@ const {
   clearNimContainerBeforeRetry,
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
+  customRoutePreferredApi,
   assertSelectionMutationAuthority,
   credentialMutationGuardFor,
   withCredentialMutationGuard,
@@ -1843,11 +1844,7 @@ async function handleRemoteProviderSelection(
     }
     const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
     state.preferredInferenceApi =
-      selected.key === "custom"
-        ? explicitApi === "chat-completions"
-          ? "openai-completions"
-          : explicitApi || null
-        : null;
+      selected.key === "custom" ? customRoutePreferredApi(explicitApi) : null;
     if (!state.preferredInferenceApi) {
       state.preferredInferenceApi =
         selected.key === "custom" ||

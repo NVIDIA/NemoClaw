@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isChatCompletionsPreference } from "../domain/inference/preferred-api";
 import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import type { NimStartReceipt } from "../inference/nim";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
@@ -352,6 +353,11 @@ function requireCustomAnthropicRuntimeApi(
   throw new Error(`Unsupported custom Anthropic runtime API: ${String(value)}`);
 }
 
+/** Map an explicit NEMOCLAW_PREFERRED_API value to a custom route's API family (#13884). */
+export function customRoutePreferredApi(explicitApi: string): string | null {
+  return isChatCompletionsPreference(explicitApi) ? "openai-completions" : explicitApi || null;
+}
+
 export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
   validateSelectedRemoteModel: (
     args: ValidateSelectedRemoteModelArgs,
@@ -412,11 +418,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
             { credentialEnv: selectedCredentialEnv },
           );
           const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
-          if (
-            explicitApi &&
-            explicitApi !== "openai-completions" &&
-            explicitApi !== "chat-completions"
-          ) {
+          if (explicitApi && !isChatCompletionsPreference(explicitApi)) {
             state.preferredInferenceApi = validation.api;
           } else {
             if (validation.api !== "openai-completions") {

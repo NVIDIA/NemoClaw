@@ -282,6 +282,49 @@ describe("createRemoteModelValidator", () => {
     ]);
   });
 
+  it.each(["completions", "chat-completions"])(
+    "treats NEMOCLAW_PREFERRED_API=%s as Chat Completions for custom endpoints (#13884)",
+    async (preferredApi) => {
+      vi.stubEnv("NEMOCLAW_PREFERRED_API", preferredApi);
+      const state = makeState();
+      state.provider = "openai-compatible";
+      state.endpointUrl = "https://compatible.example/v1";
+      state.model = "model-a";
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: true, api: "openai-responses" }),
+        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
+        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => false,
+        getProbeAuthMode: () => undefined,
+        log: () => {},
+      });
+
+      try {
+        const result = await validateSelectedRemoteModel({
+          selected: { key: "custom" },
+          remoteConfig: {
+            label: "Other OpenAI-compatible endpoint",
+            endpointUrl: "https://remote-config.example/v1",
+            helpUrl: null,
+          },
+          state,
+          selectedCredentialEnv: "OPENAI_API_KEY",
+        });
+
+        assert.equal(result, "selected");
+        assert.equal(state.preferredInferenceApi, "openai-completions");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("maps provider validation model retries without mutating selected model state", async () => {
     const state = makeState();
     const { validateSelectedRemoteModel } = createRemoteModelValidator({

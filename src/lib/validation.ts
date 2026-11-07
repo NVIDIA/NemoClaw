@@ -294,14 +294,3 @@ export function shouldSkipResponsesProbe(provider: string): boolean {
     provider === "llama-cpp-local"
   );
 }
-
-/**
- * Whether the caller has explicitly requested the chat completions API path.
- * Pass the value of `NEMOCLAW_PREFERRED_API` (or any other source). This lets
- * users with backends that expose `/v1/responses` but lack full streaming-event
- * support (e.g. SGLang) skip the Responses API probe during onboarding.
- */
-export function shouldForceCompletionsApi(preferredApi?: string): boolean {
-  const value = (preferredApi || "").trim().toLowerCase();
-  return value === "openai-completions" || value === "chat-completions";
-}

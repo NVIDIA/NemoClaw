@@ -11,7 +11,6 @@ import {
   isSafeModelId,
   nvcfFunctionNotFoundMessage,
   planSandboxCreateRecovery,
-  shouldForceCompletionsApi,
   shouldSkipResponsesProbe,
   validateNvidiaApiKeyValue,
   validateOpenRouterApiKeyValue,
@@ -458,31 +457,5 @@ describe("validateOpenRouterApiKeyValue", () => {
     expect(validateOpenRouterApiKeyValue("sk-test")).toBe(
       "  Invalid OpenRouter API key. Must start with sk-or-",
     );
-  });
-});
-
-describe("shouldForceCompletionsApi", () => {
-  it("returns true when passed openai-completions", () => {
-    expect(shouldForceCompletionsApi("openai-completions")).toBe(true);
-  });
-
-  it("returns true for the chat-completions alias", () => {
-    expect(shouldForceCompletionsApi("chat-completions")).toBe(true);
-  });
-
-  it("is case-insensitive", () => {
-    expect(shouldForceCompletionsApi("OpenAI-Completions")).toBe(true);
-  });
-
-  it("returns false when undefined", () => {
-    expect(shouldForceCompletionsApi(undefined)).toBe(false);
-  });
-
-  it("returns false for openai-responses", () => {
-    expect(shouldForceCompletionsApi("openai-responses")).toBe(false);
-  });
-
-  it("returns false for empty string", () => {
-    expect(shouldForceCompletionsApi("")).toBe(false);
   });
 });
