@@ -97,7 +97,7 @@ Apply prints this command for each interface that an agent's configuration enabl
 
 OpenClaw's Control UI and Hermes's API server and dashboard are served by the agent's Fabric runtime inside its sandbox, on loopback ports that you choose.
 Fabric's adapters start them, generate their tokens, and stop them with the runtime; NemoClaw checks the settings while planning and tells you how to reach each interface after apply.
-The [Fabric OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/7f362e098f18270a4d6238ccc31b9602fb9c959d/adapters/python/openclaw/README.md#serve-the-control-ui) and [Fabric Hermes adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/7f362e098f18270a4d6238ccc31b9602fb9c959d/adapters/python/hermes/README.md#serve-the-api-server-and-dashboard) document each interface's behavior.
+The [Fabric OpenClaw guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/openclaw.mdx#serve-the-control-ui) and [Fabric Hermes native interfaces guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/hermes-interfaces.mdx#enable-native-interfaces) document each interface's behavior.
 
 ### Enable an Interface
 

@@ -20,7 +20,7 @@ nemoclaw-fabric = { path = "../nemoclaw-fabric" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 openshell-provider = { path = "../openshell-provider", default-features = false, features = ["kubernetes"] }
-nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "7f362e098f18270a4d6238ccc31b9602fb9c959d" }
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "316fbdfbd7ac9eb63ffd52023ab4464f2d23e938" }
 async-trait.workspace = true
 regex.workspace = true
 rustls.workspace = true
