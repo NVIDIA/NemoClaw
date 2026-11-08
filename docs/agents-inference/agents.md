@@ -55,7 +55,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/7f362e098f18270a4d6238ccc31b9602fb9c959d/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With the [pinned OpenClaw example](../get-started/first-deployment.md) applied, use its sandbox key `assistant`, agent name `main`, and state directory. From the v1 worktree root on the client host, read the runtime ID and send a request:
@@ -163,8 +163,8 @@ For OpenClaw and Hermes, each path is a skill or a folder of skills:
 - Otherwise, each folder directly inside it that contains `SKILL.md` is a skill; Fabric ignores the folder's other files and folders, including folders it can't read, such as a volume's `lost+found`.
 - A folder that holds no skills, such as a new, empty volume, adds none.
 
-The agent doesn't start when a path doesn't exist, isn't a folder, or can't be read, or when two skills have the same name; Fabric's error names the path or both skills' folders.
-For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/7f362e098f18270a4d6238ccc31b9602fb9c959d/adapters) say what a path must hold.
+The agent doesn't start when a path doesn't exist or isn't a folder, when Fabric can't list a path that has no `SKILL.md` of its own, when a skill's `SKILL.md` can't be read, or when two skills have the same name; Fabric's error names the path or both skills' folders.
+For other harnesses, the [pinned Fabric adapters](https://github.com/NVIDIA/NeMo-Fabric/tree/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/adapters) say what a path must hold.
 
 To give an agent skills that outlive its sandbox, mount a volume into the sandbox through OpenShell's driver configuration and point `skills` at the mount.
 The gateway must allow driver configuration: for a managed gateway, set `allow_driver_config: true` in the driver's table of `spec.gateway.config` when you create the deployment (see [mounted volumes](../build-deploy/state.md#keep-agent-files-on-mounted-volumes)); for an external gateway, its administrator enables OpenShell's `allow_driver_config`.
@@ -258,7 +258,7 @@ Fabric decides which folders are skills, but the harness loads them, and Hermes 
 | A Hermes path uses `~` or `${VAR}` | Fabric doesn't expand them, unlike Hermes's own `skills.external_dirs`; use absolute sandbox paths. |
 
 To avoid these differences, keep one skill per folder, don't nest skill folders, and give each skill a name that differs from every skill folder name.
-The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/7f362e098f18270a4d6238ccc31b9602fb9c959d/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
+The [pinned Fabric skills guide](https://github.com/NVIDIA/NeMo-Fabric/blob/316fbdfbd7ac9eb63ffd52023ab4464f2d23e938/docs/integrations/harness/skills.mdx) lists every difference Fabric knows of.
 
 ## Web Search
 
