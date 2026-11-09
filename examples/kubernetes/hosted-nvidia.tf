@@ -21,7 +21,7 @@ variable "gateway_endpoint" {
 }
 
 variable "CLUSTER_KUBECONFIG" {
-  description = "Absolute kubeconfig path; export TF_VAR_CLUSTER_KUBECONFIG so Helm and the OpenShell provider use the same file."
+  description = "Absolute kubeconfig path for Helm; set NEMOCLAW_CLUSTER_KUBECONFIG to the same file for the OpenShell provider."
   type        = string
   sensitive   = true
 }
@@ -98,7 +98,7 @@ locals {
     runtime  = { provider = "kubernetes" }
     endpoint = var.gateway_endpoint
     kubernetes = {
-      kubeconfig     = { env = "TF_VAR_CLUSTER_KUBECONFIG" }
+      kubeconfig     = { env = "NEMOCLAW_CLUSTER_KUBECONFIG" }
       context        = var.context
       namespace      = var.namespace
       authentication = { profile = "development" }
@@ -111,7 +111,7 @@ resource "openshell_kubernetes_storage" "platform" {
   owner                  = var.deployment_uid
   compute_driver         = "kubernetes"
   endpoint               = var.gateway_endpoint
-  kubeconfig_env         = "TF_VAR_CLUSTER_KUBECONFIG"
+  kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
   context                = var.context
   namespace              = var.namespace
   authentication_profile = "development"
@@ -129,7 +129,7 @@ resource "openshell_kubernetes_auth" "platform" {
   owner                  = openshell_kubernetes_storage.platform.owner
   compute_driver         = "kubernetes"
   endpoint               = var.gateway_endpoint
-  kubeconfig_env         = "TF_VAR_CLUSTER_KUBECONFIG"
+  kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
   context                = var.context
   namespace              = var.namespace
   authentication_profile = "development"
@@ -205,7 +205,7 @@ resource "openshell_kubernetes_gateway" "platform" {
   generation             = openshell_kubernetes_auth.platform.generation
   compute_driver         = "kubernetes"
   endpoint               = var.gateway_endpoint
-  kubeconfig_env         = "TF_VAR_CLUSTER_KUBECONFIG"
+  kubeconfig_env         = "NEMOCLAW_CLUSTER_KUBECONFIG"
   context                = var.context
   namespace              = var.namespace
   authentication_profile = "development"

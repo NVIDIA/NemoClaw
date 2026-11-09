@@ -143,7 +143,13 @@ Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and
 For HCL, copy `hosted-nvidia.tf` and the repository's `versions.json` into a private working directory.
 The latter supplies the chart and gateway image pins from the same checkout as the native bundle.
 Set a fresh `deployment_uid` and `workspace`, the explicit `context` and `namespace`, and both agent `images` references.
-Export `TF_VAR_CLUSTER_KUBECONFIG` as the absolute kubeconfig path; Helm and the OpenShell provider both read it.
+Export `NEMOCLAW_CLUSTER_KUBECONFIG` as the absolute kubeconfig path for the OpenShell provider, and set `TF_VAR_CLUSTER_KUBECONFIG` to the same path for Helm:
+
+```sh
+export NEMOCLAW_CLUSTER_KUBECONFIG="$HOME/.kube/config"
+export TF_VAR_CLUSTER_KUBECONFIG="$NEMOCLAW_CLUSTER_KUBECONFIG"
+```
+
 Export `NEMOCLAW_KUBERNETES_STATE` as an absolute path to a private directory for this deployment's ownership receipt and development credentials, and retain it with the OpenTofu state.
 Neither path requires an existing gateway or `GATEWAY_*` credentials.
 Pin the two NVIDIA providers to the matching native bundle's manifest version and install them and the pinned Helm provider from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
