@@ -192,13 +192,16 @@ spec:
   - `LoadBalancer`: a DNS name, or an IP fixed in advance. On single-node k3s, ServiceLB uses the node's IP. Elsewhere, an annotation sets the address, such as MetalLB's `metallb.io/loadBalancerIPs`, GKE's `networking.gke.io/load-balancer-ip-addresses` for an internal load balancer, AKS's `service.beta.kubernetes.io/azure-pip-name`, or the AWS Load Balancer Controller's `service.beta.kubernetes.io/aws-load-balancer-eip-allocations`.
   - Where nothing fixes the address, such as EKS's default Classic load balancer, the first apply fails when it dials the endpoint. Point the endpoint's DNS name at the address `kubectl get service` shows, then apply again.
 - **`LoadBalancer` requires the `oidc` profile:** a load balancer may be reachable from outside the cluster, where the development profile's locally held signing key would guard the port.
-- **Fixed after the first plan:** `expose`, its Service type and its annotations select the address the endpoint names. Like the endpoint, changing them needs a new deployment. `loadBalancerSourceRanges` can change.
+- **Fixed after the first plan:** `expose`, its Service type and its annotations select the address the endpoint names, and `serviceUrlDomain` is written into the certificate. Like the endpoint, changing them needs a new deployment. `loadBalancerSourceRanges` can change.
 - **Prerequisites:** a `LoadBalancer` needs the cluster's load-balancer implementation, which NemoClaw doesn't check. Without one, the Service stays pending and apply fails after 10 minutes. A node port another Service holds fails apply too; plan can't check it without reading the cluster's other Services.
 
 **Both types listen on every node.**
 A `LoadBalancer` Service also gets a node port that Kubernetes allocates, and `loadBalancerSourceRanges` never covers node ports; load-balancer implementations also differ in whether they enforce it.
 Sandbox [service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) skip the gateway's sign-in, so anyone who reaches the endpoint with a service's host name reaches that service, which must authenticate its own clients.
-The URLs that apply prints don't open remotely yet ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
+To open the URLs that apply prints from another machine, set `expose.serviceUrlDomain` to a domain you serve, such as `apps.agents.example.com`, and point a wildcard DNS record for `*.apps.agents.example.com` at the endpoint's address.
+NemoClaw adds `*.apps.agents.example.com` to the gateway certificate, and the gateway names each URL `WORKSPACE--SANDBOX--SERVICE.apps.agents.example.com` at the endpoint's port, which the gateway then listens on.
+An endpoint port below 1024, such as a load balancer's 443, can't be the listen port of a gateway without privileges, so its URLs keep port 8080 and don't open ([#14316](https://github.com/NVIDIA/NemoClaw/issues/14316)).
+The endpoint can't use 8081 or 9090, the gateway's health and metrics ports.
 
 The chart writes the certificate once, when it creates the Secrets `<release>-server-tls`, `<release>-client-tls` and `<release>-jwt-keys`, and destroy keeps them.
 NemoClaw records the client certificate Secret the first time it dials a published gateway and refuses a replaced one, since it trusts that Secret's CA for whatever answers at the endpoint.

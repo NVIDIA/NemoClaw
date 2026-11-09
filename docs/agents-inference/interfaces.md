@@ -245,6 +245,7 @@ Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or
 The service must listen on loopback and authenticate its own clients.
 `BEARER_PASSTHROUGH` delivers the caller's bearer token to the service, so use it only for a service trusted with that credential.
 A successful apply lists the URL the gateway reports for each exposure under **Service URLs**, as `sandbox/service: URL`; the unnamed endpoint is listed as `sandbox: URL`.
+On Docker and Podman the URLs open on the gateway's host. On a managed Kubernetes gateway, they open from another machine only when it is [published with a service URL domain](../build-deploy/kubernetes.md#publish-the-gateway-outside-the-cluster).
 JSON results key them by sandbox and service name under `serviceUrls`, with `""` for the unnamed endpoint.
 An unchanged apply lists them again.
 

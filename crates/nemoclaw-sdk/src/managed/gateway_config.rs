@@ -34,11 +34,14 @@ const PODMAN_DRIVER_KEYS: [&str; 5] = [
     "sandbox_runtime_image",
     "supervisor_image",
 ];
-/// Keys NemoClaw sets in the chart's `gatewayConfig`; the chart owns the
-/// settings it derives from Kubernetes resources.
-const KUBERNETES_KEYS: [&str; 3] = [
+/// Keys NemoClaw sets in the chart's `gatewayConfig`, or that the chart
+/// derives from values NemoClaw sets; the chart owns the settings it derives
+/// from Kubernetes resources. `server_sans` would move service URL hosts off
+/// the names the certificate covers.
+const KUBERNETES_KEYS: [&str; 4] = [
     "openshell.gateway.auth.allow_unauthenticated_users",
     "openshell.gateway.oidc",
+    "openshell.gateway.server_sans",
     "openshell.drivers.kubernetes.image_pull_secrets",
 ];
 

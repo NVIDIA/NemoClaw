@@ -490,3 +490,100 @@ fn the_gateway_certificate_names_the_exposed_host() {
         assert_eq!(chart_values(&graph)["pkiInitJob"], json!({"enabled": true}));
     }
 }
+
+/// The gateway names service URLs under the wildcard domains its certificate
+/// covers, so a domain the operator serves makes the printed hosts resolve.
+#[test]
+fn a_service_url_domain_is_a_wildcard_name_in_the_gateway_certificate() {
+    let mut exposed = input(
+        "https://gateway.agents.example.com:30851",
+        Some(node_port()),
+    );
+    exposed["spec"]["gateway"]["kubernetes"]["expose"]["serviceUrlDomain"] =
+        json!("apps.agents.example.com");
+    let graph = compile_runtime(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap();
+    assert_eq!(
+        chart_values(&graph)["pkiInitJob"]["serverDnsNames"],
+        json!(["gateway.agents.example.com", "*.apps.agents.example.com"])
+    );
+    let mut exposed = input("https://192.0.2.10:30851", Some(node_port()));
+    exposed["spec"]["gateway"]["kubernetes"]["expose"]["serviceUrlDomain"] =
+        json!("apps.agents.example.com");
+    let values =
+        chart_values(&compile_runtime(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap());
+    assert_eq!(
+        values["pkiInitJob"]["serverDnsNames"],
+        json!(["*.apps.agents.example.com"])
+    );
+    assert_eq!(
+        values["pkiInitJob"]["serverIpAddresses"],
+        json!(["192.0.2.10"])
+    );
+}
+
+#[test]
+fn a_service_url_domain_is_a_lowercase_dns_name() {
+    for domain in [
+        "",
+        "*.apps.example.com",
+        "Apps.Example.com",
+        "apps.example.com.",
+        "apps..example.com",
+        "-apps.example.com",
+    ] {
+        let mut exposed = input(
+            "https://gateway.agents.example.com:30851",
+            Some(node_port()),
+        );
+        exposed["spec"]["gateway"]["kubernetes"]["expose"]["serviceUrlDomain"] = json!(domain);
+        refused(&exposed);
+    }
+}
+
+/// OpenShell prints a service URL with the gateway's listen port, so the
+/// gateway listens on the endpoint's port. A gateway without privileges
+/// can't listen below 1024, and the chart's health and metrics ports are taken.
+#[test]
+fn an_exposed_gateway_listens_on_its_endpoint_port() {
+    for (exposed, port) in [
+        (
+            input(
+                "https://gateway.agents.example.com:30851",
+                Some(node_port()),
+            ),
+            Some(30851),
+        ),
+        (
+            oidc(input(
+                "https://gateway.agents.example.com:8443",
+                Some(load_balancer()),
+            )),
+            Some(8443),
+        ),
+        (
+            oidc(input(
+                "https://gateway.agents.example.com:443",
+                Some(load_balancer()),
+            )),
+            None,
+        ),
+        (input("https://127.0.0.1:17671", None), None),
+    ] {
+        let values = chart_values(
+            &compile_runtime(&parse(&exposed).unwrap(), &generations(), "0.1.0").unwrap(),
+        );
+        assert_eq!(
+            values.get("service").map(|service| &service["port"]),
+            port.map(|port| json!(port)).as_ref(),
+            "{exposed}"
+        );
+    }
+    for port in [8081, 9090] {
+        let error = parse(&oidc(input(
+            &format!("https://gateway.agents.example.com:{port}"),
+            Some(load_balancer()),
+        )))
+        .unwrap_err();
+        assert!(error.contains("8081") && error.contains("9090"), "{error}");
+    }
+}

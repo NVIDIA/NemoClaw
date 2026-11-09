@@ -100,17 +100,32 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
     });
     // An exposed gateway's certificate names the endpoint host clients dial.
     // The chart's certificate always names 127.0.0.1 and in-cluster names.
-    if target.expose.is_some() {
+    if let Some(expose) = &target.expose {
         let endpoint = url::Url::parse(&spec.settings.endpoint)
             .map_err(|_| Error::State("invalid managed Kubernetes endpoint"))?;
+        let mut names = Vec::new();
         match endpoint.host() {
-            Some(url::Host::Domain(name)) => {
-                values["pkiInitJob"]["serverDnsNames"] = json!([name]);
-            }
+            Some(url::Host::Domain(name)) => names.push(name.to_owned()),
             Some(url::Host::Ipv4(address)) if !address.is_loopback() => {
                 values["pkiInitJob"]["serverIpAddresses"] = json!([address.to_string()]);
             }
             _ => {}
+        }
+        // The gateway names service URLs under the certificate's wildcard
+        // names, so a domain the operator serves makes their hosts resolve.
+        if let Some(domain) = &expose.service_url_domain {
+            names.push(format!("*.{domain}"));
+        }
+        if !names.is_empty() {
+            values["pkiInitJob"]["serverDnsNames"] = json!(names);
+        }
+        // OpenShell prints a service URL with the gateway's listen port. A
+        // gateway without privileges listens only from port 1024.
+        let port = endpoint
+            .port_or_known_default()
+            .ok_or(Error::State("managed Kubernetes endpoint has no port"))?;
+        if port >= 1024 {
+            values["service"] = json!({"port": port});
         }
     }
     if !target.image_pull_secrets.is_empty() {

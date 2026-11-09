@@ -670,6 +670,7 @@ Paths:
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `service` | [ExposureService](#exposureservice) | Yes | — | A Service that publishes the endpoint's port and forwards it to the gateway pod. TLS and client certificates pass through to the gateway unchanged. |
+| `serviceUrlDomain` | string | No | — | A domain you serve for sandbox service URLs. NemoClaw adds `*.DOMAIN` to the gateway certificate, and the gateway then names each URL `WORKSPACE--SANDBOX--SERVICE.DOMAIN` at the endpoint's port. Point a wildcard DNS record for `*.DOMAIN` at the endpoint's address. Fixed after the first successful plan. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`; minimum characters 1; maximum characters 251. |
 
 ## ManagedKubernetes
 

@@ -35,6 +35,21 @@ impl Document {
         let gateway = &self.spec.gateway;
         if let Gateway::Managed(gateway) = gateway {
             gateway.validate_managed()?;
+            // An exposed gateway listens on its endpoint's port, beside the
+            // chart's health and metrics ports.
+            if gateway
+                .kubernetes
+                .as_ref()
+                .is_some_and(|target| target.expose.is_some())
+            {
+                let port = url::Url::parse(&gateway.endpoint)
+                    .ok()
+                    .and_then(|endpoint| endpoint.port_or_known_default());
+                require(
+                    !matches!(port, Some(8081 | 9090)),
+                    "an exposed managed Kubernetes endpoint can't use port 8081 or 9090, the gateway's health and metrics ports",
+                )?;
+            }
             // The oidc profile takes OpenShell's OIDC settings from the
             // authored gateway configuration; OpenShell validates them.
             let table = crate::managed::gateway_config::OIDC_TABLE;

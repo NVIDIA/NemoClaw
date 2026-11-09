@@ -596,6 +596,12 @@ fn chart_keys_nemoclaw_owns_are_rejected() {
             json!({"openshell.drivers.kubernetes": {"image_pull_secrets": ["other"]}}),
             "openshell.drivers.kubernetes.image_pull_secrets",
         ),
+        // The chart derives routing domains from the certificate's names; an
+        // authored list would move service hosts off the certificate.
+        (
+            json!({"openshell.gateway": {"server_sans": ["*.apps.example.com"]}}),
+            "openshell.gateway.server_sans",
+        ),
     ] {
         let error = chart_values(Some(config)).unwrap_err();
         assert!(error.contains("spec.gateway.config"), "{error}");
