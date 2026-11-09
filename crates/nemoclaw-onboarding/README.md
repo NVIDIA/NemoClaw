@@ -21,6 +21,9 @@ A built CLI takes the same arguments, as `nemoclaw onboard`.
 - **Harnesses:** onboarding offers OpenClaw and Hermes.
   A template that names another harness keeps it as the suggested answer, and the menu adds it for that run.
 - **No template:** the suggestions describe a managed Docker gateway running OpenClaw with NVIDIA Endpoints inference.
+- **Name:** you choose the agent first; without a name in the template, the deployment's name is suggested from the agent, such as `hermes`.
+- **Settings onboarding decides:** it doesn't ask for the inference API of a named vendor such as NVIDIA Endpoints, the engine socket when one engine answered for the chosen runtime, the network tier, or optional agent and model settings.
+  The review lists the fields left at their defaults above the YAML, which leaves them out so `plan` fills them.
 - **Output:** defaults to `deployment.yaml` and must be a new file; onboarding never overwrites one.
 
 Each screen lists its keys.
@@ -37,7 +40,7 @@ cargo run -p nemoclaw-onboarding -- examples/onboarding/openclaw.yaml --output m
 
 While you answer, `nemoclaw onboard` reads, without changing anything:
 
-- the Docker and Podman engines that answer on this machine, to suggest a runtime;
+- the Docker and Podman engines that answer on this machine, to suggest a runtime and target the gateway at its engine;
 - the selected agent image, to check that it provides the chosen harness;
 - the selected route's model catalog, to suggest models;
 - for a managed gateway, the engine's prerequisites.

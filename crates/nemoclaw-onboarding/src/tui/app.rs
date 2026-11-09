@@ -170,10 +170,10 @@ impl JourneyWizard {
                     .position(|choice| choice == suggested)
             })
             .unwrap_or_else(|| {
-                if question.required() {
-                    0
-                } else {
+                if question.omittable() {
                     question.choices().len()
+                } else {
+                    0
                 }
             })
     }
@@ -260,10 +260,12 @@ impl JourneyWizard {
                     .min(self.review_scroll_limit.get());
             }
             Ok(Some(question)) if !question.choices().is_empty() => {
-                self.selected = (self.choice_index(&question) + 1).min(
-                    question.choices().len()
-                        - usize::from(question.required() && !question.allows_custom_answer()),
-                );
+                // The choices, then "Type another model" or "Omit" where offered.
+                let last = (question.choices().len()
+                    + usize::from(question.allows_custom_answer())
+                    + usize::from(question.omittable()))
+                .saturating_sub(1);
+                self.selected = (self.choice_index(&question) + 1).min(last);
                 self.selection_changed = true;
             }
             _ => {}
@@ -296,7 +298,7 @@ impl JourneyWizard {
             self.input.clone()
         };
         if raw.trim().is_empty() {
-            return if question.required() {
+            return if !question.omittable() {
                 Err("A value is required.".into())
             } else {
                 Ok(None)

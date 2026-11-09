@@ -146,6 +146,17 @@ impl JourneyQuestion {
     pub fn required(&self) -> bool {
         self.required
     }
+    /// Whether the question may be left unanswered. An optional choice whose
+    /// schema default is offered is not: omitting it would select that choice.
+    /// An invalid supplied value can always be omitted, which removes it.
+    pub fn omittable(&self) -> bool {
+        !self.required
+            && (self.reason == JourneyQuestionReason::InvalidSupplied
+                || self
+                    .schema
+                    .get("default")
+                    .is_none_or(|default| !self.choices.contains(default)))
+    }
     pub fn choices(&self) -> &[Value] {
         &self.choices
     }
@@ -180,6 +191,7 @@ pub struct JourneyResolution {
     questions: Vec<JourneyQuestion>,
     omitted: Vec<String>,
     kept: Vec<(String, Value)>,
+    defaults: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
     credentials: Vec<String>,
@@ -205,6 +217,11 @@ impl JourneyResolution {
     /// Supplied values that omission guidance kept without asking, by question ID.
     pub fn kept(&self) -> &[(String, Value)] {
         &self.kept
+    }
+    /// SDK fields omission left unset, with the value the SDK fills in for
+    /// each, so a frontend can show what applies without saving it.
+    pub fn defaults(&self) -> &[(String, Value)] {
+        &self.defaults
     }
     pub fn warnings(&self) -> &[String] {
         &self.warnings

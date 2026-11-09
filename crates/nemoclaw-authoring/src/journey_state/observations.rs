@@ -187,7 +187,12 @@ impl JourneyState {
                     "Select each inference route before delegating its questions.",
                 ));
             }
-            let value = question.suggestion.clone();
+            // A choice that cannot be omitted takes its schema default.
+            let value = question.suggestion.clone().or_else(|| {
+                (!question.omittable())
+                    .then(|| question.schema.get("default").cloned())
+                    .flatten()
+            });
             if value.is_none() && question.required {
                 return Err(diagnostic(
                     "delegation",
