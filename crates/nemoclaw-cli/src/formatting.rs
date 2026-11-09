@@ -587,15 +587,18 @@ fn gateway_selection(connection: &nemoclaw_sdk::DeploymentConnection) -> String 
 /// the gateway and workspace selection, which `selected` records printing. A
 /// plan lists the runtimes the last apply left, which its changes may replace.
 fn agent_invocation(result: &OperationResult, planned: bool, selected: &mut bool) -> String {
+    let invocable = result
+        .agents
+        .values()
+        .any(|agent| agent.runtime_id.is_some());
+    if planned && !invocable {
+        return String::new();
+    }
     let mut output = String::from(if planned {
         "\nAgents, as last applied:\n"
     } else {
         "\nAgents:\n"
     });
-    let invocable = result
-        .agents
-        .values()
-        .any(|agent| agent.runtime_id.is_some());
     if invocable && let Some(connection) = &result.connection {
         output.push_str(&gateway_selection(connection));
         *selected = true;
@@ -1029,6 +1032,40 @@ mod tests {
         })
     }
 
+    #[test]
+    fn plan_without_recorded_agent_runtimes_omits_applied_agent_history() {
+        for agent in [
+            json!({"agent": "main"}),
+            json!({"agent": "main", "runtimeId": null}),
+        ] {
+            let result = json!({
+                "outcome": "planned",
+                "changes": [],
+                "agents": {"assistant": agent}
+            });
+            let text = render(&["nemoclaw", "plan", "deployment.yaml"], result.clone());
+            assert!(
+                !text.contains("Agents, as last applied"),
+                "a plan without recorded runtimes must not claim applied agent history:\n{text}"
+            );
+            assert!(
+                !text.contains("no runtime recorded"),
+                "a plan must not list an agent without a recorded runtime as applied history:\n{text}"
+            );
+            let mut applied = result;
+            applied["outcome"] = json!("succeeded");
+            let text = render(&["nemoclaw", "apply", "deployment.yaml"], applied);
+            assert!(
+                text.contains("\nAgents:\n"),
+                "apply without recorded runtimes must retain the agents section:\n{text}"
+            );
+            assert!(
+                text.contains("assistant: agent main, no runtime recorded"),
+                "apply must report an agent whose runtime was not recorded:\n{text}"
+            );
+        }
+    }
+
     /// Plan and apply print the command that invokes each agent with a recorded
     /// runtime, under this deployment's gateway and workspace selection, and
     /// say which agent has none; JSON carries the same facts under `agents`.
@@ -1038,6 +1075,12 @@ mod tests {
         for (command, outcome) in [("plan", "planned"), ("apply", "succeeded")] {
             let result = json!({"outcome": outcome, "changes": [], "connection": connection, "agents": agents()});
             let text = render(&["nemoclaw", command, "deployment.yaml"], result.clone());
+            if command == "plan" {
+                assert!(
+                    text.contains("Agents, as last applied:"),
+                    "a plan with a recorded runtime must retain applied agent history:\n{text}"
+                );
+            }
             let lines: Vec<String> = text
                 .lines()
                 .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
