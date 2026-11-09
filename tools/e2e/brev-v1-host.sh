@@ -62,15 +62,15 @@ qualify() {
   remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   rsync -a candidate/bundle/ "${INSTANCE_NAME}:${remote_root}/bundle/"
-  rsync -a candidate/brev-test "${INSTANCE_NAME}:${remote_root}/brev-test"
+  rsync -a candidate/e2e "${INSTANCE_NAME}:${remote_root}/e2e"
   key="${RUNNER_TEMP}/nvidia-api-key"
   trap 'rm -f "${key}"' EXIT
   (umask 077; printf '%s' "${NVIDIA_INFERENCE_API_KEY}" > "${key}")
   rsync -a "${key}" "${INSTANCE_NAME}:${remote_root}/nvidia-api-key"
   rm -f "${key}"
-  ssh -T "${INSTANCE_NAME}" "chmod 700 '${remote_root}/brev-test' && sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' qualify\""
+  ssh -T "${INSTANCE_NAME}" "chmod 700 '${remote_root}/e2e' && sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' qualify\""
   mkdir -p "${RUNNER_TEMP}/brev-evidence"
-  rsync -a "${INSTANCE_NAME}:${remote_root}/evidence/brev-proof.json" "${RUNNER_TEMP}/brev-evidence/"
+  rsync -a "${INSTANCE_NAME}:${remote_root}/evidence/" "${RUNNER_TEMP}/brev-evidence/"
 }
 
 cleanup() {

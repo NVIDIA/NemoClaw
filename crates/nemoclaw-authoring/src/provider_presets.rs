@@ -181,7 +181,7 @@ fn provider_profile(inference: ProviderPreset) -> ProviderProfile {
         ProviderPreset::Nous => ProviderProfile {
             kind: InferenceProviderKind::Openai,
             endpoint: "https://inference-api.nousresearch.com/v1",
-            credential: "OPENAI_API_KEY",
+            credential: "NOUS_API_KEY",
             custom_endpoint: false,
             default_model: Some("moonshotai/kimi-k2.6"),
         },

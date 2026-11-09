@@ -54,13 +54,13 @@ resource openshell_inference (version 2)
 resource openshell_kubernetes_auth (version 0)
   authentication_profile: string, required
   compute_driver: string, required
-  context: string, required
+  context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
   gateway_values: string, computed
   generation: string, optional, computed
   id: string, computed
-  kubeconfig_env: string, required
+  kubeconfig_env: string, optional, computed
   name: string, required
   namespace: string, required
   oidc: string, optional
@@ -71,12 +71,12 @@ resource openshell_kubernetes_auth (version 0)
 resource openshell_kubernetes_gateway (version 0)
   authentication_profile: string, required
   compute_driver: string, required
-  context: string, required
+  context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
-  kubeconfig_env: string, required
+  kubeconfig_env: string, optional, computed
   name: string, required
   namespace: string, required
   oidc: string, optional
@@ -86,12 +86,12 @@ resource openshell_kubernetes_gateway (version 0)
 resource openshell_kubernetes_storage (version 0)
   authentication_profile: string, required
   compute_driver: string, required
-  context: string, required
+  context: string, optional, computed
   endpoint: string, required
   environment: list(string), optional
   generation: string, optional, computed
   id: string, computed
-  kubeconfig_env: string, required
+  kubeconfig_env: string, optional, computed
   name: string, required
   namespace: string, required
   oidc: string, optional

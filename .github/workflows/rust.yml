@@ -3,9 +3,7 @@
 name: CI / Bundle
 on:
   push:
-    # Push a run-live/ branch to run every job, including the live suites,
-    # outside a pull request; dispatch needs this file on the default branch.
-    branches: [v1, run-live/**]
+    branches: [v1]
   # Stacked v1 PRs target feature branches, so do not filter by base branch.
   pull_request:
   workflow_dispatch:
@@ -25,6 +23,11 @@ jobs:
     uses: ./.github/workflows/validation-plan.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
+  # Each platform runs its test layers: Unit, Contract, and Integration, and, on
+  # Linux when the plan selects the live suites, E2E. Linux AMD64 also runs
+  # the HCL E2E cases that need a model; they use the inference secret, so a
+  # fork's pull request skips them, and the ones on the NVIDIA GPU runner, which
+  # refuses pull request jobs, run on v1 pushes and manual runs.
   linux_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -33,8 +36,9 @@ jobs:
       platform: linux_arm64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ needs.plan.outputs.live == 'true' }}
+      e2e: ${{ needs.plan.outputs.live == 'true' }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
+      hcl-cases: ${{ needs.plan.outputs.hcl_cases }}
   linux_amd64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -43,8 +47,12 @@ jobs:
       platform: linux_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      live: ${{ needs.plan.outputs.live == 'true' }}
+      e2e: ${{ needs.plan.outputs.live == 'true' }}
       live-images-commit: ${{ needs.plan.outputs.live_images }}
+      hcl-cases: ${{ needs.plan.outputs.hcl_cases }}
+      hcl: ${{ needs.plan.outputs.live == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      hcl-gpu: ${{ needs.plan.outputs.live == 'true' && github.event_name != 'pull_request' }}
+    secrets: inherit
   darwin_arm64:
     needs: plan
     uses: ./.github/workflows/bundle-platform.yml
@@ -61,12 +69,18 @@ jobs:
       platform: windows_amd64
       bundle: ${{ needs.plan.outputs.bundle == 'true' }}
       lifecycle: ${{ needs.plan.outputs.lifecycle == 'true' }}
-      # Windows lifecycle tests run longest after its slower bundle build, so it
-      # uses a third partition to keep that path closer to the other platforms.
-      lifecycle-shards: "[1, 2, 3]"
-  # Keep the v1 ruleset's check names. A skipped, cancelled, or failed platform
-  # must never become a successful required check. Each platform's shards start
-  # after its own build, not after the slowest member of a global build matrix.
+      # Windows runs its tests longest after its slower bundle build, so its
+      # integration tests use a third partition to keep that path closer to
+      # the other platforms.
+      partitions: >-
+        [{"layer": "contract", "shard": 1, "shards": 1},
+        {"layer": "integration", "shard": 1, "shards": 3},
+        {"layer": "integration", "shard": 2, "shards": 3},
+        {"layer": "integration", "shard": 3, "shards": 3}]
+  # The v1 ruleset requires one check per platform. Each covers the platform's
+  # four test layers, Unit, Contract, Integration, and E2E, which the run page
+  # groups under the platform. Each platform's jobs start after its own build,
+  # not after the slowest member of a global build matrix.
   native:
     name: Test / ${{ matrix.platform }}
     # Unlike always(), this reports a cancelled run's gates as cancelled, not failed;

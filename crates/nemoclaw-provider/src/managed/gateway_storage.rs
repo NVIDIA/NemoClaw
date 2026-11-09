@@ -76,6 +76,18 @@ fn verify_initializer(
     }
     Ok(())
 }
+/// What to do when retained gateway storage carries another state directory's
+/// or deployment's labels; see Remove Retained Resources in docs/build-deploy/usage.md.
+const FOREIGN_STORAGE: &str = "belongs to another state directory or deployment; apply with the state directory that created it, or remove the retained resources and apply with a new metadata.uid";
+/// Names the retained object in a label mismatch.
+fn foreign(object: String) -> impl FnOnce(Error) -> Error {
+    move |error| match error {
+        Error::Observation(ObservationError::BindingMismatch) => {
+            ObservationError::BindingChanged(format!("{object} {FOREIGN_STORAGE}").into()).into()
+        }
+        error => error,
+    }
+}
 impl Engine {
     pub async fn gateway_storage(
         &self,
@@ -110,17 +122,20 @@ impl Engine {
             .managed_container(spec, &format!("{}-initialize", spec.name))
             .await?;
         if let Some(volume) = &volume {
-            verify_volume(spec, volume, info.docker_root_dir.as_deref())?;
+            verify_volume(spec, volume, info.docker_root_dir.as_deref())
+                .map_err(foreign(format!("volume {}", spec.volume())))?;
         }
         if let Some(network) = &network {
-            verify_network(spec, network)?;
+            verify_network(spec, network)
+                .map_err(foreign(format!("network {}", spec.network())))?;
         }
         if let Some(helper) = &helper {
             verify_initializer(
                 spec,
                 helper,
                 volume.as_ref().map(|volume| volume.mountpoint.as_str()),
-            )?;
+            )
+            .map_err(foreign(format!("container {}-initialize", spec.name)))?;
         }
         let missing = volume.is_none() || network.is_none() || helper.is_none();
         if missing && !id.is_empty() {

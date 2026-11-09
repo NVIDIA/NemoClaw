@@ -5,17 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-# One integration-test binary links the SDK and provider once. The Brev test
-# stays separate because its workflow copies that one executable to a VM.
+# Each test binary links the SDK and providers once. `integration` holds the
+# tests against local fixtures only; `e2e` holds the live tests, which use real
+# Docker, Kubernetes, images, or inference.
 autotests = false
 
 [[test]]
 name = "integration"
-path = "tests/main.rs"
+path = "tests/integration/main.rs"
 
 [[test]]
-name = "brev"
-path = "tests/brev.rs"
+name = "e2e"
+path = "tests/e2e/main.rs"
 
 [dependencies]
 rcgen = "0.14.10"
@@ -47,6 +48,8 @@ tar.workspace = true
 [dev-dependencies]
 base64 = "0.22.1"
 bollard.workspace = true
+# The integration runner sets the providers' diagnostics directory.
+nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
 k8s-openapi.workspace = true
 kube.workspace = true
@@ -55,7 +58,13 @@ url.workspace = true
 serde-saphyr.workspace = true
 getrandom.workspace = true
 reqwest.workspace = true
+futures-util.workspace = true
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+# hcl_live::terminal opens a terminal UI in a pseudo-terminal.
+nix.workspace = true
 
 [lints]
 workspace = true

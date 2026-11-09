@@ -10,12 +10,12 @@ runs:
   using: composite
   steps:
     - name: Set up Node for Fern
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
-        node-version: "24.22.1"
+        node-version: "24.22.2"
         package-manager-cache: false
     - name: Install reviewed npm
-      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@4e9f579183477b984c009cce0f47a1361e5eddef
     # Restore the cache that CI / Bundle saves on every v1 push rather than
     # keeping a docs cache: rust-cache never saved one from this nested action.
     # The bundle job builds `--package nemoclaw-build` with the same resolved

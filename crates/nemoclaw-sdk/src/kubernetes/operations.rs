@@ -51,27 +51,38 @@ pub const OPENSHIFT_WAIT: std::time::Duration = std::time::Duration::from_secs(3
 
 impl Operations {
     /// Operations from a provider's environment: the kubeconfig the spec
-    /// names, and the state directory the SDK passes through
-    /// [`STATE_ENV`](super::STATE_ENV).
+    /// names, or without one the pod's service account, and the state
+    /// directory the SDK passes through [`STATE_ENV`](super::STATE_ENV).
     pub async fn from_environment(spec: &Spec) -> Result<Self, ObservationError> {
         let target = spec
             .settings
             .kubernetes
             .as_ref()
             .ok_or(ObservationError::Query)?;
-        let kubeconfig: PathBuf = std::env::var_os(&target.kubeconfig.env)
-            .filter(|path| !path.is_empty())
-            .ok_or(ObservationError::Authentication)?
-            .into();
+        let kubeconfig: Option<PathBuf> = match &target.kubeconfig {
+            Some(reference) => Some(
+                std::env::var_os(&reference.env)
+                    .filter(|path| !path.is_empty())
+                    .ok_or(ObservationError::Authentication)?
+                    .into(),
+            ),
+            None => None,
+        };
         let state: PathBuf = std::env::var_os(super::STATE_ENV)
             .ok_or(ObservationError::Incomplete)?
             .into();
-        let cluster = super::ClusterTarget {
-            kubeconfig,
-            context: target.context.clone(),
+        let client = match kubeconfig {
+            Some(kubeconfig) => {
+                let cluster = super::ClusterTarget {
+                    kubeconfig,
+                    context: target.context.clone().ok_or(ObservationError::Query)?,
+                };
+                super::connect(&cluster).await?
+            }
+            None => super::connect_in_cluster()?,
         };
         Ok(Self {
-            client: super::connect(&cluster).await?,
+            client,
             state,
             openshift_wait: OPENSHIFT_WAIT,
         })

@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One managed vLLM service with bearer authentication shared by two OpenClaw
+# agents on the Live / HCL NVIDIA GPU runner. It is
+# docker-vllm-shared-two-agents with this runner's hardware profile, the
+# candidate image, and OpenClaw for both agents: Qwen3-4B's 40,960-token
+# window cannot serve Hermes, which needs at least 64,000 (docs/agents-inference/inference.md).
+# docker-openclaw-hermes-ollama covers Hermes on a managed model.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-openclaw-vllm-shared
+  # CI gives each run a fresh identity.
+  uid: 5d0e7c3a-2b19-4f61-8a7d-3c9e1f4b6a28
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17698
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.132.0/24
+  services:
+    qwen:
+      kind: vllm
+      hardware:
+        profile: rtx-pro-6000-blackwell
+        architecture: amd64
+      # CI binds this template to the image built from its candidate checkout.
+      image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        port: 18899
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        hostReserveGiB: 32
+        kvCacheGiB: 6
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  inferenceProviders:
+    qwen:
+      provider: openai
+      serviceRef: qwen
+  sandboxes:
+    assistant:
+      image:
+        # CI binds this template to its candidate OpenClaw image.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: Qwen/Qwen3-4B
+    researcher:
+      image:
+        # CI binds this template to its candidate OpenClaw image.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: researcher
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: Qwen/Qwen3-4B

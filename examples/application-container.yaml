@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schemas/nemoclaw-v1alpha1.schema.json
+
+# An application container beside one OpenClaw agent on a managed local Docker
+# gateway. NemoClaw starts the image with these literal settings and waits for
+# GET /health; the application reads its own variable names and connects to the
+# agent itself. See internal-docs/design/container-contract.md.
+#
+# Apply the gateway and agent without the application service first, verify the
+# agent, copy its sandbox ID into APP_SANDBOX_ID, and apply again.
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: application-container
+  uid: 2a7329cf-f07e-4766-b76a-3f9943c2fe68
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17671
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.20.0.0/24
+  services:
+    application:
+      kind: container
+      # Replace with the digest of the application image.
+      image: example-application@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      publication:
+        bindAddress: 127.0.0.1
+        port: 18790
+      readiness:
+        path: /health
+        timeoutSeconds: 120
+      # Literal values: they appear in plans, state, exports, and Docker
+      # inspection. Never commit or share a real credential here.
+      environment:
+        APP_PORT: "18790"
+        # The managed gateway's address on its Docker network: host 2 of networkCIDR.
+        APP_GATEWAY_URL: http://172.20.0.2:17671
+        # nc- and the first 16 hexadecimal digits of the SHA-256 of metadata.uid.
+        APP_WORKSPACE: nc-4a3db5963efd83f9
+        APP_SANDBOX_NAME: assistant
+        # Replace with the ID OpenShell reports for the assistant sandbox.
+        APP_SANDBOX_ID: REPLACE_WITH_SANDBOX_ID
+        APP_AGENT_NAME: main
+        APP_AUTH_MODE: none
+  inferenceProviders:
+    hosted:
+      provider: openai
+      api: openai-responses
+      endpoint: https://inference.example.com/v1
+  sandboxes:
+    assistant:
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted
+              overrides:
+                model: example-reasoning-model

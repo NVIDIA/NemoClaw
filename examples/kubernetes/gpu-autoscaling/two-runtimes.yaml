@@ -1,0 +1,114 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
+# A Hermes sandbox on the chart's vLLM release and an OpenClaw sandbox on its
+# Ollama release, which the nemoclaw-community kubernetes-gpu-autoscaling
+# chart's install-two-runtimes.sh installs on shared GPUs. The gateway uses the
+# oidc profile so that you, and load.sh, can reach the agents through the
+# OpenShell CLI. Hermes serves its OpenAI-compatible API, published at a URL
+# the gateway serves. NemoClaw creates nothing for the chart; see README.md.
+# Replace the deployment UID, the context, the issuer settings, and the image
+# digests before applying. Set GPU_VLLM_API_KEY and GPU_OLLAMA_API_KEY to the
+# two releases' inference keys, and NEMOCLAW_GATEWAY_TOKEN to a token from your
+# issuer, where you run nemoclaw. Write each image's metadata bundle with
+# `cargo images export-metadata` and set HERMES_IMAGE_METADATA and
+# OPENCLAW_IMAGE_METADATA to their paths; see docs/build-deploy/build.md.
+# Adapted from hermes-vllm.yaml and openclaw-ollama.yaml in
+# NVIDIA/NemoClaw#14009 at ac69c22.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-gpu-autoscaling-two-runtimes
+  uid: 7a1c3e52-9d4b-4f86-b0e2-3c5d8a6f1b94
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-gpu-autoscaling
+      authentication:
+        profile: oidc
+        # A ConfigMap in the namespace whose ca.crt verifies the issuer's
+        # certificate; omit it for a publicly trusted issuer.
+        caConfigMap: issuer-ca
+        token: {env: NEMOCLAW_GATEWAY_TOKEN}
+    config:
+      openshell.gateway.oidc:
+        issuer: https://login.example.com/realms/openshell
+        audience: openshell
+        roles_claim: groups
+        admin_role: openshell-admins
+        user_role: openshell-users
+  inferenceProviders:
+    # The Envoy Services for the two releases' Gateways. Envoy Gateway
+    # shortens a long Gateway name before its hash; README.md shows how to
+    # find each Service.
+    gpu-vllm:
+      provider: openai
+      api: openai-completions
+      endpoint: http://envoy-nemoclaw-gpu-vllm-nemoclaw-gpu-vllm-metrics-prox-62f61e15.envoy-gateway-system.svc.cluster.local:80/v1
+      credential: {env: GPU_VLLM_API_KEY}
+    gpu-ollama:
+      provider: openai
+      api: openai-completions
+      endpoint: http://envoy-nemoclaw-gpu-ollama-nemoclaw-gpu-ollama-metrics-f83d8e1f.envoy-gateway-system.svc.cluster.local:80/v1
+      credential: {env: GPU_OLLAMA_API_KEY}
+  inferences:
+    hermes:
+      routes:
+        - name: primary
+          providerRef: gpu-vllm
+          overrides:
+            # The model each release serves; its inference.model value.
+            model: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
+            maxTokens: 2048
+    openclaw:
+      routes:
+        - name: primary
+          providerRef: gpu-ollama
+          overrides:
+            model: llama3.2:3b
+            # OpenClaw otherwise requests more output tokens than the context allows.
+            maxTokens: 2048
+  sandboxes:
+    user-0000:
+      harness:
+        kind: nvidia.fabric.hermes
+        execution:
+          timeoutSeconds: 300
+        settings:
+          interfaces:
+            # Hermes's OpenAI-compatible API server, on loopback in the sandbox.
+            api:
+              port: 8642
+      # Publishes the API server at a URL the gateway serves. Hermes checks
+      # the bearer token itself, so the gateway passes it through.
+      serviceExposures:
+        api:
+          targetPort: 8642
+          authorizationMode: BEARER_PASSTHROUGH
+      image:
+        metadata: {env: HERMES_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inferenceRef: hermes
+    user-0001:
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      image:
+        metadata: {env: OPENCLAW_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inferenceRef: openclaw

@@ -83,6 +83,9 @@ pub struct State {
     pub sandbox_create_delay: std::time::Duration,
     pub active_sandbox_creates: usize,
     pub peak_sandbox_creates: usize,
+    /// When set, each CreateSandbox waits for a permit and takes one; a test
+    /// adds permits to let held creates finish one at a time.
+    pub sandbox_create_permits: Option<usize>,
     pub fail_read: Option<(&'static str, tonic::Code)>,
     /// Reject one RPC before its handler can mutate fixture state.
     pub reject_rpc: Option<(&'static str, tonic::Code, String)>,
@@ -91,6 +94,12 @@ pub struct State {
     pub services: std::collections::BTreeMap<(String, String, String), p::ServiceEndpoint>,
     /// The exposures each CreateSandbox request carried, as sent.
     pub sandbox_exposures: Vec<Vec<p::SandboxServiceExposure>>,
+    /// The path of every OpenShell RPC the fixture received, in order.
+    pub rpcs: Vec<String>,
+    /// Each provider registration as CreateProvider stored it, kept after deletion.
+    pub created_providers: Vec<p::Provider>,
+    /// Each sandbox as CreateSandbox stored it, kept after deletion.
+    pub created_sandboxes: Vec<p::Sandbox>,
 }
 impl State {
     fn created(&mut self, kind: &str) {
@@ -176,6 +185,233 @@ impl Fixture {
         }
     }
 }
+impl Fixture {
+    /// Serve this gateway's `fixture_state` control endpoint, which
+    /// `nemoclaw-fixture-control` reads at `NEMOCLAW_FIXTURE_CONTROL`: each
+    /// read applies its `declare` JSON with [`State::declare`] and returns
+    /// `{"openshell": OBSERVATIONS}` from [`State::observations`]. A
+    /// credential value from `environment` is reported as `env:NAME`.
+    pub async fn control(&self, environment: &[(&str, &str)]) -> crate::http::Fixture {
+        let state = self.state.clone();
+        let environment: Vec<(String, String)> = environment
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        crate::http::Fixture::start_tcp(move |request| {
+            let declared: serde_json::Value =
+                serde_json::from_slice(&request.body).unwrap_or_default();
+            let mut state = state.lock().unwrap();
+            if !declared.is_null() {
+                state.declare(&declared);
+            }
+            let source = |value: &str| {
+                environment
+                    .iter()
+                    .find(|(_, supplied)| supplied == value)
+                    .map_or_else(|| "unrecognized".into(), |(name, _)| format!("env:{name}"))
+            };
+            let observed = serde_json::json!({"openshell": state.observations(source)});
+            Some((200, observed.to_string().into_bytes()))
+        })
+        .await
+    }
+}
+/// Run the native test files in `root` side by side, each against a new fake
+/// gateway at `TF_VAR_endpoint` and its control endpoint, with `environment`,
+/// and return OpenTofu's outputs.
+pub async fn test_against_gateways(
+    root: crate::tofu::TofuWorkspace,
+    environment: &[(&str, &str)],
+) -> Vec<String> {
+    let root = Arc::new(root);
+    let mut runs = Vec::new();
+    for file in root.test_files() {
+        let gateway = Fixture::start().await;
+        let control = gateway.control(environment).await;
+        let mut environment: Vec<(String, String)> = environment
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        environment.push(("TF_VAR_endpoint".into(), gateway.endpoint.clone()));
+        environment.push(("NEMOCLAW_FIXTURE_CONTROL".into(), control.endpoint.clone()));
+        let root = root.clone();
+        runs.push(tokio::task::spawn_blocking(move || {
+            let output = root.test(&file, &environment);
+            drop((gateway, control));
+            output
+        }));
+    }
+    let mut outputs = Vec::new();
+    for run in runs {
+        outputs.push(run.await.unwrap());
+    }
+    outputs
+}
+impl State {
+    /// Apply a fixture declaration's gateway part: the compute driver, a
+    /// sandbox creation delay, and a one-time `change` that an outage between
+    /// runs would make: stop one sandbox's Fabric runtime, or forget every
+    /// registration, profile, or sandbox.
+    pub fn declare(&mut self, declared: &serde_json::Value) {
+        self.driver = declared["compute_driver"].as_str().map(str::to_owned);
+        self.sandbox_create_delay = std::time::Duration::from_millis(
+            declared["sandbox_create_delay_ms"].as_u64().unwrap_or(0),
+        );
+        self.delete_delay = std::time::Duration::from_millis(
+            declared["sandbox_delete_delay_ms"].as_u64().unwrap_or(0),
+        );
+        let change = &declared["change"];
+        let sandbox_id = |state: &Self, name: &str| {
+            state
+                .sandboxes
+                .values()
+                .filter_map(|sandbox| sandbox.metadata.as_ref())
+                .find(|metadata| metadata.name == name)
+                .map(|metadata| metadata.id.clone())
+        };
+        if let Some(name) = change["stop_agent_runtime"].as_str() {
+            let id = sandbox_id(self, name);
+            self.fabric_runtimes
+                .retain(|_, sandbox| Some(&*sandbox) != id.as_ref());
+        }
+        // Someone changes the agent's model inside its sandbox, outside OpenTofu.
+        if let Some(name) = change["change_agent_model"].as_str()
+            && let Some(id) = sandbox_id(self, name)
+            && let Some(configuration) = self.fabric_configurations.get_mut(&id)
+        {
+            configuration["models"]["default"]["model"] =
+                serde_json::json!("changed-inside-the-sandbox");
+        }
+        if change["forget_registrations"] == true {
+            self.providers.clear();
+        }
+        if change["forget_profiles"] == true {
+            self.profiles.clear();
+        }
+        if change["forget_sandboxes"] == true {
+            self.sandboxes.clear();
+        }
+    }
+
+    /// What the gateway received and holds. `source` names where a credential
+    /// value came from, so observations never carry the value.
+    pub fn observations(&self, source: impl Fn(&str) -> String) -> serde_json::Value {
+        use serde_json::json;
+        use std::collections::BTreeMap;
+        let providers: Vec<_> = self.created_providers.iter().map(|provider| {
+            let meta = provider.metadata.clone().unwrap_or_default();
+            json!({"name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
+                "type": provider.r#type, "config": provider.config,
+                "credentials": provider.credentials.iter()
+                    .map(|(name, value)| (name.clone(), source(value))).collect::<BTreeMap<_, _>>()})
+        }).collect();
+        let sandboxes: Vec<_> = self.created_sandboxes.iter().map(|sandbox| {
+            let meta = sandbox.metadata.clone().unwrap_or_default();
+            let spec = sandbox.spec.clone().unwrap_or_default();
+            let endpoints: Vec<String> = spec.policy.iter()
+                .flat_map(|policy| policy.network_policies.values())
+                .flat_map(|rule| &rule.endpoints)
+                .map(|endpoint| format!("{}:{}{}", endpoint.host, endpoint.port, endpoint.path))
+                .collect();
+            let driver_config = spec.template.as_ref().and_then(|template| template.driver_config.as_ref())
+                .map(openshell_core::proto_struct::struct_to_json_value);
+            json!({"id": meta.id, "name": meta.name, "workspace": meta.workspace, "labels": meta.labels,
+                "providers": spec.providers, "command": spec.command, "policy_endpoints": endpoints,
+                "driver_config": driver_config})
+        }).collect();
+        let profiles: BTreeMap<_, _> = self
+            .profiles
+            .values()
+            .map(|profile| {
+                let credentials: Vec<_> = profile
+                    .credentials
+                    .iter()
+                    .map(|credential| {
+                        json!({
+                "env_vars": credential.env_vars, "auth_style": credential.auth_style,
+                "header_name": credential.header_name})
+                    })
+                    .collect();
+                let endpoints: Vec<_> = profile
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| format!("{}:{}{}", endpoint.host, endpoint.port, endpoint.path))
+                    .collect();
+                let binaries: Vec<_> = profile.binaries.iter().map(|binary| &binary.path).collect();
+                (
+                    profile.id.clone(),
+                    json!({"inference_capable": profile.inference_capable,
+                "credentials": credentials, "endpoints": endpoints, "binaries": binaries}),
+                )
+            })
+            .collect();
+        let exposures: Vec<Vec<_>> = self
+            .sandbox_exposures
+            .iter()
+            .map(|exposures| {
+                exposures
+                    .iter()
+                    .map(|exposure| {
+                        json!({"service": exposure.service,
+                "target_port": exposure.target_port,
+                "authorization_mode": exposure.authorization_mode().as_str_name()})
+                    })
+                    .collect()
+            })
+            .collect();
+        let execs: Vec<_> = self.exec_calls.iter().zip(&self.exec_sandboxes).zip(&self.exec_stdin)
+            .map(|((command, sandbox), stdin)| {
+                json!({"sandbox": sandbox, "command": command, "stdin": String::from_utf8_lossy(stdin)})
+            })
+            .collect();
+        let live: BTreeMap<&str, &str> = self
+            .sandboxes
+            .values()
+            .filter_map(|sandbox| sandbox.metadata.as_ref())
+            .map(|metadata| (metadata.name.as_str(), metadata.id.as_str()))
+            .collect();
+        let registrations: Vec<&str> = self
+            .providers
+            .values()
+            .filter_map(|provider| provider.metadata.as_ref())
+            .map(|metadata| metadata.name.as_str())
+            .collect();
+        let registration_credentials: BTreeMap<_, _> = self
+            .providers
+            .values()
+            .filter_map(|provider| {
+                Some((
+                    &provider.metadata.as_ref()?.name,
+                    provider
+                        .credentials
+                        .iter()
+                        .map(|(name, value)| (name.clone(), source(value)))
+                        .collect::<BTreeMap<_, _>>(),
+                ))
+            })
+            .collect();
+        let rpcs: Vec<&str> = self
+            .rpcs
+            .iter()
+            .map(|rpc| rpc.trim_start_matches("/openshell.v1.OpenShell/"))
+            .collect();
+        json!({
+            "rpcs": rpcs, "created_providers": providers, "created_sandboxes": sandboxes,
+            "exposures": exposures, "execs": execs, "fabric_starts": self.fabric_starts,
+            "fabric_stopped": self.fabric_stopped,
+            "fabric_configured": self.fabric_configurations.keys().collect::<Vec<_>>(),
+            "workspaces": self.workspaces.keys().collect::<Vec<_>>(),
+            // Gateway mutations so far, which an unchanged apply leaves as they were.
+            "effects": self.effects,
+            "peak_sandbox_creates": self.peak_sandbox_creates,
+            "sandbox_deletes": self.delete_calls,
+            // What the gateway holds now: sandbox IDs by name, registration
+            // names and their credentials' sources, and provider profiles by ID.
+            "sandboxes": live, "registrations": registrations,
+            "registration_credentials": registration_credentials, "profiles": profiles,
+        })
+    }
+}
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.task.abort();
@@ -224,6 +460,11 @@ impl tower::Service<http::Request<Body>> for Service {
     fn call(&mut self, request: http::Request<Body>) -> Self::Future {
         let state = self.0.clone();
         Box::pin(async move {
+            state
+                .lock()
+                .unwrap()
+                .rpcs
+                .push(request.uri().path().to_owned());
             let rejection = {
                 let mut state = state.lock().unwrap();
                 let rejection = state
@@ -282,6 +523,20 @@ impl tower::Service<http::Request<Body>> for Service {
                     };
                     if !delay.is_zero() {
                         tokio::time::sleep(delay).await;
+                    }
+                    loop {
+                        {
+                            let mut state = state.lock().unwrap();
+                            match &mut state.sandbox_create_permits {
+                                None => break,
+                                Some(permits) if *permits > 0 => {
+                                    *permits -= 1;
+                                    break;
+                                }
+                                Some(_) => {}
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                     let response = unary(request, state.clone(), create_sandbox).await;
                     state.lock().unwrap().active_sandbox_creates -= 1;
@@ -458,6 +713,7 @@ fn create_provider(
     created_metadata.annotations = meta.annotations;
     provider.metadata = Some(created_metadata);
     state.providers.insert(key, provider.clone());
+    state.created_providers.push(provider.clone());
     state.created("provider");
     if std::mem::take(&mut state.lose_create) {
         return Err(Status::unavailable("lost create reply secret"));
@@ -647,6 +903,7 @@ fn create_sandbox(
         execution.create(&sandbox, &credentials)?;
     }
     state.sandboxes.insert(key.clone(), sandbox.clone());
+    state.created_sandboxes.push(sandbox.clone());
     if let Some((field, value)) = state.substitute_sandbox_after_create.take() {
         let metadata = state
             .sandboxes

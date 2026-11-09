@@ -7,9 +7,8 @@
 On 2026-09-17, it replaced the synthetic legacy export used by #11813.
 The YAML retains the credential environment-variable reference and contains no credential value.
 
-`v1.yaml` records the same portable intent explicitly reauthored on 2026-09-17 for the required singular `agent` field, and on 2026-10-22 for inference providers and sandboxes keyed by name.
+`../../cases/docker-openclaw-v0-parity.yaml` records the same portable intent explicitly reauthored on 2026-09-17 for the required singular `agent` field, and on 2026-10-22 for inference providers and sandboxes keyed by name.
 The historical raw export retains its `agents` list and its lists of named inference providers and sandboxes.
-The deterministic test compares the authored fixture with a test-only projection of the historical data; the SDK supplies no compatibility translator.
+The deterministic test compares the authored case with a test-only projection of the historical data; the SDK supplies no compatibility translator.
 
-Live verification likewise requires a separate `NEMOCLAW_LIVE_V1_CONFIG` artifact alongside the unchanged `NEMOCLAW_LIVE_V0_EXPORT`.
-It compares intent before deployment and records each artifact’s hash and redacted bytes; only the explicitly authored current configuration drives the v1 lifecycle.
+The live lifecycle deploys only the authored case, through `hcl/tests/docker-openclaw-v0-parity.tftest.hcl`; the raw export is never deployed.

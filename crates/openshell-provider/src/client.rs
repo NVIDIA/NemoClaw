@@ -174,8 +174,8 @@ pub trait KubernetesConnector: Send + Sync {
     async fn open(&self, spec: &str) -> Result<KubernetesConnection, ObservationError>;
 }
 
-/// Connects with the SDK, from the kubeconfig the specification names and
-/// the state directory the SDK passes to providers.
+/// Connects with the SDK, from the kubeconfig the specification names or the
+/// pod's service account, and the state directory the SDK passes to providers.
 #[cfg(feature = "kubernetes")]
 struct SdkKubernetes;
 

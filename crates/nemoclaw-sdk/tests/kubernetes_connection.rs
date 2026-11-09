@@ -99,15 +99,22 @@ async fn an_inherited_kubeconfig_is_ignored() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
 
+/// A context the kubeconfig lacks is named in the error, which doesn't read
+/// as rejected credentials, and the kubeconfig's current context isn't used.
 #[tokio::test]
-async fn an_unknown_context_fails_without_falling_back() {
+async fn an_unknown_context_is_named_without_falling_back() {
     let directory = tempfile::tempdir().unwrap();
     let path = kubeconfig(directory.path(), "http://127.0.0.1:9");
     let target = ClusterTarget {
         kubeconfig: path,
         context: "missing".into(),
     };
-    assert!(connect(&target).await.is_err());
+    let error = connect(&target)
+        .await
+        .err()
+        .expect("a context the kubeconfig lacks fails")
+        .to_string();
+    assert_eq!(error, "the kubeconfig has no context named missing");
 }
 
 #[tokio::test]

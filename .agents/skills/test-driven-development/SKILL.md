@@ -27,11 +27,12 @@ For mixed work, refactor with the tests passing first, then start RED for the ne
    Derive its expected result from the requirement, not from running the code.
    The test should fail for a plausible regression and still pass under a different correct implementation.
 3. **Test through the production path:** the entrypoint, the owning logic, and the observable result.
+   Choose the layer and suite with the `write-tests` skill.
    Assert outputs, state, errors, and persisted effects, not internal calls.
    Substitute only what is slow, nondeterministic, external, or destructive, and don't claim that a substitute proves the real boundary.
 4. **RED:** run the smallest command that exercises the test, and confirm it fails for the expected reason.
    A compile, fixture, or harness failure is not RED; fix it and rerun.
-   If the test already passes, either the behavior exists, so keep the test as regression coverage and say so, or the assertion misses the point.
+   If the test already passes, either the behavior exists or the assertion misses the point. When the behavior exists, keep the test only if `write-tests` found no test that covers it, and say so; otherwise delete it and cite the covering test.
 5. **GREEN:** make the smallest production change that passes, then rerun the test and nearby tests.
 6. **REFACTOR** while green, then pick the next case.
 

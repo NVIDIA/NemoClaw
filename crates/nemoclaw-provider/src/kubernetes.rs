@@ -3,8 +3,9 @@
 //! Kubernetes preparation, authentication and gateway observation resources.
 //!
 //! Each row carries the cluster target and identity as attributes. Operations
-//! connect with the kubeconfig and context they name and keep their receipt in the directory
-//! the SDK passes through `NEMOCLAW_KUBERNETES_STATE`.
+//! connect with the kubeconfig and context they name, or with the pod's service
+//! account when both are empty, and keep their receipt in the directory the SDK
+//! passes through `NEMOCLAW_KUBERNETES_STATE`.
 
 use crate::{
     Error, ObservationError,
@@ -181,7 +182,9 @@ pub(crate) fn definitions() -> [crate::Definition; 3] {
     use nemoclaw_tofu::shape::Shape;
     let typed = |kind| {
         crate::services::schema_definition(kind)
-            .optional(&[ENVIRONMENT_FIELD, OIDC_FIELD])
+            // Without a kubeconfig, NemoClaw uses the pod's service account
+            // and both connection fields stay empty.
+            .optional(&["kubeconfig_env", "context", ENVIRONMENT_FIELD, OIDC_FIELD])
             .structured(
                 "environment",
                 ENVIRONMENT_FIELD,
@@ -233,16 +236,32 @@ mod tests {
     use serde_json::json;
 
     fn spec_row(kind: &str) -> Row {
+        target_row(
+            kind,
+            json!({
+                "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
+                "authentication": {"profile": "development"}
+            }),
+        )
+    }
+
+    /// The same resource without a kubeconfig: operations use the service
+    /// account of the pod that runs NemoClaw.
+    fn pod_row(kind: &str) -> Row {
+        target_row(
+            kind,
+            json!({"namespace": "agents", "authentication": {"profile": "development"}}),
+        )
+    }
+
+    fn target_row(kind: &str, kubernetes: serde_json::Value) -> Row {
         let spec: Spec = serde_json::from_value(json!({
             "layout": 1, "kind": kind, "name": "nc-0123456789abcdef-gateway",
             "owner": "11111111-1111-4111-8111-111111111111", "generation": "0123456789abcdef0123456789abcdef",
             "settings": {
                 "runtime": {"provider": "kubernetes"},
                 "endpoint": "https://127.0.0.1:17671",
-                "kubernetes": {
-                    "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
-                    "authentication": {"profile": "development"}
-                }
+                "kubernetes": kubernetes
             }
         }))
         .unwrap();
@@ -308,6 +327,67 @@ mod tests {
             for attribute in definition.attributes() {
                 assert!(observed.contains_key(attribute), "{kind}.{attribute}");
             }
+        }
+    }
+
+    /// A resource without a kubeconfig observes empty `kubeconfig_env` and
+    /// `context`; the provider's adapter still accepts the refresh.
+    #[tokio::test]
+    async fn a_resource_without_a_kubeconfig_refreshes_completely() {
+        use nemoclaw_tofu::{Backend, Mutation, ResourceAdapter};
+        use tf_provider::{
+            Diagnostics, Resource,
+            value::{Value, ValueEmpty},
+        };
+        struct Observer(Row);
+        #[async_trait::async_trait]
+        impl Backend for Observer {
+            async fn read(
+                &self,
+                _: &str,
+                _: &Row,
+                _: bool,
+            ) -> Result<Option<Row>, ObservationError> {
+                Ok(Some(self.0.clone()))
+            }
+            async fn ensure(&self, _: &str, _: &Row) -> Mutation {
+                unreachable!("a refresh does not mutate resources")
+            }
+            async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+                unreachable!("a refresh does not remove resources")
+            }
+        }
+        for kind in [STORAGE_KIND, AUTH_KIND, GATEWAY_KIND] {
+            let source = Spec::from_row(kind, &pod_row(kind)).unwrap();
+            let observed = row(
+                &source,
+                Response {
+                    id: Some("uid-1".into()),
+                    running: Some(true),
+                    release_present: Some(true),
+                    gateway_values: Some("{}".into()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let state = observed
+                .iter()
+                .map(|(name, value)| (name.clone(), Value::Value(value.clone())))
+                .collect();
+            let adapter = ResourceAdapter::new(
+                crate::resource_definition(kind).unwrap(),
+                std::sync::Arc::new(Observer(observed)),
+            );
+            let mut diags = Diagnostics::default();
+            adapter
+                .read(
+                    &mut diags,
+                    state,
+                    ValueEmpty::default(),
+                    ValueEmpty::default(),
+                )
+                .await;
+            assert!(diags.errors.is_empty(), "{kind}: {diags:?}");
         }
     }
 
@@ -451,6 +531,31 @@ mod tests {
             .plan(GATEWAY_KIND, &prior, Some(&prior))
             .await
             .unwrap();
+    }
+
+    /// An applied deployment keeps the access it was applied with: switching
+    /// between a kubeconfig and the pod's service account is refused in both
+    /// directions, and the pod's own access plans as unchanged.
+    #[tokio::test]
+    async fn switching_between_a_kubeconfig_and_the_pods_service_account_is_refused() {
+        let backend = KubernetesBackend::new();
+        for kind in [STORAGE_KIND, AUTH_KIND, GATEWAY_KIND] {
+            let (kubeconfig, pod) = (spec_row(kind), pod_row(kind));
+            assert_eq!(pod["kubeconfig_env"], "");
+            assert_eq!(pod["context"], "");
+            for (prior, desired) in [(&kubeconfig, &pod), (&pod, &kubeconfig)] {
+                assert!(
+                    matches!(
+                        backend.plan(kind, desired, Some(prior)).await,
+                        Err(Error::Conflict(_))
+                    ),
+                    "{kind}: {} to {}",
+                    prior["kubeconfig_env"],
+                    desired["kubeconfig_env"]
+                );
+            }
+            backend.plan(kind, &pod, Some(&pod)).await.unwrap();
+        }
     }
 
     #[tokio::test]

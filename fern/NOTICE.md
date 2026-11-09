@@ -16,6 +16,6 @@ Modifications on 2026-09-15:
 - Use a separate locked npm manifest containing only `yaml` for the imported generators, executed with Node's built-in TypeScript support.
 - Rewrite imported absolute Markdown snippet paths from `/../docs/` to `/_main/docs/`; retain the original content and notices.
 - Isolate previews with `nemoclaw-v1` IDs and gate shared-site release publication on explicit enablement after publisher coordination.
-- Reuse the reviewed-npm setup action at immutable revision `98669f24d35f18e49b6b2769cd68709509ea24f2`; its upstream notice and audited npm identity remain in that action's repository checkout.
+- Reuse the reviewed-npm setup action at main revision `4e9f579183477b984c009cce0f47a1361e5eddef`; its upstream notice and audited npm identity remain in that action's repository checkout.
 
 The generator, its tests, and the publisher's tests under `crates/nemoclaw-build` are original NemoClaw code; `src/fern.rs` adapts main's publishing workflow as listed above.

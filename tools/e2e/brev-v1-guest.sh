@@ -99,46 +99,60 @@ fi
 image_ref="$(cat "${root}/image-candidate/image-ref")"
 available_kib="$(cat "${root}/available-kib")"
 
-config="${root}/brev.yaml"
-python3 - "${repo}/crates/nemoclaw-e2e/fixtures/openclaw-nvidia-hosted/v1.yaml" \
-  "${config}" "${image_ref}" <<'PY'
+# The case is the HCL E2E scenario Live / HCL also runs, bound to this run's
+# candidate image and a fresh deployment identity.
+case_name=docker-openclaw-v0-parity
+e2e="${repo}/crates/nemoclaw-e2e"
+python3 - "${e2e}/cases/${case_name}.yaml" "${image_ref}" <<'PY'
 import pathlib
+import re
 import sys
 import uuid
 
-source = pathlib.Path(sys.argv[1])
-destination = pathlib.Path(sys.argv[2])
-image = sys.argv[3]
-text = source.read_text()
-text = text.replace("b8f25ac9-8e58-4c0b-98c3-17648f9a5575", str(uuid.uuid4()))
-text = text.replace(
-    "nc-multi-models@sha256:3ab70ded67440e838a37d6c9f0e3b08b95e2acf416c6076f8817bac190525cf0",
-    image,
-)
-destination.write_text(text)
+case = pathlib.Path(sys.argv[1])
+text = case.read_text()
+text = text.replace("nc-fabric@sha256:" + "0" * 64, sys.argv[2])
+text = re.sub(r"(?m)^  uid: .*$", f"  uid: {uuid.uuid4()}", text)
+case.write_text(text)
 PY
 
-state="${root}/state"
-NVIDIA_INFERENCE_API_KEY="$(cat "${root}/nvidia-api-key")" \
-NEMOCLAW_LIVE_BREV_CONFIG="${config}" \
-NEMOCLAW_LIVE_BREV_STATE="${state}" \
-NEMOCLAW_TEST_BUNDLE="${root}/bundle" \
-  "${root}/brev-test" --ignored --exact bare_brev_hosted_openclaw_lifecycle --nocapture
+run="${root}/hcl"
+status=0
+(
+  cd "${e2e}"
+  NVIDIA_INFERENCE_API_KEY="$(cat "${root}/nvidia-api-key")" \
+  NEMOCLAW_HCL_CASE="${case_name}" \
+  NEMOCLAW_HCL_RUN="${run}" \
+  NEMOCLAW_TEST_BUNDLE="${root}/bundle" \
+    "${root}/e2e" hcl_live::case --exact --ignored --nocapture
+) || status=$?
+if test "${status}" -ne 0; then
+  (exit "${status}") || diagnose_failure || true
+fi
 
-python3 - "${state}/brev-proof.json" "${evidence}/brev-proof.json" \
-  "${available_kib}" <<'PY'
+# Like Live / HCL's destroy step, this runs whether or not the scenario's own
+# destroy ran; deleting the VM remains the required cleanup.
+cleanup=0
+if test -d "${run}/deployment"; then
+  "${root}/bundle/bin/nemoclaw" destroy --output json --progress off \
+    --state-dir "${run}/deployment" > "${run}/reports/destroy.json" || cleanup=$?
+fi
+
+# Reports hold outcomes only; requests, replies, state, and credentials stay on the VM.
+cp "${run}"/reports/*.json "${evidence}/" 2>/dev/null || true
+python3 - "${evidence}/fresh-host.json" "${available_kib}" <<'PY'
 import json
 import pathlib
 import sys
 
-source, destination = map(pathlib.Path, sys.argv[1:3])
-proof = json.loads(source.read_text())
-proof["freshHostChecks"] = {
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
     "architecture": "x86_64",
     "dockerReady": True,
     "landlockAvailable": True,
     "minimumAvailableDiskGiB": 80,
+    "availableKiB": int(sys.argv[2]),
     "noPreinstalledDeployment": True,
-}
-destination.write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n")
+}, indent=2, sort_keys=True) + "\n")
 PY
+test "${status}" -eq 0 || { echo "HCL scenario ${case_name} failed" >&2; exit "${status}"; }
+test "${cleanup}" -eq 0 || { echo "destroy failed" >&2; exit "${cleanup}"; }

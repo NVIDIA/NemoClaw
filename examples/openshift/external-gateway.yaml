@@ -4,7 +4,7 @@
 # Supply a unique deployment UID, an accessible digest-selected image for every agent,
 # and an inference endpoint reachable from inside each OpenShift sandbox.
 # Write each image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

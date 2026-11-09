@@ -9,7 +9,7 @@ description: Add a NeMo Fabric agent harness to NemoClaw when Fabric ships a new
 # Add a Fabric Harness
 
 Fabric owns each adapter: its descriptor, its behavior, and its tests.
-NemoClaw, for now, builds and publishes the agent images ([scope](../../../docs/design/scope.md#upstream-boundaries)), so adding a harness means installing Fabric's adapter in an image, labeling the image with its catalog, and showing how to deploy it.
+NemoClaw, for now, builds and publishes the agent images ([scope](../../../internal-docs/design/scope.md#upstream-boundaries)), so adding a harness means installing Fabric's adapter in an image, labeling the image with its catalog, and showing how to deploy it.
 Don't add tests of the adapter's behavior; Fabric tests its own adapters.
 
 Deliver one pull request, titled like `feat: add the OpenCode agent image`.
@@ -17,7 +17,7 @@ Deliver one pull request, titled like `feat: add the OpenCode agent image`.
 ## 1. Gather the Inputs
 
 - **Adapter ID** from Fabric, such as `nvidia.fabric.opencode`, and a short **harness name** for the image and example, lowercase and hyphenated, such as `opencode`.
-- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: `FABRIC_REVISION` and `FABRIC_SHA256` in [the agent Dockerfile](../../../image/fabric/Dockerfile), then [regenerate the bundled catalog](../../../docs/build.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
+- **Fabric revision.** NemoClaw pins one Fabric revision for every image. If the pin predates the adapter, bump it first, in its own pull request: `FABRIC_REVISION` and `FABRIC_SHA256` in [the agent Dockerfile](../../../image/fabric/Dockerfile), then [regenerate the bundled catalog](../../../internal-docs/contributing/agent-image-maintenance.md#regenerate-the-bundled-catalog). The SDK learns adapter IDs and descriptors from that catalog; it needs no code change.
 - **The adapter's descriptor** (`*.fabric-adapter.json` in Fabric's source at that revision): its runner command and `requirements.binaries` name the runtime the image must carry.
 - **Its packaging:** a Python adapter with a Fabric extra, or anything else, such as a TypeScript adapter or a native agent.
 
@@ -42,14 +42,14 @@ The stage:
 
 - **Example:** `examples/fabric-<name>.yaml`, copied from a sibling example, with `harness.kind` set to the adapter ID.
 - **Lists of harnesses:** [the Bake tests](../../../crates/nemoclaw-build/tests/bake.rs) and both lists in [the SDK's configuration tests](../../../crates/nemoclaw-sdk/tests/config.rs).
-- **Contract fixture:** add `fabric_<name> => "fabric-<name>"` to [the OpenShell contract fixtures](../../../crates/openshell-provider/tests/contract/main.rs), then write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+- **Contract fixture:** write it from the example with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
 
 ## 4. Document It
 
-- A row in [the harness reference](../../../docs/reference/fabric-harnesses.md).
-- A row in [the agent state table](../../../docs/state.md) for what the adapter keeps in `/sandbox/artifacts`, from the adapter's source at the pinned revision.
+- A row in [the harness reference](../../../docs/references/fabric-harnesses.md).
+- A row in [the agent state table](../../../docs/build-deploy/state.md) for what the adapter keeps in `/sandbox/artifacts`, from the adapter's source at the pinned revision.
 - The adapter's display name in [the onboarding text](../../../crates/nemoclaw-onboarding/src/tui/text.json), if it isn't there.
-- The image in [the release package list](../../../docs/contributing/releases.md#provision-the-packages).
+- The image in [the release package list](../../../internal-docs/contributing/releases.md#provision-the-packages).
 
 ## 5. Validate
 
@@ -60,5 +60,5 @@ The stage:
 
 ## 6. Hand Over Release Packaging
 
-Before the next release candidate, a maintainer must create `ghcr.io/nvidia/nemoclaw/v1/<name>` as an internal package and grant this repository's Actions write access, as [releases](../../../docs/contributing/releases.md#provision-the-packages) describes.
+Before the next release candidate, a maintainer must create `ghcr.io/nvidia/nemoclaw/v1/<name>` as an internal package and grant this repository's Actions write access, as [releases](../../../internal-docs/contributing/releases.md#provision-the-packages) describes.
 The staging workflow refuses to run until every release package exists, so say so in the pull request.

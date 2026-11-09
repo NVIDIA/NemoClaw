@@ -471,7 +471,7 @@ fn provider_presets_offer_the_expected_connection_and_model_suggestions() {
         (
             ProviderPreset::Nous,
             "https://inference-api.nousresearch.com/v1",
-            "OPENAI_API_KEY",
+            "NOUS_API_KEY",
             "moonshotai/kimi-k2.6",
             InferenceProviderKind::Openai,
         ),
