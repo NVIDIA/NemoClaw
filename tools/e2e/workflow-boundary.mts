@@ -3271,12 +3271,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       break;
     }
   }
-  requirePreCandidateEnvironment(errors, "workflow", workflow.env, {
-    ...PRE_CANDIDATE_WORKFLOW_ENV,
-    UPGRADE_PR_NUMBER: "${{ inputs.pr_number }}",
-    CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-    UPGRADE_BASE_SHA: "${{ inputs.base_sha }}",
-  });
+  requirePreCandidateEnvironment(errors, "workflow", workflow.env, PRE_CANDIDATE_WORKFLOW_ENV);
   if (
     asRecord(asRecord(workflow.defaults).run).shell !== undefined ||
     asRecord(asRecord(generateMatrix.defaults).run).shell !== undefined

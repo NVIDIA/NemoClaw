@@ -338,19 +338,21 @@ describe("protected admitted SDK preparation", () => {
     expect(git(f.input.trustedRoot, "status", "--porcelain")).toBe("");
   });
 
-  it.each([
-    "missing-approval",
-    "tampered-archive",
-    "projection-drift",
-    "plugin-drift",
-    "wrong-target",
-    "registry-mode",
-    "admitted-source-drift",
-  ])("rejects %s before staging", async (kind) => {
+  it.each<[string, RegExp]>([
+    ["missing-approval", /current commit-bound E2E approval/],
+    ["tampered-archive", /integrity/],
+    ["projection-drift", /Unexpected verify source: package.json/],
+    ["plugin-drift", /Unrelated changes in the trusted controller/],
+    ["wrong-target", /artifact preparation in the trusted controller/],
+    ["registry-mode", /artifact preparation in the trusted controller/],
+    ["admitted-source-drift", /Committed candidate SDK differs from the approved commit/],
+  ])("rejects %s before staging", async (kind, expected) => {
     const f = admittedSdkFixture();
     await manageProtectedOpenShellWorkspace("prepare", f.input);
     f.mutate(kind);
-    await expect(prepareProtectedOpenShellSdk(f.preparation, f.input, f.stage)).rejects.toThrow();
+    await expect(prepareProtectedOpenShellSdk(f.preparation, f.input, f.stage)).rejects.toThrow(
+      expected,
+    );
     expect(f.stage).not.toHaveBeenCalled();
   });
 

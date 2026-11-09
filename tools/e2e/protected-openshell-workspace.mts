@@ -188,6 +188,7 @@ async function candidateReleases(
   return approved.releases;
 }
 
+/** Verify committed inputs, live admission, and the permitted controller projection without changing files. */
 async function inspectProtectedOpenShellWorkspace(
   operation: "prepare" | "verify" | "restore",
   input: ProtectedOpenShellWorkspace,

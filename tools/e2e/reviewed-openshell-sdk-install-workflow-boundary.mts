@@ -49,6 +49,7 @@ export function readReviewedOpenShellSdkInstallScript(actionPath = DEFAULT_ACTIO
   return typeof install?.run === "string" ? install.run : "";
 }
 
+/** Reject installer actions that differ from the immutable source or expand credential access. */
 export function validateReviewedOpenShellSdkInstallAction(
   actionPath = DEFAULT_ACTION_PATH,
 ): string[] {

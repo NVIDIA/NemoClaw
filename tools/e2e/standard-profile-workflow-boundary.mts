@@ -123,6 +123,7 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
   }
 }
 
+/** Verify SDK admission and execution identities passed from the catalogue to each reusable profile. */
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
   const sdkPackage = record(jobs["package-openshell-sdk"]);
@@ -253,6 +254,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
   }
 }
 
+/** Reject reusable profiles that change their declared inputs, permissions, or trusted execution steps. */
 function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): void {
   const triggers = record(profile.on ?? profile[true as unknown as string]);
   const call = record(triggers.workflow_call);

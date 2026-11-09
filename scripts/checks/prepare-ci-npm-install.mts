@@ -40,6 +40,7 @@ function requestFromEnvironment(): PreparationRequest {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  /** Select trusted or admitted SDK preparation before dependency installation. */
   const main = async () => {
     const candidate = process.env.NEMOCLAW_OPEN_SHELL_SDK_CANDIDATE;
     if (candidate !== undefined && candidate !== "1") {
