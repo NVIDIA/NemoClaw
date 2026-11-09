@@ -29,7 +29,7 @@ variable "connection" {
 }
 
 variable "targets" {
-  description = "By name: the sandbox, the service port, the token file apply reports or null, the request path, an optional JSON body to POST, text the response must contain, or the one-word answer a chat completion must be."
+  description = "By name: the sandbox, the service port, the token file apply reports or null, the request path, an optional JSON body to POST, text the response must contain, or the answer a chat completion must be."
   type        = any
 }
 

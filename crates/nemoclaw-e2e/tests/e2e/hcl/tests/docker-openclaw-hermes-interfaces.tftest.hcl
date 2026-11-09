@@ -18,8 +18,12 @@
 # the gateway's storage. cargo ci live-docker runs it.
 #
 # Each agent starts with two skills.paths entries, each on its own volume: a
-# folder of skills and a folder that is one skill. OpenClaw's folder holds
-# two skills and a file that isn't one; Hermes's is empty.
+# writable folder of skills and a folder that is one skill, read-only for
+# OpenClaw and writable for Hermes. OpenClaw's folder holds two skills and a
+# file that isn't one; Hermes's is empty. Each skill's description is a
+# marker that the stub looks for in requests, so the replies in OpenClaw's
+# terminal UI and from Hermes's API server name the skills that each running
+# harness found on its volumes and offered the model.
 
 # The skills volumes, which a platform provides before apply. The agent images
 # run agents as 10001:10001 (image/fabric/Dockerfile).
@@ -32,15 +36,15 @@ run "volume" {
     owner = "10001:10001"
     files = {
       "claw:/sandbox/skills" = {
-        "summarize/SKILL.md" = "---\nname: summarize\ndescription: Summarize the workspace.\n---\n\nSummarize the workspace.\n"
-        "translate/SKILL.md" = "---\nname: translate\ndescription: Translate the reply.\n---\n\nTranslate the reply.\n"
+        "summarize/SKILL.md" = "---\nname: summarize\ndescription: nemoclaw-skill-summarize\n---\n\nSummarize the workspace.\n"
+        "translate/SKILL.md" = "---\nname: translate\ndescription: nemoclaw-skill-translate\n---\n\nTranslate the reply.\n"
         "README.md"          = "Skills shared by the deployment's agents.\n"
       }
       "claw:/sandbox/review-skill" = {
-        "SKILL.md" = "---\nname: review\ndescription: Review the change.\n---\n\nReview the change.\n"
+        "SKILL.md" = "---\nname: review\ndescription: nemoclaw-skill-review\n---\n\nReview the change.\n"
       }
       "hermes:/sandbox/notes-skill" = {
-        "SKILL.md" = "---\nname: notes\ndescription: Keep notes.\n---\n\nKeep notes.\n"
+        "SKILL.md" = "---\nname: notes\ndescription: nemoclaw-skill-notes\n---\n\nKeep notes.\n"
       }
     }
   }
@@ -51,9 +55,16 @@ run "model" {
     source = "./model"
   }
 
+  # A completion names each skill whose description its request holds.
   variables {
     key   = var.model_key
     reply = "nemoclaw-stub-reply"
+    markers = {
+      notes     = "nemoclaw-skill-notes"
+      review    = "nemoclaw-skill-review"
+      summarize = "nemoclaw-skill-summarize"
+      translate = "nemoclaw-skill-translate"
+    }
   }
 }
 
@@ -112,6 +123,7 @@ run "interfaces" {
         token_path = one([for access in run.apply.result.interfaces : access.tokenPath if access.sandbox == "hermes" && access.interface == "api"])
         path       = "/v1/models"
       }
+      # Hermes offers one skill: notes, on its own volume.
       api_chat = {
         sandbox    = "hermes"
         port       = 8642
@@ -121,7 +133,7 @@ run "interfaces" {
           model    = "hermes-agent"
           messages = [{ role = "user", content = "Reply to this NemoClaw live test." }]
         }
-        answer = "nemoclaw-stub-reply"
+        answer = "nemoclaw-stub-reply notes"
       }
       dashboard = {
         sandbox    = "hermes"
@@ -141,7 +153,8 @@ run "interfaces" {
 
 # OpenClaw's terminal UI is a client of the Gateway that serves the Control
 # UI, at the dashboard's port and with its token; its status line reads
-# "connected | idle" once it can take a prompt.
+# "connected | idle" once it can take a prompt. OpenClaw offers three skills:
+# review, on its own volume, and summarize and translate, in its folder.
 run "terminal" {
   module {
     source = "./terminal"
@@ -156,7 +169,7 @@ run "terminal" {
         token_path = one([for access in run.apply.result.interfaces : access.tokenPath if access.sandbox == "claw"])
         ready      = "connected | idle"
         prompt     = "Reply to this NemoClaw live test."
-        reply      = "nemoclaw-stub-reply"
+        reply      = "nemoclaw-stub-reply review summarize translate"
       }
     }
   }
