@@ -39,22 +39,20 @@ spec:
       driverConfig:
         kubernetes:
           volumes:
-            - name: workspace
+            - name: agent-data
               persistent_volume_claim:
-                claim_name: gtc-dc-openclaw-workspace
-                read_only: false
-            - name: artifacts
-              persistent_volume_claim:
-                claim_name: gtc-dc-openclaw-artifacts
+                claim_name: gtc-dc-openclaw-data
                 read_only: false
           containers:
             agent:
               volume_mounts:
-                - name: workspace
+                - name: agent-data
                   mount_path: /sandbox/workspace
+                  sub_path: workspace
                   read_only: false
-                - name: artifacts
+                - name: agent-data
                   mount_path: /sandbox/artifacts
+                  sub_path: artifacts
                   read_only: false
       network:
         policy:
@@ -92,22 +90,20 @@ spec:
       driverConfig:
         kubernetes:
           volumes:
-            - name: workspace
+            - name: agent-data
               persistent_volume_claim:
-                claim_name: gtc-dc-hermes-workspace
-                read_only: false
-            - name: artifacts
-              persistent_volume_claim:
-                claim_name: gtc-dc-hermes-artifacts
+                claim_name: gtc-dc-hermes-data
                 read_only: false
           containers:
             agent:
               volume_mounts:
-                - name: workspace
+                - name: agent-data
                   mount_path: /sandbox/workspace
+                  sub_path: workspace
                   read_only: false
-                - name: artifacts
+                - name: agent-data
                   mount_path: /sandbox/artifacts
+                  sub_path: artifacts
                   read_only: false
       network:
         policy:
