@@ -117,6 +117,32 @@ Select a Linux AMD64 image for each harness, push both to a registry the cluster
 Set `GATEWAY_TOKEN` and the `GATEWAY_CA`, `GATEWAY_CERT`, and `GATEWAY_KEY` TLS file references for the existing gateway.
 
 For YAML, assign a fresh deployment UID and replace the gateway endpoint and both image digests before planning.
+Before applying the YAML, the gateway administrator must enable caller driver configuration in the OpenShell gateway's Helm values:
+
+```yaml
+gatewayConfig:
+  openshell.drivers.kubernetes:
+    allow_driver_config: true
+```
+
+Set this through Helm so the chart also grants the gateway permission to inspect PVCs; editing only the rendered gateway TOML does not grant that permission.
+The example uses an external gateway, so its administrator manages these values separately from the deployment YAML.
+For a NemoClaw-managed gateway, set the same driver table under [`spec.gateway.config`](../../docs/build-deploy/usage.md#configure-a-managed-gateway).
+
+The platform operator must create `gtc-dc-openclaw-data` and `gtc-dc-hermes-data` in the sandbox namespace.
+Prepare `workspace/` and `artifacts/` on each claim, writable by UID/GID `10001:10001`, and add these PVC labels:
+
+```yaml
+metadata:
+  labels:
+    openshell.ai/sandbox-attachable: "true"
+    openshell.ai/sandbox-attachable-workspace: "<workspace from nemoclaw plan>"
+```
+
+Use the OpenShell workspace printed by `nemoclaw plan`, not the Kubernetes namespace; an operator-configured admission label map replaces these defaults.
+The YAML mounts each claim's subdirectories at `/sandbox/workspace` and `/sandbox/artifacts`.
+See [mounted-volume preparation and retention](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) before adding mounts to an existing deployment; adding mounts replaces the sandbox and does not migrate its files.
+Retaining files does not resume conversations.
 Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and retained teardown.
 
 For HCL, copy `hosted-nvidia.tf` alone into a private working directory and set `gateway_endpoint`, a fresh `workspace`, and both `images` references.

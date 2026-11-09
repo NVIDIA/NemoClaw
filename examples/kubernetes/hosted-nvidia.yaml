@@ -36,6 +36,24 @@ spec:
       image:
         metadata: {env: NEMOCLAW_OPENCLAW_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      driverConfig:
+        kubernetes:
+          volumes:
+            - name: agent-data
+              persistent_volume_claim:
+                claim_name: gtc-dc-openclaw-data
+                read_only: false
+          containers:
+            agent:
+              volume_mounts:
+                - name: agent-data
+                  mount_path: /sandbox/workspace
+                  sub_path: workspace
+                  read_only: false
+                - name: agent-data
+                  mount_path: /sandbox/artifacts
+                  sub_path: artifacts
+                  read_only: false
       network:
         policy:
           explicit:
@@ -69,6 +87,24 @@ spec:
       image:
         metadata: {env: NEMOCLAW_HERMES_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      driverConfig:
+        kubernetes:
+          volumes:
+            - name: agent-data
+              persistent_volume_claim:
+                claim_name: gtc-dc-hermes-data
+                read_only: false
+          containers:
+            agent:
+              volume_mounts:
+                - name: agent-data
+                  mount_path: /sandbox/workspace
+                  sub_path: workspace
+                  read_only: false
+                - name: agent-data
+                  mount_path: /sandbox/artifacts
+                  sub_path: artifacts
+                  read_only: false
       network:
         policy:
           explicit:
