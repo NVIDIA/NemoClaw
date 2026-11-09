@@ -252,7 +252,9 @@
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
-        "test/e2e/fixtures/native-plugin-evidence.ts"
+        "test/e2e/fixtures/native-plugin-evidence.ts",
+        "test/e2e/fixtures/onboard-performance.ts",
+        "test/e2e/fixtures/provider-timing.ts"
       ],
       "fast": [
         "src/lib/onboard/gateway-host-runtime.test.ts",
@@ -266,6 +268,7 @@
         "test/e2e/support/full-e2e-native-model.test.ts",
         "test/e2e/support/full-e2e-gateway.test.ts",
         "test/e2e/support/native-plugin-evidence.test.ts",
+        "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
