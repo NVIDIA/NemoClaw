@@ -12,10 +12,18 @@ export interface DockerDriverGatewayPortListenerOptions {
   isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
 }
 
+interface RawListenerScan {
+  pids: number[];
+  complete: boolean;
+}
+
 export interface GatewayPortListenerRawScan {
   /** Every live listener observed by the complete scan. */
   pids: number[];
-  /** False when lsof could not authoritatively enumerate the whole listener set. */
+  /**
+   * False when no available scanner could authoritatively enumerate the whole
+   * listener set.
+   */
   complete: boolean;
 }
 
@@ -113,6 +121,57 @@ export function createDockerDriverGatewayPortListenerHelpers(
   }
 
   /**
+   * lsof is not installed on every base system, and a host without it does not
+   * have an unknown listener. A scanner that cannot run is unavailable rather
+   * than a failed observation, so the next available scanner decides
+   * completeness.
+   */
+  function captureListenerScan(args: readonly string[]): ListenerCaptureResult | null {
+    try {
+      return deps.runCaptureEx(args);
+    } catch {
+      return null;
+    }
+  }
+
+  function listenerScanAvailable(
+    result: ListenerCaptureResult | null,
+  ): result is ListenerCaptureResult {
+    return result !== null && result.exitCode !== null && result.exitCode !== 127;
+  }
+
+  function scanListenersWithLsof(port: number, portCheck: PortProbeResult): RawListenerScan | null {
+    const result = captureListenerScan(["lsof", "-ti", `:${port}`, "-sTCP:LISTEN"]);
+    if (!listenerScanAvailable(result)) return null;
+    // Status 1 means "no listeners" only when the independent port probe also
+    // saw a free port. EADDRINUSE plus empty lsof output is a visibility
+    // contradiction (commonly a root-owned listener), not a complete scan.
+    const complete = result.exitCode === 0 || (result.exitCode === 1 && portCheck.ok);
+    return { pids: result.exitCode === 0 ? parseListenerPids(result.stdout) : [], complete };
+  }
+
+  function parseSsListenerPids(output: string): number[] {
+    const pids = new Set<number>();
+    for (const match of output.matchAll(/pid=(\d+)/g)) {
+      const pid = Number.parseInt(match[1] ?? "", 10);
+      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    }
+    return Array.from(pids);
+  }
+
+  function scanListenersWithSs(port: number): RawListenerScan | null {
+    const result = captureListenerScan(["ss", "-H", "-ltnp", `sport = :${port}`]);
+    if (!listenerScanAvailable(result)) return null;
+    if (result.exitCode !== 0) return { pids: [], complete: false };
+    const rows = result.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
+    const pids = parseSsListenerPids(result.stdout);
+    // Without root, ss reports the socket but omits the owning process. A row
+    // with no PID cannot be attributed to a process, so the scan stays
+    // incomplete instead of claiming the port is free.
+    return { pids, complete: pids.length > 0 || rows.length === 0 };
+  }
+
+  /**
    * Every live process holding the gateway port, with no assumption about what
    * kind of gateway it is.
    *
@@ -126,24 +185,11 @@ export function createDockerDriverGatewayPortListenerHelpers(
     portCheck: PortProbeResult,
     opts: DockerDriverGatewayPortListenerOptions = {},
   ): GatewayPortListenerRawScan {
-    const candidates = new Set<number>();
-
-    let result: ListenerCaptureResult;
-    try {
-      result = deps.runCaptureEx(["lsof", "-ti", `:${currentGatewayPort()}`, "-sTCP:LISTEN"]);
-    } catch {
-      result = { stdout: "", exitCode: null, timedOut: false };
-    }
-    // Status 1 means "no listeners" only when the independent port probe also
-    // saw a free port. EADDRINUSE plus empty lsof output is a visibility
-    // contradiction (commonly a root-owned listener), not a complete scan.
-    const complete = result.exitCode === 0 || (result.exitCode === 1 && portCheck.ok);
-    if (result.exitCode === 0) {
-      for (const pid of parseListenerPids(result.stdout)) candidates.add(pid);
-    }
-
+    const port = currentGatewayPort();
+    const scan = scanListenersWithLsof(port, portCheck) ?? scanListenersWithSs(port);
+    if (scan === null) return { pids: [], complete: false };
     const alive = opts.isPidAliveFn ?? deps.isPidAlive;
-    return { pids: Array.from(candidates).filter((pid) => alive(pid)), complete };
+    return { pids: scan.pids.filter((pid) => alive(pid)), complete: scan.complete };
   }
 
   function getDockerDriverGatewayPortListenerScan(
