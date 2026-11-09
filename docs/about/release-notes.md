@@ -18,7 +18,7 @@ Earlier CLI commands, schemas, and state formats have no compatibility guarantee
 See [migration](../get-started/migration.md) for where each earlier task lives now, and [state](../build-deploy/state.md) for data preservation.
 Recent development changes that affect existing deployments:
 
-- The intent record is now version 16, so this release refuses every deployment that an earlier build created, without changing its state. Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
+- The intent record is now version 17, so this release refuses every deployment that an earlier build created, without changing its state. Destroy each one with the bundle that created it, then create it again with this release; see [compatibility](../references/compatibility.md#deployment-state).
 - Docker-managed vLLM and Ollama services default to [`updatePolicy: Preserve`](../agents-inference/inference.md#set-container-limits-and-update-policy), which refuses an image, model, serving, or container-limit change that would replace a running container; set `spec.services.<name>.updatePolicy: Recreate` to permit the replacement and its downtime.
 - `spec.gateway.image` is removed: the SDK pins the managed gateway image, and defaulted and exported documents no longer name it.
   - Remove the field from documents; the parser rejects it as an unknown field.

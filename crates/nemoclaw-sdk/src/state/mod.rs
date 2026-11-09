@@ -20,8 +20,8 @@ use std::{
 /// When the format changes, raise the version with the fingerprint, so that a
 /// release refuses state another release wrote instead of misreading it.
 pub(crate) const RECORD_FORMAT: (u32, &str) = (
-    16,
-    "b40093ab7cb47d39a3b0c8c1ceccbda929f0faad702e4b0763e4cadea5474367",
+    17,
+    "bebc5738fff6a10674d8d1fe3ee8ae79d55aeae25933d3e78fcb24ca080e0e3d",
 );
 pub(crate) const RECORD_VERSION: u32 = RECORD_FORMAT.0;
 
