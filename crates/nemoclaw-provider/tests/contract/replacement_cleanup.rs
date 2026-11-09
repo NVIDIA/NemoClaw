@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! How pinned OpenTofu and the bundled Docker provider report a container
 //! replacement whose cleanup is unfinished. OpenTofu and the provider own that
-//! cleanup (`docs/provider.md`), so this test pins only the plans and state the
+//! cleanup (`docs/references/provider.md`), so this test pins only the plans and state the
 //! SDK reads. The SDK's `replacement_cleanup` test drives `Deployment` with
 //! canned copies of these shapes, so a change here must change it too.
 
-use super::vllm_runtime::Workspace;
+use crate::tofu::TofuWorkspace;
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
@@ -29,8 +29,35 @@ fn save(root: &Path, name: &str, value: &Value) {
     fs::write(root.join(name), value.to_string()).unwrap();
 }
 
+/// A workspace with the bundle's Docker provider, reaching an engine over
+/// SSH, and `body`.
+fn workspace(body: &str) -> TofuWorkspace {
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
+    let docker = "kreuzwerker/docker";
+    let workspace =
+        TofuWorkspace::with_providers(bundle.tofu(), &[(docker, &bundle.provider(docker))]);
+    fs::write(
+        workspace.path().join("main.tf"),
+        format!(
+            r#"terraform {{
+  required_providers {{
+    docker = {{ source = "registry.opentofu.org/kreuzwerker/docker" }}
+  }}
+}}
+
+provider "docker" {{
+  host = "ssh://operator@gpu-box"
+}}
+
+{body}"#
+        ),
+    )
+    .unwrap();
+    workspace
+}
+
 struct Scenario {
-    workspace: Workspace,
+    workspace: TofuWorkspace,
     remote: tempfile::TempDir,
 }
 
@@ -52,7 +79,7 @@ impl Scenario {
             &json!({"effects":0, "creates":0, "network":{"Name":"bridge"}}),
         );
         save(root, "control.json", &json!({}));
-        let workspace = Workspace::with("ssh://operator@gpu-box", &container());
+        let workspace = workspace(&container());
         Self { workspace, remote }
     }
 

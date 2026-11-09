@@ -66,6 +66,16 @@ impl Budgets {
     pub fn has_binaries(&self) -> bool {
         !self.binaries.is_empty()
     }
+
+    /// These budgets without the binary budgets, for a step that runs none of
+    /// the budgeted binaries.
+    #[must_use]
+    pub fn steps_only(&self) -> Self {
+        Self {
+            binaries: BTreeMap::new(),
+            steps: self.steps.clone(),
+        }
+    }
 }
 
 /// A timing report, and what in it exceeds its budgets.
@@ -296,9 +306,9 @@ pub fn join_consecutive(reports: &[String]) -> Result<String, String> {
         .map_err(|error| format!("cannot write the joined JUnit report: {error}"))
 }
 
-/// A Markdown report of a platform's whole lifecycle suite, from the JUnit
-/// reports its partitions uploaded: the artifacts
-/// `lifecycle-PLATFORM-SHARD-ATTEMPT`, downloaded as subdirectories of
+/// A Markdown report of a platform's whole contract or integration suite,
+/// `step`, from the JUnit reports its partitions uploaded: the artifacts
+/// `STEP-PLATFORM-SHARD-ATTEMPT`, downloaded as subdirectories of
 /// `directory`. Each shard's latest attempt counts, and each of `shards` without
 /// a report is named. Partitions run in parallel on separate runners, so the
 /// suite's wall time is its slowest partition's. Each binary with a budget in
@@ -308,16 +318,16 @@ pub fn join_consecutive(reports: &[String]) -> Result<String, String> {
 /// Returns an error when `directory` cannot be read or a partition's report
 /// cannot be parsed.
 pub fn partitioned_report(
+    step: super::Step,
     directory: &std::path::Path,
     platform: &str,
     shards: &[u32],
     rows: usize,
     budgets: &Budgets,
 ) -> Result<Timing, String> {
-    let step = super::Step::Lifecycle;
     let (_, file) = step
         .junit()
-        .ok_or("the lifecycle step writes no JUnit report")?;
+        .ok_or_else(|| format!("the {} step writes no JUnit report", step.name()))?;
     let prefix = format!("{}-{platform}-", step.name());
     // Shard to its latest attempt and artifact name.
     let mut latest: BTreeMap<u32, (u32, String)> = BTreeMap::new();

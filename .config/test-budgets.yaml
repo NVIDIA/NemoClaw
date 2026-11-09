@@ -4,45 +4,66 @@
 # Wall-clock budgets for each test step, in seconds, enforced on the Linux CI
 # runners; other platforms report their times without failing. wall_seconds
 # bounds a step's nextest run, the live-docker step's nextest commands together,
-# or each lifecycle partition; test_seconds bounds any one test in it. The
+# or each contract or integration partition; test_seconds bounds any one test
+# in it. The
 # step's profile in .config/nextest.toml must use test_seconds as its
 # slow-timeout period; it stops a test at a multiple of it. Lower a budget when
 # a change makes the step faster; raising one needs the reason in the pull
-# request. See docs/contributing/testing.md.
+# request. See internal-docs/contributing/testing.md.
 #
-# binaries budgets test binaries by their nextest name: summed_seconds bounds
-# the binary's test times added up across a platform's lifecycle partitions,
-# and test_seconds bounds any one of its tests. Each binary's override in the
-# lifecycle profile in .config/nextest.toml must use its test_seconds as the
-# slow-timeout period.
+# binaries budgets the providers' contract binaries by their nextest name, in
+# the contract step: summed_seconds bounds the binary's test times added up
+# across a platform's contract partitions, and test_seconds bounds any one of
+# its tests. Each binary's override in the contract profile in
+# .config/nextest.toml must use its test_seconds as the slow-timeout period.
 
 # Unit and integration tests: 27 s on linux_amd64, slowest test 5.1 s.
 test:
   wall_seconds: 45
   test_seconds: 8
 
-# Each lifecycle partition: at most 207 s on linux_amd64 and linux_arm64,
-# slowest test 67 s.
-lifecycle:
+# Each contract and each integration partition. Before they split, a lifecycle
+# partition that held both took at most 207 s on linux_amd64 and linux_arm64,
+# with the slowest test, an integration test, at 67 s; contract tests stop at
+# their binaries' test_seconds below. Lower these from the split steps' runs.
+contract:
+  wall_seconds: 300
+  test_seconds: 16
+
+integration:
   wall_seconds: 300
   test_seconds: 90
 
-# Live / Docker, its four nextest commands together: at most 255 s on
+# live-docker (E2E Docker tests), its four nextest commands together: at most 255 s on
 # linux_amd64 and 210 s on linux_arm64 in 11 v1 runs, which included the
 # runtime rebuild test since removed with the runtime builder; 228 s in one
 # linux_arm64 run without it.
+# After the HCL E2E migration (#14179), the suite's five commands took
+# 118.3 s on linux_amd64 and 92.7 s on linux_arm64; its slowest test, the
+# interface case, 46.0 s and 38.8 s.
 live-docker:
   wall_seconds: 360
   test_seconds: 180
 
-# Live / Kind: at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
-# runs. The slowest test, three agents on OpenShift, took 112 s on linux_amd64
-# and 123 s after refresh began checking agent runtimes (#13947); about 30 s of
-# each test's destroy waits out the sandbox pods' termination grace period
-# (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is fixed.
+# live-kind (E2E Kubernetes (kind) tests): at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
+# runs. The slowest test, the kind OpenShift HCL E2E scenario (now kind-openshift-oidc), took
+# 133 s on linux_amd64 and 138 s on linux_arm64 with three agents (#14097);
+# about 30 s of each test's destroy waits out the sandbox pods' termination
+# grace period (#13959, NVIDIA/OpenShell#5025). Lower test_seconds when that is
+# fixed.
+# Raised for now while #14087 finds why linux_amd64 runs vary: after the test
+# moved to the kind OpenShift HCL case (#14097), hcl_live::case took
+# 130.1-143.3 s on linux_amd64 in four runs, then 163.3 s and 155.6 s on
+# #14124, whose other Kubernetes tests were 10-15% slower too. Return to
+# 150 s and 270 s when #14087 is resolved.
+# Live / Kind runs two HCL cases one after the other (#14176). With the
+# kind module's cleanup no longer waiting for namespace deletion (#14177),
+# the development case, which destroys and redeploys, took 137.9 s on
+# linux_amd64 and 136.9 s on linux_arm64; with the OIDC case (105.1 s and
+# 95.7 s) the step took 243.0 s and 232.6 s.
 live-kind:
-  wall_seconds: 270
-  test_seconds: 150
+  wall_seconds: 300
+  test_seconds: 180
 
 # Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
 # two runs after providers and the fake OpenShell gateway set TCP_NODELAY.
@@ -59,7 +80,9 @@ binaries:
   nemoclaw-provider::contract:
     summed_seconds: 82
     test_seconds: 12
-  # 65 tests: at most 139.1 s summed; slowest test 5.7 s.
+  # 65 tests: at most 139.1 s summed; slowest test 5.7 s. The chart tests
+  # (#14174) pull the pinned chart from ghcr.io for each render; one took
+  # 8.1 s on linux_amd64.
   openshell-provider::contract:
     summed_seconds: 180
-    test_seconds: 8
+    test_seconds: 12

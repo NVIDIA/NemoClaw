@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../../schemas/nemoclaw-v1alpha1.schema.json
+# One OpenClaw sandbox per user on a managed Kubernetes gateway. Every agent
+# uses the GPU inference pods that the nemoclaw-community
+# kubernetes-gpu-autoscaling chart runs, with the Ollama runtime, through the
+# chart's Envoy load balancer; Kubernetes scales the GPU pods.
+# NemoClaw creates nothing for the chart. Install it first; see README.md.
+# Replace the deployment UID, the context, and the image digests before applying.
+# Set GPU_INFERENCE_API_KEY to the chart's inference key where you run nemoclaw.
+# Write the image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
+# Adapted from openclaw-ollama.yaml in NVIDIA/NemoClaw#14009 at ac69c22.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-gpu-autoscaling
+  uid: 0e923a57-7dbf-4f53-a53c-a80936496c86
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-gpu-autoscaling
+      authentication:
+        profile: development
+  inferenceProviders:
+    gpu:
+      provider: openai
+      api: openai-completions
+      # The Envoy Service for the chart's Gateway, release nemoclaw-gpu in the
+      # namespace nemoclaw-gpu. Its name ends in a hash; README.md shows how to
+      # find it, and the Service to use when the chart runs without Envoy.
+      endpoint: http://envoy-nemoclaw-gpu-nemoclaw-gpu-metrics-proxy-4620f768.envoy-gateway-system.svc.cluster.local:80/v1
+      credential: {env: GPU_INFERENCE_API_KEY}
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: gpu
+          overrides:
+            # The model the chart serves; its inference.model value.
+            model: llama3.2:3b
+            # OpenClaw otherwise requests more output tokens than the context allows.
+            maxTokens: 2048
+  sandboxes:
+    user-0000:
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inferenceRef: chat
+    user-0001:
+      harness:
+        kind: nvidia.fabric.openclaw
+        execution:
+          timeoutSeconds: 300
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inferenceRef: chat

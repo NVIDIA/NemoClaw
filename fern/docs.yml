@@ -66,6 +66,21 @@ versions:
 redirects:
   - source: "/nemoclaw/v1"
     destination: "/nemoclaw/v1/overview"
+  # Maintainer pages moved to internal-docs; keep their published v1 routes useful.
+  - source: "/nemoclaw/v1/testing"
+    destination: "/nemoclaw/v1/index"
+  - source: "/nemoclaw/v1/testing/fixtures"
+    destination: "/nemoclaw/v1/index"
+  - source: "/nemoclaw/v1/testing/live"
+    destination: "/nemoclaw/v1/index"
+  - source: "/nemoclaw/v1/releases"
+    destination: "/nemoclaw/v1/release-notes"
+  - source: "/nemoclaw/v1/contributing"
+    destination: "/nemoclaw/v1/index"
+  - source: "/nemoclaw/v1/configuration-schema"
+    destination: "/nemoclaw/v1/reference/configuration"
+  - source: "/nemoclaw/v1/documentation-build"
+    destination: "/nemoclaw/v1/index"
   # Paths are relative to the site root; subpath prefix matches instances + custom-domain.
   # Legacy HTML URLs used .../path/to/page/index.html; Fern canonical URLs omit index.html.
   # List explicit /index.html routes before :path*/index.html so empty path segments do not

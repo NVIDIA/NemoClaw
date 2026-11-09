@@ -219,7 +219,7 @@ pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'sta
         }
         _ => return Ok(()),
     };
-    if regex::Regex::new(pattern).unwrap().is_match(value) {
+    if crate::config::constraints::matches(pattern, value) {
         Ok(())
     } else {
         Err(requirement)
@@ -409,15 +409,10 @@ impl Spec {
     /// # Errors
     /// Returns an error if any of these contracts is invalid.
     pub fn validate(&self) -> Result<(), Error> {
-        if !regex::Regex::new(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}$")
-            .unwrap()
-            .is_match(&self.name)
-            || !regex::Regex::new(r"^[a-f0-9-]{36}$")
-                .unwrap()
-                .is_match(&self.owner)
-            || !regex::Regex::new(r"^[a-f0-9]{32}$")
-                .unwrap()
-                .is_match(&self.generation)
+        let matches = crate::config::constraints::matches;
+        if !matches(r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}$", &self.name)
+            || !matches(r"^[a-f0-9-]{36}$", &self.owner)
+            || !matches(r"^[a-f0-9]{32}$", &self.generation)
         {
             return Err(Error::Conflict(
                 "managed resource lacks ownership or generation",

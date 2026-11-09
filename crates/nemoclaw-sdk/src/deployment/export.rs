@@ -495,9 +495,21 @@ mod tests {
                     "{name}: {kind}.{field} drift was exported"
                 );
             }
+            // Disposable Docker objects are reconciled on apply and need no
+            // observation here; export_observations requires their bindings.
             let mut missing = observations.clone();
-            missing.pop_first();
-            assert!(exported(document.clone(), &generations, &missing).is_err());
+            missing.retain(|address, _| plan::disposable(address));
+            missing.extend(
+                observations
+                    .iter()
+                    .filter(|(address, _)| !plan::disposable(address))
+                    .skip(1)
+                    .map(|(address, row)| (address.clone(), row.clone())),
+            );
+            assert!(
+                exported(document.clone(), &generations, &missing).is_err(),
+                "{name}: a missing observation was exported"
+            );
             exported_examples += 1;
         }
         assert!(exported_examples > 20, "examples were not found");

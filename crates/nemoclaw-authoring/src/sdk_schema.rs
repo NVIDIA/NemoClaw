@@ -6,7 +6,7 @@
 use std::sync::OnceLock;
 
 use crate::fingerprint::sha256;
-use nemoclaw_sdk::config::schema::{input_schema, select_variant};
+use nemoclaw_sdk::config::schema::{input_schema_ref, select_variant};
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Value, json};
 
@@ -68,8 +68,7 @@ fn possible_in_schema(root: &Value, schema: &Value, parts: &[String], depth: usi
 }
 
 fn schema_root() -> &'static Value {
-    static SCHEMA: OnceLock<Value> = OnceLock::new();
-    SCHEMA.get_or_init(input_schema)
+    input_schema_ref()
 }
 
 pub(crate) fn sdk_schema_identity() -> String {

@@ -154,7 +154,7 @@
         "depends_on": [
           "data.openshell_gateway.apply"
         ],
-        "input": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.hermes\",\"settings\":{}},\"metadata\":{\"name\":\"main\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_LOCAL_7761FDD381C7CF8BFBD7F964_KEY\",\"base_url\":\"https://inference-api.nousresearch.com/v1\",\"model\":\"moonshotai/kimi-k2.6\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_LOCAL_7761FDD381C7CF8BFBD7F964_KEY\",\"base_url\":\"https://inference-api.nousresearch.com/v1\",\"model\":\"moonshotai/kimi-k2.6\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\"},\"schema_version\":\"fabric.agent/v1alpha1\"}"
+        "input": "{\"environment\":{\"provider\":\"local\",\"workspace\":\"/sandbox/workspace\"},\"harness\":{\"adapter_id\":\"nvidia.fabric.hermes\",\"settings\":{}},\"metadata\":{\"name\":\"main\"},\"models\":{\"default\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_LOCAL_7761FDD381C7CF8BFBD7F964_KEY\",\"base_url\":\"https://inference-api.nousresearch.com/v1\",\"model\":\"moonshotai/kimi-k2.6\",\"provider\":\"openai\",\"settings\":{}},\"primary\":{\"api_key_env\":\"NEMOCLAW_INFERENCE_LOCAL_7761FDD381C7CF8BFBD7F964_KEY\",\"base_url\":\"https://inference-api.nousresearch.com/v1\",\"model\":\"moonshotai/kimi-k2.6\",\"provider\":\"openai\",\"settings\":{}}},\"runtime\":{\"artifacts\":\"/sandbox/artifacts\",\"keep_state\":true},\"schema_version\":\"fabric.agent/v1alpha1\"}"
       }
     }
   },

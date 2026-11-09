@@ -4,11 +4,11 @@
 # An agent on a managed Kubernetes gateway uses a vLLM server that you run in
 # the same cluster: the Service qwen in the namespace models, protected by a key.
 # NemoClaw creates nothing for the server. Deploy it and wait for its rollout
-# first; see "Use a Model Server in the Cluster" in docs/kubernetes.md.
+# first; see "Use a Model Server in the Cluster" in docs/build-deploy/kubernetes.md.
 # Replace the deployment UID, the context, and the image digest before applying.
 # Set QWEN_INFERENCE_KEY to the server's key where you run nemoclaw.
 # Write the image's metadata bundle with `cargo images export-metadata` and set
-# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build-deploy/build.md.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:

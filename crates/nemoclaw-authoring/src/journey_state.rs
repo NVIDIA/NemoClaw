@@ -331,7 +331,54 @@ impl JourneyState {
 
     /// Recompute the applicable questions from this run without changing it.
     pub fn resolve(&self, capabilities: &Capabilities) -> Result<JourneyResolution, Diagnostics> {
-        resolver::QuestionResolver::new(self, capabilities).resolve()
+        // An answer resolves the journey before and after it changes, and the
+        // frontend resolves the answered journey again for the next question.
+        // A resolution depends only on the run and the capabilities, and
+        // comparing runs costs far less than resolving one, so keep the latest.
+        const CAPACITY: usize = 4;
+        type Resolved = (JourneyState, u64, Result<JourneyResolution, Diagnostics>);
+        thread_local! {
+            static RECENT: std::cell::RefCell<std::collections::VecDeque<Resolved>> =
+                Default::default();
+        }
+        let known = RECENT.with_borrow(|recent| {
+            recent
+                .iter()
+                .rev()
+                .find(|(state, identity, _)| {
+                    *identity == capabilities.identity && state.same_run(self)
+                })
+                .map(|(_, _, resolution)| resolution.clone())
+        });
+        if let Some(resolution) = known {
+            return resolution;
+        }
+        let resolution = resolver::QuestionResolver::new(self, capabilities).resolve();
+        RECENT.with_borrow_mut(|recent| {
+            if recent.len() == CAPACITY {
+                recent.pop_front();
+            }
+            recent.push_back((self.clone(), capabilities.identity, resolution.clone()));
+        });
+        resolution
+    }
+
+    /// Whether two runs resolve alike: every field is equal. Answers change
+    /// the decisions, so they are compared first; the definition rarely
+    /// differs and is the largest.
+    fn same_run(&self, other: &Self) -> bool {
+        let Self {
+            definition,
+            authored,
+            decisions,
+            position,
+            answered_engines,
+        } = self;
+        *decisions == other.decisions
+            && *position == other.position
+            && *answered_engines == other.answered_engines
+            && *authored == other.authored
+            && *definition == other.definition
     }
 
     pub fn current_route(&self) -> Option<&str> {

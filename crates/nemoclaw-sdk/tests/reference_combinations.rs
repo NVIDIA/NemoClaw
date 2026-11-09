@@ -114,6 +114,7 @@ fn example_configurations_are_valid_fabric_configurations() {
         "ollama",
         "ollama_proxy",
         "kubernetes_gateway",
+        "container_service",
     ]
     .map(|key| (key.into(), "a".repeat(32)))
     .into();

@@ -11,8 +11,8 @@ license = "Apache-2.0"
 repository = "https://github.com/NVIDIA/OpenShell"
 
 [dependencies]
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false }
-openshell-crypto = { git = "https://github.com/NVIDIA/OpenShell", rev = "ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47", default-features = false, features = ["aws-lc"] }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c", default-features = false }
+openshell-crypto = { git = "https://github.com/NVIDIA/OpenShell", rev = "5d25211b25a8fc887e8d5c606d57d6ab22f1d76c", default-features = false, features = ["aws-lc"] }
 async-trait = "0.1"
 futures = { version = "0.3" }
 hyper = { version = "1.6", features = ["full"] }
@@ -23,7 +23,7 @@ reqwest = { version = "0.12.28", default-features = false, features = ["json", "
 rustls = { version = "0.23", default-features = false, features = ["std", "logging", "tls12", "aws_lc_rs"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = { version = "2" }
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.53.3", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "aws_lc_rs"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 tonic = { version = "0.14", features = ["tls-native-roots"] }
@@ -33,7 +33,7 @@ async-stream = "0.3.6"
 
 [dev-dependencies]
 serde_json = { version = "1" }
-tokio = { version = "1.43", features = ["full", "macros", "rt-multi-thread"] }
+tokio = { version = "1.53.3", features = ["full", "macros", "rt-multi-thread"] }
 tokio-stream = { version = "0.1" }
 wiremock = "0.6"
 

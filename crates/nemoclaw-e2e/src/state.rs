@@ -1,26 +1,55 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Readers for what a live deployment records: each sandbox's binding, and its
-//! agent's sandbox and runtime ID, in OpenTofu state, and Fabric's run results.
+//! Readers for what a live deployment records in OpenTofu state: each
+//! sandbox's binding and its agent's runtime ID, the resources the state
+//! binds, and the managed gateway's Helm release; and Fabric's run results.
 use nemoclaw_sdk::backend::Row;
 use serde_json::Value;
 use std::{fs, path::Path};
 
-/// The managed resource of `kind` named for sandbox `name`, from the
-/// deployment's OpenTofu state.
-fn resource(directory: &Path, kind: &str, name: &str) -> Value {
+/// The resources in the deployment's OpenTofu state.
+fn resources(directory: &Path) -> Vec<Value> {
     let state: Value =
         serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    state["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
+    state["resources"].as_array().unwrap().clone()
+}
+
+/// The managed resource of `kind` named `name`, from the deployment's
+/// OpenTofu state.
+fn resource(directory: &Path, kind: &str, name: &str) -> Value {
+    resources(directory)
+        .into_iter()
         .find(|resource| {
             resource["mode"] == "managed" && resource["type"] == kind && resource["name"] == name
         })
         .unwrap_or_else(|| panic!("the state records no {kind}.{name}"))
-        .clone()
+}
+
+/// The address of each managed resource that the deployment's OpenTofu state
+/// binds, such as `openshell_kubernetes_storage.runtime`.
+pub fn bound(directory: &Path) -> Vec<String> {
+    resources(directory)
+        .iter()
+        .filter(|resource| resource["mode"] == "managed")
+        .map(|resource| {
+            let part = |key: &str| resource[key].as_str().unwrap().to_owned();
+            format!("{}.{}", part("type"), part("name"))
+        })
+        .collect()
+}
+
+/// The name and namespace of the managed Kubernetes gateway's Helm release,
+/// which authentication records whether or not the state binds the release.
+pub fn gateway_release(directory: &Path) -> (String, String) {
+    let auth = resource(directory, "openshell_kubernetes_auth", "runtime");
+    let field = |key: &str| {
+        auth["instances"][0]["attributes"][key]
+            .as_str()
+            .expect("authentication records the gateway release")
+            .to_owned()
+    };
+    (field("name"), field("namespace"))
 }
 
 /// The binding of sandbox `name`, from the deployment's OpenTofu state.
@@ -46,15 +75,6 @@ pub fn runtime_id(directory: &Path, name: &str) -> String {
         .to_owned();
     assert!(!id.trim().is_empty());
     id
-}
-
-/// The ID of the sandbox that the agent in sandbox `name` is bound to, from
-/// the deployment's OpenTofu state.
-pub fn agent_sandbox_id(directory: &Path, name: &str) -> String {
-    resource(directory, "fabric_agent", name)["instances"][0]["attributes"]["sandbox"]["id"]
-        .as_str()
-        .expect("the agent records its sandbox")
-        .to_owned()
 }
 
 /// Whether a Fabric run result succeeded. Adapters own the output's meaning
@@ -121,8 +141,7 @@ fn readers_select_the_named_managed_sandbox_and_its_agent() {
             serde_json::json!({"mode":mode,"type":"openshell_sandbox","name":name,
                 "instances":[{"attributes":{"id":format!("{value}-sandbox")}}]}),
             serde_json::json!({"mode":mode,"type":"fabric_agent","name":name,
-                "instances":[{"attributes":{"runtime_id":format!("{value}-runtime"),
-                    "sandbox":{"type":"openshell_sandbox","id":format!("{value}-bound")}}}]}),
+                "instances":[{"attributes":{"runtime_id":format!("{value}-runtime")}}]}),
         ]
     })
     .collect();
@@ -140,11 +159,36 @@ fn readers_select_the_named_managed_sandbox_and_its_agent() {
             runtime_id(directory.path(), name),
             format!("{name}-runtime")
         );
-        assert_eq!(
-            agent_sandbox_id(directory.path(), name),
-            format!("{name}-bound")
-        );
     }
+}
+
+#[test]
+fn readers_list_the_bound_resources_and_the_release_that_authentication_records() {
+    let directory = tempfile::tempdir().unwrap();
+    // A data source is observed, not bound.
+    let state = serde_json::json!({"resources": [
+        {"mode": "data", "type": "openshell_gateway", "name": "current", "instances": []},
+        {"mode": "managed", "type": "openshell_kubernetes_storage", "name": "runtime",
+            "instances": [{"attributes": {}}]},
+        {"mode": "managed", "type": "openshell_kubernetes_auth", "name": "runtime",
+            "instances": [{"attributes": {"name": "nc-gateway", "namespace": "nc-kind"}}]},
+    ]});
+    fs::write(
+        directory.path().join("terraform.tfstate"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        bound(directory.path()),
+        [
+            "openshell_kubernetes_storage.runtime",
+            "openshell_kubernetes_auth.runtime"
+        ]
+    );
+    assert_eq!(
+        gateway_release(directory.path()),
+        ("nc-gateway".to_owned(), "nc-kind".to_owned())
+    );
 }
 
 #[test]

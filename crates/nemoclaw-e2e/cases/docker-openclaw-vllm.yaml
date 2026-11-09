@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-openclaw-vllm
+  # CI gives each run a fresh identity.
+  uid: 1a96ba6e-204e-4d20-8b69-ec359915b7be
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17695
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.121.0/24
+  services:
+    qwen:
+      kind: vllm
+      hardware:
+        profile: rtx-pro-6000-blackwell
+        architecture: amd64
+      # CI replaces this placeholder with the image built from its candidate checkout.
+      image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        port: 18898
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        speculativeTokens: 0
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        hostReserveGiB: 32
+        kvCacheGiB: 6
+        minAvailableGiB: 8
+        minFreeGiB: 3
+        freeGateGiB: 12
+        consecutiveSamples: 5
+  inferenceProviders:
+    qwen:
+      provider: openai
+      serviceRef: qwen
+  sandboxes:
+    assistant:
+      image:
+        # CI binds this template to its candidate OpenClaw image.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: Qwen/Qwen3-4B
+                maxTokens: 16384

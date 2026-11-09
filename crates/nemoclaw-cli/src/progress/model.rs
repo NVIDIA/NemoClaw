@@ -83,6 +83,16 @@ impl Model {
                 ));
             }
             Progress::MutationStarted => return None,
+            Progress::Stopping => {
+                return Some(Milestone::new(
+                    "Stopping: the resource operations in progress finish first, so the state \
+                     records them. Interrupt again (Ctrl-C) to stop now; a resource being \
+                     created can then be missing from the state."
+                        .into(),
+                    Tone::Warning,
+                    true,
+                ));
+            }
             Progress::Waiting { operation, elapsed } => {
                 let label = operation_label(operation).or(verbose.then_some(operation));
                 let visible = verbose || !infrastructure_step(operation);

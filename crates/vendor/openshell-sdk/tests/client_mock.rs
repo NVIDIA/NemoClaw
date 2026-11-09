@@ -10,6 +10,8 @@
 
 use openshell_core::proto;
 use openshell_core::proto::open_shell_server::{OpenShell, OpenShellServer};
+use openshell_core::proto::sandbox_updates_server::{SandboxUpdates, SandboxUpdatesServer};
+use openshell_core::replica_routing;
 use openshell_sdk::{
     AuthConfig, ClientConfig, ExecOptions, ListOptions, OpenShellClient, Refresh, RefreshError,
     RefreshedToken, SandboxPhase, SandboxSpec, SandboxTemplateCreateSpec,
@@ -59,9 +61,16 @@ struct MockState {
     last_start: Mutex<Option<proto::StartSandboxRequest>>,
     last_suspend: Mutex<Option<proto::SuspendSandboxRequest>>,
     last_resume: Mutex<Option<proto::ResumeSandboxRequest>>,
+
+    last_update: Mutex<Option<proto::UpdateSandboxRequest>>,
     last_list_request: Mutex<Option<proto::ListSandboxesRequest>>,
     list_requests: Mutex<Vec<proto::ListSandboxesRequest>>,
     last_exec_request: Mutex<Option<proto::ExecSandboxRequest>>,
+    owner_replica: Option<&'static str>,
+    owner_lookups: AtomicU32,
+    /// `x-openshell-replica` per `ExecSandbox` call; empty when unrouted.
+    exec_routes: Mutex<Vec<String>>,
+    routed_exec_error: Option<Status>,
     last_workspace_request: Mutex<Option<String>>,
     get_calls: AtomicU32,
     phase_sequence: Vec<proto::SandboxPhase>,
@@ -492,6 +501,12 @@ impl OpenShell for TestOpenShell {
         &self,
         request: tonic::Request<proto::GetSandboxRequest>,
     ) -> Result<Response<proto::SandboxResponse>, Status> {
+        let wants_owner = request
+            .metadata()
+            .contains_key(replica_routing::OWNER_REQUEST_HEADER);
+        if wants_owner {
+            self.state.owner_lookups.fetch_add(1, Ordering::SeqCst);
+        }
         let req = request.into_inner();
         let name = req.name.clone();
         *self.state.last_get_name.lock().await = Some(name.clone());
@@ -523,10 +538,17 @@ impl OpenShell for TestOpenShell {
         if let Some(id) = &self.state.get_sandbox_id {
             sandbox.metadata.as_mut().unwrap().id.clone_from(id);
         }
-        Ok(Response::new(proto::SandboxResponse {
+        let mut response = Response::new(proto::SandboxResponse {
             sandbox: Some(sandbox),
             service_urls: HashMap::new(),
-        }))
+        });
+        if wants_owner && let Some(owner) = self.state.owner_replica {
+            response.metadata_mut().insert(
+                replica_routing::OWNER_REPLICA_HEADER,
+                owner.parse().unwrap(),
+            );
+        }
+        Ok(response)
     }
 
     async fn list_sandboxes(
@@ -657,6 +679,15 @@ impl OpenShell for TestOpenShell {
         &self,
         request: tonic::Request<proto::ExecSandboxRequest>,
     ) -> Result<Response<Self::ExecSandboxStream>, Status> {
+        let route = request
+            .metadata()
+            .get(replica_routing::ROUTE_REPLICA_HEADER)
+            .map_or_else(String::new, |value| value.to_str().unwrap().to_string());
+        let routed = !route.is_empty();
+        self.state.exec_routes.lock().await.push(route);
+        if routed && let Some(error) = &self.state.routed_exec_error {
+            return Err(error.clone());
+        }
         *self.state.last_exec_request.lock().await = Some(request.into_inner());
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         tokio::spawn(async move {
@@ -1144,16 +1175,40 @@ impl OpenShell for TestOpenShell {
     }
 }
 
+#[tonic::async_trait]
+impl SandboxUpdates for TestOpenShell {
+    async fn update_sandbox(
+        &self,
+        request: tonic::Request<proto::UpdateSandboxRequest>,
+    ) -> Result<Response<proto::SandboxResponse>, Status> {
+        if let Some(expected) = &self.state.require_bearer {
+            let got = request
+                .metadata()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok());
+            if got != Some(expected.as_str()) {
+                return Err(Status::unauthenticated("invalid or missing bearer token"));
+            }
+        }
+        *self.state.last_update.lock().await = Some(request.into_inner());
+        Ok(Response::new(proto::SandboxResponse::default()))
+    }
+}
+
 /// Spin up the mock gateway, return its endpoint URL.
 async fn start_mock(state: Arc<MockState>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let endpoint = format!("http://{addr}");
     let stream = TcpListenerStream::new(listener);
+    let updates = SandboxUpdatesServer::new(TestOpenShell {
+        state: state.clone(),
+    });
     let svc = OpenShellServer::new(TestOpenShell { state });
     tokio::spawn(async move {
         let _ = tonic::transport::Server::builder()
             .add_service(svc)
+            .add_service(updates)
             .serve_with_incoming(stream)
             .await;
     });
@@ -1833,6 +1888,127 @@ async fn exec_buffers_stdout_stderr_and_exit() {
     );
 }
 
+type ExecOutcome = Result<i32, Option<tonic::Code>>;
+
+/// Run `count` execs on `my-box`; return the mock and each exit or error code.
+async fn run_execs(state: MockState, count: usize) -> (Arc<MockState>, Vec<ExecOutcome>) {
+    let state = Arc::new(state);
+    let client = connect(&start_mock(state.clone()).await).await;
+    let mut outcomes = Vec::new();
+    for _ in 0..count {
+        let outcome = client
+            .exec("my-box", &["echo".to_string()], ExecOptions::default())
+            .await;
+        outcomes.push(
+            outcome
+                .map(|result| result.exit_code)
+                .map_err(|err| err.grpc_status().map(Status::code)),
+        );
+    }
+    (state, outcomes)
+}
+
+async fn routes(state: &MockState) -> Vec<String> {
+    state.exec_routes.lock().await.clone()
+}
+
+#[tokio::test]
+async fn exec_routes_to_the_reported_owner_and_reuses_it() {
+    let (state, outcomes) = run_execs(
+        MockState {
+            owner_replica: Some("openshell-1"),
+            ..Default::default()
+        },
+        2,
+    )
+    .await;
+    assert_eq!(outcomes, [Ok(7); 2]);
+    assert_eq!(routes(&state).await, ["openshell-1"; 2]);
+    assert_eq!(state.owner_lookups.load(Ordering::SeqCst), 1);
+
+    let (state, outcomes) = run_execs(MockState::default(), 2).await;
+    assert_eq!(outcomes, [Ok(7); 2]);
+    assert_eq!(routes(&state).await, ["", ""]);
+    assert_eq!(state.owner_lookups.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn exec_retries_unrouted_only_when_the_owner_route_has_no_endpoints() {
+    let (state, outcomes) = run_execs(
+        MockState {
+            owner_replica: Some("openshell-1"),
+            routed_exec_error: Some(Status::unavailable("")),
+            ..Default::default()
+        },
+        2,
+    )
+    .await;
+    assert_eq!(outcomes, [Ok(7); 2]);
+    assert_eq!(routes(&state).await, ["openshell-1", "", "openshell-1", ""]);
+    assert_eq!(state.owner_lookups.load(Ordering::SeqCst), 2);
+
+    let (state, outcomes) = run_execs(
+        MockState {
+            owner_replica: Some("openshell-1"),
+            routed_exec_error: Some(Status::unavailable("supervisor not connected")),
+            ..Default::default()
+        },
+        2,
+    )
+    .await;
+    assert_eq!(outcomes, [Err(Some(tonic::Code::Unavailable)); 2]);
+    assert_eq!(routes(&state).await, ["openshell-1"; 2]);
+    assert_eq!(state.owner_lookups.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn exec_runs_unrouted_only_when_the_owner_lookup_fails_for_another_reason() {
+    let (state, outcomes) = run_execs(
+        MockState {
+            owner_replica: Some("openshell-1"),
+            get_error: Some(Status::internal("lookup failed")),
+            ..Default::default()
+        },
+        1,
+    )
+    .await;
+    assert_eq!(outcomes, [Ok(7)]);
+    assert_eq!(routes(&state).await, [""]);
+
+    let (state, outcomes) = run_execs(
+        MockState {
+            get_error: Some(Status::unavailable("gateway down")),
+            ..Default::default()
+        },
+        1,
+    )
+    .await;
+    assert_eq!(outcomes, [Err(Some(tonic::Code::Unavailable))]);
+    assert!(routes(&state).await.is_empty());
+}
+
+#[tokio::test]
+async fn workspace_get_sandbox_caches_the_owner_for_exec() {
+    let state = Arc::new(MockState {
+        owner_replica: Some("openshell-1"),
+        ..Default::default()
+    });
+    let client = connect(&start_mock(state.clone()).await).await;
+    let team = client.workspace("team");
+    team.get_sandbox("my-box").await.unwrap();
+    let result = team
+        .exec("my-box", &["echo".to_string()], ExecOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 7);
+    assert_eq!(
+        state.last_get_workspace.lock().await.as_deref(),
+        Some("team")
+    );
+    assert_eq!(state.get_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(routes(&state).await, ["openshell-1"]);
+}
+
 /// Refresher that hands out a fixed "fresh-token" and counts invocations.
 struct OneShotRefresher {
     calls: Arc<AtomicU32>,
@@ -2220,6 +2396,65 @@ async fn raw_grpc_fresh_refreshes_before_raw_call() {
         1,
         "raw_grpc_fresh must refresh the near-expiry token exactly once"
     );
+}
+
+#[tokio::test]
+async fn raw_sandbox_updates_shares_transport_and_live_auth_slot() {
+    let state = Arc::new(MockState {
+        require_bearer: Some("Bearer fresh-token".to_string()),
+        ..Default::default()
+    });
+    let endpoint = start_mock(state.clone()).await;
+    let calls = Arc::new(AtomicU32::new(0));
+    let mut config = ClientConfig::new(&endpoint);
+    config.auth = Some(AuthConfig::Oidc {
+        token: "stale-token".to_string(),
+        expires_at: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 5,
+        ),
+        refresh: Some(Arc::new(OneShotRefresher {
+            calls: calls.clone(),
+        })),
+    });
+    let client = OpenShellClient::connect(config).await.unwrap();
+    let mut updates = client.raw_sandbox_updates();
+    let request = proto::UpdateSandboxRequest {
+        workspace_scope: Some(proto::workspace_selector("team")),
+        name: "sandbox".into(),
+        image: Some("example/workload:new".into()),
+        expected_resource_version: 42,
+        request_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        updates
+            .update_sandbox(request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::Unauthenticated
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    client
+        .raw_sandbox_updates_fresh()
+        .await
+        .unwrap()
+        .update_sandbox(request.clone())
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // Previously created raw clients read the same refreshed bearer slot.
+    updates.update_sandbox(request.clone()).await.unwrap();
+    client
+        .raw_grpc()
+        .health(proto::HealthRequest {})
+        .await
+        .unwrap();
+    assert_eq!(*state.last_update.lock().await, Some(request));
 }
 
 #[tokio::test]

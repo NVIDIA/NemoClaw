@@ -96,7 +96,7 @@ pub struct Registry {
 /// Environment variable whose value is a bearer or API credential; the configuration holds no credential value.
 pub struct SecretRef {
     #[serde(rename = "env")]
-    /// Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
+    /// Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 
@@ -106,7 +106,7 @@ pub struct SecretRef {
 /// Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.
 pub struct FileRef {
     #[serde(rename = "env")]
-    /// Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
+    /// Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 

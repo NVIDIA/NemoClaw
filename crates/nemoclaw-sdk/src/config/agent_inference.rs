@@ -22,19 +22,19 @@ impl InferenceApi {
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Optional public model limits; Fabric owns native capability validation.
+/// Optional public model limits; planning checks bundled adapter field support.
 pub struct RouteTuning {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "u32", range(min = 1, max = 4294967295u32))]
-    /// Maximum output tokens requested from the native adapter.
+    /// Maximum output tokens requested from the native adapter. Planning rejects this field when the bundled adapter does not accept it.
     pub max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "f64")]
-    /// Sampling temperature, passed to Fabric's temperature; Fabric validates the range.
+    /// Sampling temperature, passed to Fabric's temperature. Planning checks bundled adapter field support; Fabric validates the range.
     pub temperature: Option<serde_json::Number>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "f64")]
-    /// Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.
+    /// Nucleus sampling probability, passed to Fabric's top_p. Planning checks bundled adapter field support; Fabric validates the range.
     pub top_p: Option<serde_json::Number>,
 }
 impl RouteTuning {

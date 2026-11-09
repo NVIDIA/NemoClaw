@@ -34,8 +34,9 @@ fn text() -> &'static Text {
 }
 
 /// Map keys for a question ID, most specific first: the ID itself, then with
-/// array indices and sandbox, service, and inference provider names replaced
-/// by `*`, then also the adapter ID.
+/// array indices, sandbox, service, and inference provider names, and a
+/// service's environment variable names replaced by `*`, then also the
+/// adapter ID.
 fn keys(id: &str) -> [String; 3] {
     let parts = id.split('/').collect::<Vec<_>>();
     let indices = parts
@@ -47,7 +48,12 @@ fn keys(id: &str) -> [String; 3] {
                     parts[index - 1],
                     "sandboxes" | "services" | "inferenceProviders"
                 );
-            if named || (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())) {
+            let variable =
+                index > 2 && parts[index - 1] == "environment" && parts[index - 3] == "services";
+            if named
+                || variable
+                || (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            {
                 "*"
             } else {
                 part
@@ -241,7 +247,7 @@ mod tests {
     use super::{keys, readable};
 
     #[test]
-    fn map_keys_generalize_indices_sandbox_service_and_provider_names_and_adapters() {
+    fn map_keys_generalize_indices_names_environment_variables_and_adapters() {
         assert_eq!(
             keys("/spec/sandboxes/assistant/agent/inference/routes/1/name")[1],
             "/spec/sandboxes/*/agent/inference/routes/*/name"
@@ -249,6 +255,10 @@ mod tests {
         assert_eq!(
             keys("/spec/services/qwen/serving/port")[1],
             "/spec/services/*/serving/port"
+        );
+        assert_eq!(
+            keys("/spec/services/application/environment/APP_PORT")[1],
+            "/spec/services/*/environment/*"
         );
         assert_eq!(
             keys("/spec/inferenceProviders/nvidia-prod/api")[1],

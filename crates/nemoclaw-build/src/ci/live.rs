@@ -37,6 +37,19 @@ pub fn free_port() -> Result<u16, String> {
         .map_err(|_| "cannot find a free loopback port".into())
 }
 
+/// An HCL E2E case's template bound to one run: each placeholder, a value the
+/// checked-in case holds, replaced everywhere by this run's value.
+pub fn bind_case(template: &str, values: &[(&str, &str)]) -> Result<String, String> {
+    values
+        .iter()
+        .try_fold(template.to_owned(), |bound, (placeholder, value)| {
+            bound
+                .contains(placeholder)
+                .then(|| bound.replace(placeholder, value))
+                .ok_or_else(|| format!("the case template has no {placeholder}"))
+        })
+}
+
 pub struct GatewayInputs<'a> {
     pub name: &'a str,
     pub uid: &'a str,

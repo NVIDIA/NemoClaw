@@ -12,14 +12,14 @@ Follow [WRITING.md](WRITING.md) for all prose, including messages and pull reque
 
 ## Changes
 
-- For behavior changes and bug fixes, write a behavioral test and observe it fail before implementing; the `test-driven-development` skill routes other work.
-- Before pushing, run checks appropriate to the change; see [local validation](docs/contributing/testing.md#choose-local-validation). Use targeted checks for prose, declarative configuration, and isolated code changes; otherwise run `cargo ci`, which selects bundle and lifecycle checks from the changed inputs. When a change affects what runs in images or on Kubernetes, also run `cargo ci live-docker` or `cargo ci live-kind`.
+- For behavior changes and bug fixes, write a behavioral test and observe it fail before implementing; the `test-driven-development` skill routes other work, and the `write-tests` skill chooses the test's layer and suite.
+- Before pushing, run checks appropriate to the change; see [local validation](internal-docs/contributing/testing.md#choose-local-validation). Use targeted checks for prose, declarative configuration, and isolated code changes; otherwise run `cargo ci`, which selects bundle and lifecycle checks from the changed inputs. When a change affects what runs in images or on Kubernetes, also run `cargo ci live-docker` or `cargo ci live-kind`.
 - Rerun checks after merging the base branch. Commit regenerated schemas and fixtures with the change that alters them, and don't skip commit hooks.
-- Report which checks ran and which were deferred to CI, with the reason. `cargo test` alone skips the bundle lifecycle tests.
+- Report which checks ran and which were deferred to CI, with the reason, to whoever asked for the change; a PR description names only checks outside CI. `cargo test` alone skips the bundle-based contract and integration tests.
 - Make a slow test faster instead of raising its time budget.
-- Leave each component's work to it. Before adding a check, workaround, patch, or reimplementation of another component's behavior, apply the [upstream boundaries](docs/design/scope.md#upstream-boundaries) questions, and stop to discuss when they point upstream.
-- Write tooling and tests in Rust; Python belongs only inside images whose workload runs on it.
-- Pull requests are squash-merged: use a Conventional Commits title and fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md), explaining the failure, decision, and validation. Post the authoring-session report as a separate collapsed comment even when its fields are unavailable. To create or update a PR, use [the PR creation skill](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md).
+- Leave each component's work to it. Before adding a check, workaround, patch, or reimplementation of another component's behavior, apply the [upstream boundaries](internal-docs/design/scope.md#upstream-boundaries) questions, and stop to discuss when they point upstream.
+- Write tooling in Rust, and tests in Rust or as `tofu test` scenarios; Python belongs only inside images whose workload runs on it.
+- Pull requests are squash-merged, and the description becomes the commit message: use a Conventional Commits title and fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with the problem, the change, and anything verified or left unverified outside CI. Post the authoring-session report as a separate collapsed comment even when its fields are unavailable. To create or update a PR, use [the PR creation skill](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md).
 - Stack dependent pull requests on their parent's branch. Pull requests into `v1` don't close issues; close the issues they resolve after merge.
 - File deferred work as `v1` issues, and reference real issue numbers, never placeholders.
 - Add SPDX Apache-2.0 headers to new files.

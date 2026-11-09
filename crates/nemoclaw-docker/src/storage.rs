@@ -20,6 +20,22 @@ pub struct Storage {
     pub generation: String,
     pub engine: String,
 }
+/// Whether `value` matches a constant attribute pattern. Each pattern
+/// compiles once: every compile and observation checks storage identities,
+/// and compiling costs more than matching.
+fn matches(pattern: &'static str, value: &str) -> bool {
+    static COMPILED: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, regex::Regex>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let regex = COMPILED
+        .lock()
+        .expect("pattern cache")
+        .entry(pattern)
+        .or_insert_with(|| regex::Regex::new(pattern).expect("constant pattern"))
+        .clone();
+    regex.is_match(value)
+}
+
 impl Storage {
     /// Attributes of a storage resource, in schema order.
     pub const ATTRIBUTES: [&str; 4] = ["name", "owner", "generation", "engine"];
@@ -42,7 +58,7 @@ impl Storage {
             }
             _ => return Err("is not a storage attribute".into()),
         };
-        if regex::Regex::new(pattern).unwrap().is_match(value) {
+        if matches(pattern, value) {
             Ok(())
         } else {
             Err(requirement.into())
@@ -98,21 +114,22 @@ impl Storage {
         serde_json::to_string(self)
             .map_err(|_| Error::State("cannot serialize storage specification"))
     }
+    /// Labels on this storage's volume: its owner and generation.
+    pub fn labels(&self) -> std::collections::HashMap<String, String> {
+        [
+            (OWNER_LABEL.into(), self.owner.clone()),
+            (GENERATION_LABEL.into(), self.generation.clone()),
+        ]
+        .into()
+    }
 }
 
 #[cfg(feature = "client")]
 mod operations {
-    use super::{GENERATION_LABEL, OWNER_LABEL, Storage};
+    use super::Storage;
     use bollard::models::VolumeCreateRequest;
     use nemoclaw_backend::{Error, ObservationError};
-    use std::{collections::HashMap, time::Duration};
-    pub(super) fn labels(storage: &Storage) -> HashMap<String, String> {
-        [
-            (OWNER_LABEL.into(), storage.owner.clone()),
-            (GENERATION_LABEL.into(), storage.generation.clone()),
-        ]
-        .into()
-    }
+    use std::time::Duration;
     pub async fn observe_storage(
         storage: &Storage,
         engine: &crate::Engine,
@@ -135,7 +152,7 @@ mod operations {
                     ))
                 };
             };
-            for (key, value) in labels(storage) {
+            for (key, value) in storage.labels() {
                 if volume.labels.get(&key) != Some(&value) {
                     return Err(ObservationError::BindingMismatch.into());
                 }
@@ -179,7 +196,7 @@ mod operations {
             .create_volume(VolumeCreateRequest {
                 name: Some(storage.name.clone()),
                 driver: Some("local".into()),
-                labels: Some(labels(storage)),
+                labels: Some(storage.labels()),
                 ..Default::default()
             })
             .await
@@ -189,8 +206,5 @@ mod operations {
             ))
     }
 }
-// Only the Unix storage tests build volumes with the ownership labels.
-#[cfg(all(test, feature = "client"))]
-use operations::labels;
 #[cfg(feature = "client")]
 pub use operations::{ensure_storage, observe_storage};

@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One agent on a managed gateway in a kind cluster with the defaults: the
+# kubernetes runtime profile and the development authentication profile, in
+# which the SDK issues the gateway's tokens. Its inference route reaches a
+# stub model in its own namespace, and the agent image comes from a private
+# registry through the pull Secret the operator created. Its sandbox has an
+# explicit policy: the image's own filesystem and process policy, and one
+# entry that gives python3 the stub's /health, which the managed inference
+# grant leaves out. cargo ci live-kind gives each run a fresh identity, port,
+# namespace, kubeconfig context, registry, and agent image.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hcl-kind-development
+  uid: 3f6d2b8e-1c4a-4e7f-9b2d-5a8c0e1f7d36
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17701
+    kubernetes:
+      kubeconfig:
+        env: NEMOCLAW_TEST_KUBECONFIG
+      context: kind-nemoclaw
+      namespace: nc-hcl-kind
+      imagePullSecrets:
+        - agent-registry
+      authentication:
+        profile: development
+  inferenceProviders:
+    stub:
+      provider: openai
+      endpoint: http://model.nc-hcl-kind-model.svc.cluster.local:8000/v1
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: stub
+          overrides:
+            model: fixture-model
+            maxTokens: 2048
+  sandboxes:
+    assistant:
+      image:
+        ref: nc-registry:5000/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        metadata:
+          env: NEMOCLAW_TEST_AGENT_METADATA
+      network:
+        policy:
+          explicit:
+            version: 1
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /bin, /sbin, /lib, /lib64, /etc, /app, /opt, /proc]
+              read_write: [/sandbox, /tmp, /dev/null, /dev/urandom, /home/node]
+            landlock:
+              compatibility: best_effort
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              stub-health:
+                name: stub-health
+                endpoints:
+                  # The managed inference grant's host, port, and protocol,
+                  # which OpenShell requires of endpoints that share a host
+                  # and port.
+                  - host: model.nc-hcl-kind-model.svc.cluster.local
+                    port: 8000
+                    path: /health
+                    protocol: rest
+                    access: read-only
+                # OpenShell matches an executable's real path, which the
+                # image's python3 links to.
+                binaries:
+                  - path: /usr/local/bin/python3.14
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inferenceRef: chat

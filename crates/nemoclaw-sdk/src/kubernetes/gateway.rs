@@ -122,20 +122,24 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
     graph["terraform"]["required_providers"]["helm"] = json!({
         "source": PROVIDER_ADDRESS, "version": format!("= {PROVIDER_VERSION}")
     });
-    graph["variable"][KUBECONFIG_VARIABLE] = json!({
-        "type": "string", "nullable": false, "sensitive": true,
-    });
     graph["provider"]["helm"] = json!({
         "helm_driver": "secret",
         "registry_config_path": ".helm/registry.json",
         "repository_config_path": ".helm/repositories.yaml",
         "repository_cache": ".helm/cache",
         "plugins_path": ".helm/plugins",
-        "kubernetes": {
-            "config_path": format!("${{var.{KUBECONFIG_VARIABLE}}}"),
-            "config_context": literal(&target.context),
-        },
     });
+    // Without a kubeconfig, the provider's client loads the service account
+    // of the pod that runs NemoClaw.
+    if let Some(context) = &target.context {
+        graph["variable"][KUBECONFIG_VARIABLE] = json!({
+            "type": "string", "nullable": false, "sensitive": true,
+        });
+        graph["provider"]["helm"]["kubernetes"] = json!({
+            "config_path": format!("${{var.{KUBECONFIG_VARIABLE}}}"),
+            "config_context": literal(context),
+        });
+    }
     graph["resource"]["helm_release"]["gateway"] = json!({
         "name": literal(&spec.name),
         "namespace": literal(&target.namespace),
@@ -144,7 +148,13 @@ pub(crate) fn configure(graph: &mut Value, spec: &Spec) -> Result<(), Error> {
         "create_namespace": false,
         "take_ownership": false,
         "upgrade_install": false,
-        "atomic": false,
+        // When the install fails or times out, Helm uninstalls the release
+        // before the provider returns, so a failed apply leaves no release
+        // that the state does not bind (#14155). The uninstall removes only
+        // the chart's objects; retained storage is outside them. When an
+        // upgrade fails, Helm rolls the release back, which removes what the
+        // upgrade created, so cleanup_on_fail adds nothing.
+        "atomic": true,
         "cleanup_on_fail": false,
         "wait": true,
         "wait_for_jobs": true,
