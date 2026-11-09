@@ -2486,6 +2486,17 @@ It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
 The full-main `Release qualification` aggregate does not use this receipt.
 
+When a manual PR selects a new SDK version, trusted preparation uses its current candidate/base approval.
+The archive producer packages the admitted SDK.
+Compilation and runtime preparation recheck approval, checked-out dependency sources, and archive bytes before installation.
+SDK consumer steps expose the job’s read-only `GITHUB_TOKEN` only during trusted admission preparation.
+Preparation removes it before npm cache staging, dependency installation, and SDK import probes.
+GitHub invalidates this token after the job ends.
+The package-download credential stays in the trusted archive producer.
+The protected controller projects only SDK fields onto its trusted dependency graph.
+Preparation verifies this projection and rechecks admission before staging the archive.
+Ordinary `main` and exact-base runs retain their reviewed SDK packages.
+
 The `base-image-publication` job first resolves any authenticated PR managed-image catalog.
 When a PR catalog is selected, explicit targets with no `jobs` selector and no `managed-image-` target use it without waiting for main's base images.
 Other selections with a PR catalog retain the Deep Agents Code base prerequisite, including full runs and protected managed-image build targets.

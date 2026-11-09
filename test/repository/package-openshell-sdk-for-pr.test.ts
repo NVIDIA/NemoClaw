@@ -103,16 +103,19 @@ describe("reviewed OpenShell SDK transition packaging", () => {
     },
   );
 
-  it("loads the ordinary producer from the main workflow sparse checkout", () => {
+  it.each([
+    [".github/workflows/main.yaml", "package-openshell-sdk-for-pr", "packageReviewedOpenShellSdk"],
+    [".github/workflows/e2e.yaml", "candidate-openshell-sdk", "readApprovedOpenShellSdkConfig"],
+  ])("loads %s SDK preparation from its sparse checkout", (workflow, module, member) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-main-sdk-sparse-"));
     roots.push(root);
-    sparseSdkWorkflowCheckout(root, ".github/workflows/main.yaml", "package-openshell-sdk");
+    sparseSdkWorkflowCheckout(root, workflow, "package-openshell-sdk");
     const result = spawnSync(
       process.execPath,
       [
         "--input-type=module",
         "-e",
-        "const producer = await import('./scripts/checks/package-openshell-sdk-for-pr.mts'); console.log(typeof producer.packageReviewedOpenShellSdk)",
+        `const producer = await import('./scripts/checks/${module}.mts'); console.log(typeof producer[${JSON.stringify(member)}])`,
       ],
       {
         cwd: root,
@@ -124,10 +127,13 @@ describe("reviewed OpenShell SDK transition packaging", () => {
     expect(result.stdout.trim()).toBe("function");
   });
 
-  it("loads the ordinary consumer from the PR workflow sparse checkouts", () => {
+  it.each([
+    [".github/workflows/pr.yaml", "openshell-sdk-package"],
+    [".github/workflows/e2e.yaml", "generate-matrix"],
+  ])("loads SDK preparation from %s job %s", (workflow, job) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-sdk-sparse-"));
     roots.push(root);
-    sparseSdkWorkflowCheckout(root, ".github/workflows/pr.yaml", "openshell-sdk-package");
+    sparseSdkWorkflowCheckout(root, workflow, job);
     const result = spawnSync(
       process.execPath,
       [

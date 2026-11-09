@@ -108,6 +108,9 @@ concurrency:
   cancel-in-progress: ${{ inputs.checkout_sha != '' && inputs.jobs != 'llama-cpp-dgx-spark-qualification' && !inputs.allow_jetson_dispatch && !contains(format(',{0},{1},', inputs.jobs, inputs.targets), ',dgx-station-express,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
+  UPGRADE_PR_NUMBER: ${{ inputs.pr_number }}
+  CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+  UPGRADE_BASE_SHA: ${{ inputs.base_sha }}
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
@@ -121,6 +124,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      pull-requests: read
     outputs:
       artifact_name: ${{ steps.identity.outputs.artifact_name }}
     steps:
@@ -139,6 +143,11 @@ jobs:
             scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            scripts/lib/reviewed-ci-npm-install.mts
+            scripts/lib/reviewed-npm-cache.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -161,11 +170,27 @@ jobs:
         name: Download and verify reviewed OpenShell SDK packages
         env:
           NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
-          NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT: "1"
           NODE_AUTH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
+          artifact_path="$(node --input-type=module <<'NODE'
+          import { packageCandidateOpenShellSdkIfRequired, packageReviewedOpenShellSdk } from './scripts/checks/package-openshell-sdk-for-pr.mts';
+          import { githubRequest } from './tools/e2e/base-image-publication.mts';
+          const { GITHUB_TOKEN: token, GH_TOKEN: _gh, ...packageEnvironment } = process.env;
+          const output = process.env.NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY;
+          let artifact;
+          if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && process.env.UPGRADE_PR_NUMBER && process.env.CANDIDATE_SHA !== process.env.UPGRADE_BASE_SHA) {
+            const decision = await packageCandidateOpenShellSdkIfRequired(output, {
+              prNumber: Number(process.env.UPGRADE_PR_NUMBER),
+              candidateSha: process.env.CANDIDATE_SHA,
+              baseSha: process.env.UPGRADE_BASE_SHA,
+            }, path => githubRequest(path, token ?? ''));
+            if (decision.required) artifact = decision.artifact;
+          }
+          process.stdout.write(artifact ?? packageReviewedOpenShellSdk(output, 'if-present', { env: packageEnvironment }));
+          NODE
+          )"
           test -n "$artifact_path"
           printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 
@@ -861,6 +886,9 @@ jobs:
             scripts/lib/patch-openclaw-dependency-overrides.mts
             scripts/lib/reviewed-npm-identity.mts
             scripts/checks/prepare-ci-npm-install.mts
+            scripts/checks/candidate-openshell-sdk.mts
+            tools/e2e/candidate-upgrade-admission.mts
+            tools/e2e/base-image-publication.mts
             scripts/lib/reviewed-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -3526,6 +3554,8 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      upgrade_pr_number: ${{ inputs.pr_number }}
+      upgrade_base_sha: ${{ inputs.base_sha }}
       runtime_provider: ${{ matrix.runtime_provider }}
       execution_id: ${{ matrix.execution_id }}
       coverage_variant: ${{ matrix.coverage_variant }}
@@ -3575,6 +3605,8 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      upgrade_pr_number: ${{ inputs.pr_number }}
+      upgrade_base_sha: ${{ inputs.base_sha }}
       runtime_provider: ${{ matrix.runtime_provider }}
       execution_id: ${{ matrix.execution_id }}
       coverage_variant: ${{ matrix.coverage_variant }}
@@ -3622,6 +3654,8 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      upgrade_pr_number: ${{ inputs.pr_number }}
+      upgrade_base_sha: ${{ inputs.base_sha }}
       runtime_provider: ${{ matrix.runtime_provider }}
       execution_id: ${{ matrix.execution_id }}
       coverage_variant: ${{ matrix.coverage_variant }}
@@ -3670,6 +3704,8 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      upgrade_pr_number: ${{ inputs.pr_number }}
+      upgrade_base_sha: ${{ inputs.base_sha }}
       runtime_provider: ${{ matrix.runtime_provider }}
       execution_id: ${{ matrix.execution_id }}
       coverage_variant: ${{ matrix.coverage_variant }}
@@ -3718,6 +3754,8 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      upgrade_pr_number: ${{ inputs.pr_number }}
+      upgrade_base_sha: ${{ inputs.base_sha }}
       runtime_provider: ${{ matrix.runtime_provider }}
       execution_id: ${{ matrix.execution_id }}
       coverage_variant: ${{ matrix.coverage_variant }}
@@ -3910,6 +3948,7 @@ jobs:
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}
     permissions:
+      pull-requests: read
       contents: read
     # Keep each destructive agent lifecycle on a fresh runner. This bounds the
     # blast radius of runner loss and gives every adapter independent evidence.
@@ -4294,6 +4333,7 @@ jobs:
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
     runs-on: ubuntu-latest
     permissions:
+      pull-requests: read
       contents: read
     # Keep the credential-generation lifecycle on a fresh runner so it can
     # execute in parallel with, and fail independently from, the Deep Agents
@@ -4504,6 +4544,7 @@ jobs:
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
     permissions:
+      pull-requests: read
       contents: read
     timeout-minutes: 90
     strategy:
@@ -4739,6 +4780,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
     permissions:
+      pull-requests: read
       contents: read
     strategy:
       fail-fast: false
@@ -5852,6 +5894,7 @@ jobs:
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 90
     permissions:
+      pull-requests: read
       contents: read
     env:
       E2E_JOB: "1"

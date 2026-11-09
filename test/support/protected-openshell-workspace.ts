@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { vi } from "vitest";
+import { candidateSdkFixture } from "./candidate-openshell-sdk";
 import { fixture as approvalFixture, identity } from "../helpers/candidate-openshell-trust";
 import {
   CANDIDATE_OPENSHELL_SOURCES,
@@ -27,6 +28,8 @@ const sources = [
   "package.json",
   "package-lock.json",
   "ci/reviewed-npm-audit.json",
+  "nemoclaw/package.json",
+  "nemoclaw/package-lock.json",
 ];
 export const roots: string[] = [];
 
@@ -148,5 +151,118 @@ export function approvedFixture() {
     }),
     approval,
     request,
+  };
+}
+
+export function admittedSdkFixture() {
+  const input = fixture();
+  const sdk = candidateSdkFixture();
+  const name = "@nvidia/openshell-sdk";
+  const config = JSON.parse(
+    fs.readFileSync(join(input.trustedRoot, "ci/reviewed-npm-audit.json"), "utf8"),
+  );
+  const baseline = config.sourceRegistryPackageReplacement;
+  config.sourceRegistryPackage = baseline;
+  delete config.sourceRegistryPackageReplacement;
+  fs.writeFileSync(join(input.trustedRoot, "ci/reviewed-npm-audit.json"), JSON.stringify(config));
+  const version = JSON.parse(fs.readFileSync(join(input.candidateRoot, "package.json"), "utf8"))
+    .optionalDependencies[name];
+  const selected = JSON.parse(JSON.stringify(sdk.sdk).replaceAll("9.8.7", version));
+  for (const [root, identity] of [
+    [input.trustedRoot, baseline],
+    [input.candidateRoot, selected],
+  ] as const) {
+    const pin = identity.packageSpec.split("@").at(-1);
+    const packagePath = join(root, "package.json");
+    const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+    manifest.optionalDependencies[name] = pin;
+    if (root === input.candidateRoot) manifest.description = "Candidate-only description";
+    fs.writeFileSync(packagePath, JSON.stringify(manifest));
+    const lockPath = join(root, "package-lock.json");
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    lock.packages[""].optionalDependencies[name] = pin;
+    Object.assign(lock.packages[`node_modules/${name}`], {
+      version: pin,
+      resolved: identity.tarballUrl,
+      integrity: identity.integrity,
+    });
+    fs.writeFileSync(lockPath, JSON.stringify(lock));
+  }
+  const admittedConfig = { ...config, sourceRegistryPackage: selected };
+  fs.writeFileSync(
+    join(input.candidateRoot, "ci/reviewed-npm-audit.json"),
+    JSON.stringify(admittedConfig),
+  );
+  for (const root of [input.trustedRoot, input.candidateRoot]) {
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "SDK fixture");
+  }
+  input.workflowSha = git(input.trustedRoot, "rev-parse", "HEAD");
+  input.candidateSha = git(input.candidateRoot, "rev-parse", "HEAD");
+  for (const path of [
+    "ci/reviewed-npm-audit.json",
+    "package.json",
+    "package-lock.json",
+    "nemoclaw/package.json",
+    "nemoclaw/package-lock.json",
+  ])
+    sdk.sources[path] = fs.readFileSync(join(input.candidateRoot, path), "utf8");
+  sdk.pr.head.sha = input.candidateSha;
+  sdk.records[0]!.body = `NemoClaw-Upgrade-E2E: approve ${input.candidateSha} ${sdk.pr.base.sha}`;
+  const request = vi.fn(async (route: string) =>
+    sdk.request(route.replaceAll(input.candidateSha, "a".repeat(40))),
+  );
+  const parent = join(input.trustedRoot, "..");
+  const artifactDirectory = join(parent, "artifacts");
+  const cacheDirectory = join(parent, "cache");
+  fs.mkdirSync(artifactDirectory);
+  fs.mkdirSync(cacheDirectory);
+  fs.writeFileSync(join(artifactDirectory, selected.artifactName), sdk.bytes);
+  const preparation = {
+    targetRoot: input.trustedRoot,
+    artifactDirectory,
+    cacheDirectory,
+    mode: "artifact" as const,
+  };
+  return {
+    input: { ...input, admission: { prNumber: 123, baseSha: sdk.pr.base.sha, request } },
+    sdk,
+    request,
+    selected,
+    preparation,
+    stage: vi.fn(),
+    manifest: () => JSON.parse(fs.readFileSync(join(input.trustedRoot, "package.json"), "utf8")),
+    mutate: (kind: string) => {
+      const mutations: Record<string, () => void> = {
+        "missing-approval": () => {
+          sdk.records.splice(0);
+        },
+        "tampered-archive": () =>
+          fs.writeFileSync(join(artifactDirectory, selected.artifactName), "tampered"),
+        "projection-drift": () => fs.appendFileSync(join(input.trustedRoot, "package.json"), " "),
+        "plugin-drift": () =>
+          fs.appendFileSync(join(input.trustedRoot, "nemoclaw/package.json"), " "),
+        "wrong-target": () => {
+          preparation.targetRoot = input.candidateRoot;
+        },
+        "registry-mode": () => {
+          Object.assign(preparation, { mode: "registry" });
+        },
+        "admitted-source-drift": () => {
+          sdk.sources["package.json"] = JSON.stringify({
+            ...JSON.parse(sdk.sources["package.json"]!),
+            description: "API differs from committed bytes",
+          });
+        },
+      };
+      mutations[kind]!();
+    },
+    revokingRequest: () => {
+      let reads = 0;
+      return async (route: string) => {
+        if (route.endsWith("/pulls/123") && ++reads === 3) sdk.records.splice(0);
+        return request(route);
+      };
+    },
   };
 }

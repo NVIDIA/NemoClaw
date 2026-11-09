@@ -15,6 +15,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { parseAuditConfig } from "../../scripts/audit-reviewed-npm-graph.mts";
+import { readApprovedOpenShellSdkConfig } from "../../scripts/checks/candidate-openshell-sdk.mts";
+import {
+  prepareCiNpmInstallWithReviewedConfig,
+  requiresCandidateSdkAdmission,
+  type PreparationRequest,
+} from "../../scripts/lib/reviewed-ci-npm-install.mts";
+import {
+  stageReviewedArchiveWithNpm,
+  type NpmCacheStager,
+} from "../../scripts/lib/reviewed-npm-cache.mts";
 import { pathToFileURL } from "node:url";
 import {
   projectProtectedOpenShellSources,
@@ -176,8 +188,7 @@ async function candidateReleases(
   return approved.releases;
 }
 
-/** Apply only reviewed modules and release literals to an isolated trusted workflow checkout. */
-export async function manageProtectedOpenShellWorkspace(
+async function inspectProtectedOpenShellWorkspace(
   operation: "prepare" | "verify" | "restore",
   input: ProtectedOpenShellWorkspace,
 ) {
@@ -204,18 +215,40 @@ export async function manageProtectedOpenShellWorkspace(
     },
     releases,
   );
+  const auditSource = committedSource(
+    input.trustedRoot,
+    input.workflowSha,
+    "ci/reviewed-npm-audit.json",
+  );
+  let admittedSdk;
+  if (requiresCandidateSdkAdmission([candidate.lockSource], auditSource)) {
+    if (!input.admission) throw new Error("Protected SDK requires live upgrade admission");
+    admittedSdk = await readApprovedOpenShellSdkConfig(
+      {
+        prNumber: input.admission.prNumber,
+        baseSha: input.admission.baseSha,
+        candidateSha: input.candidateSha,
+      },
+      input.admission.request,
+      auditSource,
+    );
+    for (const [key, path] of [
+      ["packageSource", "package.json"],
+      ["lockSource", "package-lock.json"],
+    ] as const) {
+      if (candidate[key] !== admittedSdk.sources[path])
+        throw new Error(`Committed candidate SDK differs from the approved commit: ${path}`);
+    }
+  }
   const sdk = projectProtectedOpenShellSdk(
     candidate,
     {
       packageSource: committedSource(input.trustedRoot, input.workflowSha, "package.json"),
       lockSource: committedSource(input.trustedRoot, input.workflowSha, "package-lock.json"),
-      auditSource: committedSource(
-        input.trustedRoot,
-        input.workflowSha,
-        "ci/reviewed-npm-audit.json",
-      ),
+      auditSource,
     },
     projected.releaseVersion,
+    admittedSdk ? parseAuditConfig(admittedSdk.configSource).sourceRegistryPackage : undefined,
   );
   Object.assign(projected.files, sdk.files);
   const files = Object.entries(projected.files).map(([path, source]) => ({
@@ -247,6 +280,29 @@ export async function manageProtectedOpenShellWorkspace(
           : file.source === file.original || file.source === file.projected;
     if (!valid) throw new Error(`Unexpected ${operation} source: ${file.relativePath}`);
   }
+  // Plugin dependency inputs remain trusted and never come from the candidate projection.
+  for (const path of ["nemoclaw/package.json", "nemoclaw/package-lock.json"]) {
+    if (
+      safeFile(input.trustedRoot, path).source !==
+      committedSource(input.trustedRoot, input.workflowSha, path)
+    )
+      throw new Error(`Unexpected trusted plugin source: ${path}`);
+  }
+  return {
+    files,
+    projected,
+    sdk,
+    admittedSdk,
+    configSource: admittedSdk?.configSource ?? auditSource,
+  };
+}
+
+/** Apply only reviewed modules and release literals to an isolated trusted workflow checkout. */
+export async function manageProtectedOpenShellWorkspace(
+  operation: "prepare" | "verify" | "restore",
+  input: ProtectedOpenShellWorkspace,
+) {
+  const { files, projected, sdk } = await inspectProtectedOpenShellWorkspace(operation, input);
   if (operation !== "verify") {
     const written: typeof files = [];
     try {
@@ -276,6 +332,32 @@ export async function manageProtectedOpenShellWorkspace(
         .digest("hex"),
     })),
   };
+}
+
+/** Stage SDK bytes only after rechecking the permitted controller projection and live admission. */
+export async function prepareProtectedOpenShellSdk(
+  preparation: PreparationRequest,
+  workspace: ProtectedOpenShellWorkspace,
+  stage: NpmCacheStager = stageReviewedArchiveWithNpm,
+): Promise<void> {
+  const input = Object.freeze({
+    ...workspace,
+    admission: workspace.admission ? Object.freeze({ ...workspace.admission }) : undefined,
+  });
+  if (
+    preparation.mode !== "artifact" ||
+    resolve(preparation.targetRoot) !== resolve(input.trustedRoot)
+  )
+    throw new Error("Protected SDK requires artifact preparation in the trusted controller");
+  const before = await inspectProtectedOpenShellWorkspace("verify", input);
+  const verified: Parameters<NpmCacheStager>[0][] = [];
+  await prepareCiNpmInstallWithReviewedConfig(preparation, before.configSource, (archive) => {
+    verified.push(archive);
+  });
+  const after = await inspectProtectedOpenShellWorkspace("verify", input);
+  if (!isDeepStrictEqual(before, after))
+    throw new Error("Protected SDK admission or projection changed during verification");
+  for (const archive of verified) stage(archive);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -12,8 +12,17 @@ import {
   CANDIDATE_OPENSHELL_SOURCES,
   CANDIDATE_OPENSHELL_TRUST_PATH,
 } from "../../../tools/e2e/candidate-openshell-trust.mts";
-import { fixture, approvedFixture, git, roots } from "../../support/protected-openshell-workspace";
-import { manageProtectedOpenShellWorkspace } from "../../../tools/e2e/protected-openshell-workspace.mts";
+import {
+  fixture,
+  approvedFixture,
+  admittedSdkFixture,
+  git,
+  roots,
+} from "../../support/protected-openshell-workspace";
+import {
+  manageProtectedOpenShellWorkspace,
+  prepareProtectedOpenShellSdk,
+} from "../../../tools/e2e/protected-openshell-workspace.mts";
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
@@ -303,5 +312,58 @@ describe("protected OpenShell workspace", () => {
       /fixture replacement failure/,
     );
     expect(git(input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("protected admitted SDK preparation", () => {
+  it("stages admitted bytes while retaining trusted scripts, dependencies and restore behavior", async () => {
+    const f = admittedSdkFixture();
+    const original = f.manifest();
+    await manageProtectedOpenShellWorkspace("prepare", f.input);
+    await prepareProtectedOpenShellSdk(f.preparation, f.input, f.stage);
+    expect(f.stage).toHaveBeenCalledExactlyOnceWith({
+      archive: f.sdk.bytes,
+      artifactName: f.selected.artifactName,
+      cacheDirectory: f.preparation.cacheDirectory,
+    });
+    const actual = f.manifest();
+    expect(actual).toEqual({
+      ...original,
+      optionalDependencies: {
+        ...original.optionalDependencies,
+        "@nvidia/openshell-sdk": f.selected.packageSpec.split("@").at(-1),
+      },
+    });
+    await manageProtectedOpenShellWorkspace("restore", f.input);
+    expect(git(f.input.trustedRoot, "status", "--porcelain")).toBe("");
+  });
+
+  it.each([
+    "missing-approval",
+    "tampered-archive",
+    "projection-drift",
+    "plugin-drift",
+    "wrong-target",
+    "registry-mode",
+    "admitted-source-drift",
+  ])("rejects %s before staging", async (kind) => {
+    const f = admittedSdkFixture();
+    await manageProtectedOpenShellWorkspace("prepare", f.input);
+    f.mutate(kind);
+    await expect(prepareProtectedOpenShellSdk(f.preparation, f.input, f.stage)).rejects.toThrow();
+    expect(f.stage).not.toHaveBeenCalled();
+  });
+
+  it("rejects approval revocation after archive verification before staging", async () => {
+    const f = admittedSdkFixture();
+    await manageProtectedOpenShellWorkspace("prepare", f.input);
+    await expect(
+      prepareProtectedOpenShellSdk(
+        f.preparation,
+        { ...f.input, admission: { ...f.input.admission, request: f.revokingRequest() } },
+        f.stage,
+      ),
+    ).rejects.toThrow(/approval|decision/i);
+    expect(f.stage).not.toHaveBeenCalled();
   });
 });
