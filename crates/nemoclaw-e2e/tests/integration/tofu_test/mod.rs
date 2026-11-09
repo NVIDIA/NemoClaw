@@ -136,7 +136,7 @@ fn test_files() -> Vec<(String, String)> {
     tests
 }
 
-/// The quoted values assigned to `key` at the start of a test file's lines.
+/// The quoted values assigned to `key` at the start of HCL lines.
 fn quoted<'a>(text: &'a str, key: &'a str) -> impl Iterator<Item = &'a str> {
     text.lines().filter_map(move |line| {
         let value = line
@@ -209,6 +209,7 @@ fn prepare(
     let target = work.join(module);
     let source = match input(module).unwrap_or_else(|| panic!("{module} has no input")) {
         Input::Authored(path) => {
+            let mut image_metadata = Vec::new();
             if path.is_file() {
                 fs::create_dir_all(&target).unwrap();
                 fs::copy(&path, target.join("main.tf")).unwrap();
@@ -227,12 +228,13 @@ fn prepare(
                     .is_some_and(|extension| extension == "tf")
                 {
                     let text = fs::read_to_string(entry.path()).unwrap();
+                    image_metadata.extend(quoted(&text, "metadata_env").map(str::to_owned));
                     fs::write(entry.path(), pin_versions(&text, version)).unwrap();
                 }
             }
             return Prepared {
                 credentials: Vec::new(),
-                image_metadata: Vec::new(),
+                image_metadata,
                 engine_socket: false,
             };
         }
@@ -379,6 +381,7 @@ async fn run_shard(shard: usize) {
         ("HOME", directory.path().display().to_string()),
         ("TF_CLI_CONFIG_FILE", configuration.display().to_string()),
         ("TF_IN_AUTOMATION", "1".into()),
+        ("TF_VAR_fixture_image", fixture_image),
         ("CHECKPOINT_DISABLE", "1".into()),
         ("NEMOCLAW_FIXTURE_CONTROL", fixtures.control.clone()),
         (

@@ -1,25 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Plan the authored HCL without a cluster or agent images. OpenShell's native
-# provider checks the resource inputs; Helm and Fabric are mocked. The live
-# kind suite owns installation and agent replies.
+# Plan the authored HCL without a cluster. The real Fabric provider discovers
+# both harnesses from the runner's metadata bundle; only Helm is mocked.
+# The live kind suite owns installation and agent replies.
 mock_provider "helm" {}
-
-mock_provider "fabric" {
-  mock_data "fabric_harness" {
-    defaults = {
-      available   = true
-      launch_json = "{\"binaries\":[\"/usr/bin/agent\"]}"
-      ref = {
-        type         = "fabric_harness"
-        adapter_id   = "nvidia.fabric.fixture"
-        image        = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        catalog_json = "{}"
-      }
-    }
-  }
-}
 
 run "plan" {
   command = plan
@@ -30,6 +15,14 @@ run "plan" {
 
   variables {
     CLUSTER_KUBECONFIG = "/unused/mocked-kubeconfig"
+    images             = { openclaw = var.fixture_image, hermes = var.fixture_image }
+  }
+
+  assert {
+    condition = alltrue([
+      for harness in data.fabric_harness.agent : harness.available && harness.status == "available"
+    ])
+    error_message = "The HCL cannot discover both harnesses from image metadata without a container engine."
   }
 
   assert {

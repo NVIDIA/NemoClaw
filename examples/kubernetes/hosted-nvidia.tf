@@ -233,8 +233,14 @@ data "openshell_gateway" "current" {
 
 locals {
   agents = {
-    openclaw = { adapter_id = "nvidia.fabric.openclaw", metadata_env = "NEMOCLAW_OPENCLAW_IMAGE_METADATA" }
-    hermes   = { adapter_id = "nvidia.fabric.hermes", metadata_env = "NEMOCLAW_HERMES_IMAGE_METADATA" }
+    openclaw = {
+      adapter_id   = "nvidia.fabric.openclaw"
+      metadata_env = "NEMOCLAW_OPENCLAW_IMAGE_METADATA"
+    }
+    hermes = {
+      adapter_id   = "nvidia.fabric.hermes"
+      metadata_env = "NEMOCLAW_HERMES_IMAGE_METADATA"
+    }
   }
   inference = {
     endpoint = "https://integrate.api.nvidia.com/v1"
@@ -254,6 +260,7 @@ locals {
 
 data "fabric_harness" "agent" {
   for_each     = local.agents
+  engine       = ""
   image        = var.images[each.key]
   metadata_env = each.value.metadata_env
   adapter_id   = each.value.adapter_id
