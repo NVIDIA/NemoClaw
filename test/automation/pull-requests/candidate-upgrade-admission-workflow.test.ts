@@ -152,9 +152,16 @@ describe("candidate upgrade admission status", () => {
   });
 
   // source-shape-contract: security -- GitHub must relay every review change to the trusted admission controller so dismissed approvals cannot leave candidate authorization stale.
-  it.each(["submitted", "edited", "dismissed"])(
-    "refreshes admission through the configured %s review handoff",
-    async (action) => {
+  it.each([
+    ["submitted", "success"],
+    ["edited", "success"],
+    ["dismissed", "success"],
+    ["dismissed", "failure"],
+    ["dismissed", "cancelled"],
+    ["dismissed", "skipped"],
+  ])(
+    "refreshes admission through the configured %s review handoff after %s",
+    async (action, conclusion) => {
       expect(reviewSignal.on.pull_request_review.types).toContain(action);
       expect(workflow.on.workflow_run).toEqual({
         workflows: [reviewSignal.name],
@@ -164,6 +171,21 @@ describe("candidate upgrade admission status", () => {
       f.context.eventName = "workflow_run";
       f.context.payload.workflow_run.name = reviewSignal.name;
       f.context.payload.workflow_run.event = Object.keys(reviewSignal.on)[0]!;
+      const condition = String(workflow.jobs["candidate-upgrade-admission"]!.if).slice(3, -2);
+      const selected = (repository: string, conclusion: string) =>
+        new Function("github", `return (${condition});`)({
+          repository: "NVIDIA/NemoClaw",
+          event_name: "workflow_run",
+          event: {
+            workflow_run: {
+              ...f.context.payload.workflow_run,
+              conclusion,
+              head_repository: { full_name: repository },
+            },
+          },
+        });
+      expect(selected("NVIDIA/NemoClaw", conclusion)).toBe(true);
+      expect(selected("other/NemoClaw", conclusion)).toBe(false);
       await f.start();
       expect(f.status).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ sha: head, context: "check-hash", state: "pending" }),

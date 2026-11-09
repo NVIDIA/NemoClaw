@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { candidateReviewCoversInputs } from "./candidate-review-scope.mts";
+import {
+  CandidateReviewComparisonError,
+  candidateReviewCoversInputs,
+} from "./candidate-review-scope.mts";
 
 /** Authenticate permission to test candidate artifacts; never grants merge or host-code authority. */
 export interface CandidateUpgradeIdentity {
@@ -128,12 +131,23 @@ async function currentDecision(
     if (entry.state === "APPROVED")
       candidates.push({ id: Number(entry.id), login, commit: String(entry.commit_id) });
   }
+  let comparisonFailure = "";
   for (const candidate of candidates.sort((a, b) => b.id - a.id)) {
-    if (await candidateReviewCoversInputs(identity, candidate.commit, paths, request))
-      return candidate;
+    try {
+      if (await candidateReviewCoversInputs(identity, candidate.commit, paths, request))
+        return candidate;
+    } catch (error) {
+      // Reject this review, not another independently verified approval. Review parsing,
+      // permission checks and maintainer objections remain outside this catch.
+      comparisonFailure ||=
+        error instanceof CandidateReviewComparisonError
+          ? error.message
+          : "Candidate review comparison was unavailable";
+    }
   }
   throw new Error(
-    "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy",
+    "Candidate upgrade needs an independent maintainer's PR approval covering its inputs and policy" +
+      (comparisonFailure ? `: ${comparisonFailure}` : ""),
   );
 }
 

@@ -6,6 +6,9 @@ import type { CandidateUpgradeIdentity, UpgradeRequest } from "./candidate-upgra
 const PREFIX = "/repos/NVIDIA/NemoClaw";
 const SHA = /^[a-f0-9]{40}$/u;
 
+/** Fixed comparison diagnostics are safe to retain when another review can still authorize. */
+export class CandidateReviewComparisonError extends Error {}
+
 // These are the trusted controllers and installer verifier, including the API transport.
 // Protected workspaces use installer admission before projecting SDK dependencies.
 // Their archive and audit helpers therefore govern both admission scopes.
@@ -45,7 +48,7 @@ function governsAdmission(path: string, sdk: boolean): boolean {
 async function compare(request: UpgradeRequest, base: string, head: string) {
   const value = await request(`${PREFIX}/compare/${base}...${head}?per_page=1`);
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Candidate review comparison is unavailable");
+    throw new CandidateReviewComparisonError("Candidate review comparison is unavailable");
   const result = value as {
     status?: string;
     base_commit?: { sha?: string };
@@ -58,15 +61,20 @@ async function compare(request: UpgradeRequest, base: string, head: string) {
     !SHA.test(result.merge_base_commit.sha) ||
     !["ahead", "behind", "diverged", "identical"].includes(result.status ?? "")
   )
-    throw new Error("Candidate review comparison has invalid commit identities");
+    throw new CandidateReviewComparisonError(
+      "Candidate review comparison has invalid commit identities",
+    );
   return result;
 }
 
-function changedPaths(result: Awaited<ReturnType<typeof compare>>): string[] {
+function changedPaths(result: Awaited<ReturnType<typeof compare>>, policy = false): string[] {
   // GitHub returns at most 300 files, only on the first comparison page. At the cap,
-  // completeness is unknown. A fresh review avoids carrying authority over that gap.
+  // completeness is unknown. Policy comparisons also require a synchronized baseline.
   if (!Array.isArray(result.files) || result.files.length >= 300)
-    throw new Error("Candidate review comparison has an incomplete file list; refresh the review");
+    throw new CandidateReviewComparisonError(
+      "Candidate review comparison has an incomplete file list; " +
+        (policy ? "synchronize the branch and obtain a new review" : "refresh the review"),
+    );
   return result.files.flatMap((file) => {
     if (
       !file ||
@@ -74,7 +82,9 @@ function changedPaths(result: Awaited<ReturnType<typeof compare>>): string[] {
       file.filename.length === 0 ||
       (file.previous_filename !== undefined && typeof file.previous_filename !== "string")
     )
-      throw new Error("Candidate review comparison has an invalid file path");
+      throw new CandidateReviewComparisonError(
+        "Candidate review comparison has an invalid file path",
+      );
     return file.previous_filename === undefined
       ? [file.filename]
       : [file.filename, file.previous_filename];
@@ -104,8 +114,8 @@ export async function candidateReviewCoversInputs(
   if (reviewedBase !== identity.baseSha) {
     const policy = await compare(request, reviewedBase, identity.baseSha);
     if (policy.status !== "ahead" || policy.merge_base_commit!.sha !== reviewedBase)
-      throw new Error("Candidate review policy history is inconsistent");
-    if (changedPaths(policy).some((path) => governsAdmission(path, sdk))) return false;
+      throw new CandidateReviewComparisonError("Candidate review policy history is inconsistent");
+    if (changedPaths(policy, true).some((path) => governsAdmission(path, sdk))) return false;
   }
   return true;
 }

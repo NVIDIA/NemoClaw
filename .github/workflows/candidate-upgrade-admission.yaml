@@ -15,7 +15,7 @@ permissions:
   pull-requests: read
 jobs:
   candidate-upgrade-admission:
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review')) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review' && github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw')) }}
     concurrency:
       group: candidate-upgrade-admission-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch }}
       cancel-in-progress: false

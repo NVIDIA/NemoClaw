@@ -190,29 +190,23 @@ describe("changed live E2E mock parity", () => {
     ).toEqual([]);
   });
 
-  it("requires mapped relay evidence through the checked-in MCP bridge owner", () => {
-    const relay = "test/e2e/fixtures/routed-private-relay.ts";
-    const relayTest = "test/e2e/support/routed-private-relay.test.ts";
-    const bridge = "test/e2e/live/mcp-bridge.test.ts";
-    const checkedIn = JSON.parse(
-      fs.readFileSync(new URL("../../e2e/mock-parity.json", import.meta.url), "utf8"),
-    ) as MockParityManifest;
-    expect(
-      validateMockParity({ manifest: checkedIn, changedFiles: [relay], fileExists: fs.existsSync }),
-    ).toEqual([`${relay}: change at least one fast PR test mapped from ${bridge}`]);
-    expect(
-      validateMockParity({
-        manifest: checkedIn,
-        changedFiles: [relay, relayTest],
-        fileExists: fs.existsSync,
-      }),
-    ).toEqual([]);
-  });
-
-  it("requires fast evidence for the concurrent-gateway sandbox-list fixture", () => {
-    const shared = "test/e2e/fixtures/openshell-sandbox-list.ts";
-    const fastTest = "test/e2e/support/openshell-sandbox-list.test.ts";
-    const owner = "test/e2e/live/concurrent-gateway-ports.test.ts";
+  it.each([
+    {
+      shared: "test/e2e/fixtures/routed-private-relay.ts",
+      fastTest: "test/e2e/support/routed-private-relay.test.ts",
+      owner: "test/e2e/live/mcp-bridge.test.ts",
+    },
+    {
+      shared: "test/e2e/fixtures/openshell-sandbox-list.ts",
+      fastTest: "test/e2e/support/openshell-sandbox-list.test.ts",
+      owner: "test/e2e/live/concurrent-gateway-ports.test.ts",
+    },
+    {
+      shared: "test/e2e/fixtures/hermes-nvidia-recovery.ts",
+      fastTest: "test/e2e/support/hermes-nvidia-recovery.test.ts",
+      owner: "test/e2e/live/hermes-inference-switch.test.ts",
+    },
+  ])("requires mapped fast evidence when $shared changes", ({ shared, fastTest, owner }) => {
     const checkedIn = JSON.parse(
       fs.readFileSync(new URL("../../e2e/mock-parity.json", import.meta.url), "utf8"),
     ) as MockParityManifest;

@@ -21,6 +21,12 @@ import {
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 import { resolveTierPresets } from "../policy/tiers";
 import { listPresets } from "../policy";
+import {
+  customNativeProvider,
+  boundCustomNativeProfile,
+} from "../inference/native-provider/custom";
+import { nativeProviderLifecycle } from "../inference/native-provider";
+import { assertOpenShellPolicyEndpointPins } from "../adapters/openshell/policy-boundary";
 
 type PolicyRule = {
   allow?: {
@@ -86,6 +92,93 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
+  it.each(["hermes", undefined])(
+    "preserves Hermes NVIDIA access with a canonical custom endpoint and agent %s (#14013)",
+    (agentName) => {
+      const basePath = repoPath("agents", "hermes", "policy-additions.yaml");
+      const base = YAML.parse(fs.readFileSync(basePath, "utf8")) as PolicyDocument;
+      const definition = customNativeProvider({
+        provider: "compatible-endpoint",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        api: "openai-completions",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        allowedIps: ["8.8.8.8"],
+      });
+      const policy = readPreparedPolicy(
+        prepareInitialSandboxCreatePolicy(basePath, [], {
+          agentName,
+          inferenceProvider: definition.providerName,
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            providerId: "hermes-custom-provider",
+            profileId: definition.profileId,
+            providerName: definition.providerName,
+            endpointUrl: definition.endpointUrl,
+            allowedIps: definition.allowedIps,
+            custom: definition.custom,
+          },
+        }),
+      );
+      expect(policy.network_policies?.nvidia).toEqual(base.network_policies?.nvidia);
+      expect(policy.network_policies?.native_hosted_inference?.endpoints).toContainEqual(
+        expect.objectContaining({ host: "integrate.api.nvidia.com", allowed_ips: ["8.8.8.8"] }),
+      );
+    },
+  );
+  it.each(["openai-completions", "openai-responses"])(
+    "creates a Balanced OpenClaw policy for a pinned NVIDIA-compatible %s endpoint (#14013)",
+    (api) => {
+      const definition = customNativeProvider({
+        provider: "compatible-endpoint",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        api,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        allowedIps: ["8.8.8.8"],
+      });
+      const prepared = prepareInitialSandboxCreatePolicy(
+        repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        [],
+        {
+          agentName: "openclaw",
+          policyTier: "balanced",
+          inferenceProvider: definition.providerName,
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            providerId: "test-custom-provider",
+            profileId: definition.profileId,
+            providerName: definition.providerName,
+            endpointUrl: definition.endpointUrl,
+            allowedIps: definition.allowedIps,
+            custom: definition.custom,
+          },
+        },
+      );
+      const policy = readPreparedPolicy(prepared);
+      const document = fs.readFileSync(prepared.policyPath, "utf8");
+      expect(() =>
+        assertOpenShellPolicyEndpointPins(document, definition.endpoint, definition.allowedIps!),
+      ).not.toThrow();
+      // OpenShell projects this profile when sandbox creation attaches the provider.
+      // The base policy must not retain a second copy after that provider is detached.
+      expect(policy.network_policies).not.toHaveProperty("native_hosted_inference");
+      const profile = YAML.parse(
+        boundCustomNativeProfile(
+          definition,
+          nativeProviderLifecycle(definition).nativeProviderProfilePath(),
+        ),
+      );
+      expect(profile.endpoints).toEqual([
+        expect.objectContaining({
+          host: "integrate.api.nvidia.com",
+          allowed_ips: ["8.8.8.8"],
+          tls: "terminate",
+          enforcement: "enforce",
+        }),
+      ]);
+      expect(policy.network_policies).not.toHaveProperty("nvidia");
+      expect(policy.network_policies).toHaveProperty("managed_inference");
+    },
+  );
   it.each(["openai", null, "nvidia-prod"])(
     "does not add native NVIDIA access without its selected attachment [%#] (#12822)",
     (inferenceProvider) => {

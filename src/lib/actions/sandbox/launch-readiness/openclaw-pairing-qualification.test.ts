@@ -821,6 +821,51 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       },
     );
 
+    it.each([observeOrdinarySettlement, observe])(
+      "reports only the rejected persisted field with observer %# (#13668)",
+      (observePairing) => {
+        const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+        const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+        paired[deviceId]!.clientMode = "webchat";
+        writeJson(pairedPath, paired);
+        expect.assertions(4);
+        try {
+          observePairing();
+        } catch (failure) {
+          expect(failure).toBeInstanceOf(OpenClawPairingIncompatibleError);
+          expect((failure as OpenClawPairingIncompatibleError).field).toBe("paired.clientMode");
+          expect(JSON.stringify(failure)).not.toContain(TOKEN);
+          expect(JSON.stringify(failure)).not.toContain(deviceId);
+        }
+      },
+    );
+
+    it.each([
+      ["settlement", observeOrdinaryOpenClawPairingSettlement],
+      ["qualification", observeOpenClawPairingQualification],
+    ] as const)(
+      "discards untrusted mismatch output outside the field allowlist with %s (#13668)",
+      (_mode, observePairing) => {
+        const failure = () =>
+          observePairing("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
+            getOpenshellBinary: () => "openshell",
+            readApprovalPolicy: () => POLICY,
+            spawnSync: (() => ({
+              status: 4,
+              signal: null,
+              error: undefined,
+              stdout: '__NEMOCLAW_OPENCLAW_PAIRING_MISMATCH__={"field":"secret-token"}\n',
+            })) as unknown as typeof spawnSync,
+          });
+        expect(failure).toThrow(OpenClawPairingIncompatibleError);
+        try {
+          failure();
+        } catch (error) {
+          expect((error as OpenClawPairingIncompatibleError).field).toBeNull();
+        }
+      },
+    );
+
     it.each(["ui", "unknown"])("rejects %s metadata on the local device (#13100)", (clientMode) => {
       const pairedPath = path.join(stateDirectory, "devices", "paired.json");
       const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;

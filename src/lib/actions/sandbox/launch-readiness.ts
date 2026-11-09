@@ -71,6 +71,8 @@ import {
   resolveTrustedLaunchAgent,
 } from "./launch-readiness/health";
 import {
+  formatOpenClawPairingMismatchField,
+  OpenClawPairingIncompatibleError,
   observeOpenClawPairingQualification,
   observeOpenClawPairingRepairSettlement,
   observeOpenClawPairingSettlement,
@@ -86,7 +88,7 @@ import {
 } from "./launch-readiness/openclaw-pairing-qualification";
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
-export { createBoundLaunchReadinessDeps };
+export { createBoundLaunchReadinessDeps, formatOpenClawPairingMismatchField };
 export {
   getNativeProviderAttachment,
   hasRecordedNativeNvidiaAttachment,
@@ -182,7 +184,9 @@ export type LaunchReadinessPublicationResult =
           | ReturnType<typeof classifyLaunchReadinessStoreFailure>
           | "missing-authority"
           | "pairing-observation-failed"
+          | "pairing-state-incompatible"
           | "runtime-observation-failed";
+        pairingMismatchField?: string;
       };
     };
 
@@ -919,7 +923,8 @@ async function captureLaunchIdentity(
         openclawVersion,
         stateDirectory,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof OpenClawPairingQualificationError) throw error;
       throw new OpenClawPairingQualificationError();
     }
   }
@@ -1503,11 +1508,18 @@ export async function publishLaunchReadiness(
                 diagnostic: {
                   stage: "publication-validation",
                   reason:
-                    error instanceof OpenClawPairingQualificationError
-                      ? "pairing-observation-failed"
-                      : error instanceof LaunchReadinessEvidenceError
-                        ? "runtime-observation-failed"
-                        : classifyLaunchReadinessStoreFailure(error),
+                    error instanceof OpenClawPairingIncompatibleError
+                      ? "pairing-state-incompatible"
+                      : error instanceof OpenClawPairingQualificationError
+                        ? "pairing-observation-failed"
+                        : error instanceof LaunchReadinessEvidenceError
+                          ? "runtime-observation-failed"
+                          : classifyLaunchReadinessStoreFailure(error),
+                  ...(error instanceof OpenClawPairingIncompatibleError &&
+                  error.field &&
+                  formatOpenClawPairingMismatchField(error.field)
+                    ? { pairingMismatchField: error.field }
+                    : {}),
                 },
               } as const);
         } finally {

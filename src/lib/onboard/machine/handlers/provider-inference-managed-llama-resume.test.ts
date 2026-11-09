@@ -397,6 +397,10 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-vllm",
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "vLLM fixture has no managed llama.cpp choice" },
+        }),
         detectInferenceProviderHostState: () =>
           makeHostState({
             vllmProfile: profile,
@@ -450,6 +454,12 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     const entry = registryEntryFor(session);
     const status = await getSandboxStatusReport("spark-agent", {
       getSandbox: () => entry,
+      getSandboxStatusPreflightImpl: async () => ({
+        failure: null,
+        failureLayer: null,
+        suppressInferenceProbe: false,
+        exitCode: 0,
+      }),
       reconcile: async () => ({ state: "missing", output: "not found" }),
     });
 

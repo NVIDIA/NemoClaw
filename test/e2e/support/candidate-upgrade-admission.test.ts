@@ -210,12 +210,12 @@ describe("candidate upgrade admission", () => {
     });
     f.request.mockImplementation(async (path) => responses.get(path)!());
     await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
-      "API unavailable",
+      "comparison was unavailable",
     );
     expect(f.request).toHaveBeenCalledWith(comparison);
   });
 
-  it.each(["package.json", "scripts/lib/reviewed-npm-archive.mts"])(
+  it.each(["package.json", "scripts/lib/reviewed-npm-archive.mts", ".github/workflows/pr.yaml"])(
     "requires a new SDK review when %s changes",
     async (filename) => {
       const f = retainedReviewFixture();
@@ -223,6 +223,84 @@ describe("candidate upgrade admission", () => {
       await expect(
         readApprovedCandidateUpgrade(identity, ["package.json"], f.request),
       ).rejects.toThrow(/PR approval covering/);
+    },
+  );
+
+  it.each(["unavailable", "truncated", "invalid-identity"])(
+    "accepts an independently covered review after another comparison is %s",
+    async (kind) => {
+      const f = retainedReviewFixture();
+      f.records.push({
+        ...f.approval,
+        id: 49,
+        commit_id: identity.candidateSha,
+        user: { type: "User", login: "other" },
+      });
+      f.routes.set("/repos/NVIDIA/NemoClaw/collaborators/other/permission", {
+        role_name: "maintain",
+      });
+      const mutations: Record<string, () => void> = {
+        unavailable: () => {
+          const responses = new Map(
+            [...f.routes].map(([path, value]) => [path, async () => value]),
+          );
+          responses.set(
+            `/repos/NVIDIA/NemoClaw/compare/${f.reviewed}...${identity.candidateSha}?per_page=1`,
+            async () => {
+              throw new Error("private transport diagnostic");
+            },
+          );
+          f.request.mockImplementation(async (path) => responses.get(path)!());
+        },
+        truncated: () => {
+          f.changes.files = Array.from({ length: 300 }, () => ({ filename: "docs/example.mdx" }));
+        },
+        "invalid-identity": () => {
+          f.changes.base_commit.sha = "f".repeat(40);
+        },
+      };
+      mutations[kind]!();
+      await expect(
+        readApprovedCandidateUpgrade(identity, [sourcePath], f.request),
+      ).resolves.toMatchObject({ reviewId: 49, reviewer: "other" });
+    },
+  );
+
+  it.each(["changes", "policy"] as const)(
+    "reports the required recovery for an incomplete %s comparison",
+    async (history) => {
+      const f = retainedReviewFixture();
+      f[history].files = Array.from({ length: 300 }, () => ({ filename: "docs/example.mdx" }));
+      await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+        history === "policy"
+          ? "synchronize the branch and obtain a new review"
+          : "refresh the review",
+      );
+      expect(f.request.mock.calls.some(([path]) => path.includes("/contents/"))).toBe(false);
+    },
+  );
+
+  it.each(["permission", "review-state"])(
+    "does not skip an invalid %s record in favor of another approval",
+    async (kind) => {
+      const f = fixture();
+      f.records.push({ ...f.approval, id: 49, user: { type: "User", login: "other" } });
+      f.routes.set("/repos/NVIDIA/NemoClaw/collaborators/other/permission", {
+        role_name: "maintain",
+      });
+      const mutations: Record<string, () => void> = {
+        permission: () => {
+          f.routes.set("/repos/NVIDIA/NemoClaw/collaborators/reviewer/permission", null);
+        },
+        "review-state": () => {
+          f.approval.state = "unknown";
+        },
+      };
+      mutations[kind]!();
+      await expect(readApprovedCandidateUpgrade(identity, [sourcePath], f.request)).rejects.toThrow(
+        /invalid GitHub record|unknown review state/,
+      );
+      expect(f.request.mock.calls.some(([path]) => path.includes("/contents/"))).toBe(false);
     },
   );
 
