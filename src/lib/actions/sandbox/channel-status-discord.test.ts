@@ -6,8 +6,12 @@ import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test
 import { exitCodeFor } from "./channel-status";
 import { redactForLog } from "../../security/redact";
 
-function openClawDiscordStatus(account: Record<string, unknown> = {}): string {
+function openClawDiscordStatus(
+  account: Record<string, unknown> = {},
+  gatewayReachable?: unknown,
+): string {
   return JSON.stringify({
+    gatewayReachable,
     channelAccounts: {
       discord: [
         {
@@ -28,6 +32,21 @@ function openClawDiscordStatus(account: Record<string, unknown> = {}): string {
 describe("OpenClaw Discord channel status", () => {
   it.each([
     ["the gateway is connected", 0, openClawDiscordStatus(), "healthy", "ready"],
+    ["the gateway is reachable", 0, openClawDiscordStatus({}, true), "healthy", "ready"],
+    [
+      "an unreachable gateway retains a connected account",
+      0,
+      openClawDiscordStatus({}, false),
+      "unknown",
+      "waiting",
+    ],
+    [
+      "gateway reachability is malformed",
+      0,
+      openClawDiscordStatus({}, "true"),
+      "unknown",
+      "waiting",
+    ],
     [
       "the account is disabled",
       0,

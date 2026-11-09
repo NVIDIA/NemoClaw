@@ -25,14 +25,12 @@ import * as pairingSettlement from "../../onboard/machine/finalization-deps";
 import * as launchReadiness from "./launch-readiness";
 import * as portableReceipts from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
-import * as restoreWindow from "./runtime/openclaw-lifecycle";
+import * as processRecovery from "./runtime/openclaw-lifecycle";
 import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { createRebuildCommandContext } from "./rebuild-preflight-confirmation";
-
-const processRecovery = restoreWindow;
 
 describe("rebuild post-restore phase", () => {
   const runtimeKindByAgent = {
@@ -67,7 +65,7 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(restoreWindow, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
+    vi.spyOn(processRecovery, "beginUnregisteredOpenClawBackupQuiesce").mockImplementation(
       async (sandboxName, runtimeSelection) => {
         order.push("maintenance-begin");
         return {
@@ -80,13 +78,13 @@ describe("rebuild post-restore phase", () => {
         };
       },
     );
-    vi.spyOn(restoreWindow, "finishUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    vi.spyOn(processRecovery, "finishUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
       async () => {
         order.push("native-start");
         return { ok: true };
       },
     );
-    vi.spyOn(restoreWindow, "abortUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
+    vi.spyOn(processRecovery, "abortUnregisteredOpenClawPostRestoreDoctor").mockImplementation(
       async () => {
         order.push("doctor-abort");
         return { ok: true };

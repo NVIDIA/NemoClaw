@@ -47,10 +47,15 @@ export async function probeOpenClawDiscordConnection(
       return "unknown";
     }
     const payload: unknown = JSON.parse(result.stdout);
-    const accounts =
-      isObjectRecord(payload) && isObjectRecord(payload.channelAccounts)
-        ? payload.channelAccounts.discord
-        : undefined;
+    if (
+      !isObjectRecord(payload) ||
+      ("gatewayReachable" in payload && payload.gatewayReachable !== true)
+    ) {
+      return "unknown";
+    }
+    const accounts = isObjectRecord(payload.channelAccounts)
+      ? payload.channelAccounts.discord
+      : undefined;
     const account = Array.isArray(accounts)
       ? accounts.find((entry: unknown) => isObjectRecord(entry) && entry.accountId === "default")
       : undefined;
