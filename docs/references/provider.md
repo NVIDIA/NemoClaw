@@ -7,7 +7,7 @@ The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, Helm, and Ku
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
 Fabric starts and stops the one agent runtime in each sandbox through Fabric's `fabric-agent-ctl`, through the same gateway.
-Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges; NemoClaw manages durable data bindings for inference services.
+Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; Kubernetes publishes an exposed managed Kubernetes gateway through a Service; OpenShell installs Podman gateway processes, Kubernetes gateway prerequisites, initialization, and retained gateway bridges; NemoClaw manages durable data bindings for inference services.
 Use [the SDK](sdk.md) or [CLI](cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
@@ -48,6 +48,7 @@ The generated graphs manage these objects and observations:
 | Docker provider | Docker gateway, inference, proxy, and application containers; model-cache and application volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
+| Kubernetes provider | The Service that publishes an exposed managed Kubernetes gateway (`kubernetes_service_v1.gateway_exposure`) |
 
 Every provider type has a [lifecycle test](../../internal-docs/contributing/integration-tests.md) that plans hand-written HCL through pinned OpenTofu without SDK orchestration.
 These tests do not qualify a complete standalone deployment workflow.
@@ -463,9 +464,11 @@ Generated graphs declare only the types marked as used; NemoClaw does not qualif
 | Docker | Resource | `docker_volume` | Model caches |
 | Docker | Data source | `docker_image` | Local images selected with `imagePullPolicy: Never` |
 | Helm | Resource | `helm_release` | The managed Kubernetes gateway chart |
+| Kubernetes | Resource | `kubernetes_service_v1` | The Service that publishes an exposed managed Kubernetes gateway |
 | Docker | Resource | `docker_buildx_builder`, `docker_compose`, `docker_config`, `docker_plugin`, `docker_registry_image`, `docker_secret`, `docker_service`, `docker_tag` | Unused |
 | Docker | Data source | `docker_containers`, `docker_logs`, `docker_network`, `docker_plugin`, `docker_registry_image`, `docker_registry_image_manifests`, `docker_registry_image_tags` | Unused |
 | Helm | Data source | `helm_template` | Unused |
+| Kubernetes | Resource, data source, ephemeral resource, function | Every other type | Unused |
 
 
 ## OpenShell Resource Lifecycles
@@ -888,6 +891,9 @@ The runtime graph for a managed Kubernetes or OpenShift gateway declares four re
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
 4. `openshell_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
 
+With `gateway.kubernetes.expose`, it also declares `kubernetes_service_v1.gateway_exposure` after the development issuer: a NodePort or LoadBalancer Service that forwards the endpoint's port to the gateway's `grpc` port.
+The gateway reads depend on it and dial the endpoint directly; it is disposable, so OpenTofu replaces it like Docker compute.
+
 The three NemoClaw resources take the same cluster target and identity:
 
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
@@ -906,10 +912,10 @@ Changing any of these settings after creation fails planning and leaves the reso
 
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
-The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither, and its client uses the pod's service account.
+The Helm and Kubernetes providers receive only the authored kubeconfig path and context; without them, they receive neither, and their clients use the pod's service account.
 Ambient Helm and Kubernetes settings are excluded.
 
-Teardown removes the release before the issuer.
+Teardown removes the release and the exposure Service before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
 The namespace, encryption key, and persistent volumes remain.
 [Managed Kubernetes ownership](../../internal-docs/design/architecture.md#managed-kubernetes-ownership) explains recovery when Helm loses its release binding, and [Deploy to Kubernetes or OpenShift](../build-deploy/kubernetes.md) gives the procedure.

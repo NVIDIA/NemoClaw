@@ -46,7 +46,7 @@ Each service owns its storage retention requirements.
 
 ## Managed Kubernetes Ownership
 
-For a managed Kubernetes gateway, the runtime graph orders retained storage, development authentication, `helm_release.gateway`, and gateway readiness.
+For a managed Kubernetes gateway, the runtime graph orders retained storage, development authentication, `helm_release.gateway`, and gateway readiness, and, for a gateway published through `gateway.kubernetes.expose`, its exposure Service after the development authentication.
 The native bundle includes the pinned Helm and Kubernetes providers; no Helm CLI is required.
 
 | Owner | Managed Kubernetes responsibility |
@@ -55,6 +55,7 @@ The native bundle includes the pinned Helm and Kubernetes providers; no Helm CLI
 | OpenTofu | Execute dependencies and retain each provider's resource state |
 | OpenShell provider | Bind or create and retain the namespace, and create and retain the encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
 | Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
+| Kubernetes provider | Create, update, and remove a published gateway's exposure Service in the prepared namespace |
 | Platform operator | Install and maintain Agent Sandbox, the default StorageClass, and OpenShift security prerequisites |
 
 The OpenShell provider does not install or remove the chart, and the Helm release cannot create or adopt the namespace or take ownership of existing resources.
