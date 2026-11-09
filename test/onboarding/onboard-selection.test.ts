@@ -631,13 +631,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
   },
   {
-    name: "Model Router",
-    label: "Model Router API key",
-    answers: ["back", ""],
-    menuSelections: ["Model Router", "NVIDIA Endpoints"],
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-  },
-  {
     name: "Hermes Provider Nous API key",
     label: "Nous API Key",
     answers: ["back", ""],
