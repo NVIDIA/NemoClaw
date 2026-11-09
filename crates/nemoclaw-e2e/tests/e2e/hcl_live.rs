@@ -105,8 +105,9 @@ async fn probe() {
     let recorded = sandbox_binding(&state, sandbox.name);
     let runtime = runtime_id(&state, sandbox.name);
     let request: Value = serde_json::from_str(&input("REQUEST")).unwrap();
-    // A managed Kubernetes gateway is reached through a port-forward that the
-    // connection holds, as the SDK's providers reach it.
+    // A managed Kubernetes gateway is reached as the SDK's providers reach
+    // it: at its published endpoint, or through a port-forward that the
+    // connection holds.
     let (_forward, client) = match kubernetes_operations(&document, &state).await {
         Some(operations) => {
             let (forward, client) = kubernetes_gateway(&operations, &recorded).await;
@@ -244,7 +245,7 @@ fn sandbox_exec(sandbox: &str, command: &[&str]) -> Command {
 }
 
 /// Run one command in a sandbox with `openshell sandbox exec`, or on a managed
-/// Kubernetes gateway with the gateway's exec, through the port-forward that
+/// Kubernetes gateway with the gateway's exec, through the connection that
 /// `probe` uses. The published report holds its exit status and whether its
 /// output contains the expected text and none of the forbidden text: standard
 /// output and error together from the CLI, standard output alone from the
@@ -458,8 +459,9 @@ fn visible(output: &[u8]) -> String {
 }
 
 /// The managed Kubernetes gateway that `binding` records, reached as the
-/// SDK's providers reach it: through the port-forward the returned connection
-/// holds, with the token and TLS files in its environment.
+/// SDK's providers reach it: at its published endpoint, or through the
+/// port-forward the returned connection holds, with the token and TLS files
+/// in its environment.
 async fn kubernetes_gateway(
     operations: &nemoclaw_sdk::kubernetes::operations::Operations,
     binding: &nemoclaw_sdk::backend::Row,
