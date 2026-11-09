@@ -790,14 +790,12 @@ describe("startSandbox native lifecycle", () => {
   });
 
   it.each([true, false, undefined])(
-    "requires verification after an unavailable OpenClaw observation with stop intent %s",
+    "requires verification after unavailable OpenClaw observations exhaust the budget with stop intent %s",
     async (stopped) => {
       const probeGatewayProcess = vi.fn(async () => null);
-      const delayGatewayProcessProbe = vi.fn(async () => {});
       const probeInferenceInvocation = vi.fn();
       const h = harness({
         probeGatewayProcess,
-        delayGatewayProcessProbe,
         probeInferenceInvocation,
       });
       h.getSandbox.mockReturnValue(
@@ -809,11 +807,27 @@ describe("startSandbox native lifecycle", () => {
         "native gateway route unavailable",
       );
 
-      expect(probeGatewayProcess).toHaveBeenCalledOnce();
-      expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
+      expect(probeGatewayProcess).toHaveBeenCalledTimes(60);
       expect(h.verifyGateway).toHaveBeenCalledOnce();
       expect(probeInferenceInvocation).not.toHaveBeenCalled();
       expect(h.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false, undefined])(
+    "waits through unavailable OpenClaw startup with stop intent %s (#12280)",
+    async (stopped) => {
+      const probeGatewayProcess = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(true);
+      const h = harness({ probeGatewayProcess });
+      h.getSandbox.mockReturnValue(sandbox({ agent: "openclaw", stopped }));
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+      expect(probeGatewayProcess).toHaveBeenCalledTimes(2);
+      expect(probeGatewayProcess.mock.invocationCallOrder[1]).toBeLessThan(
+        h.verifyGateway.mock.invocationCallOrder[0]!,
+      );
+      expect(h.startOpenShellSandbox).toHaveBeenCalledOnce();
     },
   );
 
