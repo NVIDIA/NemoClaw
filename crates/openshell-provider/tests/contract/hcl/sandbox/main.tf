@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Sandbox settings passed through to OpenShell: per-driver configuration,
-# service exposures and the URLs reported for them, and optional providers.
+# service exposures and the URLs reported for them, optional providers, and
+# a policy's middleware binding.
 terraform {
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
@@ -72,7 +73,34 @@ resource "openshell_sandbox" "agent" {
       tmpfs_bytes = 1048576
     }
   })
-  policy {}
+  # A middleware binding, whose settings reach the gateway as JSON.
+  policy {
+    explicit {
+      version = 1
+      network_policies "docs" {
+        name = "docs"
+        endpoints {
+          host     = "docs.example.com"
+          port     = 443
+          protocol = "rest"
+          access   = "read-only"
+        }
+        binaries {
+          path = "/usr/bin/agent"
+        }
+      }
+      network_middlewares "guard" {
+        middleware = "decision-guard"
+        order      = 10
+        on_error   = "fail_closed"
+        config     = jsonencode({ mode = "block", terms = ["forbidden"] })
+        endpoints {
+          include = ["docs.example.com"]
+          exclude = ["trusted.example.com"]
+        }
+      }
+    }
+  }
   dynamic "service" {
     for_each = var.services
     content {

@@ -208,6 +208,47 @@ fn a_loaded_policy_keeps_the_declared_rules_and_reports_its_hash() {
     assert!(active_policy(response(enriched, "", loaded), &expected).is_err());
 }
 
+/// A loaded policy may gain OpenShell's filesystem additions, but its middleware
+/// bindings must stay exactly as declared.
+#[test]
+fn a_loaded_policy_keeps_middleware_bindings_exactly() {
+    let declared: nemoclaw_openshell::policy::ExplicitPolicy =
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "filesystem_policy": {"read_only": ["/usr"], "read_write": ["/sandbox"]},
+            "network_policies": {},
+            "network_middlewares": {"guard": {
+                "middleware": "decision-guard", "order": 10, "on_error": "fail_closed",
+                "config": {"mode": "block", "threshold": 2},
+                "endpoints": {"include": ["docs.example.com"], "exclude": ["trusted.example.com"]}
+            }}
+        }))
+        .unwrap();
+    let declared = declared.to_proto().unwrap();
+    let expected = policy_json(&declared).unwrap();
+    let mut loaded = declared.clone();
+    loaded
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .read_only
+        .push("/proc".into());
+    assert!(network::loaded_policy_contains(&loaded, &expected).unwrap());
+    let changes: [fn(&mut proto::NetworkMiddlewareConfig); 4] = [
+        |guard| guard.order = 20,
+        |guard| guard.on_error = "fail_open".into(),
+        |guard| guard.endpoints.as_mut().unwrap().exclude.clear(),
+        |guard| guard.config = Some(Default::default()),
+    ];
+    for change in changes {
+        let mut changed = loaded.clone();
+        change(changed.network_middlewares.get_mut("guard").unwrap());
+        assert!(!network::loaded_policy_contains(&changed, &expected).unwrap());
+    }
+    loaded.network_middlewares.clear();
+    assert!(!network::loaded_policy_contains(&loaded, &expected).unwrap());
+}
+
 #[test]
 fn inference_names_the_variable_sandboxes_see_its_key_in() {
     let row = |pairs: &[(&str, &str)]| -> Row {

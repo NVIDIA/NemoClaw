@@ -409,6 +409,13 @@
           "$ref": "#/$defs/PolicyLandlock",
           "description": "Kernel filesystem enforcement compatibility."
         },
+        "network_middlewares": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PolicyMiddleware"
+          },
+          "description": "Supervisor middleware attachments keyed by policy-local names, which OpenShell's logs report. Each names a built-in middleware or a service registered in the gateway's `openshell.supervisor.middleware` configuration, and selects the admitted destination hosts it runs for.",
+          "type": "object"
+        },
         "network_policies": {
           "additionalProperties": {
             "$ref": "#/$defs/PolicyRule"
@@ -2426,6 +2433,71 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "PolicyMiddleware": {
+      "additionalProperties": false,
+      "description": "One supervisor middleware attachment. OpenShell validates the attachment, including unique orders and selectors that avoid `tls: skip` endpoints, and the named middleware validates `config`.",
+      "properties": {
+        "config": {
+          "additionalProperties": true,
+          "description": "Settings passed to the middleware, which defines and validates their format.",
+          "type": "object"
+        },
+        "endpoints": {
+          "$ref": "#/$defs/PolicyMiddlewareEndpoints",
+          "description": "Admitted destination hosts the middleware runs for."
+        },
+        "middleware": {
+          "description": "A built-in middleware, such as `openshell/regex`, or the `name` of a service registered with the gateway.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Display name; omission uses the attachment's key.",
+          "type": "string"
+        },
+        "on_error": {
+          "description": "fail_closed blocks the affected traffic when the middleware fails; fail_open lets it continue. Omission selects fail_closed. A middleware denial blocks traffic either way.",
+          "enum": [
+            "fail_closed",
+            "fail_open"
+          ],
+          "type": "string"
+        },
+        "order": {
+          "description": "Position among attachments that select the same host; lower values run first. Orders must be unique within the policy; omission means 0.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "middleware",
+        "endpoints"
+      ],
+      "type": "object"
+    },
+    "PolicyMiddlewareEndpoints": {
+      "additionalProperties": false,
+      "description": "Destination hosts selected for a middleware attachment, as exact hosts or DNS globs in endpoint-host syntax.",
+      "properties": {
+        "exclude": {
+          "description": "Hosts to skip; exclusions take precedence over inclusions.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include": {
+          "description": "Hosts to run the middleware for; OpenShell requires at least one.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "include"
+      ],
       "type": "object"
     },
     "PolicyProcess": {

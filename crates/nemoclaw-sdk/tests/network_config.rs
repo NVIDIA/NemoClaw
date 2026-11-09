@@ -167,6 +167,164 @@ fn explicit_policy_supports_tcp_rest_websocket_rpc_mcp_and_deny_all() {
     );
 }
 
+fn with_middlewares(middlewares: Value) -> Value {
+    let mut value = input();
+    value["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_middlewares"] =
+        middlewares;
+    value
+}
+
+fn guard_and_redactor() -> Value {
+    json!({
+        "guard": {
+            "name": "Decision guard",
+            "middleware": "decision-guard",
+            "order": 20,
+            "on_error": "fail_closed",
+            "config": {"mode": "block", "terms": ["forbidden"], "threshold": 2, "nested": {"strict": true}},
+            "endpoints": {"include": ["docs.example.com", "*.example.com"], "exclude": ["trusted.example.com"]}
+        },
+        "redactor": {
+            "middleware": "openshell/regex",
+            "order": 10,
+            "on_error": "fail_open",
+            "endpoints": {"include": ["docs.example.com"]}
+        }
+    })
+}
+
+#[test]
+fn explicit_policy_binds_network_middleware_through_compilation_and_observation() {
+    let value = with_middlewares(guard_and_redactor());
+    assert!(
+        jsonschema::validator_for(&input_schema())
+            .unwrap()
+            .is_valid(&value),
+        "middleware bindings must have an editor schema"
+    );
+    let document = parse(&value).expect("a valid middleware binding must parse");
+    // Export writes the document back; it must parse to the same bindings.
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+    let proto = document.spec.sandboxes["assistant"]
+        .network
+        .policy_proto()
+        .unwrap();
+    let guard = &proto.network_middlewares["guard"];
+    assert_eq!(guard.name, "Decision guard");
+    assert_eq!(guard.middleware, "decision-guard");
+    assert_eq!(guard.order, 20);
+    assert_eq!(guard.on_error, "fail_closed");
+    let selector = guard.endpoints.as_ref().unwrap();
+    assert_eq!(selector.include, ["docs.example.com", "*.example.com"]);
+    assert_eq!(selector.exclude, ["trusted.example.com"]);
+    let config = guard.config.as_ref().unwrap();
+    assert_eq!(
+        config.fields.keys().collect::<Vec<_>>(),
+        ["mode", "nested", "terms", "threshold"]
+    );
+    let redactor = &proto.network_middlewares["redactor"];
+    assert_eq!(
+        redactor.name, "redactor",
+        "the map key names an unnamed entry"
+    );
+    assert_eq!(
+        (redactor.order, redactor.on_error.as_str()),
+        (10, "fail_open")
+    );
+
+    // Refresh reads the policy back through the same typed contract: an
+    // observation keeps every binding rather than reporting it incomplete.
+    let observed = nemoclaw_sdk::config::policy_json(&proto)
+        .expect("observation must retain middleware bindings");
+    let reread: nemoclaw_sdk::config::ExplicitPolicy = serde_json::from_str(&observed).unwrap();
+    let reread = reread.to_proto().unwrap();
+    assert_eq!(reread.network_middlewares, proto.network_middlewares);
+    assert_eq!(
+        nemoclaw_sdk::config::policy_json(&reread).unwrap(),
+        observed
+    );
+
+    let generations: Generations = ["workspace", "provider", "sandbox"]
+        .map(|k| (k.into(), format!("{k}-generation")))
+        .into();
+    let rows = targets(&document, &generations).unwrap();
+    let sandbox = &rows
+        .iter()
+        .find(|row| row.kind == "sandbox")
+        .unwrap()
+        .values;
+    let policy: Value = serde_json::from_str(&sandbox["policy_json"]).unwrap();
+    assert_eq!(
+        policy["explicit"]["network_middlewares"],
+        guard_and_redactor(),
+        "compilation must keep the authored bindings"
+    );
+}
+
+#[test]
+fn middleware_bindings_reject_unknown_fields_and_defer_semantics_to_openshell() {
+    let guard = |patch: Value| {
+        let mut entry = guard_and_redactor()["guard"].clone();
+        for (key, field) in patch.as_object().unwrap() {
+            if field.is_null() {
+                entry.as_object_mut().unwrap().remove(key);
+            } else {
+                entry[key] = field.clone();
+            }
+        }
+        with_middlewares(json!({"guard": entry}))
+    };
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    // The typed contract rejects fields OpenShell's schema doesn't have.
+    for (case, value) in [
+        (
+            "unknown entry field",
+            guard(json!({"service": "decision-guard"})),
+        ),
+        (
+            "unknown selector field",
+            guard(json!({"endpoints": {"include": ["docs.example.com"], "ports": [443]}})),
+        ),
+        ("missing selector", guard(json!({"endpoints": null}))),
+        ("unknown failure mode", guard(json!({"on_error": "retry"}))),
+    ] {
+        assert!(!validator.is_valid(&value), "schema must reject {case}");
+        assert!(parse(&value).is_err(), "must reject {case}");
+    }
+    // OpenShell's validator decides the rest; NemoClaw reports its refusal.
+    let mut skipped = with_middlewares(json!({
+        "guard": {"middleware": "decision-guard", "endpoints": {"include": ["docs.example.com"]}}
+    }));
+    skipped["spec"]["sandboxes"]["assistant"]["network"]["policy"]["explicit"]["network_policies"]
+        ["docs"]["endpoints"][0] = json!({"host": "docs.example.com", "port": 443, "tls": "skip"});
+    for (case, value) in [
+        ("empty middleware name", guard(json!({"middleware": ""}))),
+        (
+            "empty selector",
+            guard(json!({"endpoints": {"include": []}})),
+        ),
+        (
+            "duplicate order",
+            with_middlewares(json!({
+                "first": {"middleware": "decision-guard", "order": 5, "endpoints": {"include": ["docs.example.com"]}},
+                "second": {"middleware": "openshell/regex", "order": 5, "endpoints": {"include": ["docs.example.com"]}}
+            })),
+        ),
+        // Fail-closed middleware can't select traffic OpenShell can't inspect.
+        ("tls: skip selection", skipped),
+    ] {
+        assert!(
+            validator.is_valid(&value),
+            "schema leaves {case} to OpenShell"
+        );
+        let error = parse(&value).expect_err(case).to_string();
+        assert!(error.contains("OpenShell validation"), "{case}: {error}");
+    }
+}
+
 #[test]
 fn policy_template_markers_remain_literal_in_opentofu_configuration() {
     let mut value = input();

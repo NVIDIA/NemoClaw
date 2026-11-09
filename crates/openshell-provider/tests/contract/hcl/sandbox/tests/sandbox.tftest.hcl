@@ -31,6 +31,29 @@ run "deploy" {
     condition     = [for sandbox in local.openshell.created_sandboxes : sandbox.providers if sandbox.name != "researcher"] == [[], []]
     error_message = "Sandboxes without providers must attach none."
   }
+  assert {
+    condition = [for sandbox in local.openshell.created_sandboxes : sandbox.policy_middlewares if sandbox.name == "researcher"] == [{
+      guard = {
+        name       = "guard"
+        middleware = "decision-guard"
+        order      = 10
+        on_error   = "fail_closed"
+        config     = { mode = "block", terms = ["forbidden"] }
+        include    = ["docs.example.com"]
+        exclude    = ["trusted.example.com"]
+      }
+    }]
+    error_message = "The gateway must receive the middleware binding as written: ${jsonencode(local.openshell.created_sandboxes)}"
+  }
+}
+
+# Reading the bound policy back, including its middleware binding, finds
+# nothing to change.
+run "unchanged" {
+  assert {
+    condition     = length(local.openshell.created_sandboxes) == 3
+    error_message = "An unchanged apply must keep the sandbox and its middleware binding."
+  }
 }
 
 # GetSandbox reports no URLs, so a refresh reads each service endpoint.

@@ -104,7 +104,7 @@ Its authored modules each have a Rust test:
 |---|---|---|
 | `standalone` | `standalone_resources` | An inference registration and its sandbox: planning without a gateway, recreating a missing registration, profile, or sandbox without replacing what else exists, image and endpoint changes, authentication and secret rotation, and removal without destroy mode |
 | `credentials` | `tool_credentials` | Web search and API credentials: profiles, registrations, and keys a sandbox sees, rotation, recovery, a custom header, and removal |
-| `sandbox` | `sandbox_settings` | Driver configuration, service exposures and their URLs, and sandboxes without providers |
+| `sandbox` | `sandbox_settings` | Driver configuration, service exposures and their URLs, a policy's middleware binding through apply and refresh, and sandboxes without providers |
 | `gateway` | `gateway_installation::gateway_settings_plan_without_contacting_a_host` | The Docker gateway launch, engine prerequisites, the Docker gateway's storage, and the managed Kubernetes resources, planned from typed settings; the engine fixture refuses any request but a read |
 | `chart` | `chart::*` | The pinned gateway chart rendered by the bundled Helm provider with the SDK's values, which `chart.rs` writes to `inputs/`: the release owns the gateway StatefulSet and no namespace or object NemoClaw prepares; the gateway keeps the chart's UID, or takes the OpenShift namespace's user and group; pull Secret names reach the pod templates and the sandbox driver; and the gateway refuses unauthenticated users and trusts only the deployment's own issuer and audience. Rendering pulls the chart by digest and needs no cluster. |
 
