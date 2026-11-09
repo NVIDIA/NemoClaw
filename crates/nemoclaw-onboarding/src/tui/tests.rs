@@ -27,12 +27,12 @@ use ratatui::{Terminal, backend::TestBackend};
 use serde_json::Value;
 
 #[test]
-fn onboarding_screen_keeps_the_existing_wordmark() {
+fn a_tall_terminal_keeps_the_full_wordmark_on_questions() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
-    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(120, 50)).unwrap();
     terminal.draw(|frame| wizard.render(frame)).unwrap();
     let screen = terminal.backend().to_string();
     assert!(screen.contains("███╗"), "missing wordmark: {screen}");
@@ -45,21 +45,55 @@ fn onboarding_screen_keeps_the_existing_wordmark() {
 }
 
 #[test]
+fn a_short_terminal_and_the_review_show_a_one_line_wordmark() {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.started = true;
+    let question = screen(&wizard, 120, 40);
+    assert!(!question.contains("███╗"), "{question}");
+    assert_eq!(
+        question.lines().next().unwrap().trim_matches('"').trim(),
+        "NEMOCLAW",
+        "{question}"
+    );
+    let review = reviewing_wizard(unverified_engine());
+    let tall = screen(&review, 120, 80);
+    assert!(!tall.contains("███╗"), "{tall}");
+    assert_eq!(
+        tall.lines().next().unwrap().trim_matches('"').trim(),
+        "NEMOCLAW",
+        "{tall}"
+    );
+}
+
+#[test]
 fn compatible_terminal_keeps_the_brand_image_beside_the_wordmark() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let wizard = JourneyWizard::new(capabilities, state);
-    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal
-        .draw(|frame| wizard.render_with_brand(frame, Some(BrandImage::from_id(0x12_34_56))))
-        .unwrap();
-    let screen = terminal.backend().to_string();
-    assert!(
-        screen
-            .lines()
-            .any(|line| line.contains('\u{10eeee}') && line.contains("██╔██╗")),
-        "{screen}"
-    );
+    for (height, beside) in [(50, "██╔██╗"), (30, "NEMOCLAW")] {
+        let mut terminal = Terminal::new(TestBackend::new(120, height)).unwrap();
+        terminal
+            .draw(|frame| wizard.render_with_brand(frame, Some(BrandImage::from_id(0x12_34_56))))
+            .unwrap();
+        let screen = terminal.backend().to_string();
+        assert!(
+            screen
+                .lines()
+                .any(|line| line.contains('\u{10eeee}') && line.contains(beside)),
+            "{screen}"
+        );
+        // Both rows of the image are placed.
+        assert_eq!(
+            screen
+                .lines()
+                .filter(|line| line.contains('\u{10eeee}'))
+                .count(),
+            2,
+            "{screen}"
+        );
+    }
 }
 
 #[test]
@@ -503,7 +537,7 @@ fn a_hermes_run_is_named_after_its_agent() {
 }
 
 #[test]
-fn review_shows_the_network_tier_it_left_at_its_default() {
+fn review_summarizes_the_network_tier_it_left_at_its_default() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -512,23 +546,120 @@ fn review_shows_the_network_tier_it_left_at_its_default() {
     assert!(!yaml.contains("tier"), "{yaml}");
     wizard.accepted = false;
     let screen = flat(&screen(&wizard, 160, 120));
-    assert!(screen.contains("Left at defaults:"), "{screen}");
-    assert!(screen.contains("Network tier: Isolated"), "{screen}");
     assert!(
-        screen.contains("reaches its inference endpoint and nothing else"),
+        screen.contains("Network Isolated: only the model endpoint"),
         "{screen}"
     );
-    // The defaults come before the YAML, where the review opens.
-    let lines = wizard
-        .review_lines()
-        .iter()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-    let defaults = lines.iter().position(|line| line == "Left at defaults:");
+    // The summary comes before the YAML, where the review opens.
+    let lines = review_text(&wizard);
+    let network = lines.iter().position(|line| line.contains("Network"));
     let yaml = lines
         .iter()
         .position(|line| line.starts_with("apiVersion:"));
-    assert!(defaults < yaml, "{lines:#?}");
+    assert!(network.is_some() && network < yaml, "{lines:#?}");
+}
+
+/// The review's lines as plain text.
+fn review_text(wizard: &JourneyWizard) -> Vec<String> {
+    wizard
+        .review_lines()
+        .iter()
+        .map(|line| line.to_string())
+        .collect()
+}
+
+/// The review of the default journey with `harness`, saving to
+/// `deployment.yaml`. This machine answered for no engine.
+fn reviewing_wizard_with(harness: &str) -> JourneyWizard {
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(vec![])
+        .with_output("deployment.yaml".into());
+    wizard.started = true;
+    wizard.submit(Some(serde_json::json!(harness))).unwrap();
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    wizard
+}
+
+#[test]
+fn at_120x40_the_review_shows_the_agent_model_and_image_without_scrolling() {
+    let wizard = reviewing_wizard_with("nvidia.fabric.hermes");
+    let screen = screen(&wizard, 120, 40);
+    let text = flat(&screen);
+    for row in [
+        "Review your deployment",
+        "Agent Hermes",
+        "Model nvidia/nemotron-3.5-super-vl-120b-a12b · NVIDIA Endpoints",
+        "API key NVIDIA_API_KEY",
+        "Runs on Docker on this machine",
+        "Image default image · not checked",
+        "Network Isolated: only the model endpoint",
+        "File deployment.yaml",
+        "Configuration file",
+    ] {
+        assert!(text.contains(row), "{row:?} is not on screen: {screen}");
+    }
+    assert!(
+        text.find("Image default image") < text.find("apiVersion:"),
+        "{screen}"
+    );
+    // The saved file's details stay in the YAML, not the summary.
+    let summary = &text[..text.find("Configuration file").unwrap()];
+    for detail in ["unix://", "managed", "uid"] {
+        assert!(!summary.contains(detail), "{detail:?} in {summary}");
+    }
+}
+
+#[test]
+fn the_configuration_file_under_the_summary_is_the_saved_yaml() {
+    let wizard = reviewing_wizard_with("nvidia.fabric.openclaw");
+    let lines = review_text(&wizard);
+    let heading = lines
+        .iter()
+        .position(|line| line == "Configuration file")
+        .expect("Configuration file heading");
+    let saved = wizard.saved_yaml().unwrap();
+    assert!(saved.contains("uid: "), "{saved}");
+    assert_eq!(
+        lines[heading + 1..heading + 1 + saved.lines().count()],
+        saved.lines().collect::<Vec<_>>()[..],
+    );
+}
+
+#[test]
+fn a_template_with_search_and_grants_summarizes_both() {
+    let mut values: Value = serde_saphyr::from_slice(include_bytes!(
+        "../../../../examples/onboarding/openclaw.yaml"
+    ))
+    .unwrap();
+    values["spec"]["integrations"] = serde_json::json!({
+        "search": {"kind": "webSearch", "provider": "brave", "credential": {"env": "BRAVE_API_KEY"}}
+    });
+    let sandbox = &mut values["spec"]["sandboxes"]["assistant"];
+    sandbox["harness"]["kind"] = serde_json::json!("nvidia.fabric.hermes");
+    sandbox["agent"]["integrationRefs"] = serde_json::json!(["search"]);
+    sandbox["network"] = serde_json::json!({
+        "tier": "isolated",
+        "grants": {"documentation": {"endpoints": [{"host": "docs.example.com", "port": 443}]}}
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("template.yaml");
+    std::fs::write(&path, serde_json::to_vec(&values).unwrap()).unwrap();
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    let text = flat(&screen(&wizard, 160, 60));
+    assert!(text.contains("Search Brave · BRAVE_API_KEY"), "{text}");
+    assert!(
+        text.contains(
+            "Network Isolated: only the model and search endpoints, and the documentation grant"
+        ),
+        "{text}"
+    );
 }
 
 #[test]
@@ -862,6 +993,31 @@ fn mixed_local_and_hosted_template_reaches_review_without_losing_routes() {
             .len(),
         2
     );
+}
+
+#[test]
+fn a_template_with_several_routes_gets_a_model_row_for_each() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/spark/local-and-hosted.yaml");
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state);
+    wizard.started = true;
+    for _ in 0..80 {
+        if wizard.reviewing() {
+            break;
+        }
+        wizard.advance();
+        assert!(wizard.error.is_none(), "{:?}", wizard.error);
+    }
+    let text = flat(&screen(&wizard, 160, 60));
+    for row in [
+        "Model local (default): nvidia/Qwen3.8-27B-NVFP4 · local service",
+        "Model hosted: replace-with-your-hosted-model · hosted.example",
+        "API key HOSTED_API_KEY",
+    ] {
+        assert!(text.contains(row), "{row:?} is not on screen: {text}");
+    }
 }
 
 /// Walk one example's sparse journey to review, requiring friendly text for every question.
@@ -1340,7 +1496,7 @@ async fn credentials_are_checked_when_review_opens_and_only_once() {
     assert!(credential_probe(&wizard).is_empty(), "each is checked once");
     assert!(
         flat(&screen(&wizard, 100, 40))
-            .contains("NVIDIA_API_KEY could not be read in this environment.")
+            .contains("API key NVIDIA_API_KEY · could not be read (plan will ask for it)")
     );
 }
 
@@ -1363,13 +1519,10 @@ fn questions_do_not_check_credentials() {
 #[test]
 fn credential_availability_appears_on_review_and_not_on_questions() {
     for (status, expected) in [
-        (
-            ObservationStatus::Available,
-            "NVIDIA_API_KEY is set in this environment.",
-        ),
+        (ObservationStatus::Available, "API key NVIDIA_API_KEY · set"),
         (
             ObservationStatus::Unavailable,
-            "NVIDIA_API_KEY is not set in this environment.",
+            "API key NVIDIA_API_KEY · not set (plan will ask for it)",
         ),
     ] {
         let capabilities = Capabilities::available();
@@ -1393,7 +1546,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
             }
             for (width, height) in [(160, 35), (72, 24)] {
                 let text = flat(&screen(&wizard, width, height));
-                assert!(!text.contains("in this environment"), "{text}");
+                assert!(!text.contains("NVIDIA_API_KEY ·"), "{text}");
             }
             wizard.advance();
         }
@@ -1418,7 +1571,7 @@ fn credential_availability_appears_on_review_and_not_on_questions() {
         }
         // Color is not the only signal, but an unset key is what the user must act on.
         assert_eq!(
-            foreground_of(&wizard, expected) == super::view::WARNING,
+            foreground_after(&wizard, "NVIDIA_API_KEY · ") == super::view::WARNING,
             status == ObservationStatus::Unavailable
         );
     }
@@ -1688,6 +1841,21 @@ fn drawn(wizard: &JourneyWizard, width: u16, height: u16) -> ratatui::buffer::Bu
     terminal.backend().buffer().clone()
 }
 
+/// The foreground of the cell after the first `prefix` on the rendered screen.
+fn foreground_after(wizard: &JourneyWizard, prefix: &str) -> ratatui::style::Color {
+    let buffer = drawn(wizard, 100, 40);
+    for y in 0..buffer.area.height {
+        let row = (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol().to_owned())
+            .collect::<String>();
+        if let Some(column) = row.find(prefix) {
+            let x = row[..column + prefix.len()].chars().count() as u16;
+            return buffer[(x, y)].fg;
+        }
+    }
+    panic!("{prefix:?} is not on screen");
+}
+
 /// The foreground of the first cell of `needle` on the rendered screen.
 fn foreground_of(wizard: &JourneyWizard, needle: &str) -> ratatui::style::Color {
     let buffer = drawn(wizard, 100, 40);
@@ -1710,7 +1878,7 @@ fn review_opens_with_the_unverified_target_and_every_reason_above_the_yaml() {
         let screen = screen(&wizard, width, height);
         let text = flat(&screen);
         for expected in [
-            "Target: Unverified",
+            "Image default image · not checked",
             "No docker engine answered on this machine.",
             "The selected engine remains unverified.",
             "The selected image's Fabric capabilities have not been observed.",
@@ -1718,13 +1886,13 @@ fn review_opens_with_the_unverified_target_and_every_reason_above_the_yaml() {
             assert!(text.contains(expected), "{width}x{height}: {screen}");
         }
         if let Some(yaml) = screen.find("kind:") {
-            assert!(screen.find("Target: Unverified") < Some(yaml), "{screen}");
+            assert!(screen.find("not checked") < Some(yaml), "{screen}");
         }
+        assert!(!text.contains("Target:"), "{screen}");
     }
-    assert_eq!(
-        foreground_of(&wizard, "Target: Unverified"),
-        super::view::WARNING
-    );
+    for unverified in ["not checked", "No docker engine answered"] {
+        assert_eq!(foreground_of(&wizard, unverified), super::view::WARNING);
+    }
 }
 
 #[test]
@@ -1735,6 +1903,12 @@ fn a_target_conflict_blocks_saving_and_says_why_on_the_review() {
         let screen = screen(&wizard, width, height);
         let text = flat(&screen);
         assert!(text.contains("Target: Conflict"), "{screen}");
+        // The conflict prevents saving, so it leads the screen.
+        assert!(
+            text.find("Target: Conflict") < text.find("Agent OpenClaw"),
+            "{screen}"
+        );
+        assert!(text.contains("Image default image · conflict"), "{screen}");
         assert!(
             text.contains("The selected engine does not meet gateway prerequisites."),
             "{screen}"
@@ -1840,7 +2014,7 @@ fn an_unverified_target_the_journey_requires_blocks_saving_in_the_error_colour()
 /// The scrollbar's symbols down the review's right edge, top to bottom.
 fn scrollbar_column(wizard: &JourneyWizard, width: u16, height: u16) -> String {
     let buffer = drawn(wizard, width, height);
-    (9..height - 2)
+    (3..height - 2)
         .map(|y| buffer[(width - 3, y)].symbol().to_owned())
         .collect()
 }
@@ -2027,4 +2201,21 @@ fn another_model_entry_starts_empty_because_enter_needs_a_typed_identifier() {
     wizard.press(key(KeyCode::Tab));
     wizard.press(key(KeyCode::Enter));
     assert_eq!(wizard.error.as_deref(), Some("Enter a model identifier."));
+}
+
+#[test]
+fn an_explicit_policy_is_not_summarized_as_isolated() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/explicit-policy.yaml");
+    let capabilities = Capabilities::available();
+    let state = load_journey(Source::Template(&path), &capabilities).unwrap();
+    let mut wizard = JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
+    questions_until_review(&mut wizard);
+    wizard.accepted = false;
+    let text = flat(&screen(&wizard, 160, 60));
+    assert!(
+        text.contains("Network Explicit policy from the configuration file"),
+        "{text}"
+    );
+    assert!(!text.contains("Isolated"), "{text}");
 }

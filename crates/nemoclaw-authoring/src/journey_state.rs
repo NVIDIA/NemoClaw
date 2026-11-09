@@ -209,7 +209,6 @@ pub struct JourneyResolution {
     questions: Vec<JourneyQuestion>,
     omitted: Vec<String>,
     kept: Vec<(String, Value)>,
-    defaults: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
     credentials: Vec<CredentialNote>,
@@ -235,11 +234,6 @@ impl JourneyResolution {
     /// Supplied values that omission guidance kept without asking, by question ID.
     pub fn kept(&self) -> &[(String, Value)] {
         &self.kept
-    }
-    /// SDK fields omission left unset, with the value the SDK fills in for
-    /// each, so a frontend can show what applies without saving it.
-    pub fn defaults(&self) -> &[(String, Value)] {
-        &self.defaults
     }
     pub fn warnings(&self) -> &[String] {
         &self.warnings

@@ -575,3 +575,19 @@ fn a_pi_author_can_explicitly_choose_responses_api() {
         Some(InferenceApi::OpenaiResponses)
     );
 }
+
+#[test]
+fn a_vendor_endpoint_names_its_preset_and_a_custom_endpoint_names_none() {
+    assert_eq!(
+        ProviderPreset::for_endpoint("https://integrate.api.nvidia.com/v1"),
+        Some(ProviderPreset::NvidiaEndpoints)
+    );
+    assert_eq!(
+        ProviderPreset::for_endpoint("https://inference.example.com/v1"),
+        None
+    );
+    assert_eq!(
+        ProviderPreset::for_endpoint("http://172.20.0.1:11446/v1"),
+        None
+    );
+}

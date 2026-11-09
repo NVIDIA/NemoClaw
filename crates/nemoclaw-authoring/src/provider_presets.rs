@@ -93,6 +93,15 @@ impl ProviderPreset {
         })
     }
 
+    /// The vendor preset whose fixed endpoint is `endpoint`. Compatible
+    /// presets carry only a placeholder endpoint, so none matches them.
+    pub fn for_endpoint(endpoint: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|preset| {
+            let profile = preset.profile();
+            !profile.custom_endpoint && profile.endpoint == endpoint
+        })
+    }
+
     pub fn apis(self) -> &'static [InferenceApi] {
         match self.profile().kind {
             InferenceProviderKind::Anthropic => &[InferenceApi::AnthropicMessages],

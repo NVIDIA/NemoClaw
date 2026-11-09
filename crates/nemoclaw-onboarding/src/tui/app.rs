@@ -9,7 +9,10 @@ use nemoclaw_authoring::{
 use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{config::Document, discovery::DiscoveryRequest};
 use serde_json::Value;
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+};
 
 pub(crate) struct JourneyWizard {
     pub(super) capabilities: Capabilities,
@@ -39,6 +42,8 @@ pub(crate) struct JourneyWizard {
     /// The furthest the review can scroll, as of its last render: the view
     /// alone knows how its wrapped text fits.
     pub(super) review_scroll_limit: Cell<u16>,
+    /// Where saving writes, named on the review.
+    pub(super) output: Option<PathBuf>,
 }
 
 impl JourneyWizard {
@@ -62,7 +67,14 @@ impl JourneyWizard {
             accepted: false,
             review_scroll: 0,
             review_scroll_limit: Cell::new(0),
+            output: None,
         }
+    }
+
+    /// Name `output` on the review as the file saving writes.
+    pub(crate) fn with_output(mut self, output: PathBuf) -> Self {
+        self.output = Some(output);
+        self
     }
 
     /// Read `candidates` as this machine's engines.

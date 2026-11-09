@@ -5,6 +5,7 @@ use super::{
     app::JourneyWizard,
     labels::{self, terminal_text},
     logo::BrandImage,
+    summary::{self, Facts},
 };
 use nemoclaw_authoring::{CompatibilityStatus, DiscoveryAssessment, JourneyQuestion};
 use ratatui::{
@@ -16,6 +17,9 @@ use ratatui::{
 };
 use serde_json::Value;
 
+/// Terminals shorter than this get the one-line wordmark, so questions and
+/// the review keep their room.
+const FULL_WORDMARK_HEIGHT: u16 = 50;
 const NVIDIA_GREEN: Color = Color::Rgb(118, 185, 0);
 const BRIGHT_GREEN: Color = Color::Rgb(163, 230, 53);
 const DIM: Color = Color::Rgb(82, 121, 84);
@@ -70,16 +74,18 @@ impl JourneyWizard {
             area.width.saturating_sub(margin * 2),
             area.height,
         );
+        let current = self.question();
+        let reviewing = self.reviewing();
+        // The review leads with what it saves, so it always takes the room.
+        let compact = reviewing || area.height < FULL_WORDMARK_HEIGHT;
         let rows = Layout::vertical([
-            Constraint::Length(8),
+            Constraint::Length(if compact { 2 } else { 8 }),
             Constraint::Length(1),
             Constraint::Min(10),
             Constraint::Length(2),
         ])
         .split(body);
-        self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80));
-        let current = self.question();
-        let reviewing = self.reviewing();
+        self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80), compact);
         let asking = self.started && matches!(&current, Ok(Some(_)));
         let mut lines = if !self.started {
             welcome()
@@ -283,79 +289,107 @@ impl JourneyWizard {
     pub(super) fn review_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
             Line::from(Span::styled(
-                "Review desired state",
+                "Review your deployment",
                 Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
         ];
-        match self.resolution() {
-            Ok(resolution) => {
-                if let Some(assessment) = resolution.target_assessment() {
-                    // A target that blocks saving without a conflict is one the
-                    // journey requires compatible evidence from.
-                    let blocked = assessment.status == CompatibilityStatus::Conflict
-                        || (resolution.materialized_document().is_some()
-                            && resolution.ready_document().is_none());
-                    lines.extend(target_lines(assessment, blocked));
-                    lines.push(Line::from(""));
-                }
-                let information = resolution
-                    .information()
+        let resolution = match self.resolution() {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                lines.push(Line::from(Span::styled(
+                    terminal_text(&error.to_string()),
+                    Style::new().fg(WARNING),
+                )));
+                return lines;
+            }
+        };
+        let assessment = resolution.target_assessment();
+        // A target that blocks saving without a conflict is one the journey
+        // requires compatible evidence from.
+        let blocked = assessment.is_some_and(|assessment| {
+            assessment.status == CompatibilityStatus::Conflict
+                || (resolution.materialized_document().is_some()
+                    && resolution.ready_document().is_none())
+        });
+        // What prevents saving leads the screen; otherwise the target's
+        // verdict is in the Image row and its reasons follow the summary.
+        if let Some(assessment) = assessment.filter(|_| blocked) {
+            lines.extend(target_lines(assessment, true));
+            lines.push(Line::from(""));
+        }
+        let Some(document) = resolution.materialized_document() else {
+            if let Some(assessment) = assessment.filter(|_| !blocked) {
+                lines.extend(target_lines(assessment, false));
+                lines.push(Line::from(""));
+            }
+            lines.extend(resolution.unverified().iter().map(|warning| {
+                Line::from(Span::styled(
+                    terminal_text(warning),
+                    Style::new().fg(WARNING),
+                ))
+            }));
+            lines.extend(
+                resolution
+                    .assessment()
+                    .issues()
                     .iter()
-                    .map(|note| (note.as_str(), MUTED));
-                // A missing credential is what the user must act on before plan.
-                let credentials = resolution
-                    .credentials()
-                    .iter()
-                    .map(|note| (note.text(), if note.is_missing() { WARNING } else { MUTED }));
-                for notes in [
-                    information.collect::<Vec<_>>(),
-                    credentials.collect::<Vec<_>>(),
-                ] {
-                    if !notes.is_empty() {
-                        lines.extend(notes.iter().map(|(note, color)| {
-                            Line::from(Span::styled(terminal_text(note), Style::new().fg(*color)))
-                        }));
-                        lines.push(Line::from(""));
-                    }
-                }
-                lines.extend(default_value_lines(resolution.defaults()));
-                if let Some(configuration) = self.configuration() {
-                    match configuration {
-                        Ok(yaml) => lines.extend(yaml.lines().map(yaml_line)),
-                        Err(reason) => lines.push(Line::from(Span::styled(
-                            terminal_text(&format!("Cannot save: {reason}")),
-                            Style::new().fg(ERROR),
-                        ))),
-                    }
-                } else {
-                    lines.extend(resolution.unverified().iter().map(|warning| {
+                    .take(5)
+                    .map(|issue| {
                         Line::from(Span::styled(
-                            terminal_text(warning),
+                            terminal_text(&format!("{}: {}", issue.path(), issue.rule())),
                             Style::new().fg(WARNING),
                         ))
-                    }));
-                    lines.extend(
-                        resolution
-                            .assessment()
-                            .issues()
-                            .iter()
-                            .take(5)
-                            .map(|issue| {
-                                Line::from(Span::styled(
-                                    terminal_text(&format!("{}: {}", issue.path(), issue.rule())),
-                                    Style::new().fg(WARNING),
-                                ))
-                            }),
-                    );
-                }
-                lines.extend(template_value_lines(resolution.kept()));
-            }
-            Err(error) => lines.push(Line::from(Span::styled(
-                terminal_text(&error.to_string()),
-                Style::new().fg(WARNING),
-            ))),
+                    }),
+            );
+            lines.extend(template_value_lines(resolution.kept()));
+            return lines;
+        };
+        let facts = Facts {
+            observations: self.observations(),
+            target: assessment.map(|assessment| assessment.status),
+            output: self.output.as_deref(),
+        };
+        lines.extend(
+            summary::rows(document, &facts)
+                .iter()
+                .flat_map(summary_lines),
+        );
+        lines.push(Line::from(""));
+        if let Some(assessment) = assessment.filter(|_| !blocked)
+            && !assessment.reasons.is_empty()
+        {
+            let color = if assessment.status == CompatibilityStatus::Unverified {
+                WARNING
+            } else {
+                MUTED
+            };
+            lines.extend(assessment.reasons.iter().map(|reason| {
+                Line::from(Span::styled(terminal_text(reason), Style::new().fg(color)))
+            }));
+            lines.push(Line::from(""));
         }
+        if !resolution.information().is_empty() {
+            lines.extend(
+                resolution.information().iter().map(|note| {
+                    Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED)))
+                }),
+            );
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            "Configuration file",
+            Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+        )));
+        match self.configuration() {
+            Some(Ok(yaml)) => lines.extend(yaml.lines().map(yaml_line)),
+            Some(Err(reason)) => lines.push(Line::from(Span::styled(
+                terminal_text(&format!("Cannot save: {reason}")),
+                Style::new().fg(ERROR),
+            ))),
+            None => {}
+        }
+        lines.extend(template_value_lines(resolution.kept()));
         if self.saveable() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -411,7 +445,35 @@ impl JourneyWizard {
         }
     }
 
-    fn render_logo(&self, frame: &mut Frame<'_>, area: Rect, brand: Option<BrandImage>) {
+    fn render_logo(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        brand: Option<BrandImage>,
+        compact: bool,
+    ) {
+        if compact {
+            // The brand image spans two rows: the wordmark and the texture.
+            let mut wordmark = Vec::new();
+            let mut texture = Vec::new();
+            if let Some(brand) = brand {
+                wordmark.extend([brand.placeholder(0), Span::raw("  ")]);
+                texture.extend([brand.placeholder(1), Span::raw("  ")]);
+            }
+            wordmark.push(Span::styled(
+                "NEMOCLAW",
+                Style::new()
+                    .fg(LOGO_GRADIENT[0])
+                    .add_modifier(Modifier::BOLD),
+            ));
+            let used = if brand.is_some() { 8 } else { 0 };
+            texture.extend(texture_line((area.width as usize).saturating_sub(used)).spans);
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(wordmark), Line::from(texture)]),
+                area,
+            );
+            return;
+        }
         let rows = [
             "███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗",
             "████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║",
@@ -533,34 +595,26 @@ fn target_lines(assessment: &DiscoveryAssessment, blocked: bool) -> Vec<Line<'st
     lines
 }
 
-/// Fields the journey left unset, with the value that applies, so the person
-/// sees what was not asked although the saved file leaves it out. They come
-/// before the YAML, which the review shows from the top.
-fn default_value_lines(defaults: &[(String, Value)]) -> Vec<Line<'static>> {
-    if defaults.is_empty() {
-        return Vec::new();
+/// A summary row: the label in a column, the value, then its status.
+fn summary_lines(row: &summary::Row) -> Vec<Line<'static>> {
+    let mut spans = vec![
+        Span::styled(format!("  {:<10} ", row.label), Style::new().fg(MUTED)),
+        Span::styled(terminal_text(&row.value), Style::new().fg(WHITE)),
+    ];
+    if let Some(status) = &row.status {
+        spans.push(Span::styled(" · ", Style::new().fg(MUTED)));
+        spans.push(Span::styled(
+            terminal_text(&status.text),
+            Style::new().fg(if status.attention { WARNING } else { MUTED }),
+        ));
     }
-    let mut lines = vec![Line::from(Span::styled(
-        "Left at defaults:",
-        Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
-    ))];
-    for (id, value) in defaults {
-        lines.push(Line::from(Span::styled(
-            terminal_text(&format!(
-                "{}: {}",
-                labels::field_title(id),
-                labels::field_value(id, value)
-            )),
-            Style::new().fg(MUTED),
-        )));
-        if let Some(description) = labels::field_description(id) {
-            lines.push(Line::from(Span::styled(
-                terminal_text(&format!("  {description}")),
-                Style::new().fg(DIM),
-            )));
-        }
+    let mut lines = vec![Line::from(spans)];
+    if let Some(detail) = &row.detail {
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(13)),
+            Span::styled(terminal_text(detail), Style::new().fg(MUTED)),
+        ]));
     }
-    lines.push(Line::from(""));
     lines
 }
 
