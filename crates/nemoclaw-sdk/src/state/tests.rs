@@ -89,30 +89,99 @@ fn corrupt_intent_is_not_an_empty_deployment() {
     );
 }
 #[test]
-fn legacy_intent_is_rejected_without_rewriting_recovery_state() {
+fn intent_from_another_release_is_refused_unchanged_whatever_it_holds() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let document = crate::config::Document::parse(
         include_str!("../../tests/fixtures/config/local.yaml").as_bytes(),
     )
     .unwrap();
-    let mut record = Record::new(document).unwrap();
-    // Version 10 records bind fabric_agent_configuration resources, which no
-    // provider serves since typed Fabric agents; version 11 records bind
-    // nemoclaw_inference_storage and nemoclaw_ollama_proxy_storage, which moved
-    // to the vllm and ollama providers; version 12 records bind
-    // nemoclaw_ollama_external_model, which data.ollama_model replaced;
-    // version 13 records bind web search profiles and registrations, which
-    // openshell_web_search replaced; version 14 records bind inference
-    // profiles and registrations, which openshell_inference replaced.
-    for version in [6, 10, 11, 12, 13, 14] {
-        record.version = version;
+    let mut record = serde_json::to_value(Record::new(document).unwrap()).unwrap();
+    // Another release's record may hold anything this release can't read.
+    record["document"] = serde_json::json!(42);
+    for version in [RECORD_VERSION - 1, RECORD_VERSION + 1] {
+        record["version"] = version.into();
         let bytes = serde_json::to_vec(&record).unwrap();
         let path = dir.path().join("intent.json");
         std::fs::write(&path, &bytes).unwrap();
-        assert!(store.load().is_err(), "version {version}");
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        assert_eq!(
+            store.load().unwrap_err().to_string(),
+            format!(
+                "deployment state was written by a different NemoClaw release (intent record \
+                 version {version}; this release reads {RECORD_VERSION}); keep using the CLI \
+                 bundle that created the deployment, or destroy it with that bundle and create \
+                 a new deployment; state retained"
+            ),
+            "version {version}"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes, "version {version}");
     }
+}
+
+/// SHA-256 of the intent record's JSON Schema, without the annotations that
+/// don't change what a record holds: descriptions, titles, examples, comments,
+/// and extensions.
+fn record_format_fingerprint() -> String {
+    use sha2::{Digest, Sha256};
+    fn structure(schema: &mut serde_json::Value) {
+        let Some(object) = schema.as_object_mut() else {
+            return;
+        };
+        object.retain(|keyword, _| {
+            !matches!(
+                keyword.as_str(),
+                "description" | "title" | "examples" | "$comment"
+            ) && !keyword.starts_with("x-")
+        });
+        for (keyword, child) in object.iter_mut() {
+            match keyword.as_str() {
+                "properties" | "patternProperties" | "$defs" | "dependentSchemas" => {
+                    for schema in child
+                        .as_object_mut()
+                        .into_iter()
+                        .flat_map(|map| map.values_mut())
+                    {
+                        structure(schema);
+                    }
+                }
+                "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                    for schema in child.as_array_mut().into_iter().flatten() {
+                        structure(schema);
+                    }
+                }
+                "items"
+                | "additionalProperties"
+                | "propertyNames"
+                | "contains"
+                | "not"
+                | "if"
+                | "then"
+                | "else" => structure(child),
+                _ => {}
+            }
+        }
+    }
+    let mut schema = schemars::generate::SchemaSettings::draft2020_12()
+        .into_generator()
+        .into_root_schema_for::<Record>()
+        .to_value();
+    structure(&mut schema);
+    schema.sort_all_objects();
+    Sha256::digest(schema.to_string().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[test]
+fn the_intent_record_format_changes_only_with_its_version() {
+    let fingerprint = record_format_fingerprint();
+    assert_eq!(
+        fingerprint,
+        RECORD_FORMAT.1,
+        "the intent record's format changed; set RECORD_FORMAT to ({}, \"{fingerprint}\")",
+        RECORD_VERSION + 1
+    );
 }
 
 #[test]
@@ -164,6 +233,24 @@ fn documented_state_json_preserves_full_instance_addresses() {
         "nested"
     );
     assert!(!observed.contains_key("docker_container.agent"));
+}
+
+#[test]
+fn sandbox_service_urls_bind_and_a_null_or_absent_map_is_empty() {
+    let urls =
+        serde_json::json!({"": "http://ws--a.example/", "api": "http://ws--a--api.example/"});
+    let observed = read(&state(serde_json::json!([
+        {"address": "openshell_sandbox.a", "mode": "managed", "values": {"id": "a", "service_urls": urls}},
+        {"address": "openshell_sandbox.b", "mode": "managed", "values": {"id": "b", "service_urls": null}},
+        object("openshell_sandbox.c", "c")
+    ])))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&observed["openshell_sandbox.a"].service_urls).unwrap(),
+        urls
+    );
+    assert!(observed["openshell_sandbox.b"].service_urls.is_empty());
+    assert!(observed["openshell_sandbox.c"].service_urls.is_empty());
 }
 
 #[test]
@@ -641,6 +728,66 @@ fn typed_storage_bindings_compare_their_complete_identity() {
         changed.insert(attribute.into(), "changed".into());
         assert!(bindings[address].differs(&changed), "{attribute}");
     }
+}
+
+/// An applied deployment keeps the cluster access it was applied with. A
+/// binding made with the pod's service account matches its compiled row, and
+/// differs from one that names a kubeconfig, in both directions.
+#[test]
+fn kubernetes_bindings_compare_how_they_reach_the_cluster() {
+    const ADDRESS: &str = "openshell_kubernetes_storage.runtime";
+    let generations = [
+        crate::kubernetes::GATEWAY_KIND,
+        crate::kubernetes::STORAGE_KIND,
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let compiled = |kubeconfig: bool| -> crate::backend::Row {
+        let mut value = serde_json::to_value(
+            Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+                .unwrap(),
+        )
+        .unwrap();
+        value["spec"]["gateway"] = serde_json::json!({
+            "management": "managed", "runtime": {"provider": "kubernetes"},
+            "endpoint": "https://127.0.0.1:17671",
+            "kubernetes": {"namespace": "test-agents", "authentication": {"profile": "development"}}
+        });
+        if kubeconfig {
+            value["spec"]["gateway"]["kubernetes"]["kubeconfig"] =
+                serde_json::json!({"env": "TEST_KUBECONFIG"});
+            value["spec"]["gateway"]["kubernetes"]["context"] = serde_json::json!("test-cluster");
+        }
+        value["spec"]["sandboxes"]["assistant"]["image"]["metadata"] =
+            serde_json::json!({"env": "TEST_IMAGE_METADATA"});
+        let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+        crate::compile::runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.address == ADDRESS)
+            .unwrap()
+            .values
+    };
+    let bound = |values: &crate::backend::Row| {
+        let mut values = serde_json::to_value(values).unwrap();
+        values["id"] = serde_json::json!("namespace-uid");
+        read(&state(serde_json::json!([
+            {"address": ADDRESS, "mode": "managed", "values": values}
+        ])))
+        .unwrap()
+        .remove(ADDRESS)
+        .unwrap()
+    };
+    let (kubeconfig, pod) = (compiled(true), compiled(false));
+    let differing: Vec<&String> = kubeconfig
+        .keys()
+        .filter(|key| kubeconfig.get(*key) != pod.get(*key))
+        .collect();
+    assert_eq!(differing, ["context", "kubeconfig_env"]);
+    assert!(!bound(&kubeconfig).differs(&kubeconfig));
+    assert!(!bound(&pod).differs(&pod));
+    assert!(bound(&kubeconfig).differs(&pod));
+    assert!(bound(&pod).differs(&kubeconfig));
 }
 
 #[test]

@@ -5,7 +5,7 @@
 # Two agents share one inference provider and one Brave search definition.
 # OpenShell holds the search key and allows each agent's harness to reach the
 # search API; the agent's own tools make the requests. Set your own deployment
-# UID, endpoints, and model; see docs/agents.md#web-search.
+# UID, endpoints, and model; see docs/agents-inference/agents.md#web-search.
 
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig

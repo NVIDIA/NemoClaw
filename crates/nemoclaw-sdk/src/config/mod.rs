@@ -146,7 +146,7 @@ impl Document {
         let g = &self.spec.gateway;
         let mut names = Vec::new();
         if let Some(kubernetes) = g.as_kubernetes() {
-            names.push(kubernetes.kubeconfig.env.as_str());
+            names.extend(kubernetes.kubeconfig.iter().map(|file| file.env.as_str()));
             names.extend(kubernetes.environment.iter().map(String::as_str));
             names.extend(
                 kubernetes
@@ -160,11 +160,9 @@ impl Document {
             names.push(c.env.as_str());
         }
         if let Some(tls) = g.tls() {
-            names.extend([
-                tls.ca.env.as_str(),
-                tls.certificate.env.as_str(),
-                tls.key.env.as_str(),
-            ]);
+            names.push(tls.ca.env.as_str());
+            names.extend(tls.certificate.iter().map(|file| file.env.as_str()));
+            names.extend(tls.key.iter().map(|file| file.env.as_str()));
         }
         if let Ok(providers) = self.selected_inference_providers() {
             for provider in providers {
@@ -226,6 +224,17 @@ fn default_string(value: &mut String, default: &str) {
     if value.is_empty() {
         *value = default.into();
     }
+}
+/// Parse a private IPv4 /24 written as its network address in canonical form.
+/// ipnet accepts octets with leading zeros, which Docker rejects, and networks
+/// are compared as text, so one network must have one spelling.
+pub(crate) fn private_network(cidr: &str) -> Option<ipnet::Ipv4Net> {
+    let network = cidr.parse::<ipnet::Ipv4Net>().ok()?;
+    (network.to_string() == cidr
+        && network.addr().is_private()
+        && network.prefix_len() == 24
+        && network.addr() == network.network())
+    .then_some(network)
 }
 pub(crate) fn bridge_address(cidr: &str) -> Result<String, ConfigError> {
     network_address(
@@ -359,8 +368,12 @@ impl Gateway {
             credential_env: self.credential().map(|credential| credential.env.clone()),
             tls: self.tls().map(|tls| nemoclaw_openshell::TlsFiles {
                 ca_env: tls.ca.env.clone(),
-                certificate_env: tls.certificate.env.clone(),
-                key_env: tls.key.env.clone(),
+                identity: tls.certificate.as_ref().zip(tls.key.as_ref()).map(
+                    |(certificate, key)| nemoclaw_openshell::IdentityFiles {
+                        certificate_env: certificate.env.clone(),
+                        key_env: key.env.clone(),
+                    },
+                ),
             }),
         }
     }

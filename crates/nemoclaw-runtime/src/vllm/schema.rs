@@ -16,7 +16,9 @@ pub fn constrain(defs: &mut serde_json::Map<String, Value>, normalized: bool) {
         {"oneOf":[{"required":["hardware"]},{"required":["recipe"]}]},
         {"if":{"required":["hardware"]},"then":forbid(&["recipe"])},
         {"if":at("memory/gpuMemoryUtilization",json!({}),true),"then":{"required":["hardware"],"allOf":[at("hardware/minGpuMemoryBytes",json!({}),true),at("hardware/profile",json!({"not":{"enum":super::HardwareProfile::UNIFIED_MEMORY}}),false),forbid(&["recipe"]),at("memory/gpuMemoryGiB",json!({"const":0}),false),at("memory/kvCacheGiB",json!({"const":0}),false)]}},
-        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}}
+        {"if":{"required":["recipe"]},"then":{"allOf":[at("serving/modelName",json!({"const":""}),false),at("serving/mambaBackend",json!({"const":""}),false),at("serving",forbid(&["enforceEager"]),false)]}},
+        {"if":{"anyOf":[{"required":["recipe"]},at("hardware/profile",json!({"enum":super::HardwareProfile::UNIFIED_MEMORY}),true)]},
+         "then":at("memory/hostReserveGiB",json!({"anyOf":constraints::bounds(c::UNIFIED_HOST_RESERVE_MIN,c::HOST_RESERVE.max,normalized)}),false)}
     ]);
     service["if"] = json!({"required": ["recipe"]});
     service["then"] = at("memory/gpuMemoryGiB", json!({"const": 0}), false);

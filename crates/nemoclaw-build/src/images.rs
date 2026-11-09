@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::Path,
@@ -24,6 +24,29 @@ const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
 const REFERENCE_ADAPTER: &str = "org.nemoclaw.dummy";
 // The reference runtime starts and answers without a model.
 const QUALIFY_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The model runtime images, by Bake target. A managed service whose `kind`
+/// names one runs the image that target builds from `image/<target>/` and the
+/// supervisor in [`RUNTIME_SUPERVISOR`]. CI builds a live HCL case's runtime
+/// images from this list, and `changes cases` uses it to select the cases
+/// whose runtime images a change affects.
+pub const RUNTIMES: [&str; 2] = ["ollama", "vllm"];
+/// The directory of the supervisor that every runtime image includes.
+pub const RUNTIME_SUPERVISOR: &str = "image/supervisor";
+
+/// The runtime images, as Bake targets, that a NemoClaw document's managed
+/// services run.
+pub fn runtime_targets(document: &str) -> Result<BTreeSet<&'static str>> {
+    let document: Value =
+        serde_saphyr::from_str(document).map_err(|error| format!("invalid document: {error}"))?;
+    let services = document["spec"]["services"].as_object();
+    Ok(services
+        .into_iter()
+        .flat_map(|services| services.values())
+        .filter_map(|service| service["kind"].as_str())
+        .filter_map(|kind| RUNTIMES.into_iter().find(|runtime| *runtime == kind))
+        .collect())
+}
 
 fn docker() -> Command {
     let mut command = Command::new("docker");
@@ -520,7 +543,8 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
 
 /// Facts about an image's assembly, gathered by its own shell: the files its
 /// provenance and runtime declare, the hashes of its retained sources, its user,
-/// the owners and modes under `/sandbox`, and any installer or toolchain left.
+/// the owners and modes under `/sandbox`, any installer or toolchain left, and
+/// what Hermes's own interfaces need in a Hermes image.
 const ASSEMBLY_FACTS: &str = r#"
 echo '=== provenance'; cat /opt/nemoclaw/provenance.json; echo
 echo '=== runtime'; cat /opt/nemoclaw/runtime.json; echo
@@ -536,6 +560,13 @@ echo '=== installers'; ls -d /opt/fabric/bin/pip* /opt/fabric/lib/python*/site-p
 echo '=== toolchains'; for tool in rustc cargo uv gcc; do command -v "$tool" || true; done
 echo '=== control'
 if [ -x /opt/fabric/bin/fabric-agent-ctl ]; then echo executable; else echo missing; fi
+echo '=== hermes interfaces'
+if [ -d /opt/hermes ]; then
+  /opt/fabric/bin/python -c 'import aiohttp' 2>/dev/null && echo aiohttp
+  [ -f "${HERMES_WEB_DIST:-}/index.html" ] && echo dashboard
+  [ -f /opt/hermes/hermes_cli/tui_dist/entry.js ] && [ -x "${HERMES_NODE:-}" ] && echo tui
+fi
+true
 "#;
 
 /// Check an image's assembly facts against what NemoClaw promises about the
@@ -571,6 +602,31 @@ pub fn check_assembly(facts: &str) -> Vec<String> {
             "the image carries a package installer: {}",
             section("installers").join(", ")
         ));
+    }
+    // Hermes serves its API server with aiohttp, its dashboard from the built web
+    // assets HERMES_WEB_DIST names, and its browser chat by running the built TUI
+    // bundle with the Node.js HERMES_NODE names; otherwise it builds or installs
+    // them at startup, which a read-only, offline sandbox refuses.
+    if provenance["harness"] == "hermes" {
+        let interfaces = section("hermes interfaces");
+        for (fact, problem) in [
+            (
+                "aiohttp",
+                "the Hermes image lacks aiohttp for Hermes's API server",
+            ),
+            (
+                "dashboard",
+                "the Hermes image lacks Hermes's built dashboard at HERMES_WEB_DIST",
+            ),
+            (
+                "tui",
+                "the Hermes image lacks Hermes's built TUI bundle or Node.js at HERMES_NODE",
+            ),
+        ] {
+            if !interfaces.contains(&fact) {
+                problems.push(problem.into());
+            }
+        }
     }
     if !section("toolchains").is_empty() {
         problems.push(format!(

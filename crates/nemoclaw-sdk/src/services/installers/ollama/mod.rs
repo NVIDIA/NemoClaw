@@ -143,10 +143,7 @@ pub const RUNTIME_DATA_SOURCE: &str = "ollama_runtime";
 
 /// OpenTofu attributes for the Ollama runtime contract.
 pub fn runtime_fields() -> Result<crate::hcl_schema::Fields, crate::hcl_schema::Unmappable> {
-    let schema = serde_json::to_value(schemars::schema_for!(
-        nemoclaw_runtime::ollama::ManagedOllama
-    ))
-    .expect("the Ollama runtime schema serializes");
+    let schema = schemars::schema_for!(nemoclaw_runtime::ollama::ManagedOllama).to_value();
     crate::hcl_schema::fields(&schema, &[])
 }
 pub const STORAGE_KIND: &str = "ollama_service_storage";

@@ -141,6 +141,21 @@
       ],
       "type": "string"
     },
+    "AuthorizationMode": {
+      "description": "OpenShell's service authorization modes.",
+      "oneOf": [
+        {
+          "const": "STRIP",
+          "description": "Remove the Authorization header before the request reaches the service.",
+          "type": "string"
+        },
+        {
+          "const": "BEARER_PASSTHROUGH",
+          "description": "Pass a bearer Authorization header through to the service.",
+          "type": "string"
+        }
+      ]
+    },
     "Compatibility": {
       "additionalProperties": false,
       "description": "Execution host requirements and labels that must be present on the pinned image.",
@@ -154,7 +169,7 @@
           "type": "string"
         },
         "gpu": {
-          "description": "GPU name that must equal the observed device name.",
+          "description": "GPU name that must equal the observed device name. It must belong to a hardware profile's GPU family; that profile's memory architecture decides whether the GPU budget is checked against GPU or host memory.",
           "minLength": 1,
           "type": "string"
         },
@@ -327,17 +342,11 @@
       "properties": {
         "path": {
           "description": "HTTP GET path on the container's listener. Success requires HTTP 200; redirects are not followed.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "runtimeStatus": {
           "description": "Managed-runtime status file containing phase and updated. Requires a ready report from this container start, not an old volume's report.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "timeoutSeconds": {
           "description": "Startup wait in seconds, 1–3600. Omission selects 300.",
@@ -512,14 +521,14 @@
       "description": "Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.",
       "properties": {
         "env": {
-          "description": "Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.",
+          "description": "Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls.",
           "not": {
             "anyOf": [
               {
                 "const": "NEMOCLAW_KUBERNETES_STATE"
               },
               {
-                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"
               }
             ]
           },
@@ -748,7 +757,7 @@
             },
             "tls": {
               "$ref": "#/$defs/TLS",
-              "description": "Optional mutual TLS references for an external HTTPS gateway."
+              "description": "Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS."
             }
           },
           "required": [
@@ -1428,21 +1437,32 @@
     },
     "ManagedKubernetes": {
       "additionalProperties": false,
-      "description": "Explicit existing-cluster target for a managed development gateway. The SDK does not create a cluster or select an ambient context, and installs nothing cluster-wide: Agent Sandbox and a default StorageClass must already exist. `runtime.provider: openshift` selects the OpenShift profile.",
+      "dependentRequired": {
+        "context": [
+          "kubeconfig"
+        ],
+        "environment": [
+          "kubeconfig"
+        ],
+        "kubeconfig": [
+          "context"
+        ]
+      },
+      "description": "Existing-cluster target for a managed development gateway: an explicit kubeconfig and context, or, with both omitted, the service account of the pod that runs NemoClaw. The SDK does not create a cluster or select an ambient context. Agent Sandbox and a default StorageClass are platform prerequisites that the SDK does not check. `runtime.provider: openshift` selects the OpenShift profile.",
       "properties": {
         "authentication": {
           "$ref": "#/$defs/KubernetesAuthentication",
           "description": "How the managed gateway authenticates users: a generated development issuer, or an existing OIDC issuer."
         },
         "context": {
-          "description": "Exact kubeconfig context used for every cluster operation.",
+          "description": "Exact kubeconfig context used for every cluster operation. Requires kubeconfig.",
           "maxLength": 253,
           "minLength": 1,
           "pattern": "^[^\\x00-\\x20\\x7f]+$",
           "type": "string"
         },
         "environment": {
-          "description": "Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state.",
+          "description": "Caller environment variables that the kubeconfig's exec credential plugin needs, such as `AWS_PROFILE` for an EKS cluster. Requires kubeconfig. Cluster operations receive only platform variables and these; they are resolved like credential references and never written to configuration or state.",
           "items": {
             "not": {
               "anyOf": [
@@ -1488,7 +1508,7 @@
                   "const": "NEMOCLAW_KUBERNETES_STATE"
                 },
                 {
-                  "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+                  "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"
                 }
               ]
             },
@@ -1501,7 +1521,7 @@
           "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
         },
         "imagePullSecrets": {
-          "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them after the SDK creates the namespace, before its pods need to pull images.",
+          "description": "Names of caller-managed registry Secrets in this deployment's namespace, used by gateway/helper and sandbox pods. Values stay in Kubernetes; NemoClaw does not create, read, rotate, or remove these Secrets. Provision them in the namespace before the first apply, or after the SDK creates it, before its pods need to pull images.",
           "items": {
             "maxLength": 253,
             "minLength": 1,
@@ -1515,7 +1535,7 @@
         },
         "kubeconfig": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment reference whose value is the local kubeconfig file path. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.",
+          "description": "Environment reference whose value is the local kubeconfig file path. Requires context; omit both to use the pod's service account. The file and its credentials remain outside configuration and exported state. Process, loader, trust, proxy, cluster, Python, Helm, OpenTofu, and SDK control variable names are reserved.",
           "properties": {
             "env": {
               "not": {
@@ -1561,7 +1581,7 @@
           }
         },
         "namespace": {
-          "description": "Namespace for this deployment's gateway and generated development authentication resources.",
+          "description": "Namespace for this deployment's gateway and generated development authentication resources. An existing namespace is bound by UID and never changed; a missing one is created. A namespace another NemoClaw deployment created is refused.",
           "maxLength": 63,
           "minLength": 1,
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
@@ -1569,8 +1589,6 @@
         }
       },
       "required": [
-        "kubeconfig",
-        "context",
         "namespace",
         "authentication"
       ],
@@ -1699,11 +1717,11 @@
             },
             {
               "maximum": 64,
-              "minimum": 28
+              "minimum": 6
             }
           ],
           "default": 32,
-          "description": "Host memory reserve in GiB excluded from the serving budget.",
+          "description": "Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -1904,11 +1922,11 @@
             },
             {
               "maximum": 64,
-              "minimum": 28
+              "minimum": 6
             }
           ],
           "default": 32,
-          "description": "Host memory reserve excluded from serving.",
+          "description": "Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -2054,7 +2072,7 @@
           "type": "string"
         },
         "maxTokens": {
-          "description": "Maximum output tokens requested from the native adapter.",
+          "description": "Maximum output tokens requested from the native adapter. Planning rejects this field when the bundled adapter does not accept it.",
           "format": "uint32",
           "maximum": 4294967295,
           "minimum": 1,
@@ -2071,12 +2089,12 @@
           "type": "object"
         },
         "temperature": {
-          "description": "Sampling temperature, passed to Fabric's temperature; Fabric validates the range.",
+          "description": "Sampling temperature, passed to Fabric's temperature. Planning checks bundled adapter field support; Fabric validates the range.",
           "format": "double",
           "type": "number"
         },
         "topP": {
-          "description": "Nucleus sampling probability, passed to Fabric's top_p; Fabric validates the range.",
+          "description": "Nucleus sampling probability, passed to Fabric's top_p. Planning checks bundled adapter field support; Fabric validates the range.",
           "format": "double",
           "type": "number"
         }
@@ -2495,7 +2513,7 @@
       "description": "Resource declarations checked against host observations and produced data.",
       "properties": {
         "gpuMemoryBytes": {
-          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations.",
+          "description": "Total serving GPU budget in bytes, including model, caches, and other allocations. Checked against GPU memory on a dedicated-memory GPU, and against host memory with the host reserve on unified memory.",
           "format": "uint64",
           "maximum": 4398046511104,
           "minimum": 4294967296,
@@ -2516,7 +2534,7 @@
           "type": "integer"
         },
         "startupHeadroomGiB": {
-          "description": "Additional available-memory headroom in GiB required at startup.",
+          "description": "Host available memory in GiB required at startup, beyond the GPU budget on unified memory or beyond the host reserve on a dedicated-memory GPU.",
           "format": "uint64",
           "maximum": 4096,
           "minimum": 0,
@@ -2717,6 +2735,14 @@
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
+        },
+        "serviceExposures": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ServiceExposure"
+          },
+          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.",
+          "maxProperties": 32,
+          "type": "object"
         }
       },
       "required": [
@@ -2737,14 +2763,14 @@
       "description": "Environment variable whose value is a bearer or API credential; the configuration holds no credential value.",
       "properties": {
         "env": {
-          "description": "Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.",
+          "description": "Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls.",
           "not": {
             "anyOf": [
               {
                 "const": "NEMOCLAW_KUBERNETES_STATE"
               },
               {
-                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"
+                "pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"
               }
             ]
           },
@@ -2869,6 +2895,47 @@
                     }
                   }
                 ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "hardware": {
+                    "properties": {
+                      "profile": {
+                        "enum": [
+                          "dgx-spark",
+                          "rtx-spark"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "profile"
+                    ]
+                  }
+                },
+                "required": [
+                  "hardware"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "hostReserveGiB": {
+                        "anyOf": [
+                          {
+                            "const": 0
+                          },
+                          {
+                            "maximum": 64,
+                            "minimum": 28
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
               }
             }
           ],
@@ -3161,6 +3228,56 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "recipe"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "profile": {
+                            "enum": [
+                              "dgx-spark",
+                              "rtx-spark"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "profile"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "hostReserveGiB": {
+                        "anyOf": [
+                          {
+                            "const": 0
+                          },
+                          {
+                            "maximum": 64,
+                            "minimum": 28
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
             }
           ],
           "dependentRequired": {
@@ -3281,10 +3398,7 @@
               "items": {
                 "type": "string"
               },
-              "type": [
-                "array",
-                "null"
-              ]
+              "type": "array"
             },
             "container": {
               "$ref": "#/$defs/ContainerExecution",
@@ -3351,6 +3465,27 @@
           "type": "object"
         }
       ]
+    },
+    "ServiceExposure": {
+      "additionalProperties": false,
+      "description": "One OpenShell service exposure: a loopback port the gateway makes reachable.",
+      "properties": {
+        "authorizationMode": {
+          "$ref": "#/$defs/AuthorizationMode",
+          "description": "How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP."
+        },
+        "targetPort": {
+          "description": "Loopback TCP port the service listens on inside the sandbox.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "targetPort"
+      ],
+      "type": "object"
     },
     "ServiceHardware": {
       "anyOf": [
@@ -3855,7 +3990,15 @@
     },
     "TLS": {
       "additionalProperties": false,
-      "description": "Gateway mutual TLS file references. All three references are required when TLS is declared.",
+      "dependentRequired": {
+        "certificate": [
+          "key"
+        ],
+        "key": [
+          "certificate"
+        ]
+      },
+      "description": "Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.",
       "properties": {
         "ca": {
           "$ref": "#/$defs/FileRef",
@@ -3863,17 +4006,15 @@
         },
         "certificate": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client certificate file."
+          "description": "Environment variable whose value names the local client certificate file. Requires key."
         },
         "key": {
           "$ref": "#/$defs/FileRef",
-          "description": "Environment variable whose value names the local client private-key file."
+          "description": "Environment variable whose value names the local client private-key file. Requires certificate."
         }
       },
       "required": [
-        "ca",
-        "certificate",
-        "key"
+        "ca"
       ],
       "type": "object"
     },
@@ -4293,7 +4434,7 @@
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
     "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+    "Managed Kubernetes requires a namespace and an authentication profile, and a kubeconfig environment reference and context together; omitting both selects the service account of the pod that runs NemoClaw. Agent Sandbox and a default StorageClass are platform prerequisites that are not checked. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Namespace identity, ownership, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",
@@ -4302,7 +4443,7 @@
     "Native reasoning-effort identifiers are preserved for Fabric validation. Managed inference services may constrain routes to their declared served model.",
     "Rust resolves inferenceRef from enclosing inferences, preserves declaration scope for nested provider references, and rejects missing names and shadowing. The schema rejects inline/reference ambiguity.",
     "The parser resolves providerRef from enclosing inferenceProviders, rejects shadowing, conflicting selected names, more than 32 selected providers, incompatible managed-service combinations, and compares route models and authentication with the selected provider. Provider transport and reference consistency are checked after reference resolution for both inline and shared definitions. Unselected definitions create no resources. Snapshot identity must match the service model.",
-    "The parser checks memory threshold ordering and GPU/KV budget relationships; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
+    "The parser checks memory threshold ordering and GPU/KV budget relationships; that a recipe's GPU belongs to a hardware profile's GPU family; recipe path safety, byte-length limits, environment-map conflicts, snapshot file uniqueness, directory conflicts, and total-size overflow.",
     "Schema validation does not observe hardware, image labels, model weights, credentials, ownership, connectivity, or inference readiness. Those checks run during the relevant SDK operation."
   ]
 }

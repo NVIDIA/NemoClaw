@@ -42,7 +42,7 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
     // Fabric rejects a model field an adapter doesn't accept, so values the
     // deployment generates follow the adapter's descriptor. A base URL also goes
     // to adapters outside the bundled catalog; an API goes only where declared.
-    let catalog = crate::fabric_catalog::FabricCatalog::bundled();
+    let catalog = crate::fabric_catalog::FabricCatalog::bundled_ref();
     let descriptor = catalog
         .adapters
         .iter()
@@ -61,7 +61,60 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
         .iter()
         .any(|schema| schema["properties"].get("api").is_some())
     });
+    // Fabric gives every runtime of an agent one state folder only when asked,
+    // and rejects the request for an adapter that doesn't accept it.
+    if descriptor.is_some_and(|descriptor| {
+        descriptor["config"]["accepts"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "runtime.keep_state"))
+    }) {
+        result["runtime"]["keep_state"] = true.into();
+    }
     for route in &selection.inference.routes {
+        // Match Fabric's adapter_config_compatibility_issues until it is public.
+        // Model extensions can declare legacy sampling fields outside config.accepts.
+        for (field, authored, input_name) in [
+            (
+                "max_tokens",
+                route.overrides.tuning.max_tokens.is_some(),
+                "maxTokens",
+            ),
+            (
+                "temperature",
+                route.overrides.tuning.temperature.is_some(),
+                "temperature",
+            ),
+            ("top_p", route.overrides.tuning.top_p.is_some(), "topP"),
+        ] {
+            let extension = route
+                .overrides
+                .extensions
+                .as_ref()
+                .and_then(|values| values.get(field))
+                .is_some_and(|value| !value.is_null());
+            if (authored || extension)
+                && descriptor.is_some_and(|descriptor| {
+                    let path = format!("models.{field}");
+                    !descriptor["config"]["accepts"]
+                        .as_array()
+                        .is_some_and(|fields| fields.iter().any(|accepted| accepted == &path))
+                        && !(field != "temperature"
+                            && descriptor["extension_schemas"]["model"]["properties"]
+                                .get(field)
+                                .is_some())
+                })
+            {
+                let source = if authored {
+                    input_name.to_owned()
+                } else {
+                    format!("extensions.{field}")
+                };
+                return Err(ConfigError(format!(
+                    "{}.overrides.{source}: the adapter does not accept this model field",
+                    selection.route_path(route)
+                )));
+            }
+        }
         let provider = document.sandbox_route_registration(sandbox, route)?;
         let definition = provider.definition;
         let connection = document.provider_connection(definition)?;
@@ -116,8 +169,9 @@ pub fn for_sandbox(document: &Document, sandbox: NamedSandbox<'_>) -> Result<Val
             result["models"]["default"] = projected;
         }
     }
-    // Fabric's OpenCode adapter refuses a plain-HTTP model endpoint outside
-    // loopback unless its settings list the host. The deployment names each
+    // Fabric's adapters that declare the setting (OpenCode, and Claude, Codex
+    // and Pi under Relay) refuse a plain-HTTP model endpoint outside loopback
+    // unless their settings list the host. The deployment names each
     // endpoint, so an adapter that declares the setting trusts their hosts.
     let lists_trusted_hosts = descriptor.is_some_and(|descriptor| {
         descriptor["settings_schema"]["properties"]

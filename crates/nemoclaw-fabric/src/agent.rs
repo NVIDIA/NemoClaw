@@ -81,7 +81,7 @@ pub fn flatten(resource_type: &str, values: &mut Value) {
 /// Fabric's configuration sections by name.
 pub const SETTINGS: (&str, &str) = ("settings", "settings_json");
 const RUNTIME: &str = "runtime";
-pub const SECTIONS: [(&str, &str); 12] = [
+pub const SECTIONS: [(&str, &str); 13] = [
     ("instructions", "instructions_json"),
     ("models", "models_json"),
     ("runtime", "runtime_config_json"),
@@ -94,6 +94,7 @@ pub const SECTIONS: [(&str, &str); 12] = [
     ("relay", "relay_json"),
     ("telemetry", "telemetry_json"),
     ("system_stats", "system_stats_json"),
+    ("provenance", "provenance_json"),
 ];
 
 /// The typed inputs of an agent, shaped by Fabric's own configuration schema.

@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod helm_install;
 mod helm_recovery;
 #[cfg(feature = "test-scenarios")]
 mod scenarios;
@@ -9,6 +10,7 @@ pub(super) mod tests;
 
 use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
+pub(super) use helm_install::check_install;
 const GATEWAY_STORAGE: &str = "openshell_gateway_storage.runtime";
 const KUBERNETES_STORAGE: &str = "openshell_kubernetes_storage.runtime";
 const KUBERNETES_AUTH: &str = "openshell_kubernetes_auth.runtime";

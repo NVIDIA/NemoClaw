@@ -3,13 +3,13 @@
 
 # OpenShell SDK Source
 
-Source: NVIDIA/OpenShell, `crates/openshell-sdk`, revision `bdb956f2cd65a635f1294fccf1d138d263bf650f`.
-Upstream: https://github.com/NVIDIA/OpenShell/tree/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-sdk
+Source: NVIDIA/OpenShell, `crates/openshell-sdk`, revision `5d25211b25a8fc887e8d5c606d57d6ab22f1d76c`.
+Upstream: https://github.com/NVIDIA/OpenShell/tree/5d25211b25a8fc887e8d5c606d57d6ab22f1d76c/crates/openshell-sdk
 
 The Rust sources, tests, and README are unchanged.
 Upstream copyright headers, the Apache-2.0 license, and third-party notices are retained.
 
-Modifications on 2026-10-27 (refreshed from OpenShell v0.1.5):
+Modifications on 2026-11-05 (refreshed from OpenShell v0.1.7):
 
 - Resolve inherited package and dependency values from the upstream workspace into this standalone manifest.
 - Replace the relative `openshell-core` dependency with the same Git revision and disable its default features so NemoClaw does not compile telemetry support.

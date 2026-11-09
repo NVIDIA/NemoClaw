@@ -169,6 +169,29 @@ fn targets_with_plans(
                 serde_json::to_string(config).expect("driver configuration"),
             );
         }
+        if !sandbox.service_exposures.is_empty() {
+            // OpenShell's terms, as in the HCL service block: the map key is
+            // the service name.
+            let exposures: Vec<_> = sandbox
+                .service_exposures
+                .iter()
+                .map(|(name, service)| {
+                    let mut exposure = serde_json::json!({
+                        "name": name,
+                        "target_port": service.target_port,
+                    });
+                    if let Some(mode) = service.authorization_mode {
+                        exposure["authorization_mode"] =
+                            serde_json::to_value(mode).expect("authorization mode");
+                    }
+                    exposure
+                })
+                .collect();
+            values.insert(
+                "services_json".into(),
+                serde_json::to_string(&exposures).expect("service exposures"),
+            );
+        }
         {
             // The agent's inputs are Fabric's configuration sections; the
             // sandbox fields name the sandbox whose ref the graph passes.
@@ -590,8 +613,10 @@ pub(crate) fn gateway_connection(
     }
     if let Some(tls) = gateway.tls() {
         provider["tls_ca_env"] = json!(tls.ca.env);
-        provider["tls_certificate_env"] = json!(tls.certificate.env);
-        provider["tls_key_env"] = json!(tls.key.env);
+        if let (Some(certificate), Some(key)) = (&tls.certificate, &tls.key) {
+            provider["tls_certificate_env"] = json!(certificate.env);
+            provider["tls_key_env"] = json!(key.env);
+        }
     }
     Ok(provider)
 }

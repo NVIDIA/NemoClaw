@@ -106,6 +106,33 @@ fn fixture_files() -> Vec<(String, String)> {
         ("image/fabric/Dockerfile", "FROM scratch\n".into()),
         ("ruff.toml", "\n".into()),
         ("image/vllm/Dockerfile", "FROM scratch\n".into()),
+        ("image/ollama/Dockerfile", "FROM scratch\n".into()),
+        ("image/supervisor/Dockerfile", "FROM scratch\n".into()),
+        // Live HCL cases: a scenario with a case document of the same name, the
+        // module every scenario shares, and a document no live scenario runs.
+        // Only docker-one runs a model runtime image.
+        (
+            "crates/nemoclaw-e2e/cases/docker-one.yaml",
+            "kind: NemoClawConfig\nspec:\n  services:\n    model:\n      kind: vllm\n".into(),
+        ),
+        (
+            "crates/nemoclaw-e2e/tests/e2e/hcl/tests/docker-one.tftest.hcl",
+            "\n".into(),
+        ),
+        (
+            "crates/nemoclaw-e2e/cases/kind-two.yaml",
+            "kind: NemoClawConfig\nspec:\n  gateway:\n    runtime:\n      provider: kubernetes\n"
+                .into(),
+        ),
+        (
+            "crates/nemoclaw-e2e/tests/e2e/hcl/tests/kind-two.tftest.hcl",
+            "\n".into(),
+        ),
+        ("crates/nemoclaw-e2e/tests/e2e/hcl/main.tf", "\n".into()),
+        (
+            "crates/nemoclaw-e2e/cases/integration-only.yaml",
+            "kind: NemoClawConfig\n".into(),
+        ),
         (
             "rust-toolchain.toml",
             "[toolchain]\nchannel = \"1.98.1\"\n".into(),
@@ -740,7 +767,7 @@ fn local_execution_skips_bundle_and_lifecycle_but_keeps_ordinary_checks() {
             "cargo",
             r#"#!/bin/sh
 if [ "$1" = metadata ]; then exec "$REAL_CARGO" "$@"; fi
-if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.150'; exit 0; fi
+if [ "$1 $2" = 'nextest --version' ]; then echo 'cargo-nextest 0.9.151'; exit 0; fi
 printf '%s\n' "$*" >> "$CHECK_LOG"
 if [ "$1" = build ]; then
   mkdir -p target/debug
@@ -945,7 +972,8 @@ fn full_ci_explicitly_selects_every_step_without_pr_discovery() {
             "test",
             "schema",
             "bundle",
-            "lifecycle"
+            "contract",
+            "integration"
         ])
     );
     assert!(!called);
@@ -1028,7 +1056,7 @@ fn explicit_base_bypasses_pr_discovery() {
 /// The references `v1` pushes for `commit` that the live suites pull: the
 /// agent, the reference image, and the proxy, on both Linux architectures.
 fn pushed(commit: &str) -> Vec<String> {
-    ["openclaw", "dummy", "ollama-proxy"]
+    ["openclaw", "hermes", "dummy", "ollama-proxy"]
         .iter()
         .flat_map(|name| {
             ["arm64", "amd64"]
@@ -1125,4 +1153,281 @@ fn live_suites_build_their_images_when_no_recent_commit_pushed_all_of_them() {
     references.retain(|reference| *reference != missing);
     let (decision, stderr) = repo.live_images(&pushed_commit, &references);
     assert_eq!(decision, "live-images=", "{stderr}");
+}
+
+impl Repo {
+    /// Select the live HCL cases for `HEAD` against `base`, adding `requested`.
+    fn cases(&self, base: &str, requested: &[&str]) -> std::process::Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"));
+        command.args(["changes", "cases", "--base", base]);
+        for case in requested {
+            command.args(["--add", case]);
+        }
+        command
+            .current_dir(self.0.path())
+            .env("CARGO", cargo())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("HOME", self.0.path())
+            .output()
+            .unwrap()
+    }
+
+    /// The selected case IDs and the whole selection, from an analysis that
+    /// must complete rather than select every case.
+    fn selected(&self, base: &str, requested: &[&str]) -> (Vec<String>, serde_json::Value) {
+        let output = self.cases(base, requested);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let selection: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            !selection.to_string().contains("could not analyze"),
+            "{selection}"
+        );
+        let ids = selection["selected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().to_owned())
+            .collect();
+        (ids, selection)
+    }
+}
+
+/// The fixture's live HCL cases, sorted.
+const EVERY_CASE: [&str; 2] = ["docker-one", "kind-two"];
+
+#[test]
+fn a_case_document_or_scenario_selects_only_its_case() {
+    let repo = Repo::new();
+    let base = repo.base();
+    let commit = repo.commit(&[(
+        "crates/nemoclaw-e2e/cases/docker-one.yaml",
+        Some("kind: Changed\n"),
+    )]);
+    let (selected, selection) = repo.selected(&base, &[]);
+    assert_eq!(selected, ["docker-one"], "{selection}");
+    assert_eq!(
+        selection["commit"], commit,
+        "the selection names the commit it analyzed"
+    );
+    succeed(repo.0.path(), "git", &["reset", "-q", "--hard", &base]);
+    repo.commit(&[(
+        "crates/nemoclaw-e2e/tests/e2e/hcl/tests/kind-two.tftest.hcl",
+        Some("# changed\n"),
+    )]);
+    assert_eq!(repo.selected(&base, &[]).0, ["kind-two"]);
+}
+
+#[test]
+fn shared_live_inputs_select_every_case() {
+    let repo = Repo::new();
+    let base = repo.base();
+    for path in [
+        "crates/nemoclaw-sdk/src/lib.rs",
+        "crates/nemoclaw-e2e/tests/e2e/hcl/main.tf",
+        "crates/nemoclaw-e2e/cases/integration-only.yaml",
+        "image/fabric/Dockerfile",
+        "versions.json",
+    ] {
+        succeed(repo.0.path(), "git", &["reset", "-q", "--hard", &base]);
+        repo.commit(&[(path, Some("# changed\n"))]);
+        let (selected, selection) = repo.selected(&base, &[]);
+        assert_eq!(selected, EVERY_CASE, "{path}: {selection}");
+    }
+}
+
+#[test]
+fn runtime_image_inputs_select_only_the_cases_that_run_the_image() {
+    let repo = Repo::new();
+    let base = repo.base();
+    for (path, expected) in [
+        ("image/vllm/Dockerfile", &["docker-one"][..]),
+        ("image/supervisor/Dockerfile", &["docker-one"]),
+        ("image/ollama/Dockerfile", &[]),
+    ] {
+        succeed(repo.0.path(), "git", &["reset", "-q", "--hard", &base]);
+        repo.commit(&[(path, Some("# changed\n"))]);
+        let (selected, selection) = repo.selected(&base, &[]);
+        assert_eq!(selected, expected, "{path}: {selection}");
+    }
+}
+
+#[test]
+fn the_selection_names_where_each_selected_case_runs() {
+    let repo = Repo::new();
+    let base = repo.base();
+    repo.commit(&[("image/vllm/Dockerfile", Some("# changed\n"))]);
+    let (_, selection) = repo.selected(&base, &[]);
+    assert_eq!(
+        selection["runners"],
+        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": []}),
+        "{selection}"
+    );
+    assert_eq!(
+        selection["nvidia_key"],
+        serde_json::json!([]),
+        "{selection}"
+    );
+}
+
+#[test]
+fn all_selects_every_case_without_analysis() {
+    let repo = Repo::new();
+    // A dirty checkout can't be analyzed, but --all doesn't analyze.
+    write(repo.0.path(), "docs/guide.md", "# Uncommitted\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["changes", "cases", "--all"])
+        .current_dir(repo.0.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let selection: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        selection["selected"],
+        serde_json::json!(EVERY_CASE),
+        "{selection}"
+    );
+    assert_eq!(
+        selection["runners"],
+        serde_json::json!({"gpu": ["docker-one"], "hosted": [], "live-docker": [], "live-kind": ["kind-two"]}),
+        "{selection}"
+    );
+}
+
+#[test]
+fn changes_outside_the_live_build_select_no_case() {
+    let repo = Repo::new();
+    let base = repo.base();
+    repo.commit(&[
+        ("docs/guide.md", Some("# Changed\n")),
+        (
+            "crates/nemoclaw-onboarding/src/lib.rs",
+            Some("pub fn changed() {}\n"),
+        ),
+    ]);
+    let (selected, selection) = repo.selected(&base, &[]);
+    assert!(selected.is_empty(), "{selection}");
+    assert_eq!(
+        selection["cases"]["docker-one"]["run"], false,
+        "every case reports its decision: {selection}"
+    );
+}
+
+#[test]
+fn changes_the_base_made_after_the_branch_point_select_no_case() {
+    let repo = Repo::new();
+    let fork = repo.base();
+    // The base moves on with a shared change that the branch doesn't contain.
+    let base = repo.commit(&[(
+        "crates/nemoclaw-sdk/src/lib.rs",
+        Some("pub fn changed() {}\n"),
+    )]);
+    succeed(repo.0.path(), "git", &["checkout", "-q", "-b", "pr", &fork]);
+    repo.commit(&[(
+        "crates/nemoclaw-e2e/cases/docker-one.yaml",
+        Some("kind: Changed\n"),
+    )]);
+    let (selected, selection) = repo.selected(&base, &[]);
+    assert_eq!(selected, ["docker-one"], "{selection}");
+}
+
+#[test]
+fn requested_cases_add_to_the_selection_without_removing_from_it() {
+    let repo = Repo::new();
+    let base = repo.base();
+    repo.commit(&[(
+        "crates/nemoclaw-e2e/cases/docker-one.yaml",
+        Some("kind: Changed\n"),
+    )]);
+    let (selected, selection) = repo.selected(&base, &["kind-two"]);
+    assert_eq!(selected, EVERY_CASE, "{selection}");
+    let reason = selection["cases"]["kind-two"]["reason"].as_str().unwrap();
+    assert!(reason.contains("requested"), "{selection}");
+}
+
+#[test]
+fn requesting_a_case_without_a_live_scenario_fails() {
+    let output = Repo::new().cases("HEAD", &["integration-only"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("integration-only"), "{stderr}");
+}
+
+#[test]
+fn an_unanalyzable_change_selects_every_case() {
+    let output = Repo::new().cases("0000000000000000000000000000000000000000", &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let selection: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        selection["selected"],
+        serde_json::json!(EVERY_CASE),
+        "{selection}"
+    );
+    let reason = selection["cases"]["docker-one"]["reason"].as_str().unwrap();
+    assert!(reason.contains("could not analyze"), "{selection}");
+}
+
+/// Every file under `dir`, recursively.
+fn files_under(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(files_under(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// A case's document and scenario select only that case, so neither another
+/// case nor the module every scenario shares may read them.
+#[test]
+fn live_case_files_are_read_only_by_their_own_case() {
+    let e2e = Path::new(env!("CARGO_MANIFEST_DIR")).join("../nemoclaw-e2e");
+    let hcl = e2e.join("tests/e2e/hcl");
+    let cases: Vec<String> = fs::read_dir(hcl.join("tests"))
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            let id = name.strip_suffix(".tftest.hcl")?.to_owned();
+            e2e.join(format!("cases/{id}.yaml")).is_file().then_some(id)
+        })
+        .collect();
+    assert!(!cases.is_empty(), "no live HCL cases found");
+    let mut readers = files_under(&hcl);
+    readers.extend(cases.iter().map(|id| e2e.join(format!("cases/{id}.yaml"))));
+    for reader in &readers {
+        let Ok(text) = fs::read_to_string(reader) else {
+            continue;
+        };
+        for id in &cases {
+            let own = [
+                e2e.join(format!("cases/{id}.yaml")),
+                hcl.join(format!("tests/{id}.tftest.hcl")),
+            ];
+            if own.contains(reader) {
+                continue;
+            }
+            for file in [format!("{id}.yaml"), format!("{id}.tftest.hcl")] {
+                assert!(
+                    !text.contains(&file),
+                    "{} reads {file}, which selects only {id}",
+                    reader.display()
+                );
+            }
+        }
+    }
 }

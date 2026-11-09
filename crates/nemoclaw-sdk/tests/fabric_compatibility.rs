@@ -58,6 +58,7 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     input["spec"]["sandboxes"]["assistant"]["harness"]["config"] = json!({
         "mcp":{"servers":{"custom":{"transport":"stdio","url":"owned-fixture","exposure":"harness_native"}}},
         "relay":{"plugins":{"dynamic":[{"manifest":"/plugins/example/relay-plugin.toml","config":{"mode":"route"}}]}},
+        "skills":{"paths":["/sandbox/workspace/skills/supplied-skill"]},
         "runtime":{"max_turns":3}
     });
     let doc = Document::parse(input.to_string().as_bytes()).unwrap();
@@ -71,6 +72,20 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
     assert_eq!(
         actual["relay"],
         input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["relay"]
+    );
+    assert_eq!(
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        "skills must pass through without driverConfig"
+    );
+    input["spec"]["sandboxes"]["assistant"]["driverConfig"] = json!({"docker": {"mounts": [
+        {"type": "volume", "source": "caller-workspace", "target": "/sandbox/workspace", "read_only": false}
+    ]}});
+    let doc = Document::parse(input.to_string().as_bytes()).unwrap();
+    let actual =
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandbox("assistant").unwrap()).unwrap();
+    assert_eq!(
+        actual["skills"], input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["skills"],
+        "workspace mounts must not add or replace skill paths"
     );
     input["spec"]["sandboxes"]["assistant"]["harness"]["config"]["models"] =
         json!({"default":{"base_url":"https://substituted.invalid"}});
@@ -250,6 +265,329 @@ fn whether_a_harness_accepts_a_configuration_is_left_to_fabric() {
     );
 }
 
+/// The interface checks of a report: the rejected setting paths, in order.
+fn rejected_interfaces(
+    catalog: &FabricCatalog,
+    adapter_id: &str,
+    interfaces: serde_json::Value,
+) -> Vec<String> {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["adapter_id"] = adapter_id.into();
+    configuration["harness"]["settings"] = json!({ "interfaces": interfaces });
+    let report = assess_fabric(
+        catalog,
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    let rejected: Vec<String> = report
+        .checks
+        .iter()
+        .filter(|check| check.status == Support::Unsupported)
+        .map(|check| {
+            assert_eq!(check.requirement, "harness_interfaces", "{check:?}");
+            check
+                .reason
+                .split_once(':')
+                .map(|(path, _)| path.to_owned())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(
+        report.status == Support::Unsupported,
+        !rejected.is_empty(),
+        "{:?}",
+        report.checks
+    );
+    rejected
+}
+
+/// The fixture adapter with an interface declaration like a P0 adapter's:
+/// `dashboard`, taking `enabled` and `port`.
+fn catalog_with_interfaces() -> FabricCatalog {
+    let mut catalog = catalog();
+    catalog.adapters[0].descriptor["settings_schema"]["properties"]["interfaces"] = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {"dashboard": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["port"],
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+            }
+        }}
+    });
+    catalog
+}
+
+/// Planning rejects an interface or interface field that the image's adapter
+/// doesn't declare, naming the setting, so the plan fails before apply.
+#[test]
+fn planning_rejects_interfaces_and_fields_the_adapter_does_not_declare() {
+    let catalog = catalog_with_interfaces();
+    let adapter = "org.fixture.new-adapter";
+    assert!(
+        rejected_interfaces(&catalog, adapter, json!({"dashboard": {"port": 9119}})).is_empty()
+    );
+    assert!(
+        rejected_interfaces(
+            &catalog,
+            adapter,
+            json!({"dashboard": {"enabled": false, "port": 9119}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog, adapter, json!({"terminal": {}})),
+        ["harness.settings.interfaces.terminal"]
+    );
+    assert_eq!(
+        rejected_interfaces(
+            &catalog,
+            adapter,
+            json!({"dashboard": {"port": 9119, "public_origins": ["https://a.example"]}, "api": {"port": 8642}})
+        ),
+        [
+            "harness.settings.interfaces.api",
+            "harness.settings.interfaces.dashboard.public_origins"
+        ]
+    );
+}
+
+/// An adapter whose descriptor declares no interfaces supports none.
+#[test]
+fn an_adapter_without_an_interface_declaration_supports_no_interfaces() {
+    let adapter = "org.fixture.new-adapter";
+    assert_eq!(
+        rejected_interfaces(&catalog(), adapter, json!({"dashboard": {"port": 9119}})),
+        ["harness.settings.interfaces.dashboard"]
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog(), adapter, json!(true)),
+        ["harness.settings.interfaces"]
+    );
+}
+
+/// Planning checks each interface against its own schema in the image's
+/// descriptor: a missing required field, a wrong type or an out-of-range value
+/// fails the plan, naming the field.
+#[test]
+fn planning_rejects_interface_values_their_schema_refuses() {
+    let catalog = catalog_with_interfaces();
+    let adapter = "org.fixture.new-adapter";
+    let port = "harness.settings.interfaces.dashboard.port";
+    for (interfaces, rejected) in [
+        (json!({"dashboard": {}}), port),
+        (json!({"dashboard": {"enabled": true}}), port),
+        (json!({"dashboard": {"port": "9119"}}), port),
+        (json!({"dashboard": {"port": 0}}), port),
+        (json!({"dashboard": {"port": 65536}}), port),
+        (
+            json!({"dashboard": {"port": 9119, "enabled": "yes"}}),
+            "harness.settings.interfaces.dashboard.enabled",
+        ),
+        (
+            json!({"dashboard": true}),
+            "harness.settings.interfaces.dashboard",
+        ),
+    ] {
+        assert_eq!(
+            rejected_interfaces(&catalog, adapter, interfaces.clone()),
+            [rejected],
+            "{interfaces}"
+        );
+    }
+}
+
+/// Settings that satisfy an interface's schema pass, including an interface,
+/// such as a terminal, whose schema requires no field.
+#[test]
+fn interface_settings_their_schema_accepts_pass() {
+    let mut catalog = catalog_with_interfaces();
+    catalog.adapters[0].descriptor["settings_schema"]["properties"]["interfaces"]["properties"]["terminal"] = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {"enabled": {"type": "boolean"}}
+    });
+    let adapter = "org.fixture.new-adapter";
+    for interfaces in [
+        json!({"dashboard": {"port": 9119}}),
+        json!({"dashboard": {"port": 1, "enabled": false}}),
+        json!({"terminal": {}}),
+        json!({"terminal": {"enabled": true}, "dashboard": {"port": 65535}}),
+    ] {
+        assert!(
+            rejected_interfaces(&catalog, adapter, interfaces.clone()).is_empty(),
+            "{interfaces}"
+        );
+    }
+}
+
+/// A rejected value is never echoed: the reason names the field only.
+#[test]
+fn a_rejected_interface_value_is_not_echoed() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["settings"] =
+        json!({"interfaces": {"dashboard": {"port": "\u{1b}[31mPRIVATE"}}});
+    let report = assess_fabric(
+        &catalog_with_interfaces(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    let reasons: Vec<&str> = report
+        .checks
+        .iter()
+        .map(|check| check.reason.as_str())
+        .collect();
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.starts_with("harness.settings.interfaces.dashboard.port:")),
+        "{reasons:?}"
+    );
+    assert!(
+        reasons
+            .iter()
+            .all(|reason| !reason.contains("PRIVATE") && !reason.contains('\u{1b}')),
+        "{reasons:?}"
+    );
+}
+
+/// Only the interfaces are checked: settings outside them, and combinations
+/// across them, such as OpenClaw's port_range with a dashboard port, are
+/// Fabric's to check when it plans the agent.
+#[test]
+fn settings_outside_the_interfaces_are_left_to_fabric() {
+    use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
+    let mut configuration = config();
+    configuration["harness"]["adapter_id"] = "nvidia.fabric.openclaw".into();
+    configuration["harness"]["settings"] = json!({
+        "port_range": {"start": 18789, "end": 18899},
+        "interfaces": {"dashboard": {"port": 18789}}
+    });
+    let report = assess_fabric(
+        &FabricCatalog::bundled(),
+        &FabricRequirements {
+            configuration,
+            filesystem_read: None,
+        },
+    );
+    assert_eq!(report.status, Support::Supported, "{:?}", report.checks);
+}
+
+/// A name that isn't safe to print is reported without echoing it.
+#[test]
+fn an_unsupported_interface_name_is_never_echoed_unsafely() {
+    let rejected = rejected_interfaces(
+        &catalog_with_interfaces(),
+        "org.fixture.new-adapter",
+        json!({"\u{1b}[31mPRIVATE": {}}),
+    );
+    assert_eq!(rejected, ["harness.settings.interfaces"]);
+}
+
+/// The bundled OpenClaw and Hermes adapters declare their P0 interfaces.
+#[test]
+fn the_bundled_adapters_accept_their_p0_interfaces_only() {
+    let catalog = FabricCatalog::bundled();
+    let openclaw = "nvidia.fabric.openclaw";
+    let hermes = "nvidia.fabric.hermes";
+    assert!(
+        rejected_interfaces(
+            &catalog,
+            openclaw,
+            json!({"dashboard": {"enabled": true, "port": 18789}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog, openclaw, json!({"api": {"port": 8642}})),
+        ["harness.settings.interfaces.api"]
+    );
+    assert!(
+        rejected_interfaces(
+            &catalog,
+            hermes,
+            json!({"api": {"port": 8642}, "dashboard": {"enabled": true, "port": 9119}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        rejected_interfaces(
+            &catalog,
+            hermes,
+            json!({"dashboard": {"port": 9119, "public_origins": ["https://h.example"]}, "terminal": {}})
+        ),
+        [
+            "harness.settings.interfaces.dashboard.public_origins",
+            "harness.settings.interfaces.terminal"
+        ]
+    );
+    assert_eq!(
+        rejected_interfaces(&catalog, "nvidia.fabric.pi", json!({"terminal": {}})),
+        ["harness.settings.interfaces.terminal"]
+    );
+    // Each HTTP interface needs its exact port, within the adapter's range.
+    for (adapter, interfaces, rejected) in [
+        (
+            hermes,
+            json!({"api": {}}),
+            "harness.settings.interfaces.api.port",
+        ),
+        (
+            hermes,
+            json!({"dashboard": {"enabled": true}}),
+            "harness.settings.interfaces.dashboard.port",
+        ),
+        (
+            openclaw,
+            json!({"dashboard": {}}),
+            "harness.settings.interfaces.dashboard.port",
+        ),
+        (
+            openclaw,
+            json!({"dashboard": {"port": 65426}}),
+            "harness.settings.interfaces.dashboard.port",
+        ),
+        (
+            hermes,
+            json!({"api": {"port": "8642"}}),
+            "harness.settings.interfaces.api.port",
+        ),
+    ] {
+        assert_eq!(
+            rejected_interfaces(&catalog, adapter, interfaces.clone()),
+            [rejected],
+            "{adapter} {interfaces}"
+        );
+    }
+}
+
+#[test]
+fn agents_keep_their_state_where_the_adapter_accepts_it() {
+    // Fabric gives every runtime of an agent one state folder when asked, and
+    // rejects the request for an adapter that doesn't accept it, so the SDK asks
+    // only where the descriptor accepts `runtime.keep_state`.
+    let project = |text: &[u8]| {
+        let doc = nemoclaw_sdk::config::Document::parse(text).unwrap();
+        nemoclaw_sdk::fabric_config::for_sandbox(&doc, doc.sandboxes().next().unwrap()).unwrap()
+    };
+    let hermes = project(include_bytes!("../../../examples/fabric-hermes.yaml"));
+    assert_eq!(hermes["runtime"]["keep_state"], true, "{hermes}");
+    let openclaw = project(include_bytes!("../../../examples/openclaw.yaml"));
+    assert!(
+        openclaw["runtime"].get("keep_state").is_none(),
+        "{openclaw}"
+    );
+}
+
 #[test]
 fn generated_base_urls_go_only_to_adapters_that_accept_them() {
     // Fabric rejects a normalized field an adapter does not accept, so the SDK
@@ -326,16 +664,23 @@ fn opencode_trusts_the_plain_http_model_hosts_the_deployment_names() {
     let config = project(&https);
     assert_eq!(config["harness"]["settings"], json!({}), "{config}");
 
-    // Pi declares no such setting, and Fabric rejects undeclared settings.
-    let pi = include_str!("../../../examples/fabric-pi.yaml");
-    let config = project(pi);
+    // Pi declares the setting too, for its Relay gateway.
+    let pi = project(include_str!("../../../examples/fabric-pi.yaml"));
+    assert_eq!(
+        pi["harness"]["settings"]["insecure_http_model_hosts"],
+        json!(["172.20.0.1"]),
+        "{pi}"
+    );
+
+    // Hermes declares no such setting, and Fabric rejects undeclared settings.
+    let hermes = project(include_str!("../../../examples/fabric-hermes.yaml"));
     assert!(
-        config["models"]["default"]["base_url"]
+        hermes["models"]["default"]["base_url"]
             .as_str()
             .is_some_and(|url| url.starts_with("http://")),
-        "{config}"
+        "{hermes}"
     );
-    assert_eq!(config["harness"]["settings"], json!({}), "{config}");
+    assert_eq!(hermes["harness"]["settings"], json!({}), "{hermes}");
 }
 
 #[test]
@@ -388,14 +733,157 @@ fn routes_set_the_harness_provider_and_sampling() {
     let tuned = text.replace(
         "                maxTokens: 8192\n",
         "                maxTokens: 8192\n                harnessProvider: custom\n                temperature: 0.2\n                topP: 0.9\n",
-    );
+    ).replace("example-reasoning-model", "example-reasoning-model:Q4_K_M");
     assert_ne!(tuned, text);
     let tuned = nemoclaw_sdk::config::Document::parse(tuned.as_bytes()).unwrap();
     let model =
         &nemoclaw_sdk::fabric_config::for_sandbox(&tuned, tuned.sandbox("assistant").unwrap())
             .unwrap()["models"]["default"];
     assert_eq!(model["provider"], "custom", "{model}");
+    assert_eq!(model["model"], "example-reasoning-model:Q4_K_M", "{model}");
     assert_eq!(model["temperature"], 0.2, "{model}");
     assert_eq!(model["top_p"], 0.9, "{model}");
     assert_eq!(model["max_tokens"], 8192, "{model}");
+}
+
+/// A bundled adapter that accepts none of the tuning fields: Codex's descriptor
+/// accepts only `models.base_url` among model fields and declares no model
+/// extension. Pi's model extension declares `max_tokens`, which planning
+/// accepts as a legacy extension field.
+const NO_TUNING: &str = "nvidia.fabric.codex";
+
+#[test]
+fn model_tuning_rejects_fields_the_adapter_does_not_accept() {
+    let text = include_str!("../../../examples/openclaw.yaml");
+    for (authored, value) in [
+        ("maxTokens", json!(8192)),
+        ("temperature", json!(0.2)),
+        ("topP", json!(0.9)),
+    ] {
+        let mut input: serde_json::Value = serde_saphyr::from_str(text).unwrap();
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
+        input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
+            json!({"model":"test-model", authored:value});
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("unsupported authored tuning must not reach Fabric");
+        let message = error.to_string();
+        assert!(message.contains("assistant"), "{message}");
+        assert!(
+            message.contains(&format!(
+                "spec.sandboxes[assistant].agent.inference.routes[primary].overrides.{authored}"
+            )),
+            "{message}"
+        );
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let error = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0")
+            .expect_err("planning must reject unsupported model tuning");
+        let message = error.to_string();
+        assert!(message.contains("assistant"), "{message}");
+        assert!(
+            message.contains(&format!("overrides.{authored}")),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn model_extensions_cannot_bypass_adapter_tuning_acceptance() {
+    for (field, value) in [
+        ("max_tokens", json!(8192)),
+        ("temperature", json!(0.2)),
+        ("top_p", json!(0.9)),
+    ] {
+        let mut input: serde_json::Value =
+            serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
+        input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
+        input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] =
+            json!({"model":"test-model", "extensions": {field:value}});
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("extensions must not bypass adapter acceptance");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("overrides.extensions.{field}")),
+            "{error}"
+        );
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "managed_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let error = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0")
+            .expect_err("compilation must reject unsupported extension tuning");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("overrides.extensions.{field}")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn rejected_tuning_names_the_referenced_inference_definition() {
+    for shared in [false, true] {
+        let mut input: serde_json::Value =
+            serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
+        let sandbox = &mut input["spec"]["sandboxes"]["assistant"];
+        sandbox["harness"]["kind"] = json!(NO_TUNING);
+        let mut inference = sandbox["agent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("inference")
+            .unwrap();
+        inference["routes"][0]["overrides"] = json!({"model":"test-model", "maxTokens":8192});
+        sandbox["agent"]["inferenceRef"] = json!("shared");
+        let expected = if shared {
+            input["spec"]["inferences"]["shared"] = inference;
+            "spec.inferences[shared].routes[primary].overrides.maxTokens"
+        } else {
+            sandbox["inferences"]["shared"] = inference;
+            "spec.sandboxes[assistant].inferences[shared].routes[primary].overrides.maxTokens"
+        };
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let error = nemoclaw_sdk::fabric_config::for_sandbox(
+            &document,
+            document.sandbox("assistant").unwrap(),
+        )
+        .expect_err("unsupported tuning must name its declaration");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn null_sampling_extensions_remain_unset_for_adapter_acceptance() {
+    let mut input: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/openclaw.yaml")).unwrap();
+    input["spec"]["sandboxes"]["assistant"]["harness"]["kind"] = json!(NO_TUNING);
+    input["spec"]["sandboxes"]["assistant"]["agent"]["inference"]["routes"][0]["overrides"] = json!({"model":"test-model", "extensions": {"max_tokens":null,"temperature":null,"top_p":null}});
+    let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+    let config =
+        nemoclaw_sdk::fabric_config::for_sandbox(&document, document.sandbox("assistant").unwrap())
+            .expect("Fabric treats null optional sampling fields as unset");
+    for field in ["max_tokens", "temperature", "top_p"] {
+        assert!(config["models"]["primary"][field].is_null());
+    }
 }

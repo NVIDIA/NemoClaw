@@ -73,7 +73,7 @@ pub struct OllamaMemory {
     pub gpu_memory_gib: i64,
     #[serde(rename = "hostReserveGiB")]
     #[schemars(default)]
-    /// Host memory reserve excluded from serving.
+    /// Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile.
     pub host_reserve_gib: i64,
     #[serde(rename = "minAvailableGiB")]
     #[schemars(default)]

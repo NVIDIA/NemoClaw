@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# examples/managed-ollama.yaml: a managed Ollama service on the Docker gateway
+# network serving one OpenClaw agent. The integration runner points the
+# gateway and engine at its fixtures.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: local-agent
+  uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17671
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.20.0.0/24
+  services:
+    ollama-server:
+      kind: ollama
+      hardware: {profile: dgx-spark}
+      image: nc-prototype-ollama@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      model:
+        name: qwen3:0.6b
+        digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
+      serving:
+        contextTokens: 32768
+      memory:
+        gpuMemoryGiB: 16
+  inferenceProviders:
+    local:
+      provider: openai
+      serviceRef: ollama-server
+  sandboxes:
+    assistant:
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: local
+              overrides:
+                model: qwen3:0.6b

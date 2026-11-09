@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Plan expensive validation from changed paths and simulated Cargo builds.
 
-use determinator::{Determinator, Utf8Paths0, rules::DeterminatorRules};
+use crate::hcl_cases;
+use determinator::{
+    Determinator, Utf8Paths0,
+    rules::{DeterminatorMarkChanged, DeterminatorPostRule, DeterminatorRules, PathRule},
+};
 use guppy::{
     MetadataCommand,
     graph::{
@@ -12,7 +16,12 @@ use guppy::{
     },
 };
 use serde::Serialize;
-use std::{collections::BTreeSet, fs, path::Path, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+    process::Command,
+};
 
 pub const RULES: &str = ".config/determinator-images.toml";
 pub const LIVE_RULES: &str = ".config/determinator-live.toml";
@@ -140,19 +149,204 @@ pub fn decide(root: &Path, base: &str, workflow: Workflow) -> Decision {
         })
 }
 
+/// The live HCL cases that a change affects.
+#[derive(Serialize)]
+pub struct CaseSelection {
+    /// The commit analyzed: the clean checkout's `HEAD`.
+    pub commit: String,
+    /// The selected case IDs, sorted.
+    pub selected: Vec<String>,
+    /// Every live HCL case's decision.
+    pub cases: BTreeMap<String, Decision>,
+    /// The selected cases by where they run, with every runner present.
+    pub runners: BTreeMap<hcl_cases::Runner, Vec<String>>,
+    /// The selected cases that read the NVIDIA API key.
+    pub nvidia_key: Vec<String>,
+}
+
+/// Select the live HCL cases that the changes since the merge base of `base`
+/// and `HEAD` affect. A case's own document and scenario select only that
+/// case, and the files that only runtime images read select the cases that
+/// run those images; any other input of the live suites selects every case.
+/// `requested` cases, such as maintainer-reviewed recommendations, are added
+/// and never remove a selection. An analysis failure selects every case, and
+/// without a `base` every case is selected without analysis.
+pub fn cases(root: &Path, base: Option<&str>, requested: &[String]) -> Result<CaseSelection> {
+    let commit = revision(root, "HEAD")?;
+    let ids = hcl_cases::live(root)?;
+    // Case files become path rule globs, which these characters can't disturb.
+    let unusual = |id: &&String| {
+        !id.bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    };
+    if let Some(id) = ids.iter().find(unusual) {
+        return Err(format!(
+            "live HCL case {id:?} must be named with lowercase letters, digits, and hyphens"
+        ));
+    }
+    if let Some(id) = requested.iter().find(|id| !ids.contains(*id)) {
+        let known: Vec<&str> = ids.iter().map(String::as_str).collect();
+        return Err(format!(
+            "{id} is not a live HCL case; the live cases are {}",
+            known.join(", ")
+        ));
+    }
+    let placements = hcl_cases::placements(root)?;
+    let every = |reason: &str| {
+        ids.iter()
+            .map(|id| {
+                let reason = reason.to_owned();
+                (id.clone(), Decision { run: true, reason })
+            })
+            .collect()
+    };
+    let mut cases = match base {
+        None => every("every case selected with --all"),
+        Some(base) => select_cases(root, base, &ids).unwrap_or_else(|error| {
+            every(&format!(
+                "could not analyze changes since {base} ({error}); running every case"
+            ))
+        }),
+    };
+    for id in requested {
+        let decision = cases.get_mut(id).expect("requested cases are live cases");
+        if !decision.run {
+            *decision = Decision {
+                run: true,
+                reason: "requested with --add".into(),
+            };
+        }
+    }
+    let selected: Vec<String> = cases
+        .iter()
+        .filter(|(_, decision)| decision.run)
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut runners: BTreeMap<hcl_cases::Runner, Vec<String>> = hcl_cases::Runner::ALL
+        .into_iter()
+        .map(|runner| (runner, Vec::new()))
+        .collect();
+    let mut nvidia_key = Vec::new();
+    for id in &selected {
+        let needed = placements[id];
+        runners.entry(needed.runner).or_default().push(id.clone());
+        if needed.nvidia_key {
+            nvidia_key.push(id.clone());
+        }
+    }
+    Ok(CaseSelection {
+        commit,
+        selected,
+        cases,
+        runners,
+        nvidia_key,
+    })
+}
+
+/// The directories that only the `targets` runtime images read: each image's
+/// own and, for any image, the supervisor's.
+fn runtime_directories<'a>(targets: impl IntoIterator<Item = &'a &'static str>) -> Vec<String> {
+    let mut directories: Vec<String> = targets
+        .into_iter()
+        .map(|target| format!("image/{target}"))
+        .collect();
+    if !directories.is_empty() {
+        directories.push(crate::images::RUNTIME_SUPERVISOR.to_owned());
+    }
+    directories
+}
+
+fn select_cases(
+    root: &Path,
+    base: &str,
+    ids: &BTreeSet<String>,
+) -> Result<BTreeMap<String, Decision>> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    // Compare from the branch point so that changes the base made since don't select cases.
+    let base = revision(root, base)?;
+    let fork = String::from_utf8(git(root, &["merge-base", &base, "HEAD"])?)
+        .map_err(|_| "git printed a non-UTF-8 revision")?
+        .trim()
+        .to_owned();
+    let owners: BTreeMap<String, &str> = ids
+        .iter()
+        .flat_map(|id| hcl_cases::files(id).map(|file| (file, id.as_str())))
+        .collect();
+    let runtimes = hcl_cases::runtimes(root)?;
+    let mut ignored: Vec<String> = owners.keys().cloned().collect();
+    ignored.extend(
+        runtime_directories(&crate::images::RUNTIMES)
+            .into_iter()
+            .map(|directory| format!("{directory}/**")),
+    );
+    analyze(root, &fork, false, |fork, paths, old, new| {
+        let shared = decide_build(root, Workflow::Live, &ignored, fork, paths, old, new)?;
+        Ok(ids
+            .iter()
+            .map(|id| {
+                let own = paths
+                    .into_iter()
+                    .find(|path| owners.get(path.as_str()) == Some(&id.as_str()));
+                let directories = runtime_directories(&runtimes[id]);
+                let runtime = paths.into_iter().find(|path| {
+                    directories
+                        .iter()
+                        .any(|directory| path.starts_with(directory))
+                });
+                let decision = if shared.run {
+                    Decision {
+                        run: true,
+                        reason: format!("every case runs: {}", shared.reason),
+                    }
+                } else if let Some(path) = own {
+                    Decision {
+                        run: true,
+                        reason: format!("{path} changed"),
+                    }
+                } else if let Some(path) = runtime {
+                    Decision {
+                        run: true,
+                        reason: format!("{path} changed, an input of a runtime image this case runs"),
+                    }
+                } else {
+                    Decision {
+                        run: false,
+                        reason: format!(
+                            "neither the live build nor this case's files or runtime images changed since {fork}"
+                        ),
+                    }
+                };
+                (id.clone(), decision)
+            })
+            .collect())
+    })
+}
+
 fn analyze_many(
     root: &Path,
     base: &str,
     worktree: bool,
     workflows: &[Workflow],
 ) -> Result<Vec<Decision>> {
-    let base = String::from_utf8(git(
-        root,
-        &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
-    )?)
-    .map_err(|_| "git printed a non-UTF-8 revision")?
-    .trim()
-    .to_owned();
+    analyze(root, base, worktree, |base, paths, old, new| {
+        workflows
+            .iter()
+            .map(|workflow| decide_build(root, *workflow, &[], base, paths, old, new))
+            .collect()
+    })
+}
+
+/// Find the paths changed since `base` and the old and new package graphs,
+/// then decide with them.
+fn analyze<T>(
+    root: &Path,
+    base: &str,
+    worktree: bool,
+    decide: impl FnOnce(&str, &Utf8Paths0, &PackageGraph, &PackageGraph) -> Result<T>,
+) -> Result<T> {
+    let base = revision(root, base)?;
     if !worktree && !git(root, &["status", "--porcelain", "--untracked-files=normal"])?.is_empty() {
         return Err(
             "committed analysis requires a clean checkout; use --worktree to include local edits"
@@ -203,54 +397,72 @@ fn analyze_many(
     } else {
         &new
     };
-    workflows
-        .iter()
-        .map(|workflow| {
-            let rules =
-                fs::read_to_string(root.join(workflow.rules())).map_err(|e| e.to_string())?;
-            let rules =
-                DeterminatorRules::parse(&rules).map_err(|e| format!("invalid path rules: {e}"))?;
-            let mut determinator = Determinator::new(old, &new);
-            determinator.set_rules(&rules).map_err(|e| e.to_string())?;
-            determinator.add_changed_paths(&paths);
-            // These decisions concern specific feature sets, not every possible
-            // build of each affected package. Intersect changed paths with that
-            // build's dependency closure, then compare its dependency/feature summary.
-            let path_changed = determinator.compute().path_changed_set;
-            let build_for = |graph| match workflow {
-                Workflow::Images => image_build(graph),
-                Workflow::Live => live_build(graph),
-                Workflow::Bundle => bundle_build(graph),
-                Workflow::Lifecycle => lifecycle_build(graph),
-            };
-            let build = build_for(&new)?;
-            let subject = workflow.subject();
-            for package in packages(&build).packages(DependencyDirection::Forward) {
-                if path_changed
-                    .contains(package.id())
-                    .map_err(|e| e.to_string())?
-                {
-                    return Ok(Decision {
-                        run: true,
-                        reason: format!(
-                            "{} is part of the {subject} build and changed",
-                            package.name()
-                        ),
-                    });
-                }
-            }
-            if summary(&build) != summary(&build_for(old)?) {
-                return Ok(Decision {
-                    run: true,
-                    reason: format!("the {subject} build's dependencies or features changed"),
-                });
-            }
-            Ok(Decision {
-                run: false,
-                reason: format!("no {subject} inputs changed since {base}"),
-            })
-        })
-        .collect()
+    decide(&base, &paths, old, &new)
+}
+
+/// Whether `workflow`'s build changed, leaving the paths that match `ignored`
+/// out of its path rules.
+fn decide_build(
+    root: &Path,
+    workflow: Workflow,
+    ignored: &[String],
+    base: &str,
+    paths: &Utf8Paths0,
+    old: &PackageGraph,
+    new: &PackageGraph,
+) -> Result<Decision> {
+    let rules = fs::read_to_string(root.join(workflow.rules())).map_err(|e| e.to_string())?;
+    let mut rules =
+        DeterminatorRules::parse(&rules).map_err(|e| format!("invalid path rules: {e}"))?;
+    if !ignored.is_empty() {
+        rules.path_rules.insert(
+            0,
+            PathRule {
+                globs: ignored.to_vec(),
+                mark_changed: DeterminatorMarkChanged::Packages(Vec::new()),
+                post_rule: DeterminatorPostRule::Skip,
+            },
+        );
+    }
+    let mut determinator = Determinator::new(old, new);
+    determinator.set_rules(&rules).map_err(|e| e.to_string())?;
+    determinator.add_changed_paths(paths);
+    // These decisions concern specific feature sets, not every possible
+    // build of each affected package. Intersect changed paths with that
+    // build's dependency closure, then compare its dependency/feature summary.
+    let path_changed = determinator.compute().path_changed_set;
+    let build_for = |graph| match workflow {
+        Workflow::Images => image_build(graph),
+        Workflow::Live => live_build(graph),
+        Workflow::Bundle => bundle_build(graph),
+        Workflow::Lifecycle => lifecycle_build(graph),
+    };
+    let build = build_for(new)?;
+    let subject = workflow.subject();
+    for package in packages(&build).packages(DependencyDirection::Forward) {
+        if path_changed
+            .contains(package.id())
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(Decision {
+                run: true,
+                reason: format!(
+                    "{} is part of the {subject} build and changed",
+                    package.name()
+                ),
+            });
+        }
+    }
+    if summary(&build) != summary(&build_for(old)?) {
+        return Ok(Decision {
+            run: true,
+            reason: format!("the {subject} build's dependencies or features changed"),
+        });
+    }
+    Ok(Decision {
+        run: false,
+        reason: format!("no {subject} inputs changed since {base}"),
+    })
 }
 
 fn bundle_build(graph: &PackageGraph) -> Result<CargoSet<'_>> {
@@ -291,6 +503,17 @@ fn selected_build<'g>(
     )
     .map_err(|e| e.to_string())
 }
+/// The commit that `revision` names.
+fn revision(root: &Path, revision: &str) -> Result<String> {
+    Ok(String::from_utf8(git(
+        root,
+        &["rev-parse", "--verify", &format!("{revision}^{{commit}}")],
+    )?)
+    .map_err(|_| "git printed a non-UTF-8 revision")?
+    .trim()
+    .to_owned())
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .args(args)

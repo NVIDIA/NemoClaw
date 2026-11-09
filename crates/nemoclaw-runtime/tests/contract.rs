@@ -176,3 +176,37 @@ fn runtime_errors_identify_declared_fields_without_echoing_values_or_map_keys() 
         assert!(!error.contains("PRIVATE_SENTINEL"), "{error}");
     }
 }
+
+#[test]
+fn recipe_gpu_matching_covers_every_hardware_profile() {
+    use nemoclaw_runtime::vllm::HardwareProfile;
+    let schema = serde_json::to_value(schemars::schema_for!(HardwareProfile)).unwrap();
+    let mut declared: Vec<_> = schema["enum"].as_array().unwrap().iter().collect();
+    declared.sort_by_key(|name| name.as_str());
+    let listed = HardwareProfile::ALL.map(|profile| serde_json::to_value(profile).unwrap());
+    let mut listed: Vec<_> = listed.iter().collect();
+    listed.sort_by_key(|name| name.as_str());
+    assert_eq!(listed, declared);
+}
+
+#[test]
+fn the_runtime_accepts_a_6_gib_host_reserve_only_on_dedicated_memory() {
+    let spec = |hardware: serde_json::Value, reserve: i64| {
+        json!({
+            "kind": "vllm",
+            "hardware": hardware,
+            "model": {"repository": "owner/model", "revision": "a".repeat(40)},
+            "serving": {"port": 18888, "contextTokens": 32768, "maxSequences": 1,
+                "batchTokens": 1024, "startupTimeoutSeconds": 1800},
+            "memory": {"hostReserveGiB": reserve, "kvCacheGiB": 8, "minAvailableGiB": 8,
+                "minFreeGiB": 3, "freeGateGiB": 12, "consecutiveSamples": 5}
+        })
+        .to_string()
+    };
+    let dedicated = json!({"profile": "a100", "architecture": "amd64"});
+    RuntimeSpec::decode(&spec(dedicated.clone(), 6)).unwrap();
+    assert!(RuntimeSpec::decode(&spec(dedicated, 5)).is_err());
+    let unified = json!({"profile": "rtx-spark"});
+    assert!(RuntimeSpec::decode(&spec(unified.clone(), 6)).is_err());
+    RuntimeSpec::decode(&spec(unified, 28)).unwrap();
+}

@@ -3,9 +3,10 @@
 
 # GTC DC Examples
 
-These nine templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three GTC DC target environments.
+The nine local-inference templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three ARM64 GTC DC target environments.
 Each declares one agent, a local managed Docker gateway, and one managed vLLM service.
 On DGX Spark, the Hermes and Deep Agents templates are verified; the other combinations are untested.
+The directory also links an [AMD64 Kubernetes profile](#amd64-kubernetes-with-nvidia-cloud-inference) that uses NVIDIA cloud inference.
 
 | Template | DGX Spark result |
 |---|---|
@@ -15,7 +16,8 @@ On DGX Spark, the Hermes and Deep Agents templates are verified; the other combi
 
 The first apply downloads the 74.8 GiB model; on the verified DGX Spark the download took about 55 minutes and loading about 15.
 After the model loaded, a short question took about 5 seconds, a five-point itinerary about 15–18 seconds, and a task with a tool call 17–29 seconds.
-The model's reasoning left room for complete answers within the templates' 1,024-token limit.
+Those measurements used a 1,024-token output limit.
+The templates allow 8,192 output tokens for longer replies: within the 300-second execution timeout, one sequence of this model on a GB10 produces about 8,000 tokens, so a larger limit would reach the timeout first.
 Switching a deployment from one harness to another replaces only the sandbox, while the model service keeps running.
 DGX Station and Windows WSL2 RTX Spark remain untested.
 
@@ -25,7 +27,7 @@ DGX Station and Windows WSL2 RTX Spark remain untested.
 | OpenClaw | [Station](openclaw-dgx-station.yaml) | [Spark](openclaw-dgx-spark.yaml) | [WSL2 RTX Spark](openclaw-windows-wsl2-rtx-spark.yaml) |
 | LangChain Deep Agents | [Station](deepagents-dgx-station.yaml) | [Spark](deepagents-dgx-spark.yaml) | [WSL2 RTX Spark](deepagents-windows-wsl2-rtx-spark.yaml) |
 
-All files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
+The local-inference files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
 The serving configuration uses a 65,536-token context, one sequence, an 8 GiB KV cache, and an 88 GiB total GPU budget.
 That budget covers the approximately 74.8 GiB pinned weights and declared cache; actual runtime headroom and context capacity still require verification.
 KV and SSM cache dtypes use runtime defaults; model output accuracy and tool calls also require live checks.
@@ -33,7 +35,7 @@ KV and SSM cache dtypes use runtime defaults; model output accuracy and tool cal
 ## Prepare the Target Host
 
 Ubuntu 24.04 is the assumed Linux environment, including the WSL2 distribution.
-Use [the build prerequisites](../../docs/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
+Use [the build prerequisites](../../docs/build-deploy/build.md), Docker with NVIDIA GPU access and the containerd image store, and driver major 580 or newer.
 Each target requires exactly one visible NVIDIA GPU; these configurations provide neither CPU offloading nor multi-GPU serving.
 
 | Target | Hardware requirement | Memory accounting |
@@ -51,7 +53,7 @@ The 88 GiB budget and 28 GiB reserve require at least 116 GiB total memory obser
 A WSL2 memory limit that passes these checks leaves at most 12 GiB of the 128 GB configuration for firmware, Windows, and other applications.
 Whether memory observed inside WSL2 accounts for GPU allocations made through the Windows driver is untested; measure both inside WSL2 and in Windows while the model loads.
 Model loading and GPU access through WSL2 still require validation on the selected machine.
-See [hardware admission and memory checks](../../docs/models.md#choose-a-hardware-profile) and [platform limits](../../docs/limits.md#platforms-models-and-placement).
+See [hardware admission and memory checks](../../docs/agents-inference/models.md#choose-a-hardware-profile) and [platform limits](../../docs/resources/limits.md#platforms-models-and-placement).
 
 On the Station, DGX Spark, or inside the RTX Spark's ARM64 WSL2 distribution, run from the repository root:
 
@@ -87,7 +89,75 @@ dist/linux_arm64/bin/nemoclaw plan --state-dir .local/gtc-dc/state .local/gtc-dc
 For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` file instead and run the same Linux ARM64 command inside WSL2.
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
-Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
+Follow [the deployment workflow](../../docs/build-deploy/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/agents-inference/inference.md#verify-the-result) separately.
+
+## AMD64 Kubernetes with NVIDIA Cloud Inference
+
+One profile targets Linux AMD64 Kubernetes workers and NVIDIA's hosted Super VL API.
+It replaces the earlier three-OpenClaw Kubernetes example with two sandboxes: one OpenClaw agent and one Hermes agent.
+Inference runs on NVIDIA's cloud; the Kubernetes workers need no local GPU.
+Choose the [YAML](kubernetes-amd64.yaml) or [OpenTofu HCL](kubernetes-amd64.tf) configuration; both install a managed development gateway.
+Both links are symlinks to the owning files in `examples/kubernetes/`.
+The profile requires live validation.
+
+| Sandbox | Harness | Image metadata environment variable |
+|---|---|---|
+| `openclaw` | `nvidia.fabric.openclaw` | `NEMOCLAW_OPENCLAW_IMAGE_METADATA` |
+| `hermes` | `nvidia.fabric.hermes` | `NEMOCLAW_HERMES_IMAGE_METADATA` |
+
+Both agents select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrate.api.nvidia.com/v1` through the OpenAI completions API.
+Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security/security.md#credentials-and-authentication) describes its storage and removal.
+Model requests can incur cloud inference charges.
+Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
+Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
+Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS, and can open pseudo-terminals in `/dev/pts`, which its [browser chat](../../docs/agents-inference/interfaces.md#hermess-browser-chat) needs.
+
+Follow the [Kubernetes prerequisites and image preparation](../../docs/build-deploy/kubernetes.md#prerequisites).
+Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.
+
+For YAML, assign a fresh deployment UID and replace the cluster context, namespace, and both image digests before planning.
+Set `NEMOCLAW_CLUSTER_KUBECONFIG` to the kubeconfig file for that context.
+NemoClaw installs the gateway and creates development authentication material; its providers use command-scoped loopback tunnels, so no `GATEWAY_*` credentials are required.
+The YAML enables PVC driver configuration through `spec.gateway.config`; the HCL sets the same Helm `gatewayConfig` value.
+Both paths install the gateway with the permissions needed to inspect PVCs.
+The [development authentication profile](../../docs/build-deploy/kubernetes.md#deploy-with-a-managed-gateway) is for development clusters; use the documented OIDC profile for an existing issuer.
+
+Before applying either configuration, the platform operator must create `gtc-dc-openclaw-data` and `gtc-dc-hermes-data` in the sandbox namespace.
+Use `spec.gateway.kubernetes.namespace` for YAML or `var.namespace` for HCL; create that namespace before provisioning the claims if it does not exist.
+Prepare `workspace/` and `artifacts/` on each claim, writable by UID/GID `10001:10001`, and add these PVC labels:
+
+```yaml
+metadata:
+  labels:
+    openshell.ai/sandbox-attachable: "true"
+    openshell.ai/sandbox-attachable-workspace: "<OpenShell workspace>"
+```
+
+For YAML, use the OpenShell workspace printed by `nemoclaw plan`; for HCL, use `var.workspace`.
+The workspace label is not the Kubernetes namespace; an operator-configured admission label map replaces these defaults.
+Both configurations mount each claim's subdirectories at `/sandbox/workspace` and `/sandbox/artifacts`.
+See [mounted-volume preparation and retention](../../docs/build-deploy/state.md#keep-agent-files-on-mounted-volumes) before adding mounts to an existing deployment; adding mounts replaces the sandbox and does not migrate its files.
+Retaining files does not resume conversations.
+Follow the [deployment workflow](../../docs/build-deploy/usage.md) for apply and retained teardown.
+
+For HCL, copy `hosted-nvidia.tf` and the repository's `versions.json` into a private working directory.
+The latter supplies the chart and gateway image pins from the same checkout as the native bundle.
+Set a fresh `deployment_uid` and `workspace`, the explicit `context` and `namespace`, and both agent `images` references.
+Export `NEMOCLAW_CLUSTER_KUBECONFIG` as the absolute kubeconfig path for the OpenShell provider, and set `TF_VAR_CLUSTER_KUBECONFIG` to the same path for Helm:
+
+```sh
+export NEMOCLAW_CLUSTER_KUBECONFIG="$HOME/.kube/config"
+export TF_VAR_CLUSTER_KUBECONFIG="$NEMOCLAW_CLUSTER_KUBECONFIG"
+```
+
+Export `NEMOCLAW_KUBERNETES_STATE` as an absolute path to a private directory for this deployment's ownership receipt and development credentials, and retain it with the OpenTofu state.
+Neither path requires an existing gateway or `GATEWAY_*` credentials.
+Pin the two NVIDIA providers to the matching native bundle's manifest version and install them and the pinned Helm provider from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
+Run the bundle's `libexec/tofu` to initialize, validate, plan, and apply that directory.
+For HCL workload teardown, remove the workspace's `prevent_destroy` protection, then run `tofu destroy -var destroy=true -target=openshell_kubernetes_auth.platform` to remove authentication and its dependent gateway and agents.
+Keep the `openshell_kubernetes_storage.platform` resource and its `prevent_destroy` protection; the namespace, key Secret, and gateway storage remain for recovery.
+Choose one authoring path per deployment, with its own workspace and state; applying both configurations does not adopt the other path's resources.
+Verify an [agent response](../../docs/agents-inference/inference.md#verify-the-result) from each sandbox separately.
 
 ## Sources and Adaptation
 

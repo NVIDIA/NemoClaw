@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Current v1 intent authored from the reviewed raw v0 export produced by
+# NVIDIA/NemoClaw b6934c6300c4e1e175757e9281ae3a641d9a5b1f.
+# The live E2E lifecycle deploys this document; tests/hosted_parity.rs compares
+# it with the raw export in fixtures/hermes-nvidia-hosted.
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: hermes-nvidia-hosted
+  # CI gives each run a fresh identity.
+  uid: 06b13b70-649d-4bc5-848d-1e116c36615d
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    endpoint: http://127.0.0.1:17692
+    engine: unix:///var/run/docker.sock
+    networkCIDR: 172.30.187.0/24
+  inferenceProviders:
+    hosted-nvidia-prod:
+      provider: openai
+      api: openai-completions
+      endpoint: https://integrate.api.nvidia.com/v1
+      credential:
+        env: NVIDIA_INFERENCE_API_KEY
+  sandboxes:
+    assistant:
+      harness:
+        kind: nvidia.fabric.hermes
+        settings:
+          interfaces:
+            api:
+              port: 8643
+      image:
+        # CI binds this template to its candidate Hermes image.
+        ref: nc-fabric-hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/local/bin/hermes
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /opt/hermes
+                - /opt/nemo-relay/plugins/switchyard
+              read_write:
+                - /sandbox
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-nvidia-prod
+              overrides:
+                model: nvidia/nemotron-3.5-super-vl-120b-a12b

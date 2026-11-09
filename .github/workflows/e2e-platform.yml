@@ -1,0 +1,230 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The Docker and Kubernetes live suites for one Linux platform, from the test
+# inputs and bundle that its Bundle platform run uploaded, which calls it as
+# that platform's E2E jobs whenever the plan selects the live suites, including
+# on pull requests. CI / Bundle reports it in the required E2E check.
+name: E2E platform
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      tests:
+        description: The Bundle platform run's test inputs artifact.
+        type: string
+        required: true
+      bundle:
+        description: The Bundle platform run's bundle artifact.
+        type: string
+        required: true
+      live-images-commit:
+        description: A v1 commit whose pushed images the live suites pull instead of building, or empty to build them.
+        type: string
+        default: ""
+      hcl:
+        description: Also run the HCL E2E cases that use NVIDIA hosted inference; the caller passes the inference secret.
+        type: boolean
+        default: false
+      hcl-cases:
+        description: The validation plan's live HCL case selection, as JSON with the selected cases by where they run.
+        type: string
+        required: true
+permissions:
+  contents: read
+  packages: read
+defaults:
+  run:
+    shell: bash
+env:
+  TEST_PLATFORM: ${{ inputs.platform }}
+  CARGO_INCREMENTAL: "0"
+jobs:
+  # The live suites' images, built once per platform alongside the build and
+  # bundle jobs; both live jobs load them instead of building their own. When
+  # no image input changed since a v1 commit that pushed them, the live jobs
+  # pull that commit's images instead.
+  live-images:
+    name: E2E build images
+    if: inputs.live-images-commit == ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ inputs.platform }}
+          save-cache: "false"
+      - uses: ./.github/actions/containerd-store
+      - name: Build and save the live images
+        run: cargo ci live-images
+      - name: Identify live images artifact
+        id: identity
+        run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Upload live images
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: .build/ci/live-images.tar.zst
+          include-hidden-files: true
+          # Already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # Like the contract and integration shards, the live suites run this
+  # platform's archived test executables and bundle, load its live images, and
+  # compile nothing. No required check depends on them.
+  live-docker:
+    name: E2E Docker tests
+    needs: [live-images]
+    # Runs after Build images, or in its place when the plan names a v1
+    # commit's images.
+    if: >-
+      ${{ !cancelled() &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-docker
+          tests: ${{ inputs.tests }}
+          bundle: ${{ inputs.bundle }}
+          images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}
+          hcl-cases: ${{ join(fromJSON(inputs.hcl-cases).runners['live-docker'], ',') }}
+
+  live-kind:
+    name: E2E Kubernetes (kind) tests
+    needs: [live-images]
+    # Runs after Build images, or in its place when the plan names a v1
+    # commit's images, when the plan selected a kind case: the suite runs
+    # only those.
+    if: >-
+      ${{ !cancelled() && fromJSON(inputs.hcl-cases).runners['live-kind'][0] != null &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-kind
+          tests: ${{ inputs.tests }}
+          bundle: ${{ inputs.bundle }}
+          images: ${{ needs.live-images.outputs.artifact }}
+          images-commit: ${{ inputs.live-images-commit }}
+          hcl-cases: ${{ join(fromJSON(inputs.hcl-cases).runners['live-kind'], ',') }}
+
+  # The selected HCL E2E cases that use NVIDIA hosted inference, from this
+  # platform's test archive, bundle, and live images, like the live suites.
+  hcl:
+    name: E2E HCL ${{ matrix.case }}
+    needs: [live-images]
+    # Runs after Build images, or in its place when the plan names a v1
+    # commit's images.
+    if: >-
+      ${{ !cancelled() && inputs.hcl && fromJSON(inputs.hcl-cases).runners.hosted[0] != null &&
+      (needs.live-images.result == 'success' ||
+      (needs.live-images.result == 'skipped' && inputs.live-images-commit != '')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ${{ fromJSON(inputs.hcl-cases).runners.hosted }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    env:
+      NEMOCLAW_HCL_CASE: ${{ matrix.case }}
+      NEMOCLAW_TEST_BUNDLE: ${{ github.workspace }}/dist/${{ inputs.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/containerd-store
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.tests }}
+          path: .build/ci
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.bundle }}
+          path: .build/ci
+      - if: inputs.live-images-commit == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.live-images.outputs.artifact }}
+          path: .build/ci
+      - name: Load the images and bind the case to them
+        env:
+          COMMIT: ${{ inputs.live-images-commit }}
+          PULL_TOKEN: ${{ github.token }}
+        run: |
+          tar -xf .build/ci/bundle.tar
+          mkdir -p .build/hcl
+          zstd -d -c -q .build/ci/lifecycle.tar.zst | tar -x -C .build/hcl
+          find .build/hcl -type f -perm -u+x -path '*/deps/e2e-*' -exec ln -s "$PWD/{}" .build/e2e ';'
+          # A case names its images nc-fabric@DIGEST, which Docker resolves only
+          # in the repository that holds the image.
+          if [[ -n $COMMIT ]]; then
+            printf '%s\n' "$PULL_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            for name in openclaw hermes; do
+              docker pull --quiet "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}"
+              docker tag "ghcr.io/nvidia/nemoclaw/v1-ci:$name-$COMMIT-${TEST_PLATFORM#linux_}" "nc-fabric:$name"
+            done
+          else
+            zstd -d -c -q .build/ci/live-images.tar.zst | docker load
+            for name in openclaw hermes; do docker tag "nc-live-images:$name" "nc-fabric:$name"; done
+          fi
+          id() { docker image inspect --format '{{.Id}}' "$1"; }
+          # Pin this run's images and give it a fresh deployment identity; plan rejects an unbound image.
+          sed -i -e "s#nc-fabric@sha256:0\{64\}#nc-fabric@$(id nc-fabric:openclaw)#" \
+            -e "s#nc-fabric-hermes@sha256:0\{64\}#nc-fabric@$(id nc-fabric:hermes)#" \
+            -e "s#^  uid: .*#  uid: $(cat /proc/sys/kernel/random/uuid)#" \
+            "crates/nemoclaw-e2e/cases/$NEMOCLAW_HCL_CASE.yaml"
+      - name: Run the scenario
+        working-directory: crates/nemoclaw-e2e
+        env:
+          NEMOCLAW_HCL_RUN: ${{ runner.temp }}/hcl
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: '"$GITHUB_WORKSPACE/.build/e2e" hcl_live::case --exact --ignored --nocapture'
+      # A cancelled or timed-out job still runs this step; the test's process does not survive.
+      - name: Destroy
+        if: always()
+        run: |
+          state="$RUNNER_TEMP/hcl/deployment"
+          [[ -d $state ]] || exit 0
+          "$NEMOCLAW_TEST_BUNDLE/bin/nemoclaw" destroy --output json --progress off --state-dir "$state" \
+            > "$RUNNER_TEMP/hcl/reports/destroy.json"
+      # Reports hold outcomes only; requests, replies, state, and credentials stay on the runner.
+      - name: Upload observations and cleanup receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hcl-e2e-${{ matrix.case }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hcl/reports/*.json
+          if-no-files-found: ignore
+          retention-days: 7

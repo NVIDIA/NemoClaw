@@ -24,6 +24,8 @@ mod fabric_cache;
 #[cfg(feature = "sdk")]
 #[path = "fern.rs"]
 mod fern;
+#[path = "hcl_cases.rs"]
+mod hcl_cases;
 #[cfg(feature = "sdk")]
 #[path = "image_metadata.rs"]
 mod image_metadata;

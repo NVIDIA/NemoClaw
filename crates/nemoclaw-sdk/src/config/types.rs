@@ -96,7 +96,7 @@ pub struct Registry {
 /// Environment variable whose value is a bearer or API credential; the configuration holds no credential value.
 pub struct SecretRef {
     #[serde(rename = "env")]
-    /// Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
+    /// Uppercase name of the caller environment variable that holds the credential. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 
@@ -106,24 +106,26 @@ pub struct SecretRef {
 /// Environment variable whose value is the path of a local file; the configuration holds neither the path nor the file.
 pub struct FileRef {
     #[serde(rename = "env")]
-    /// Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, and KUBE_ prefixes are reserved for runtime controls.
+    /// Uppercase name of the caller environment variable that holds the local file path. NEMOCLAW_KUBERNETES_STATE and the NEMOCLAW_MANAGED_K8S_, HELM_, KUBE_, and KUBERNETES_SERVICE_ prefixes are reserved for runtime controls.
     pub env: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(!default)]
 #[serde(default, deny_unknown_fields)]
-/// Gateway mutual TLS file references. All three references are required when TLS is declared.
+/// Gateway TLS file references: the CA certificate that verifies the gateway, and a client certificate and key, which must appear together, when the gateway requires one.
 pub struct TLS {
     #[serde(rename = "ca")]
     /// Environment variable whose value names the local CA certificate file.
     pub ca: FileRef,
-    #[serde(rename = "certificate")]
-    /// Environment variable whose value names the local client certificate file.
-    pub certificate: FileRef,
-    #[serde(rename = "key")]
-    /// Environment variable whose value names the local client private-key file.
-    pub key: FileRef,
+    #[serde(rename = "certificate", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FileRef")]
+    /// Environment variable whose value names the local client certificate file. Requires key.
+    pub certificate: Option<FileRef>,
+    #[serde(rename = "key", skip_serializing_if = "Option::is_none")]
+    #[schemars(default, with = "FileRef")]
+    /// Environment variable whose value names the local client private-key file. Requires certificate.
+    pub key: Option<FileRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -205,7 +207,7 @@ pub struct ExternalGateway {
     pub credential: Option<SecretRef>,
     #[serde(rename = "tls", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "TLS")]
-    /// Optional mutual TLS references for an external HTTPS gateway.
+    /// Optional TLS references for an external HTTPS gateway: a CA alone, or with a client certificate and key for mutual TLS.
     pub tls: Option<TLS>,
 }
 
@@ -305,9 +307,45 @@ pub struct Sandbox {
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(
+        rename = "serviceExposures",
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    #[schemars(default)]
+    /// OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.
+    pub service_exposures: std::collections::BTreeMap<String, ServiceExposure>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// One OpenShell service exposure: a loopback port the gateway makes reachable.
+pub struct ServiceExposure {
+    #[serde(rename = "targetPort")]
+    #[schemars(range(min = 1, max = 65535))]
+    /// Loopback TCP port the service listens on inside the sandbox.
+    pub target_port: u16,
+    #[serde(
+        rename = "authorizationMode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "AuthorizationMode")]
+    /// How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP.
+    pub authorization_mode: Option<AuthorizationMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+/// OpenShell's service authorization modes.
+pub enum AuthorizationMode {
+    /// Remove the Authorization header before the request reaches the service.
+    Strip,
+    /// Pass a bearer Authorization header through to the service.
+    BearerPassthrough,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

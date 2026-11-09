@@ -28,7 +28,7 @@ const GROUP_RANGE: &str = "openshift.io/sa.scc.supplemental-groups";
 /// The namespace stays and the receipt keeps the identity recorded from it.
 async fn removed_authentication(objects: &Objects, state: &Path) -> (FaultServer, Operations) {
     let server = serve(objects, |_, _, _| None).await;
-    let operations = platform::operations(server.client(), server.endpoint(), state);
+    let operations = platform::operations(server.client(), state);
     let on = |kind| platform::spec_on(kind, "openshift");
     operations.ensure(&on(STORAGE_KIND), None).await.unwrap();
     let ranges = json!({UID_RANGE: "1000680000/10000", GROUP_RANGE: "1000690000/10000"});

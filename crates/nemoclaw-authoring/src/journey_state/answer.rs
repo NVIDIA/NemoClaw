@@ -182,7 +182,7 @@ impl JourneyState {
                     .ask_scopes
                     .contains(&JourneyScope::DeploymentFields)
                     && !self.definition.ask.contains(path)
-                    && self.resolve(capabilities)?.question(id).is_some()
+                    && resolution.question(id).is_some()
                     && PartialDocument::from_value(self.authored.values.clone())
                         .assess()
                         .document()

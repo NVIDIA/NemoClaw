@@ -47,6 +47,29 @@ fn config() -> serde_json::Value {
     })
 }
 
+/// The agent row configuring `sandbox`'s runtime.
+fn desired(sandbox: &Row) -> Row {
+    let mut desired = nemoclaw_fabric::agent::decompose(&config());
+    desired.extend(
+        [
+            ("workspace", sandbox["workspace"].as_str()),
+            ("sandbox", sandbox["name"].as_str()),
+            ("owner", sandbox["owner"].as_str()),
+            ("generation", sandbox["generation"].as_str()),
+            ("sandbox_id", sandbox["id"].as_str()),
+        ]
+        .map(|(key, value)| (key.to_owned(), value.to_owned())),
+    );
+    desired
+}
+
+/// `agent` as refresh records it, with whether its runtime runs.
+fn observed(agent: &Row, running: bool) -> Row {
+    let mut row = agent.clone();
+    row.insert("running".into(), running.to_string());
+    row
+}
+
 fn operations(fixture: &Fixture, operation: &str) -> usize {
     fixture
         .state
@@ -63,17 +86,7 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
     let fixture = Fixture::start().await;
     let client = client(&fixture);
     let sandbox = create_sandbox(&client, "fabric-openclaw").await;
-    let mut desired = nemoclaw_fabric::agent::decompose(&config());
-    desired.extend(
-        [
-            ("workspace", sandbox["workspace"].as_str()),
-            ("sandbox", sandbox["name"].as_str()),
-            ("owner", sandbox["owner"].as_str()),
-            ("generation", sandbox["generation"].as_str()),
-            ("sandbox_id", sandbox["id"].as_str()),
-        ]
-        .map(|(key, value)| (key.to_owned(), value.to_owned())),
-    );
+    let desired = desired(&sandbox);
     // Until `fabric-agent-ctl serve` listens, start is asked again.
     fixture.state.lock().unwrap().host_unavailable_starts = 2;
     let fabric = AgentBackend(client.clone());
@@ -101,14 +114,6 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
             serde_json::from_slice(state.exec_stdin.last().unwrap()).unwrap();
         assert_eq!(sent["metadata"]["name"], "main");
     }
-
-    // Reading an agent checks its sandbox and leaves the runtime alone.
-    let calls = fixture.state.lock().unwrap().exec_calls.len();
-    assert_eq!(
-        fabric.read("agent", &agent, false).await.unwrap(),
-        Some(agent.clone())
-    );
-    assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
 
     let parent = crate::configuration::fabric_binding(sandbox.clone()).unwrap();
     let reply = client
@@ -148,23 +153,144 @@ async fn an_agent_starts_once_its_bridge_serves_and_stops_when_removed() {
     fabric.remove("agent", &agent, false).await.unwrap();
 }
 
+/// Answer the next bridge command with `envelope`, as a failed command does;
+/// none restores the fake bridge.
+fn reply(fixture: &Fixture, envelope: Option<String>) {
+    let mut state = fixture.state.lock().unwrap();
+    state.exec_exit = i32::from(envelope.is_some());
+    state.exec_response = envelope.map(|envelope| format!("{envelope}\n").into_bytes());
+}
+
+#[tokio::test]
+async fn reading_an_agent_finds_a_runtime_that_no_longer_runs() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture);
+    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
+    let fabric = AgentBackend(client.clone());
+    let started = fabric.ensure("agent", &desired(&sandbox)).await;
+    assert!(started.error().is_none(), "{:?}", started.error());
+    let agent = started.into_parts().0.unwrap();
+    assert_eq!(agent["running"], "true");
+
+    for (reason, running) in [
+        (None, true),
+        // An adapter without health checks, or a probe that could not
+        // finish, is no evidence that the runtime stopped.
+        (Some("unsupported_adapter"), true),
+        (Some("probe_timeout"), true),
+        // Fabric no longer has the runtime, or its adapter finds it unhealthy.
+        (Some("runtime_unavailable"), false),
+        (Some("harness_exited"), false),
+    ] {
+        fixture.state.lock().unwrap().fabric_check_reason = reason.map(str::to_owned);
+        assert_eq!(
+            fabric.read("agent", &agent, false).await.unwrap(),
+            Some(observed(&agent, running)),
+            "{reason:?}"
+        );
+    }
+    fixture.state.lock().unwrap().fabric_check_reason = None;
+    // Reading only checks: nothing starts, stops, or answers a request.
+    assert_eq!(operations(&fixture, "check"), 5);
+    assert_eq!(operations(&fixture, "start"), 1);
+    assert_eq!(
+        operations(&fixture, "stop") + operations(&fixture, "invoke"),
+        0
+    );
+
+    // A bridge that no longer answers has no runtime; a check Fabric refuses
+    // is an error.
+    let failed = |code: &str, stage: &str| {
+        Some(format!(
+            r#"{{"operation":"check","status":"failed","changed":false,"result":null,"error":{{"code":"{code}","stage":"{stage}","message":"m","effects":"none"}}}}"#
+        ))
+    };
+    reply(&fixture, failed("host_unavailable", "transport"));
+    assert_eq!(
+        fabric.read("agent", &agent, false).await.unwrap(),
+        Some(observed(&agent, false))
+    );
+    reply(&fixture, failed("wrong_agent", "check"));
+    assert!(fabric.read("agent", &agent, false).await.is_err());
+    reply(&fixture, None);
+
+    // Removing the agent reads only its sandbox.
+    let checks = operations(&fixture, "check");
+    assert_eq!(
+        fabric.read("agent", &agent, true).await.unwrap(),
+        Some(agent.clone())
+    );
+    // A sandbox that exited took its runtime with it.
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandboxes
+        .get_mut(&key(&sandbox))
+        .unwrap()
+        .status
+        .as_mut()
+        .unwrap()
+        .phase = proto::SandboxPhase::Error as i32;
+    assert_eq!(
+        fabric.read("agent", &agent, false).await.unwrap(),
+        Some(observed(&agent, false))
+    );
+    assert_eq!(operations(&fixture, "check"), checks);
+}
+
+#[tokio::test]
+async fn an_agent_whose_runtime_stopped_starts_again_in_its_sandbox() {
+    let fixture = Fixture::start().await;
+    let client = client(&fixture);
+    let sandbox = create_sandbox(&client, "fabric-openclaw").await;
+    let fabric = AgentBackend(client.clone());
+    let agent = fabric
+        .ensure("agent", &desired(&sandbox))
+        .await
+        .into_parts()
+        .0
+        .unwrap();
+    let first = agent["runtime_id"].clone();
+
+    // Updating a running agent, such as for a newer image catalog, keeps its
+    // runtime.
+    let kept = fabric.ensure("agent", &agent).await.into_parts().0.unwrap();
+    assert_eq!(kept, agent);
+    assert_eq!(operations(&fixture, "start"), 1);
+
+    // The runtime stops; refresh records it, and the next apply plans the
+    // agent's running state anew.
+    fixture.state.lock().unwrap().fabric_runtimes.clear();
+    let mut planned = fabric.read("agent", &agent, false).await.unwrap().unwrap();
+    assert_eq!(planned["running"], "false");
+    planned.remove("running");
+    let started = fabric.ensure("agent", &planned).await;
+    assert!(started.error().is_none(), "{:?}", started.error());
+    let restarted = started.into_parts().0.unwrap();
+    // Fabric stops the recorded runtime, then starts one in the same sandbox.
+    assert_eq!(operations(&fixture, "stop"), 1);
+    assert_eq!(operations(&fixture, "start"), 2);
+    assert_eq!(restarted["id"], sandbox["id"]);
+    assert_eq!(restarted["running"], "true");
+    assert_ne!(restarted["runtime_id"], first);
+    assert!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .fabric_runtimes
+            .contains_key(&restarted["runtime_id"])
+    );
+}
+
 #[tokio::test]
 async fn removing_an_agent_whose_sandbox_exited_stops_nothing() {
     for phase in [proto::SandboxPhase::Error, proto::SandboxPhase::Completed] {
         let fixture = Fixture::start().await;
         let client = client(&fixture);
         let sandbox = create_sandbox(&client, "fabric-openclaw").await;
-        let mut desired = nemoclaw_fabric::agent::decompose(&config());
-        desired.extend(
-            [
-                ("workspace", sandbox["workspace"].as_str()),
-                ("sandbox", sandbox["name"].as_str()),
-                ("owner", sandbox["owner"].as_str()),
-                ("generation", sandbox["generation"].as_str()),
-                ("sandbox_id", sandbox["id"].as_str()),
-            ]
-            .map(|(key, value)| (key.to_owned(), value.to_owned())),
-        );
+        let desired = desired(&sandbox);
         let fabric = AgentBackend(client.clone());
         let started = fabric.ensure("agent", &desired).await;
         assert!(started.error().is_none(), "{:?}", started.error());

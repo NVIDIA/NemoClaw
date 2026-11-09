@@ -23,6 +23,7 @@ pub(crate) fn configuration_failure(
         "start" => "start",
         "invoke" => "invoke",
         "stop" => "stop",
+        "check" => "check",
         _ => "unknown",
     };
     let code = match code {
@@ -160,16 +161,23 @@ pub(crate) async fn read(
     prior: &Row,
     removing: bool,
 ) -> Result<Option<Row>, ObservationError> {
-    // The agent lives as long as its sandbox. Fabric reports no runtime
-    // status (NVIDIA/NeMo-Fabric#420), so a stopped or changed runtime inside
-    // the sandbox is found when it is next invoked, not here.
     let Some(parent) = configuration_parent(client, prior, removing).await? else {
         return Ok(None);
     };
     if value(prior, "id") != value(&parent, "id") {
         return Err(ObservationError::BindingMismatch);
     }
-    Ok(Some(prior.clone()))
+    // Removing stops the runtime whether or not it still runs.
+    if removing {
+        return Ok(Some(prior.clone()));
+    }
+    let running = client
+        .agent_running(&parent, value(prior, "runtime_id"))
+        .await
+        .map_err(Error::into_observation)?;
+    let mut row = prior.clone();
+    row.insert("running".into(), running.to_string());
+    Ok(Some(row))
 }
 
 pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
@@ -181,13 +189,28 @@ pub(crate) async fn ensure(client: &OpenShell, desired: &Row) -> Mutation {
         if !value(desired, "id").is_empty() && value(desired, "id") != parent["id"] {
             return Err(ObservationError::BindingMismatch);
         }
+        let mut row = desired.clone();
+        row.insert("id".into(), parent["id"].clone());
+        // An update that keeps a running runtime, such as a newer image
+        // catalog, leaves it alone.
+        let prior = value(desired, "runtime_id");
+        if value(desired, "running") == "true" && !prior.is_empty() {
+            return Ok(row);
+        }
+        // A runtime that stopped is stopped in Fabric too before another
+        // starts in the same sandbox, which keeps its files.
+        if !prior.is_empty() {
+            client
+                .stop_agent(&parent, prior)
+                .await
+                .map_err(Error::into_observation)?;
+        }
         let runtime_id = client
             .start_agent(&parent, &config)
             .await
             .map_err(Error::into_observation)?;
-        let mut row = desired.clone();
-        row.insert("id".into(), parent["id"].clone());
         row.insert("runtime_id".into(), runtime_id);
+        row.insert("running".into(), "true".into());
         Ok(row)
     }
     .await;

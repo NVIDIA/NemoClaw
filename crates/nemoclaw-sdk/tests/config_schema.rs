@@ -340,6 +340,71 @@ fn schema_and_parser_enforce_choices_bounds_and_conditional_forms() {
 }
 
 #[test]
+fn the_host_reserve_floor_is_6_gib_on_dedicated_memory_and_28_on_unified_memory_or_a_recipe() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let reserve = |mut value: Value, service: &str, gib: i64| {
+        value["spec"]["services"][service]["memory"]["hostReserveGiB"] = json!(gib);
+        value
+    };
+    let with_hardware = |mut value: Value, service: &str, hardware: Value| {
+        value["spec"]["services"][service]["hardware"] = hardware;
+        value
+    };
+    let h100 = json!({"profile": "h100", "architecture": "amd64"});
+    for (value, service) in [
+        (
+            with_hardware(input("spark/vllm.yaml"), "qwen", h100),
+            "qwen",
+        ),
+        (input("nemotron-amd64.yaml"), "nemotron"),
+        (
+            with_hardware(
+                input("managed-ollama.yaml"),
+                "ollama-server",
+                json!({"profile": "l4", "architecture": "amd64"}),
+            ),
+            "ollama-server",
+        ),
+    ] {
+        agrees(&validator, &reserve(value.clone(), service, 6), true);
+        agrees(&validator, &reserve(value, service, 5), false);
+    }
+
+    let mut dedicated_recipe = crate::support::fixture("inline-recipe.yaml");
+    let compatibility =
+        &mut dedicated_recipe["spec"]["services"]["qwen"]["recipe"]["compatibility"];
+    compatibility["architecture"] = json!("amd64");
+    compatibility["gpu"] = json!("NVIDIA H100 80GB HBM3");
+    for (value, service) in [
+        (input("spark/vllm.yaml"), "qwen"),
+        (
+            with_hardware(
+                input("spark/vllm.yaml"),
+                "qwen",
+                json!({"profile": "rtx-spark"}),
+            ),
+            "qwen",
+        ),
+        (input("managed-ollama.yaml"), "ollama-server"),
+        (crate::support::fixture("inline-recipe.yaml"), "qwen"),
+        (dedicated_recipe, "qwen"),
+    ] {
+        let below = reserve(value.clone(), service, 6);
+        agrees(&validator, &below, false);
+        let error = Document::parse(below.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("spec.services.{service}.memory.hostReserveGiB"))
+                && error.contains("between 28 and 64"),
+            "{error}"
+        );
+        agrees(&validator, &reserve(value.clone(), service, 27), false);
+        agrees(&validator, &reserve(value, service, 28), true);
+    }
+}
+
+#[test]
 fn defaulted_numeric_bounds_match_the_parser_at_each_boundary() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (section, field, min, max) in [
@@ -740,6 +805,28 @@ fn managed_podman_requires_an_explicit_engine() {
 }
 
 #[test]
+fn external_gateway_tls_takes_a_ca_alone_or_with_a_client_certificate_and_key() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let complete = input("kubernetes/external-gateway.yaml");
+    agrees(&validator, &complete, true);
+    let tls = complete["spec"]["gateway"]["tls"].clone();
+    for (fields, accepted) in [
+        (&["ca"][..], true),
+        (&["ca", "certificate"][..], false),
+        (&["ca", "key"][..], false),
+        (&["certificate", "key"][..], false),
+    ] {
+        let mut value = complete.clone();
+        value["spec"]["gateway"]["tls"] = fields
+            .iter()
+            .map(|field| (field.to_string(), tls[*field].clone()))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+        agrees(&validator, &value, accepted);
+    }
+}
+
+#[test]
 fn ollama_and_vllm_services_state_the_same_placement_requirement() {
     let schema = input_schema();
     let service = |kind: &str| {
@@ -934,5 +1021,41 @@ fn a_model_containers_gpu_is_one_uuid_or_index_in_the_schema_and_the_parser() {
             value["spec"]["services"][service]["container"]["gpu"] = gpu.clone();
             agrees(&validator, &value, accepted);
         }
+    }
+}
+
+#[test]
+fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("fabric-openclaw.yaml");
+    let set = |value: &mut Value, exposures: Value| {
+        value["spec"]["sandboxes"]["assistant"]["serviceExposures"] = exposures;
+    };
+    let many: serde_json::Map<String, Value> = (0..33)
+        .map(|index| (format!("s{index}"), json!({"targetPort": 8000 + index})))
+        .collect();
+    let mut at_most: serde_json::Map<String, Value> = many.clone();
+    at_most.remove("s32");
+    for accepted in [
+        json!({"dashboard": {"targetPort": 18800}}),
+        json!({"": {"targetPort": 65535, "authorizationMode": "STRIP"}}),
+        json!({"api": {"targetPort": 1, "authorizationMode": "BEARER_PASSTHROUGH"}}),
+        Value::Object(at_most),
+    ] {
+        set(&mut value, accepted);
+        agrees(&validator, &value, true);
+    }
+    for rejected in [
+        json!({"dashboard": {"targetPort": 0}}),
+        json!({"dashboard": {"targetPort": 65536}}),
+        json!({"dashboard": {"targetPort": "80"}}),
+        json!({"dashboard": {"targetPort": 80, "authorizationMode": "OPEN"}}),
+        json!({"dashboard": {"targetPort": 80, "surprise": true}}),
+        json!({"dashboard": {}}),
+        json!([{"name": "dashboard", "targetPort": 80}]),
+        Value::Object(many),
+    ] {
+        set(&mut value, rejected);
+        agrees(&validator, &value, false);
     }
 }

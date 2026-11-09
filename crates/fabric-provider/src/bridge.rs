@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Fabric's sandbox bridge, `fabric-agent-ctl`: one JSON envelope per command
 //! run in a Fabric sandbox through OpenShell, to start, invoke, and stop the
-//! sandbox's one agent runtime.
+//! sandbox's one agent runtime, and to check whether it still runs.
 use async_trait::async_trait;
 use nemoclaw_backend::{Error, ObservationError, Row};
 use openshell_provider::{self as openshell, OpenShell, SandboxPhase};
@@ -209,6 +209,11 @@ pub trait AgentBridge {
     /// answers, or a sandbox that has exited, which took its runtime with it,
     /// counts as stopped.
     async fn stop_agent(&self, binding: &Row, runtime_id: &str) -> Result<(), Error>;
+    /// Whether the runtime still runs, by Fabric's check. A runtime Fabric no
+    /// longer has, one that fails its check, and one whose sandbox no longer
+    /// serves its bridge or is not ready do not. An adapter without health
+    /// checks, or a probe that could not finish, is no evidence against it.
+    async fn agent_running(&self, binding: &Row, runtime_id: &str) -> Result<bool, Error>;
 }
 
 #[async_trait]
@@ -286,6 +291,35 @@ impl AgentBridge for OpenShell {
                 Ok(())
             }
             Some(_) => Err(failure(binding, &response)),
+        }
+    }
+
+    async fn agent_running(&self, binding: &Row, runtime_id: &str) -> Result<bool, Error> {
+        match self.sandbox_phase(binding, false).await {
+            Ok(SandboxPhase::Ready) => {}
+            Ok(SandboxPhase::Pending) | Err(Error::SandboxStartup { .. }) => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        let name = value(binding, "agent_name");
+        let arguments = ["check", "--agent", name, "--runtime-id", runtime_id];
+        let response = run(self, binding, &arguments, Vec::new()).await?;
+        let outcome = response
+            .result
+            .as_ref()
+            .and_then(|report| report["outcome"].as_str());
+        match (response.error(), outcome) {
+            (None, _) => Ok(true),
+            (Some(error), _)
+                if matches!(
+                    error.code.as_str(),
+                    "runtime_unavailable" | "host_unavailable"
+                ) =>
+            {
+                Ok(false)
+            }
+            (Some(_), Some("failed")) => Ok(false),
+            (Some(_), Some("unsupported" | "unknown")) => Ok(true),
+            (Some(_), _) => Err(failure(binding, &response)),
         }
     }
 }

@@ -6,7 +6,6 @@
 use super::*;
 use nemoclaw_build::ci::live::{self, GatewayInputs};
 
-const ENGINE: &str = "unix:///var/run/docker.sock";
 const UID_LABEL: &str = "nemoclaw.nvidia.com/uid";
 
 fn docker() -> Command {
@@ -33,6 +32,29 @@ fn by_digest(repository: &str, tag: &str) -> Result<String> {
         &format!("{repository}:{tag}"),
     ])?;
     Ok(format!("{repository}@{id}"))
+}
+
+/// Where the pinned OpenShell CLI is installed, by its archive's checksum.
+/// Where the pinned OpenShell CLI is installed, by its archive's checksum.
+fn openshell_path(pins: &Pins, platform: &str) -> Result<PathBuf> {
+    let artifact = artifact(pins, platform, "openshell")?;
+    Ok(std::path::absolute(
+        Path::new(".tools")
+            .join(format!("openshell-{}", &artifact.sha256[..12]))
+            .join("openshell"),
+    )?)
+}
+
+/// Install the pinned OpenShell CLI, verified by checksum, unless it is there.
+/// The interface case forwards services and reads tokens with it.
+pub(super) async fn install_openshell(pins: &Pins, platform: &str) -> Result<()> {
+    let path = openshell_path(pins, platform)?;
+    if !path.is_file() {
+        let bytes = download(artifact(pins, platform, "openshell")?).await?;
+        let directory = path.parent().ok_or("the OpenShell CLI has no directory")?;
+        ci::install_openshell(&bytes, directory)?;
+    }
+    Ok(())
 }
 
 fn ollama_base() -> Result<String> {
@@ -170,6 +192,7 @@ fn prepare(
     bundle: &Path,
     inputs: &Path,
     images: live_images::Source<'_>,
+    cases: &[String],
     owned: &mut Owned,
 ) -> Result<Vec<(String, String)>> {
     if !platform.starts_with("linux_") {
@@ -209,11 +232,12 @@ fn prepare(
                 .images
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
+            live_images::build_hermes(platform, &prefix)?;
             live_images::build_dummy(platform, &prefix)?;
-            live_images::build_proxies(platform, &prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
+    let hermes = by_digest(&prefix, live_images::HERMES)?;
     // The lifecycle runs an image derived from the reference image, so it
     // also checks that derived images deploy.
     live_images::build_derived(&prefix)?;
@@ -266,60 +290,159 @@ fn prepare(
         owned.uids.push(uid);
         Ok(path)
     };
-    // The dummy reports native health, so its whole lifecycle completes.
-    let lifecycle = document_for(
-        "live-dummy",
-        &dummy,
-        "org.nemoclaw.dummy",
-        serde_json::json!({"reply": "dummy-reply"}).as_object(),
-    )?;
     let mut document = |name: &str| document_for(name, &agent, harness, None);
     // Each gateway test refuses resources from an earlier run, so each gets
-    // fresh documents: recovery, an isolation pair, and profile revisions.
-    let recovery = document("live-recovery")?;
+    // fresh documents: an isolation pair and profile revisions.
     let first = document("live-isolation-a")?;
     let second = document("live-isolation-b")?;
     let profiles = document("live-profiles")?;
+    // The interface case's agents reach a stub model at the gateway network's
+    // host address; the stub answers only requests with this run's key.
+    let mut key = [0u8; 16];
+    getrandom::fill(&mut key).map_err(|_| "cannot make the stub model's key")?;
+    let model_key = format!("nc-model-key-{}", nemoclaw_build::hex(&key));
     let path = |path: &Path| path.display().to_string();
+    // Each HCL E2E case is bound to this run like the documents above.
+    let mut bound = Vec::new();
+    for case in cases {
+        let uid = live::uuid()?;
+        let subnet = live::free_subnet(&used, &subnets)?;
+        subnets.push(subnet.clone());
+        let template = fs::read_to_string(
+            Path::new(nemoclaw_build::hcl_cases::DOCUMENTS).join(format!("{case}.yaml")),
+        )?;
+        let endpoint = format!("http://127.0.0.1:{}", live::free_port()?);
+        let document = match case.as_str() {
+            // The dummy reports native health, so its whole HCL E2E lifecycle
+            // completes.
+            DUMMY_CASE => dummy_case(&template, &uid, &endpoint, &subnet, &dummy)?,
+            INTERFACES_CASE => {
+                let host = subnet
+                    .strip_suffix(".0/24")
+                    .map(|prefix| format!("{prefix}.1"))
+                    .ok_or("a gateway subnet is a /24")?;
+                let model = (host.as_str(), live::free_port()?);
+                interfaces_case(&template, &uid, &endpoint, &subnet, model, &agent, &hermes)?
+            }
+            other => {
+                return Err(format!(
+                    "live-docker cannot bind the {other} case to its run; add its binding to run_ci/live_docker.rs"
+                )
+                .into());
+            }
+        };
+        let file = inputs.join(format!("{case}.yaml"));
+        fs::write(&file, document)?;
+        owned.uids.push(uid);
+        bound.push(format!("{case}\t{}", path(&file)));
+    }
     Ok(vec![
         ("NEMOCLAW_TEST_BUNDLE".into(), path(bundle)),
         ("NEMOCLAW_TEST_RUNTIME_IMAGE".into(), "1".into()),
-        ("NEMOCLAW_TEST_CACHE_ENGINE".into(), ENGINE.into()),
-        ("NEMOCLAW_TEST_CACHE_IMAGE".into(), agent.clone()),
-        (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE".into(),
-            by_digest(&prefix, "proxy-a")?,
-        ),
-        (
-            "NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE".into(),
-            by_digest(&prefix, "proxy-b")?,
-        ),
-        (
-            "NEMOCLAW_TEST_GATEWAY_STATE".into(),
-            path(&inputs.join("recovery-state")),
-        ),
         ("NEMOCLAW_TEST_GATEWAY_SANDBOX_IMAGE".into(), agent),
         (
             "NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT".into(),
             path(&second),
         ),
-        ("NEMOCLAW_TEST_DUMMY_DOCUMENT".into(), path(&lifecycle)),
+        (
+            "NEMOCLAW_TEST_OPENSHELL".into(),
+            path(&openshell_path(pins, platform)?),
+        ),
+        (
+            "NEMOCLAW_TEST_INTERFACES_MODEL_KEY".into(),
+            model_key.clone(),
+        ),
+        // The interface case's stub model reads the key as a root variable.
+        ("TF_VAR_model_key".into(), model_key),
     ]
     .into_iter()
-    .chain([(
-        GATEWAY_DOCUMENTS.into(),
-        [path(&recovery), path(&first), path(&profiles)].join("\n"),
-    )])
+    .chain([
+        (
+            GATEWAY_DOCUMENTS.into(),
+            [path(&first), path(&profiles)].join("\n"),
+        ),
+        (HCL_CASES.into(), bound.join("\n")),
+    ])
     .collect())
 }
 
-/// Internal: the three gateway documents, in [`GATEWAY_TESTS`] order.
+/// The reference image's case, which this suite binds to the derived image.
+const DUMMY_CASE: &str = "docker-dummy";
+
+/// The dummy case bound to one run's UID, gateway endpoint, subnet, and image,
+/// and a workspace volume named for the UID, so runs never share one.
+fn dummy_case(
+    template: &str,
+    uid: &str,
+    endpoint: &str,
+    subnet: &str,
+    image: &str,
+) -> Result<String> {
+    let zero = format!("nc-live-dummy@sha256:{}", "0".repeat(64));
+    Ok(live::bind_case(
+        template,
+        &[
+            ("0b3f1c52-7d0e-4c6a-9a51-2f6c8e4d7a10", uid),
+            ("http://127.0.0.1:17697", endpoint),
+            ("172.30.122.0/24", subnet),
+            (&zero, image),
+            (
+                "source: hcl-dummy-workspace",
+                &format!("source: hcl-dummy-workspace-{uid}"),
+            ),
+        ],
+    )?)
+}
+
+/// The case whose agents reach this suite's stub model.
+const INTERFACES_CASE: &str = "docker-openclaw-hermes-interfaces";
+
+/// The interface case bound to one run's UID, gateway endpoint, subnet, stub
+/// model address and port, which its model provider and a grant name,
+/// OpenClaw and Hermes images, and skills volumes named for the UID, so runs
+/// never share one.
+fn interfaces_case(
+    template: &str,
+    uid: &str,
+    endpoint: &str,
+    subnet: &str,
+    (model_host, model_port): (&str, u16),
+    openclaw: &str,
+    hermes: &str,
+) -> Result<String> {
+    let zero = "0".repeat(64);
+    let model_port = model_port.to_string();
+    Ok(live::bind_case(
+        template,
+        &[
+            // The stub's address and port come first: bind_case replaces
+            // every occurrence, and a later value, such as the UID, could
+            // contain the template's port.
+            ("172.30.123.1", model_host),
+            ("17699", &model_port),
+            ("9d4c1f2e-6b3a-4c8d-a5e7-2f1b0c9d8e76", uid),
+            ("http://127.0.0.1:17698", endpoint),
+            ("172.30.123.0/24", subnet),
+            (&format!("nc-fabric@sha256:{zero}"), openclaw),
+            (&format!("nc-fabric-hermes@sha256:{zero}"), hermes),
+            (
+                "source: hcl-interfaces-",
+                &format!("source: hcl-interfaces-{uid}-"),
+            ),
+        ],
+    )?)
+}
+
+/// Internal: each HCL E2E case and its bound document, separated by a tab;
+/// `hcl_live::case` runs one case per nextest command.
+const HCL_CASES: &str = "NEMOCLAW_LIVE_DOCKER_HCL_CASES";
+
+/// Internal: the two gateway documents, in [`GATEWAY_TESTS`] order.
 const GATEWAY_DOCUMENTS: &str = "NEMOCLAW_LIVE_DOCKER_GATEWAY_DOCUMENTS";
 
 /// Gateway tests all read NEMOCLAW_TEST_GATEWAY_DOCUMENT and each refuses
 /// another test's resources, so each runs alone with its own document.
-const GATEWAY_TESTS: [&str; 3] = [
-    "managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu",
+const GATEWAY_TESTS: [&str; 2] = [
     "pinned_docker_gateways_reach_ready_without_interfering_with_other_sandboxes",
     "imported_profile_revisions_survive_repeated_reads_and_gateway_restart",
 ];
@@ -330,11 +453,17 @@ pub(super) fn run_live_docker(
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
     images: live_images::Source<'_>,
+    hcl_cases: Option<&[String]>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
         return Err("build the bundle first: cargo ci bundle".into());
     }
+    let cases = nemoclaw_build::hcl_cases::on(
+        Path::new("."),
+        nemoclaw_build::hcl_cases::Runner::LiveDocker,
+        hcl_cases,
+    )?;
     let inputs = tempfile::Builder::new()
         .prefix("nemoclaw-live-docker-")
         .tempdir()?;
@@ -342,15 +471,34 @@ pub(super) fn run_live_docker(
         images: Vec::new(),
         uids: Vec::new(),
     };
-    let environment = prepare(pins, platform, &bundle, inputs.path(), images, &mut owned)?;
+    let environment = prepare(
+        pins,
+        platform,
+        &bundle,
+        inputs.path(),
+        images,
+        &cases,
+        &mut owned,
+    )?;
     let documents: Vec<String> = environment
         .iter()
         .find(|(key, _)| key == GATEWAY_DOCUMENTS)
         .map(|(_, value)| value.lines().map(str::to_owned).collect())
         .unwrap_or_default();
+    let cases: Vec<(String, String)> = environment
+        .iter()
+        .find(|(key, _)| key == HCL_CASES)
+        .map(|(_, value)| {
+            value
+                .lines()
+                .filter_map(|line| line.split_once('\t'))
+                .map(|(case, document)| (case.to_owned(), document.to_owned()))
+                .collect()
+        })
+        .unwrap_or_default();
     let shared: Vec<_> = environment
         .iter()
-        .filter(|(key, _)| key != GATEWAY_DOCUMENTS)
+        .filter(|(key, _)| key != GATEWAY_DOCUMENTS && key != HCL_CASES)
         .collect();
     let [args] = Step::LiveDocker.cargo_args() else {
         unreachable!("live-docker is one nextest command")
@@ -362,7 +510,7 @@ pub(super) fn run_live_docker(
     };
     let junit = Path::new("target").join("nextest").join(profile).join(file);
     let mut reports = Vec::new();
-    let mut nextest = |filter: &str, document: Option<&str>| -> Result<()> {
+    let mut nextest = |filter: &str, extra: &[(&str, String)]| -> Result<()> {
         let mut command = match archive {
             Some(archive) => archived(Step::LiveDocker, archive, configure)?,
             None => {
@@ -375,9 +523,7 @@ pub(super) fn run_live_docker(
         command
             .args(["-E", filter])
             .envs(shared.iter().map(|(key, value)| (key, value)));
-        if let Some(document) = document {
-            command.env("NEMOCLAW_TEST_GATEWAY_DOCUMENT", document);
-        }
+        command.envs(extra.iter().map(|(key, value)| (key, value)));
         // A command that writes no report must not repeat the previous one.
         let _ = fs::remove_file(&junit);
         let result = run(&mut command);
@@ -393,9 +539,24 @@ pub(super) fn run_live_docker(
         .join(" | ");
     let result: Result<()> = (|| {
         // `-E` narrows the profile's default filter rather than replacing it.
-        nextest(&format!("not ({gateway})"), None)?;
+        nextest(&format!("not ({gateway} | test(=hcl_live::case))"), &[])?;
         for (name, document) in GATEWAY_TESTS.iter().zip(&documents) {
-            nextest(&format!("test({name})"), Some(document))?;
+            nextest(
+                &format!("test({name})"),
+                &[("NEMOCLAW_TEST_GATEWAY_DOCUMENT", document.clone())],
+            )?;
+        }
+        // `hcl_live::case` runs the case its environment names, one per command.
+        for (case, document) in &cases {
+            let run = Path::new(document).with_file_name(format!("hcl-{case}"));
+            nextest(
+                "test(=hcl_live::case)",
+                &[
+                    ("NEMOCLAW_HCL_CASE", case.clone()),
+                    ("NEMOCLAW_HCL_DOCUMENT", document.clone()),
+                    ("NEMOCLAW_HCL_RUN", run.display().to_string()),
+                ],
+            )?;
         }
         Ok(())
     })();
@@ -412,6 +573,57 @@ pub(super) fn run_live_docker(
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    fn the_dummy_case_binds_its_identity_gateway_and_image() {
+        let template = include_str!("../../../nemoclaw-e2e/cases/docker-dummy.yaml");
+        let bound = super::dummy_case(
+            template,
+            "u-1",
+            "http://127.0.0.1:1",
+            "172.30.9.0/24",
+            "i@1",
+        )
+        .unwrap();
+        for line in [
+            "  uid: u-1",
+            "    networkCIDR: 172.30.9.0/24",
+            "        ref: i@1",
+            "              source: hcl-dummy-workspace-u-1",
+        ] {
+            assert!(bound.lines().any(|bound| bound == line), "{line}");
+        }
+        assert!(nemoclaw_build::ci::live::bind_case("uid: x", &[("y", "z")]).is_err());
+    }
+
+    #[test]
+    fn the_interfaces_case_binds_its_gateway_model_and_images() {
+        let template =
+            include_str!("../../../nemoclaw-e2e/cases/docker-openclaw-hermes-interfaces.yaml");
+        let bound = super::interfaces_case(
+            template,
+            "u-1",
+            "http://127.0.0.1:1",
+            "172.30.9.0/24",
+            ("172.30.9.1", 2),
+            "o@1",
+            "h@1",
+        )
+        .unwrap();
+        for line in [
+            "  uid: u-1",
+            "    networkCIDR: 172.30.9.0/24",
+            "      endpoint: http://172.30.9.1:2/v1",
+            "        ref: o@1",
+            "        ref: h@1",
+            // The claw sandbox's grant names the stub's address too.
+            "              - host: 172.30.9.1",
+            "                port: 2",
+            "                  - 172.30.9.1/32",
+        ] {
+            assert!(bound.lines().any(|bound| bound == line), "{line}");
+        }
+    }
+
     use super::*;
 
     /// A Docker CLI over `kind id key=value [running]` lines. Like Docker, it

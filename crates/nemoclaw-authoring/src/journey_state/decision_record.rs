@@ -6,7 +6,7 @@
 use super::*;
 
 /// The user's decisions about applicable questions, separate from supplied values.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct DecisionRecord {
     pub(super) accepted: BTreeSet<String>,
     pub(super) targets: BTreeMap<String, QuestionTarget>,

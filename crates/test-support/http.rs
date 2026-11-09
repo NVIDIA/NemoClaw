@@ -23,6 +23,8 @@ impl Request {
             .find_map(|(key, value)| (*key == name).then_some(value.as_str()))
     }
 }
+/// A status, extra response headers, and a body.
+pub type Reply = (u16, Vec<(String, String)>, Vec<u8>);
 /// Answers each connection with the handler's status and JSON body, or closes
 /// it without a response when the handler returns `None`.
 pub struct Fixture {
@@ -35,20 +37,40 @@ impl Fixture {
     /// prefixes are removed before the handler sees them.
     #[cfg(unix)]
     pub async fn start(
-        mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+        handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
     ) -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("engine.sock");
-        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let mut fixture = Self::start_at(&directory.path().join("engine.sock"), handler).await;
+        fixture._directory = Some(directory);
+        fixture
+    }
+    /// Serve like [`Self::start`] at `path`, which the caller owns and removes.
+    #[cfg(unix)]
+    pub async fn start_at(
+        path: &std::path::Path,
+        mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        Self::start_at_with_headers(path, move |request| {
+            handler(request).map(|(status, body)| (status, Vec::new(), body))
+        })
+        .await
+    }
+    /// Serve like [`Self::start_at`], with response headers from the handler.
+    #[cfg(unix)]
+    pub async fn start_at_with_headers(
+        path: &std::path::Path,
+        mut handler: impl FnMut(Request) -> Option<Reply> + Send + 'static,
+    ) -> Self {
+        let listener = tokio::net::UnixListener::bind(path).unwrap();
         let task = tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
-                serve(stream, &mut handler).await;
+                serve_with_headers(stream, &mut handler).await;
             }
         });
         Self {
             endpoint: format!("unix://{}", path.display()),
-            _directory: Some(directory),
+            _directory: None,
             task,
         }
     }
@@ -120,8 +142,17 @@ fn relay_as_ssh() {
     });
 }
 async fn serve(
-    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    stream: impl AsyncRead + AsyncWrite + Unpin,
     handler: &mut impl FnMut(Request) -> Option<(u16, Vec<u8>)>,
+) {
+    serve_with_headers(stream, &mut |request| {
+        handler(request).map(|(status, body)| (status, Vec::new(), body))
+    })
+    .await;
+}
+async fn serve_with_headers(
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
+    handler: &mut impl FnMut(Request) -> Option<Reply>,
 ) {
     let mut bytes = Vec::new();
     while !bytes.ends_with(b"\r\n\r\n") {
@@ -153,14 +184,18 @@ async fn serve(
     if stream.read_exact(&mut body).await.is_err() {
         return;
     }
-    if let Some((status, body)) = handler(Request {
+    if let Some((status, extra, body)) = handler(Request {
         method,
         path,
         headers,
         body,
     }) {
+        let extra: String = extra
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect();
         let header = format!(
-            "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
         if stream.write_all(header.as_bytes()).await.is_ok() {

@@ -65,6 +65,9 @@ pub enum ObservationError {
     /// A binding mismatch whose detail names the object and what changed.
     /// The detail holds only names and UIDs, never secret values.
     BindingChanged(Box<str>),
+    /// The kubeconfig has no context with the configured name. Holds only
+    /// that name, never the kubeconfig's contents.
+    MissingContext(Box<str>),
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
@@ -142,6 +145,9 @@ impl fmt::Display for ObservationError {
                 f,
                 "observed ownership, generation, or durable identity changed: {detail}"
             ),
+            Self::MissingContext(context) => {
+                write!(f, "the kubeconfig has no context named {context}")
+            }
         }
     }
 }
