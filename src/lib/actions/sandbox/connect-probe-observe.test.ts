@@ -596,4 +596,26 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(errors).toContain("NEMOCLAW_CONNECT_TIMEOUT=600 nemoclaw alpha connect --probe-only");
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
+  it.each(["paired.clientMode", "secret-token"])(
+    "probe-only reports only allowlisted pairing field %s (#13668)",
+    async (field) => {
+      const harness = createConnectHarness({
+        readinessPublicationResult: {
+          kind: "evidence-failed",
+          diagnostic: {
+            stage: "publication-validation",
+            reason: "pairing-state-incompatible",
+            pairingMismatchField: field,
+          },
+        },
+      });
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        `  Readiness evidence: stage=publication-validation reason=pairing-state-incompatible${field === "paired.clientMode" ? " (paired.clientMode)" : ""}`,
+      );
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain("secret-token");
+    },
+  );
 });
