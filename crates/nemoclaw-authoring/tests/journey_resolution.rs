@@ -175,7 +175,8 @@ fn asked_inference_api_precedes_route_model_in_question_order() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("api-before-model", base)
-        .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
+        .ask([JourneyScope::RouteModels])
+        .ask(["/spec/inferenceProviders/nvidia-prod/api"])
         .start(&capabilities)
         .unwrap();
     let api_path = "/spec/inferenceProviders/nvidia-prod/api";
@@ -3376,8 +3377,9 @@ fn changing_inference_api_reopens_the_accepted_model_but_keeps_identity() {
         .ask([
             "/metadata/name",
             "/spec/inferenceProviders/nvidia-prod/endpoint",
+            "/spec/inferenceProviders/nvidia-prod/api",
         ])
-        .ask([JourneyScope::InferenceApi, JourneyScope::RouteModels])
+        .ask([JourneyScope::RouteModels])
         .start(&capabilities)
         .unwrap();
     let name = "/metadata/name";

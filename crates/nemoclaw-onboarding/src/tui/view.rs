@@ -121,7 +121,7 @@ impl JourneyWizard {
         } else {
             frame.render_widget(content, rows[2]);
         }
-        let optional = matches!(&current, Ok(Some(question)) if !question.required());
+        let optional = matches!(&current, Ok(Some(question)) if question.omittable());
         let choosing = matches!(&current, Ok(Some(question))
             if !question.choices().is_empty() && !self.custom_answer);
         self.render_footer(frame, rows[3], reviewing, asking, choosing, optional);
@@ -245,7 +245,7 @@ impl JourneyWizard {
             if question.allows_custom_answer() {
                 choices.push("Type another model".into());
             }
-            if !question.required() {
+            if question.omittable() {
                 choices.push("Omit".into());
             }
             lines.extend(
@@ -285,6 +285,7 @@ impl JourneyWizard {
                         lines.push(Line::from(""));
                     }
                 }
+                lines.extend(default_value_lines(resolution.defaults()));
                 if let Some(configuration) = self.configuration() {
                     match configuration {
                         Ok(yaml) => lines.extend(yaml.lines().map(yaml_line)),
@@ -499,6 +500,37 @@ fn target_lines(assessment: &DiscoveryAssessment, blocked: bool) -> Vec<Line<'st
             .iter()
             .map(|reason| Line::from(Span::styled(terminal_text(reason), Style::new().fg(color)))),
     );
+    lines
+}
+
+/// Fields the journey left unset, with the value that applies, so the person
+/// sees what was not asked although the saved file leaves it out. They come
+/// before the YAML, which the review shows from the top.
+fn default_value_lines(defaults: &[(String, Value)]) -> Vec<Line<'static>> {
+    if defaults.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![Line::from(Span::styled(
+        "Left at defaults:",
+        Style::new().fg(WHITE).add_modifier(Modifier::BOLD),
+    ))];
+    for (id, value) in defaults {
+        lines.push(Line::from(Span::styled(
+            terminal_text(&format!(
+                "{}: {}",
+                labels::field_title(id),
+                labels::field_value(id, value)
+            )),
+            Style::new().fg(MUTED),
+        )));
+        if let Some(description) = labels::field_description(id) {
+            lines.push(Line::from(Span::styled(
+                terminal_text(&format!("  {description}")),
+                Style::new().fg(DIM),
+            )));
+        }
+    }
+    lines.push(Line::from(""));
     lines
 }
 

@@ -26,6 +26,12 @@ impl JourneyState {
         if value.is_none() && question.required {
             return Err(diagnostic("journey", "This question is required."));
         }
+        if value.is_none() && !question.omittable() {
+            return Err(diagnostic(
+                "journey",
+                "Omitting this question would select its default; choose it instead.",
+            ));
+        }
         if question.target == QuestionTarget::Harness && question.choices.is_empty() {
             return Err(diagnostic(
                 "journey",
