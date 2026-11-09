@@ -34,6 +34,7 @@ Accepted platform and model declarations are not a tested matrix; verify the exa
 | OpenShift beyond [one OpenShift Local node qualified by hand](../build-deploy/kubernetes.md); no automated run enforces OpenShift's security constraints, since kind runs the OpenShift profile without them | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Changing a managed Kubernetes or OpenShift gateway's CPU and memory: NemoClaw sets the chart's `resources` to requests of 250m CPU and 256Mi and limits of 1 CPU and 1Gi | [#13835](https://github.com/NVIDIA/NemoClaw/issues/13835) |
 | Choosing the StorageClass of a managed Kubernetes or OpenShift gateway's own volume: it uses the cluster's default, because NemoClaw doesn't pass the chart's `server.dataStorageClass` | [#13829](https://github.com/NVIDIA/NemoClaw/issues/13829) |
+| Exposing a managed Kubernetes or OpenShift gateway outside the cluster: NemoClaw reaches it only through port forwards and doesn't pass the chart's `grpcRoute`, `openshiftRoute` or `pkiInitJob.serverDnsNames` values; use [an external gateway behind an ingress](../build-deploy/kubernetes.md#reach-an-external-gateway-through-an-ingress) instead | [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) |
 | Model services that NemoClaw places with a Kubernetes or OpenShift gateway; sandboxes can use [a server you run in the cluster](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | [A model server you run in the cluster](../build-deploy/kubernetes.md#use-a-model-server-in-the-cluster) has been tried on one kind cluster with NemoClaw's vLLM runtime behind a key ([#13546](https://github.com/NVIDIA/NemoClaw/issues/13546)) and its Ollama runtime, and with Ollama on one OpenShift Local node; vLLM on OpenShift and other network plugins are untested | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Live GPU inference, tools and replies through managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
@@ -76,6 +77,7 @@ Access paths and diagnostic signals depend on the gateway and harness in use.
 | The OpenClaw request walkthrough, rehearsed once OpenClaw starts in a sandbox | [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) |
 | A live rehearsal against an external gateway that requires an issuer or mTLS client certificates | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A managed Kubernetes gateway with the `development` profile gives you no `openshell` access of your own; the `oidc` profile [reaches it from the OpenShell CLI](../build-deploy/kubernetes.md#reach-the-gateway-from-the-openshell-cli), and those steps have not been run on a cluster | By design: the development issuer serves only NemoClaw |
+| [Service URLs](../agents-inference/interfaces.md#expose-a-service-through-the-gateway) on a managed Kubernetes or OpenShift gateway: a client reaches them only through a port forward to the gateway, sending the URL's host name | [#14307](https://github.com/NVIDIA/NemoClaw/issues/14307) |
 
 ## Data and Cleanup
 
