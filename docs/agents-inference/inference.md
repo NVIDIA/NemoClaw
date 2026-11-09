@@ -120,7 +120,6 @@ On a host with two or more GPUs, `container.gpu` names the one GPU to request fo
 Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`.
 An index also works, but it can change when the host boots, and YAML needs it quoted, as in `gpu: "1"`, because the field is a string.
 Without `gpu`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
-Managed vLLM and Ollama haven't been run with `gpu` on a host with two or more GPUs ([#13743](https://github.com/NVIDIA/NemoClaw/issues/13743)).
 Native managed inference on Podman remains unsupported; a Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields do not change [platform qualification limits](../resources/limits.md#platforms-models-and-placement).
 
