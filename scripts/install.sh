@@ -2606,14 +2606,161 @@ maybe_install_openshell_during_install() {
   install_nemoclaw_openshell_gateway_user_service
 }
 
+is_nemoclaw_owned_acp_cli_target() {
+  local candidate="${1:-}" node_path
+  [[ -n "$candidate" && -f "$candidate" && -x "$candidate" ]] || return 1
+  node_path="$(command -v node 2>/dev/null || true)"
+  [[ -n "$node_path" && -x "$node_path" ]] || return 1
+  # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
+  "$node_path" -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const candidate = process.argv[1];
+const expectedStateRoot = process.argv[2];
+const uid = typeof process.getuid === "function" ? process.getuid() : null;
+if (uid === null) process.exit(1);
+function ownedRegularFile(file) {
+  const stat = fs.lstatSync(file);
+  return stat.isFile() && !stat.isSymbolicLink() && stat.uid === uid;
+}
+try {
+  const candidateBefore = fs.lstatSync(candidate);
+  const resolved = fs.realpathSync(candidate);
+  const cliRelativePath = path.join("dist", "lib", "acp", "main.js");
+  const packageRoot = path.dirname(path.dirname(path.dirname(path.dirname(resolved))));
+  const expectedSourceRoot = path.join(expectedStateRoot, "source");
+  if (!path.isAbsolute(expectedStateRoot) || resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
+  let managedSource = false;
+  try {
+    const stateStat = fs.lstatSync(expectedStateRoot);
+    const sourceStat = fs.lstatSync(expectedSourceRoot);
+    managedSource = stateStat.isDirectory() && !stateStat.isSymbolicLink() &&
+      sourceStat.isDirectory() && !sourceStat.isSymbolicLink() &&
+      stateStat.uid === uid && sourceStat.uid === uid &&
+      fs.realpathSync(expectedSourceRoot) === packageRoot;
+  } catch {}
+  if (!managedSource) {
+    const expectedLink = path.resolve(path.dirname(candidate), "../lib/node_modules/nemoclaw");
+    const expectedBinTarget = "../lib/node_modules/nemoclaw/dist/lib/acp/main.js";
+    const linkStat = fs.lstatSync(expectedLink);
+    if (!linkStat.isSymbolicLink() || linkStat.uid !== uid ||
+        fs.realpathSync(expectedLink) !== packageRoot ||
+        fs.readlinkSync(candidate) !== expectedBinTarget ||
+        packageRoot === path.resolve(expectedSourceRoot) ||
+        packageRoot.startsWith(path.resolve(expectedSourceRoot) + path.sep)) process.exit(1);
+  }
+  const packageStat = fs.lstatSync(packageRoot);
+  if (!packageStat.isDirectory() || packageStat.isSymbolicLink() || packageStat.uid !== uid) process.exit(1);
+  const packageFile = path.join(packageRoot, "package.json");
+  const identityFile = path.join(packageRoot, "dist", "build-identity.json");
+  if (!ownedRegularFile(packageFile) || !ownedRegularFile(identityFile) || !ownedRegularFile(resolved)) process.exit(1);
+  const pkgBefore = fs.lstatSync(packageFile);
+  const identityBefore = fs.lstatSync(identityFile);
+  const executableBefore = fs.statSync(resolved);
+  const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+  const identity = JSON.parse(fs.readFileSync(identityFile, "utf8"));
+  if (pkg.name !== "nemoclaw" || pkg.bin?.["nemoclaw-acp"] !== "./dist/lib/acp/main.js") process.exit(1);
+  // Keep these checks aligned with validateBuildIdentity in src/lib/core/version.ts.
+  const publicVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+  if (!publicVersionPattern.test(pkg.version ?? "")) process.exit(1);
+  if (typeof identity.nemoclawVersion !== "string" ||
+      identity.nemoclawVersion.length > 128 ||
+      !publicVersionPattern.test(identity.nemoclawVersion)) process.exit(1);
+  if (typeof identity.sourceRevision !== "string" ||
+      !/^[0-9a-f]{40,64}$/.test(identity.sourceRevision)) process.exit(1);
+  const describedRevision = /-\d+-g([0-9a-f]{7,64})$/.exec(identity.nemoclawVersion)?.[1];
+  if (describedRevision && !identity.sourceRevision.startsWith(describedRevision)) process.exit(1);
+  let gitDir = path.join(packageRoot, ".git");
+  let gitStat = fs.lstatSync(gitDir);
+  if (ownedRegularFile(gitDir)) {
+    const gitFile = fs.readFileSync(gitDir, "utf8");
+    const gitDirMatch = /^gitdir: ([^\r\n]+)\r?\n?$/.exec(gitFile);
+    if (!gitDirMatch) process.exit(1);
+    gitDir = path.resolve(packageRoot, gitDirMatch[1]);
+    gitStat = fs.lstatSync(gitDir);
+  }
+  if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || gitStat.uid !== uid) process.exit(1);
+  const gitEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_") && value !== undefined) gitEnv[key] = value;
+  }
+  // Keep verification local. A promisor remote must not be contacted mid-check.
+  // GIT_NO_LAZY_FETCH needs Git 2.46; the transport allowlist covers older Git.
+  gitEnv.GIT_NO_LAZY_FETCH = "1";
+  gitEnv.GIT_ALLOW_PROTOCOL = "none";
+  const gitOptions = {
+    encoding: "utf8",
+    env: gitEnv,
+    maxBuffer: 64 * 1024,
+    timeout: 3000,
+  };
+  function verifyGit(step, args, allowDirty = false) {
+    try {
+      return execFileSync("git", args, gitOptions);
+    } catch (error) {
+      if (allowDirty && error.status === 1) process.exit(1);
+      process.stderr.write(`ACP target Git verification did not complete at ${step}.\n`);
+      process.exit(2);
+    }
+  }
+  // Bind every Git command to the validated source and Git directories. Repository
+  // discovery through -C still honors core.worktree, which can redirect the work
+  // tree to a clean copy while the validated directory stays modified.
+  const gitRepoArgs = ["--git-dir", gitDir, "--work-tree", packageRoot];
+  const reportedGitDir = verifyGit(
+    "repository directory",
+    [...gitRepoArgs, "rev-parse", "--absolute-git-dir"],
+  ).trim();
+  const reportedTopLevel = verifyGit(
+    "work tree",
+    [...gitRepoArgs, "rev-parse", "--show-toplevel"],
+  ).trim();
+  if (fs.realpathSync(reportedGitDir) !== fs.realpathSync(gitDir) ||
+      fs.realpathSync(reportedTopLevel) !== packageRoot) process.exit(1);
+  // Disabling textconv and external diff does not disable clean/process filters.
+  const filterConfigKeys = verifyGit(
+    "filter configuration",
+    [...gitRepoArgs, "config", "--null", "--name-only", "--list"],
+  ).split("\0").filter(key => /^filter\..*\.(clean|process)$/i.test(key));
+  if (filterConfigKeys.some(key => key.includes("="))) process.exit(1);
+  const disableFilterArgs = filterConfigKeys.flatMap(key => ["-c", `${key}=`]);
+  const gitDiffArgs = [
+    ...disableFilterArgs,
+    "-c", "core.fsmonitor=false", ...gitRepoArgs,
+    "diff", "--no-ext-diff", "--no-textconv", "--quiet", "--ignore-submodules",
+  ];
+  const revision = verifyGit(
+    "source revision",
+    ["-c", "core.fsmonitor=false", ...gitRepoArgs, "rev-parse", "--verify", "HEAD^{commit}"],
+  ).trim();
+  if (revision !== identity.sourceRevision) process.exit(1);
+  verifyGit("working-tree diff", [...gitDiffArgs, "--"], true);
+  verifyGit("index diff", [...gitDiffArgs, "--cached", "--"], true);
+  const candidateAfter = fs.lstatSync(candidate);
+  const resolvedAfter = fs.realpathSync(candidate);
+  const executableAfter = fs.statSync(resolved);
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  if (resolvedAfter !== resolved || !sameFile(candidateBefore, candidateAfter) ||
+      !sameFile(executableBefore, executableAfter) ||
+      !sameFile(pkgBefore, fs.lstatSync(packageFile)) ||
+      !sameFile(identityBefore, fs.lstatSync(identityFile))) process.exit(1);
+} catch {
+  process.exit(1);
+}
+' "$candidate" "$(nemoclaw_state_root)"
+}
+
 is_installer_managed_cli_shim() {
   local shim_path="${1:-}" cli_bin="${2:-}" canonical_cli_path="${3:-}"
   local line path_line node_dir path_dir exec_line shim_cli_path
   local path_prefix path_middle path_suffix exec_prefix exec_suffix
   local -a lines=()
 
-  [[ -n "$shim_path" && -n "$cli_bin" && -n "$canonical_cli_path" ]] || return 1
-  [[ -f "$shim_path" && ! -L "$shim_path" && -e "$canonical_cli_path" ]] || return 1
+  [[ -n "$shim_path" && -n "$cli_bin" ]] || return 1
+  [[ -n "$canonical_cli_path" || "$cli_bin" == "nemoclaw-acp" ]] || return 1
+  [[ -f "$shim_path" && ! -L "$shim_path" ]] || return 1
+  [[ (-n "$canonical_cli_path" && -e "$canonical_cli_path") || "$cli_bin" == "nemoclaw-acp" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     lines[${#lines[@]}]="$line"
     [[ "${#lines[@]}" -le 3 ]] || return 1
@@ -2646,8 +2793,10 @@ is_installer_managed_cli_shim() {
   [[ "$exec_line" == "$exec_prefix"*"$exec_suffix" ]] || return 1
   shim_cli_path="${exec_line#"$exec_prefix"}"
   shim_cli_path="${shim_cli_path%"$exec_suffix"}"
-  [[ "$shim_cli_path" == */"$cli_bin" && -e "$shim_cli_path" ]] || return 1
-  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]]
+  [[ "$shim_cli_path" == */"$cli_bin" ]] || return 1
+  [[ -e "$shim_cli_path" ]] || return 1
+  [[ -n "$canonical_cli_path" && "$shim_cli_path" -ef "$canonical_cli_path" ]] && return 0
+  [[ "$cli_bin" == "nemoclaw-acp" ]] && is_nemoclaw_owned_acp_cli_target "$shim_cli_path"
 }
 
 is_npm_managed_nemoclaw_acp_link() {
@@ -2660,6 +2809,7 @@ is_npm_managed_nemoclaw_acp_link() {
 
 assert_nemoclaw_acp_shim_replaceable() {
   local cli_bin="${1:-}" cli_path="${2:-}" shim_path before_identity after_identity
+  local ownership_status=0
   _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY=""
   [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
@@ -2670,7 +2820,11 @@ assert_nemoclaw_acp_shim_replaceable() {
   fi
   before_identity="$(cli_shim_entry_identity "$shim_path")" \
     || error "Installation stopped because NemoClaw could not inspect $shim_path without following symbolic links. NemoClaw left it unchanged."
-  if ! is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
+  is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" || ownership_status=$?
+  if [[ "$ownership_status" -eq 2 ]]; then
+    error "Installation stopped because ACP target ownership verification did not complete for $shim_path. NemoClaw left it unchanged. Check the Git verification error above, then rerun the installer."
+  fi
+  if [[ "$ownership_status" -ne 0 ]] \
     && ! is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path"; then
     error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
   fi
@@ -2700,6 +2854,7 @@ cli_shim_entry_identity() {
 
 assert_nemoclaw_acp_shim_unchanged() {
   local cli_bin="${1:-}" cli_path="${2:-}" expected_identity="${3:-}" shim_path current_identity
+  local ownership_status=0
   [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
   current_identity="$(cli_shim_entry_identity "$shim_path")" \
@@ -2707,14 +2862,20 @@ assert_nemoclaw_acp_shim_unchanged() {
   [[ -n "$expected_identity" && "$current_identity" == "$expected_identity" ]] \
     || error "Installation stopped because $shim_path changed while NemoClaw prepared its shim. NemoClaw left the current path unchanged. Rerun the installer."
   if [[ "$expected_identity" != "absent" ]]; then
-    is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
-      || is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" \
-      || error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
+    is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" || ownership_status=$?
+    if [[ "$ownership_status" -eq 2 ]]; then
+      error "Installation stopped because ACP target ownership verification did not complete for $shim_path. NemoClaw left it unchanged. Check the Git verification error above, then rerun the installer."
+    fi
+    if [[ "$ownership_status" -ne 0 ]] \
+      && ! is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path"; then
+      error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
+    fi
   fi
 }
 
 preflight_nemoclaw_acp_shim() {
   local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp" npm_bin="" cli_path=""
+  local ownership_status=0
   [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
   npm_bin="$(resolve_npm_bin)" \
     || error "Installation stopped because NemoClaw could not resolve the active npm prefix to verify $shim_path. NemoClaw left it unchanged. Fix the npm configuration, then rerun the installer."
@@ -2723,7 +2884,11 @@ preflight_nemoclaw_acp_shim() {
     "$cli_path" -ef "$shim_path" ]]; then
     return 0
   fi
-  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
+  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" || ownership_status=$?
+  [[ "$ownership_status" -eq 0 ]] && return 0
+  if [[ "$ownership_status" -eq 2 ]]; then
+    error "Installation stopped because ACP target ownership verification did not complete for $shim_path. NemoClaw left it unchanged. Check the Git verification error above, then rerun the installer."
+  fi
   is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" && return 0
   if truthy_env "${FORCE_FRESH_INSTALL:-}" && [[ "$cli_path" != "$shim_path" ]]; then
     _NEMOCLAW_FORCE_FRESH_SKIP_ACP_SHIM=true
